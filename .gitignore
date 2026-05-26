@@ -1,0 +1,51 @@
+# ===== PYTHON =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.log
+
+# ===== ML MODELS (large files — never commit these) =====
+*.pt
+*.pth
+*.onnx
+*.weights
+backend/runs/
+backend/models/
+
+# ===== NODE =====
+node_modules/
+*.tsbuildinfo
+
+# ===== ENVIRONMENT FILES (never commit real .env) =====
+.env
+.env.local
+.env.*.local
+!.env.example        # this line keeps .env.example tracked
+
+# ===== DATABASE =====
+*.sqlite3
+*.db
+dump.sql
+migrations/versions/*.py   # optional: track or ignore alembic versions
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== IDE =====
+.idea/
+*.swp
+*.swo
+
+# ===== UPLOADS & SNAPSHOTS =====
+backend/uploads/
+backend/snapshots/
