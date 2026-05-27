@@ -4,15 +4,24 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-venv/
-.env
 *.egg-info/
 dist/
 build/
 .pytest_cache/
 *.log
 
-# ===== ML MODELS (large files — never commit these) =====
+# ===== VIRTUAL ENVIRONMENT =====
+venv/
+.venv/
+env/
+
+# ===== DJANGO =====
+backend/db.sqlite3
+backend/media/
+backend/staticfiles/
+backend/*.log
+
+# ===== ML MODELS (large files — never commit) =====
 *.pt
 *.pth
 *.onnx
@@ -24,28 +33,44 @@ backend/models/
 node_modules/
 *.tsbuildinfo
 
-# ===== ENVIRONMENT FILES (never commit real .env) =====
+# ===== VITE BUILD OUTPUT =====
+frontend/dist/
+frontend/dist-ssr/
+
+# ===== ENVIRONMENT FILES =====
 .env
 .env.local
 .env.*.local
-!.env.example        # this line keeps .env.example tracked
+# Keep example files tracked
+!.env.example
 
 # ===== DATABASE =====
 *.sqlite3
 *.db
 dump.sql
-migrations/versions/*.py   # optional: track or ignore alembic versions
+
+# ===== DOCKER =====
+postgres_data/
 
 # ===== OS =====
 .DS_Store
+.DS_Store?
 Thumbs.db
+thumbs.db
 desktop.ini
+ehthumbs.db
 
 # ===== IDE =====
 .idea/
 *.swp
 *.swo
+*.suo
+*.user
+.vscode/*
+# Keep shared VS Code settings
+!.vscode/settings.json
+!.vscode/extensions.json
 
-# ===== UPLOADS & SNAPSHOTS =====
+# ===== UPLOADS AND SNAPSHOTS =====
 backend/uploads/
 backend/snapshots/
