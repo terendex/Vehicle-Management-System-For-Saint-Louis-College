@@ -3,11 +3,11 @@ from django.db import models
 
 class User(AbstractUser):
     class Role(models.TextChoices):
-        GUARD      = 'guard',      'Guard'
-        SUPERVISOR = 'supervisor', 'Supervisor'
-        ADMIN      = 'admin',      'Admin'
+        ADMIN          = 'admin',          'Admin'
+        SECURITY       = 'security',       'Security Personnel'
+        VEHICLE_OWNER  = 'vehicle_owner',  'Registered Vehicle Owner'
 
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.GUARD)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
 
     def __str__(self):
         return f"{self.username} ({self.role})"
