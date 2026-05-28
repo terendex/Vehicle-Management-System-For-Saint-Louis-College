@@ -1,0 +1,135 @@
+/* ============================================================
+   OWNER LAYOUT STYLES
+   Matches Login Page Theme:
+   ============================================================ */
+
+.owner-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #F0F2F7;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* --- Header --- */
+.owner-header {
+  width: 100%;
+  background: #FFFFFF;
+  border-bottom: 2.5px solid #2A2B61;
+  padding: 0 2rem;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(42, 43, 97, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-logo-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #2A2B61;
+  box-shadow: 0 2px 8px rgba(42, 43, 97, 0.12);
+}
+
+.header-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #2A2B61;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.header-subtitle {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #7C80A3;
+  letter-spacing: 0.3px;
+}
+
+/* --- Header Actions --- */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.user-greeting {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1A1D2E;
+  margin-right: 8px;
+  display: none; /* hidden on small screens by default */
+}
+
+@media (min-width: 768px) {
+  .user-greeting {
+    display: block;
+  }
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #FAFBFD;
+  border: 1.5px solid #E2E6EE;
+  color: #5A5F72;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+  background: #F0F0FA;
+  color: #2A2B61;
+  border-color: #B8BAD4;
+}
+
+.logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #FFFFFF;
+  color: #DC2626;
+  border: 1.5px solid #FECACA;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.logout-btn:hover {
+  background: #FEF2F2;
+  border-color: #DC2626;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.1);
+}
+
+/* --- Main Content --- */
+.owner-main {
+  flex: 1;
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}

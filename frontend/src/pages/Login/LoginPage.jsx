@@ -1,25 +1,54 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
 
 export default function LoginPage() {
+  const navigate = useNavigate()
 
-  const [username, setUsername] = useState('')
+  const [fullName, setFullName] = useState(localStorage.getItem('rememberedFullName') || '')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
+  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedFullName'))
   const [showPassword, setShowPassword] = useState(false)
 
-  const { login, isLoading, error, clearError } = useAuthStore()
+  const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      if (user.role === 'admin') navigate('/admin')
+      else if (user.role === 'security') navigate('/security')
+      else if (user.role === 'vehicle_owner') navigate('/owner')
+    }
+  }, [isAuthenticated, user, navigate])
+  useEffect(() => {
+    if (rememberMe) {
+      localStorage.setItem('rememberedFullName', fullName)
+    } else {
+      localStorage.removeItem('rememberedFullName')
+    }
+  }, [rememberMe, fullName])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
 
     try {
-      const user = await login(username, password)
-      // TODO: Navigate based on user.role
+      const user = await login(fullName, password)
+      
+      // Navigate based on user.role
+      if (user.role === 'admin') {
+        navigate('/admin')
+      } else if (user.role === 'security') {
+        navigate('/security')
+      } else if (user.role === 'vehicle_owner') {
+        navigate('/owner')
+      } else {
+        navigate('/') // Fallback if role doesn't match
+      }
+      
       console.log('Logged in as:', user)
     } catch (err) {
       // Error is already set in the store
@@ -60,20 +89,20 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="login-form" id="login-form">
 
-            {/* Username */}
+            {/* Full Name */}
             <div className="form-group">
-              <label className="form-label" htmlFor="login-username">
-                Username <span className="required">*</span>
+              <label className="form-label" htmlFor="login-fullname">
+                Full Name <span className="required">*</span>
               </label>
               <input
-                id="login-username"
+                id="login-fullname"
                 type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your username"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Enter your full name"
                 className="form-input"
                 required
-                autoComplete="username"
+                autoComplete="name"
               />
             </div>
 
@@ -150,10 +179,8 @@ export default function LoginPage() {
             </button>
 
 
-            {/* Terms */}
+            {/* Policy */}
             <div className="terms-row">
-              <a href="#" className="terms-link">Terms</a>
-              <span className="terms-divider">|</span>
               <a href="#" className="terms-link">Policy</a>
             </div>
           </form>

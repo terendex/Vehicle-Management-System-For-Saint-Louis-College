@@ -84,13 +84,12 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 | YOLOv8 (Ultralytics) | Plate region detection |
 | python-dotenv | Environment variable loading |
 | Celery + Redis | Background tasks |
-| Gunicorn | Production WSGI server |
 
 ### Frontend
 | Package | Purpose |
 |---|---|
 | React + Vite | UI framework and build tool |
-| Tailwind CSS | Styling |
+| Tailwind CSS v4 | Styling (via `@tailwindcss/vite` plugin) |
 | React Router v6 | Navigation |
 | TanStack Query | Server state and caching |
 | Zustand | Global state management |
@@ -98,6 +97,7 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 | react-webcam | Camera access on mobile |
 | Lucide React | Icons |
 | Sonner | Toast notifications |
+| date-fns | Date formatting and manipulation |
 | React Hook Form + Zod | Forms and validation |
 | TanStack Table | Data tables |
 
@@ -125,7 +125,7 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │   ├── ScanPage.jsx         # Mobile camera scanner
 │   │   │   ├── DashboardPage.jsx
 │   │   │   └── VehiclesPage.jsx
-│   │   ├── store/
+│   │   ├── stores/
 │   │   │   └── authStore.js         # Zustand auth state
 │   │   ├── App.jsx
 │   │   └── main.jsx
@@ -465,4 +465,4 @@ main          ← production only, never push directly
 
 ## License
 
-For internal use only. © 2025 Saint Louis College.
+For internal use only. © 2026 Saint Louis College.
