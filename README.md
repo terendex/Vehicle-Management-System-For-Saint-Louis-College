@@ -37,6 +37,7 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 - 🪪 **Visitor pass system** — visitors declare office destination, office confirms entry
 - ⚠️ **Violation tracking** — flags vehicles with unresolved violations
 - 📱 **Mobile web scanner** — guards can scan plates from any device
+- 📝 **Secure Registration** — admin generates one-time tokens for self-registration
 - 🔐 **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
 - 📋 **Access logs** — full history of every scan and entry attempt
 
@@ -332,6 +333,18 @@ npm run dev
 | `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | ✅ |
 | `GET` | `/api/vehicles/owners/` | List all owners | ✅ |
 | `POST` | `/api/vehicles/owners/` | Register new owner | ✅ |
+
+### Secure Registration
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | ✅ Admin |
+| `GET` | `/api/vehicles/tokens/` | List all registration tokens | ✅ Admin |
+| `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | ✅ Admin |
+| `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | ❌ |
+| `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | ❌ |
+| `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | ✅ Admin |
+| `POST` | `/api/vehicles/registrations/{id}/accept/` | Accept registration and create vehicle/owner | ✅ Admin |
+| `POST` | `/api/vehicles/registrations/{id}/reject/` | Reject registration application | ✅ Admin |
 
 ### Scanning
 | Method | Endpoint | Description | Auth |
