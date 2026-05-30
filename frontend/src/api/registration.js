@@ -22,6 +22,18 @@ export const registrationApi = {
     return data
   },
 
+  // Delete token
+  deleteToken: async (id) => {
+    const { data } = await api.delete(`/api/vehicles/tokens/${id}/`)
+    return data
+  },
+
+  // Clear expired/used tokens
+  clearTokens: async () => {
+    const { data } = await api.delete('/api/vehicles/tokens/clear/')
+    return data
+  },
+
   // Validate a token (public)
   validateToken: async (token) => {
     const { data } = await api.get(`/api/vehicles/register/validate-token/${token}/`)

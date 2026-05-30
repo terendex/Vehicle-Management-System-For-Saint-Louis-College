@@ -71,6 +71,24 @@ class ToggleTokenView(APIView):
         return Response(RegistrationTokenSerializer(token).data)
 
 
+class DeleteTokenView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def delete(self, request, pk):
+        token = get_object_or_404(RegistrationToken, pk=pk)
+        token.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ClearTokensView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def delete(self, request):
+        RegistrationToken.objects.filter(is_used=True).delete()
+        RegistrationToken.objects.filter(expires_at__lt=timezone.now()).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class ValidateTokenView(APIView):
     permission_classes = [permissions.AllowAny]
 

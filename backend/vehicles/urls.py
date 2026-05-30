@@ -10,6 +10,8 @@ urlpatterns = [
     # Registration token endpoints (Admin)
     path('tokens/generate/', views.GenerateRegistrationTokenView.as_view(), name='generate-token'),
     path('tokens/', views.ListRegistrationTokensView.as_view(), name='list-tokens'),
+    path('tokens/clear/', views.ClearTokensView.as_view(), name='clear-tokens'),
+    path('tokens/<int:pk>/', views.DeleteTokenView.as_view(), name='delete-token'),
     path('tokens/<int:pk>/toggle/', views.ToggleTokenView.as_view(), name='toggle-token'),
     
     # Public endpoints

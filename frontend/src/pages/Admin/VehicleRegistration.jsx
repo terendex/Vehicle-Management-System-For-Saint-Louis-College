@@ -3,13 +3,14 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { QrCode, Copy, Check, X, Eye, Power, PowerOff } from 'lucide-react'
+import { QrCode, Copy, Check, X, Eye, Power, PowerOff, Trash2, Eraser, MoreVertical } from 'lucide-react'
 import './VehicleRegistration.css'
 
 export default function VehicleRegistration() {
   // Token State
   const [tokens, setTokens] = useState([])
   const [isTokenModalOpen, setIsTokenModalOpen] = useState(false)
+  const [openActionId, setOpenActionId] = useState(null)
   const [tokenType, setTokenType] = useState('student')
   const [tokenExpiry, setTokenExpiry] = useState('')
   const [generatedToken, setGeneratedToken] = useState(null)
@@ -81,6 +82,26 @@ export default function VehicleRegistration() {
       fetchTokens()
     } catch (error) {
       console.error("Failed to toggle token:", error)
+    }
+  }
+
+  const handleDeleteToken = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this token?")) return
+    try {
+      await registrationApi.deleteToken(id)
+      fetchTokens()
+    } catch (error) {
+      console.error("Failed to delete token:", error)
+    }
+  }
+
+  const handleClearTokens = async () => {
+    if (!window.confirm("Are you sure you want to clear all expired and used tokens?")) return
+    try {
+      await registrationApi.clearTokens()
+      fetchTokens()
+    } catch (error) {
+      console.error("Failed to clear tokens:", error)
     }
   }
 
@@ -161,20 +182,30 @@ export default function VehicleRegistration() {
 
         {/* SECTION 1: Token Management */}
         <div className="section-container">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="section-title mb-0">Registration QR Codes</h2>
-            <button 
-              className="btn-primary"
-              onClick={() => {
-                setGeneratedToken(null)
-                setTokenType('student')
-                setTokenExpiry('')
-                setIsTokenModalOpen(true)
-              }}
-            >
-              <QrCode size={18} />
-              Generate New QR
-            </button>
+          <div className="section-header">
+            <h2 className="section-title">Registration QR Codes</h2>
+            <div className="header-buttons">
+              <button 
+                className="btn-clear"
+                onClick={handleClearTokens}
+                title="Clear Expired & Used"
+              >
+                <Eraser size={16} />
+                Clear Expired
+              </button>
+              <button 
+                className="btn-primary"
+                onClick={() => {
+                  setGeneratedToken(null)
+                  setTokenType('student')
+                  setTokenExpiry('')
+                  setIsTokenModalOpen(true)
+                }}
+              >
+                <QrCode size={18} />
+                Generate New QR
+              </button>
+            </div>
           </div>
 
           <div className="table-container">
@@ -192,8 +223,10 @@ export default function VehicleRegistration() {
                 {paginatedTokens.map(t => (
                   <tr key={t.id}>
                     <td className="capitalize">{t.registrant_type}</td>
-                    <td className="font-mono text-xs text-gray-500">
-                      {window.location.origin}/register?token={t.token.substring(0, 8)}...
+                    <td>
+                      <span className="token-link">
+                        {window.location.origin}/register?token={t.token.substring(0, 8)}...
+                      </span>
                     </td>
                     <td>{format(new Date(t.expires_at), 'PPp')}</td>
                     <td>
@@ -201,20 +234,45 @@ export default function VehicleRegistration() {
                         {t.is_valid ? 'Active' : (t.is_used ? 'Used' : (t.is_active ? 'Expired' : 'Disabled'))}
                       </span>
                     </td>
-                    <td>
+                    <td className="action-cell">
                       <button 
-                        className={`p-1 rounded ${t.is_active ? 'text-red-500 hover:bg-red-50' : 'text-green-500 hover:bg-green-50'}`}
-                        onClick={() => handleToggleToken(t.id)}
-                        title={t.is_active ? "Disable Token" : "Enable Token"}
+                        className="action-menu-trigger"
+                        onClick={() => setOpenActionId(openActionId === t.id ? null : t.id)}
+                        onBlur={() => setTimeout(() => setOpenActionId(null), 200)}
                       >
-                        {t.is_active ? <PowerOff size={16} /> : <Power size={16} />}
+                        <MoreVertical size={18} />
                       </button>
+                      
+                      {openActionId === t.id && (
+                        <div className="action-dropdown">
+                          <button 
+                            className={`action-dropdown-item ${t.is_active ? 'toggle-disable' : 'toggle-enable'}`}
+                            onClick={() => {
+                              handleToggleToken(t.id)
+                              setOpenActionId(null)
+                            }}
+                          >
+                            {t.is_active ? <PowerOff size={16} /> : <Power size={16} />}
+                            {t.is_active ? 'Disable' : 'Enable'}
+                          </button>
+                          <button
+                            className="action-dropdown-item delete"
+                            onClick={() => {
+                              handleDeleteToken(t.id)
+                              setOpenActionId(null)
+                            }}
+                          >
+                            <Trash2 size={16} />
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {tokens.length === 0 && (
-                  <tr>
-                    <td colSpan="5" className="text-center py-4 text-gray-500">No tokens generated yet.</td>
+                  <tr className="empty-row">
+                    <td colSpan="5">No tokens generated yet.</td>
                   </tr>
                 )}
               </tbody>
@@ -223,18 +281,18 @@ export default function VehicleRegistration() {
           
           {/* Token Pagination */}
           {totalTokenPages > 1 && (
-            <div className="flex justify-end items-center gap-4 mt-4 border-t pt-4">
-              <span className="text-sm text-gray-500">Page {tokenPage} of {totalTokenPages}</span>
-              <div className="flex gap-2">
+            <div className="pagination-bar">
+              <span className="pagination-info">Page {tokenPage} of {totalTokenPages}</span>
+              <div className="pagination-buttons">
                 <button 
-                  className="btn-outline px-3 py-1 text-sm"
+                  className="pagination-btn"
                   disabled={tokenPage === 1}
                   onClick={() => setTokenPage(p => Math.max(1, p - 1))}
                 >
                   Previous
                 </button>
                 <button 
-                  className="btn-outline px-3 py-1 text-sm"
+                  className="pagination-btn"
                   disabled={tokenPage === totalTokenPages}
                   onClick={() => setTokenPage(p => Math.min(totalTokenPages, p + 1))}
                 >
@@ -247,10 +305,10 @@ export default function VehicleRegistration() {
 
         {/* SECTION 2: Registrations */}
         <div className="section-container">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="section-title mb-0">Registrations</h2>
+          <div className="section-header">
+            <h2 className="section-title">Registrations</h2>
             <select 
-              className="form-select w-auto"
+              className="filter-select"
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value)
@@ -280,7 +338,7 @@ export default function VehicleRegistration() {
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
-                    <td className="font-mono">{r.plate_number}</td>
+                    <td className="token-link">{r.plate_number}</td>
                     <td>{format(new Date(r.created_at), 'PP')}</td>
                     <td>
                       <span className={`status-badge status-${r.status}`}>
@@ -289,7 +347,7 @@ export default function VehicleRegistration() {
                     </td>
                     <td>
                       <button 
-                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                        className="view-btn"
                         onClick={() => openViewModal(r)}
                         title="View Details"
                       >
@@ -299,8 +357,8 @@ export default function VehicleRegistration() {
                   </tr>
                 ))}
                 {registrations.length === 0 && (
-                  <tr>
-                    <td colSpan="6" className="text-center py-4 text-gray-500">No {statusFilter} registrations found.</td>
+                  <tr className="empty-row">
+                    <td colSpan="6">No {statusFilter} registrations found.</td>
                   </tr>
                 )}
               </tbody>
@@ -309,18 +367,18 @@ export default function VehicleRegistration() {
           
           {/* Registrations Pagination */}
           {totalRegPages > 1 && (
-            <div className="flex justify-end items-center gap-4 mt-4 border-t pt-4">
-              <span className="text-sm text-gray-500">Page {regPage} of {totalRegPages}</span>
-              <div className="flex gap-2">
+            <div className="pagination-bar">
+              <span className="pagination-info">Page {regPage} of {totalRegPages}</span>
+              <div className="pagination-buttons">
                 <button 
-                  className="btn-outline px-3 py-1 text-sm"
+                  className="pagination-btn"
                   disabled={regPage === 1}
                   onClick={() => setRegPage(p => Math.max(1, p - 1))}
                 >
                   Previous
                 </button>
                 <button 
-                  className="btn-outline px-3 py-1 text-sm"
+                  className="pagination-btn"
                   disabled={regPage === totalRegPages}
                   onClick={() => setRegPage(p => Math.min(totalRegPages, p + 1))}
                 >
@@ -353,7 +411,7 @@ export default function VehicleRegistration() {
                 </div>
                 
                 <div className="form-group">
-                  <label className="form-label">Expiration Date & Time</label>
+                  <label className="form-label">Expiration Date &amp; Time</label>
                   <input 
                     type="datetime-local" 
                     className="form-input"
@@ -385,13 +443,13 @@ export default function VehicleRegistration() {
                       className="qr-link-input"
                       value={`${window.location.origin}/register?token=${generatedToken.token}`}
                     />
-                    <button className="btn-outline px-2 py-1" onClick={handleCopyLink} title="Copy Link">
-                      {copied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
+                    <button className="btn-outline" onClick={handleCopyLink} title="Copy Link" style={{ padding: '8px 12px' }}>
+                      {copied ? <Check size={16} style={{ color: '#059669' }} /> : <Copy size={16} />}
                     </button>
                   </div>
                 </div>
                 <div className="modal-actions">
-                  <button type="button" className="btn-primary w-full justify-center" onClick={() => setIsTokenModalOpen(false)}>Close</button>
+                  <button type="button" className="btn-primary" onClick={() => setIsTokenModalOpen(false)} style={{ width: '100%', justifyContent: 'center' }}>Close</button>
                 </div>
               </div>
             )}
@@ -402,15 +460,15 @@ export default function VehicleRegistration() {
       {/* MODAL: View Registration Details */}
       {isViewModalOpen && selectedReg && (
         <div className="modal-overlay">
-          <div className="modal-content max-w-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="modal-title mb-0">Registration Details</h2>
-              <button className="text-gray-400 hover:text-gray-600" onClick={() => setIsViewModalOpen(false)}>
+          <div className="modal-content modal-lg">
+            <div className="modal-header">
+              <h2 className="modal-title">Registration Details</h2>
+              <button className="modal-close-btn" onClick={() => setIsViewModalOpen(false)}>
                 <X size={24} />
               </button>
             </div>
             
-            <div className="details-grid mb-6 border-b pb-4">
+            <div className="details-grid detail-divider">
               <div className="detail-item">
                 <div className="detail-label">Full Name</div>
                 <div className="detail-value">{selectedReg.full_name}</div>
@@ -431,7 +489,7 @@ export default function VehicleRegistration() {
                     <div className="detail-value">{selectedReg.student_id}</div>
                   </div>
                   <div className="detail-item">
-                    <div className="detail-label">Program & Year</div>
+                    <div className="detail-label">Program &amp; Year</div>
                     <div className="detail-value">{selectedReg.program_year}</div>
                   </div>
                 </>
@@ -458,11 +516,11 @@ export default function VehicleRegistration() {
               </div>
             </div>
 
-            <h3 className="font-semibold text-[#1A1D2E] mb-3">Vehicle Information</h3>
-            <div className="details-grid mb-6">
+            <h3 className="detail-section-title">Vehicle Information</h3>
+            <div className="details-grid" style={{ marginBottom: '24px' }}>
               <div className="detail-item">
                 <div className="detail-label">Plate Number</div>
-                <div className="detail-value font-mono">{selectedReg.plate_number}</div>
+                <div className="detail-value token-link" style={{ fontSize: '14px', fontWeight: 600 }}>{selectedReg.plate_number}</div>
               </div>
               <div className="detail-item">
                 <div className="detail-label">Vehicle Type</div>
@@ -479,15 +537,15 @@ export default function VehicleRegistration() {
             </div>
 
             {selectedReg.status === 'pending' && (
-              <div className="flex gap-4 pt-4 border-t border-gray-100">
+              <div className="detail-actions">
                 <button 
-                  className="btn-success flex-1 justify-center"
+                  className="btn-success"
                   onClick={() => handleAcceptClick(selectedReg.id)}
                 >
-                  <Check size={18} /> Accept & Generate ID
+                  <Check size={18} /> Accept &amp; Generate ID
                 </button>
                 <button 
-                  className="btn-danger flex-1 justify-center"
+                  className="btn-danger"
                   onClick={openRejectModal}
                 >
                   <X size={18} /> Reject
@@ -502,10 +560,10 @@ export default function VehicleRegistration() {
       {isRejectModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h2 className="modal-title text-red-600">Reject Registration</h2>
+            <h2 className="modal-title danger">Reject Registration</h2>
             <form onSubmit={handleReject}>
               <div className="form-group">
-                <label className="form-label">Reason for Rejection <span className="text-red-500">*</span></label>
+                <label className="form-label">Reason for Rejection <span className="required">*</span></label>
                 <textarea 
                   className="form-textarea"
                   rows={4}
@@ -529,22 +587,22 @@ export default function VehicleRegistration() {
       {/* MODAL: Confirm Accept */}
       {confirmAcceptModal && (
         <div className="modal-overlay">
-          <div className="modal-content text-center" style={{ maxWidth: '400px' }}>
-            <div className="mx-auto w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
+          <div className="modal-content confirm-modal">
+            <div className="confirm-icon success">
               <Check size={24} />
             </div>
-            <h2 className="text-xl font-bold text-[#1A1D2E] mb-2">Accept Registration?</h2>
-            <p className="text-[#5A5F72] mb-6">This will automatically provision a user account and generate a QR token for the vehicle owner. Are you sure you want to proceed?</p>
-            <div className="flex gap-3 justify-end mt-4">
+            <h2 className="confirm-title">Accept Registration?</h2>
+            <p className="confirm-message">This will automatically provision a user account and generate a QR token for the vehicle owner. Are you sure you want to proceed?</p>
+            <div className="confirm-actions">
               <button 
-                className="btn-outline flex-1 justify-center" 
+                className="btn-outline" 
                 onClick={() => setConfirmAcceptModal(null)}
                 disabled={submitting}
               >
                 Cancel
               </button>
               <button 
-                className="btn-success flex-1 justify-center" 
+                className="btn-success" 
                 onClick={confirmAccept}
                 disabled={submitting}
               >
@@ -558,16 +616,17 @@ export default function VehicleRegistration() {
       {/* MODAL: Result/Success/Error */}
       {resultModal && (
         <div className="modal-overlay">
-          <div className="modal-content text-center" style={{ maxWidth: '400px' }}>
-            <div className={`mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4 ${resultModal.type === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+          <div className="modal-content confirm-modal">
+            <div className={`confirm-icon ${resultModal.type === 'success' ? 'success' : 'error'}`}>
               {resultModal.type === 'success' ? <Check size={24} /> : <X size={24} />}
             </div>
-            <h2 className="text-xl font-bold text-[#1A1D2E] mb-2">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
-            <p className="text-[#5A5F72] mb-6">{resultModal.message}</p>
-            <div className="flex justify-center mt-4">
+            <h2 className="confirm-title">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
+            <p className="confirm-message">{resultModal.message}</p>
+            <div className="confirm-actions">
               <button 
-                className="btn-primary w-full justify-center" 
+                className="btn-primary" 
                 onClick={() => setResultModal(null)}
+                style={{ width: '100%', justifyContent: 'center' }}
               >
                 Close
               </button>

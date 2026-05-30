@@ -17,6 +17,7 @@ class VehicleSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class RegistrationTokenSerializer(serializers.ModelSerializer):
+    is_valid = serializers.ReadOnlyField()
     class Meta:
         model = RegistrationToken
         fields = '__all__'
