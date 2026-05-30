@@ -29,6 +29,9 @@ export default function VehicleRegistration() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [confirmAcceptModal, setConfirmAcceptModal] = useState(null) // holds registration id
+  const [resultModal, setResultModal] = useState(null) // { message, type }
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     fetchTokens()
@@ -81,30 +84,49 @@ export default function VehicleRegistration() {
     }
   }
 
-  const handleAccept = async (id) => {
-    if (!window.confirm('Are you sure you want to accept this registration?')) return
+  const handleAcceptClick = (id) => {
+    setConfirmAcceptModal(id)
+  }
+
+  const confirmAccept = async () => {
+    if (!confirmAcceptModal) return
+    setSubmitting(true)
     try {
-      await registrationApi.acceptRegistration(id)
+      await registrationApi.acceptRegistration(confirmAcceptModal)
       setIsViewModalOpen(false)
+      setConfirmAcceptModal(null)
       fetchRegistrations()
+      showResult("Registration accepted successfully!", "success")
     } catch (error) {
       console.error("Failed to accept registration:", error)
-      alert(error.response?.data?.error || "Failed to accept.")
+      setConfirmAcceptModal(null)
+      showResult(error.response?.data?.error || "Failed to accept registration.", "error")
+    } finally {
+      setSubmitting(false)
     }
   }
 
   const handleReject = async (e) => {
     e.preventDefault()
     if (!selectedReg) return
+    setSubmitting(true)
     try {
       await registrationApi.rejectRegistration(selectedReg.id, rejectReason)
       setIsRejectModalOpen(false)
       setIsViewModalOpen(false)
       setRejectReason('')
       fetchRegistrations()
+      showResult("Registration rejected successfully.", "success")
     } catch (error) {
       console.error("Failed to reject registration:", error)
+      showResult(error.response?.data?.error || "Failed to reject registration.", "error")
+    } finally {
+      setSubmitting(false)
     }
+  }
+
+  const showResult = (message, type = 'success') => {
+    setResultModal({ message, type })
   }
 
   const openViewModal = (reg) => {
@@ -114,6 +136,13 @@ export default function VehicleRegistration() {
 
   const openRejectModal = () => {
     setIsRejectModalOpen(true)
+  }
+
+  // Helper to get current datetime formatted for datetime-local input (YYYY-MM-DDThh:mm)
+  const getMinDateTime = () => {
+    const now = new Date()
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
+    return now.toISOString().slice(0, 16)
   }
 
   const paginatedTokens = tokens.slice((tokenPage - 1) * itemsPerPage, tokenPage * itemsPerPage)
@@ -329,6 +358,7 @@ export default function VehicleRegistration() {
                     type="datetime-local" 
                     className="form-input"
                     value={tokenExpiry}
+                    min={getMinDateTime()}
                     onChange={(e) => setTokenExpiry(e.target.value)}
                     required
                   />
@@ -452,7 +482,7 @@ export default function VehicleRegistration() {
               <div className="flex gap-4 pt-4 border-t border-gray-100">
                 <button 
                   className="btn-success flex-1 justify-center"
-                  onClick={() => handleAccept(selectedReg.id)}
+                  onClick={() => handleAcceptClick(selectedReg.id)}
                 >
                   <Check size={18} /> Accept & Generate ID
                 </button>
@@ -486,10 +516,62 @@ export default function VehicleRegistration() {
                 />
               </div>
               <div className="modal-actions">
-                <button type="button" className="btn-outline" onClick={() => setIsRejectModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-danger">Confirm Rejection</button>
+                <button type="button" className="btn-outline" onClick={() => setIsRejectModalOpen(false)} disabled={submitting}>Cancel</button>
+                <button type="submit" className="btn-danger" disabled={submitting}>
+                  {submitting ? 'Processing...' : 'Confirm Rejection'}
+                </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Confirm Accept */}
+      {confirmAcceptModal && (
+        <div className="modal-overlay">
+          <div className="modal-content text-center" style={{ maxWidth: '400px' }}>
+            <div className="mx-auto w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
+              <Check size={24} />
+            </div>
+            <h2 className="text-xl font-bold text-[#1A1D2E] mb-2">Accept Registration?</h2>
+            <p className="text-[#5A5F72] mb-6">This will automatically provision a user account and generate a QR token for the vehicle owner. Are you sure you want to proceed?</p>
+            <div className="flex gap-3 justify-end mt-4">
+              <button 
+                className="btn-outline flex-1 justify-center" 
+                onClick={() => setConfirmAcceptModal(null)}
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-success flex-1 justify-center" 
+                onClick={confirmAccept}
+                disabled={submitting}
+              >
+                {submitting ? 'Processing...' : 'Confirm Accept'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Result/Success/Error */}
+      {resultModal && (
+        <div className="modal-overlay">
+          <div className="modal-content text-center" style={{ maxWidth: '400px' }}>
+            <div className={`mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4 ${resultModal.type === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+              {resultModal.type === 'success' ? <Check size={24} /> : <X size={24} />}
+            </div>
+            <h2 className="text-xl font-bold text-[#1A1D2E] mb-2">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
+            <p className="text-[#5A5F72] mb-6">{resultModal.message}</p>
+            <div className="flex justify-center mt-4">
+              <button 
+                className="btn-primary w-full justify-center" 
+                onClick={() => setResultModal(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
