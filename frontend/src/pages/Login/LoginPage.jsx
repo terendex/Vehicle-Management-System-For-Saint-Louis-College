@@ -8,9 +8,9 @@ import './LoginPage.css'
 export default function LoginPage() {
   const navigate = useNavigate()
 
-  const [fullName, setFullName] = useState(localStorage.getItem('rememberedFullName') || '')
+  const [email, setEmail] = useState(localStorage.getItem('rememberedEmail') || '')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedFullName'))
+  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
 
   const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
@@ -25,18 +25,18 @@ export default function LoginPage() {
   }, [isAuthenticated, user, navigate])
   useEffect(() => {
     if (rememberMe) {
-      localStorage.setItem('rememberedFullName', fullName)
+      localStorage.setItem('rememberedEmail', email)
     } else {
-      localStorage.removeItem('rememberedFullName')
+      localStorage.removeItem('rememberedEmail')
     }
-  }, [rememberMe, fullName])
+  }, [rememberMe, email])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
 
     try {
-      const user = await login(fullName, password)
+      const user = await login(email, password)
       
       // Navigate based on user.role
       if (user.role === 'admin') {
@@ -89,20 +89,20 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="login-form" id="login-form">
 
-            {/* Full Name */}
+            {/* Email */}
             <div className="form-group">
-              <label className="form-label" htmlFor="login-fullname">
-                Full Name <span className="required">*</span>
+              <label className="form-label" htmlFor="login-email">
+                Email <span className="required">*</span>
               </label>
               <input
-                id="login-fullname"
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Enter your full name"
+                id="login-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email address"
                 className="form-input"
                 required
-                autoComplete="name"
+                autoComplete="email"
               />
             </div>
 

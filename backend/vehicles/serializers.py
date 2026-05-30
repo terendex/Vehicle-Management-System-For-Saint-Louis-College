@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Owner, Vehicle
+from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration
 
 class OwnerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -14,4 +14,14 @@ class VehicleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Vehicle
+        fields = '__all__'
+
+class RegistrationTokenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegistrationToken
+        fields = '__all__'
+
+class VehicleRegistrationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VehicleRegistration
         fields = '__all__'

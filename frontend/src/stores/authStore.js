@@ -9,10 +9,10 @@ const useAuthStore = create((set, get) => ({
   isLoading: false,
   error: null,
 
-  login: async (fullName, password) => {
+  login: async (email, password) => {
     set({ isLoading: true, error: null })
     try {
-      const data = await authApi.login(fullName, password)
+      const data = await authApi.login(email, password)
 
       const user = data.user
       const accessToken = data.access

@@ -33,10 +33,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         model  = User
         fields = ['full_name', 'email', 'role']
 
-    def validate_full_name(self, value):
+    def validate_email(self, value):
         user = self.instance
-        if User.objects.exclude(pk=user.pk).filter(full_name=value).exists():
-            raise serializers.ValidationError('A user with this name already exists.')
+        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
         return value
 
 
@@ -65,9 +65,9 @@ class AdminReplaceSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
-    def validate_full_name(self, value):
-        if User.objects.filter(full_name=value).exists():
-            raise serializers.ValidationError('A user with this name already exists.')
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
         return value
 
     def validate(self, attrs):
@@ -90,7 +90,7 @@ class AdminReplaceSerializer(serializers.Serializer):
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """Custom JWT serializer that adds role to the token and response."""
 
-    # Override the default 'username' field — we log in with full_name
+    # Override the default 'username' field — we log in with email
     username_field = User.USERNAME_FIELD
 
     @classmethod
