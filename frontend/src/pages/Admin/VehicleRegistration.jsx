@@ -76,6 +76,12 @@ export default function VehicleRegistration() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleCopyTokenLink = (token) => {
+    const link = `${window.location.origin}/register?token=${token}`
+    navigator.clipboard.writeText(link)
+    showResult("Link copied to clipboard!", "success")
+  }
+
   const handleToggleToken = async (id) => {
     try {
       await registrationApi.toggleToken(id)
@@ -223,11 +229,20 @@ export default function VehicleRegistration() {
                 {paginatedTokens.map(t => (
                   <tr key={t.id}>
                     <td className="capitalize">{t.registrant_type}</td>
-                    <td>
-                      <span className="token-link">
-                        {window.location.origin}/register?token={t.token.substring(0, 8)}...
-                      </span>
-                    </td>
+<td>
+  <div className="token-link-container">
+    <span className="token-link">
+      {window.location.origin}/register?token={t.token.substring(0, 8)}...
+    </span>
+    <button 
+      className="btn-outline btn-sm"
+      onClick={() => handleCopyTokenLink(t.token)}
+      title="Copy Link"
+    >
+      <Copy size={14} />
+    </button>
+  </div>
+</td>
                     <td>{format(new Date(t.expires_at), 'PPp')}</td>
                     <td>
                       <span className={`status-badge status-${t.is_valid ? 'active' : (t.is_used ? 'disabled' : (t.is_active ? 'expired' : 'disabled'))}`}>
