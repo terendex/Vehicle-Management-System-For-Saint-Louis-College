@@ -152,7 +152,7 @@ export default function RegisterPage() {
             <h2 className="card-title">Registration Submitted!</h2>
             <p className="card-message">Your vehicle registration application has been submitted successfully and is pending review.</p>
             <p className="card-help">You will receive an email notification once your application has been processed.</p>
-            <button className="card-btn" onClick={() => navigate('/login')}>Return to Login</button>
+            <button className="card-btn" onClick={() => navigate('/login')}>Proceed to Login</button>
           </div>
         </main>
       </div>

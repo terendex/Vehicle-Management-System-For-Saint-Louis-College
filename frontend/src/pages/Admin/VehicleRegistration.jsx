@@ -612,7 +612,12 @@ export default function VehicleRegistration() {
       {isRejectModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h2 className="modal-title danger">Reject Registration</h2>
+            <div className="modal-header">
+              <h2 className="modal-title danger">Reject Registration</h2>
+              <button className="modal-close-btn" onClick={() => setIsRejectModalOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
             <form onSubmit={handleReject}>
               <div className="form-group">
                 <label className="form-label">Reason for Rejection <span className="required">*</span></label>
@@ -640,10 +645,15 @@ export default function VehicleRegistration() {
       {confirmAcceptModal && (
         <div className="modal-overlay">
           <div className="modal-content confirm-modal">
+            <div className="modal-header">
+              <h2 className="modal-title">Confirm Action</h2>
+              <button className="modal-close-btn" onClick={() => setConfirmAcceptModal(null)} disabled={submitting}>
+                <X size={20} />
+              </button>
+            </div>
             <div className="confirm-icon success">
               <Check size={24} />
             </div>
-            <h2 className="confirm-title">Accept Registration?</h2>
             <p className="confirm-message">This will automatically provision a user account and generate a QR token for the vehicle owner. Are you sure you want to proceed?</p>
             <div className="confirm-actions">
               <button 
