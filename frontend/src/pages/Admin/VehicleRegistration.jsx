@@ -33,6 +33,9 @@ export default function VehicleRegistration() {
   const [confirmAcceptModal, setConfirmAcceptModal] = useState(null) // holds registration id
   const [resultModal, setResultModal] = useState(null) // { message, type }
   const [submitting, setSubmitting] = useState(false)
+  const [isQRModalOpen, setIsQRModalOpen] = useState(false)
+  const [qrDisplayData, setQrDisplayData] = useState(null)
+  const [qrViewerCopied, setQrViewerCopied] = useState(false)
 
   useEffect(() => {
     fetchTokens()
@@ -101,6 +104,32 @@ export default function VehicleRegistration() {
     }
   }
 
+  const handleViewTokenQR = (token) => {
+    const link = `${window.location.origin}/register?token=${token}`
+    openQRModal({ type: 'token', token, link }, 'Registration Invite QR Code', `${window.location.origin}/register?token=${token.substring(0, 8)}...`)
+  }
+
+  const handleViewVehicleQR = () => {
+    if (!selectedReg) return
+    const qrData = `VEHICLE:${selectedReg.plate_number}|ID:${selectedReg.id}`
+    openQRModal(
+      { type: 'vehicle', payload: qrData, plateNumber: selectedReg.plate_number, ownerName: selectedReg.full_name },
+      'Vehicle Access QR Code',
+      `${selectedReg.full_name} - ${selectedReg.plate_number}`,
+    )
+  }
+
+  const handleCopyQRData = async () => {
+    if (!qrDisplayData) return
+    try {
+      await navigator.clipboard.writeText(qrDisplayData.type === 'token' ? qrDisplayData.link : qrDisplayData.payload)
+      setQrViewerCopied(true)
+      setTimeout(() => setQrViewerCopied(false), 2000)
+    } catch (err) {
+      showResult('Failed to copy to clipboard.', 'error')
+    }
+  }
+
   const handleClearTokens = async () => {
     if (!window.confirm("Are you sure you want to clear all expired and used tokens?")) return
     try {
@@ -165,6 +194,11 @@ export default function VehicleRegistration() {
     setIsRejectModalOpen(true)
   }
 
+  const openQRModal = (qrData, title, subtitle) => {
+    setQrDisplayData({ ...qrData, title, subtitle })
+    setIsQRModalOpen(true)
+  }
+
   // Helper to get current datetime formatted for datetime-local input (YYYY-MM-DDThh:mm)
   const getMinDateTime = () => {
     const now = new Date()
@@ -219,7 +253,6 @@ export default function VehicleRegistration() {
               <thead>
                 <tr>
                   <th>Type</th>
-                  <th>Token Link</th>
                   <th>Expires At</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -229,20 +262,6 @@ export default function VehicleRegistration() {
                 {paginatedTokens.map(t => (
                   <tr key={t.id}>
                     <td className="capitalize">{t.registrant_type}</td>
-<td>
-  <div className="token-link-container">
-    <span className="token-link">
-      {window.location.origin}/register?token={t.token.substring(0, 8)}...
-    </span>
-    <button 
-      className="btn-outline btn-sm"
-      onClick={() => handleCopyTokenLink(t.token)}
-      title="Copy Link"
-    >
-      <Copy size={14} />
-    </button>
-  </div>
-</td>
                     <td>{format(new Date(t.expires_at), 'PPp')}</td>
                     <td>
                       <span className={`status-badge status-${t.is_valid ? 'active' : (t.is_used ? 'disabled' : (t.is_active ? 'expired' : 'disabled'))}`}>
@@ -260,26 +279,36 @@ export default function VehicleRegistration() {
                       
                       {openActionId === t.id && (
                         <div className="action-dropdown">
-                          <button 
-                            className={`action-dropdown-item ${t.is_active ? 'toggle-disable' : 'toggle-enable'}`}
-                            onClick={() => {
-                              handleToggleToken(t.id)
-                              setOpenActionId(null)
-                            }}
-                          >
-                            {t.is_active ? <PowerOff size={16} /> : <Power size={16} />}
-                            {t.is_active ? 'Disable' : 'Enable'}
-                          </button>
-                          <button
-                            className="action-dropdown-item delete"
-                            onClick={() => {
-                              handleDeleteToken(t.id)
-                              setOpenActionId(null)
-                            }}
-                          >
-                            <Trash2 size={16} />
-                            Delete
-                          </button>
+                           <button
+                             className="action-dropdown-item"
+                             onClick={() => {
+                               handleViewTokenQR(t.token)
+                               setOpenActionId(null)
+                             }}
+                           >
+                             <Eye size={16} />
+                             View QR
+                           </button>
+                           <button
+                             className={`action-dropdown-item ${t.is_active ? 'toggle-disable' : 'toggle-enable'}`}
+                             onClick={() => {
+                               handleToggleToken(t.id)
+                               setOpenActionId(null)
+                             }}
+                           >
+                             {t.is_active ? <PowerOff size={16} /> : <Power size={16} />}
+                             {t.is_active ? 'Disable' : 'Enable'}
+                           </button>
+                           <button
+                             className="action-dropdown-item delete"
+                             onClick={() => {
+                               handleDeleteToken(t.id)
+                               setOpenActionId(null)
+                             }}
+                           >
+                             <Trash2 size={16} />
+                             Delete
+                           </button>
                         </div>
                       )}
                     </td>
@@ -287,7 +316,7 @@ export default function VehicleRegistration() {
                 ))}
                 {tokens.length === 0 && (
                   <tr className="empty-row">
-                    <td colSpan="5">No tokens generated yet.</td>
+                    <td colSpan="4">No tokens generated yet.</td>
                   </tr>
                 )}
               </tbody>
@@ -553,17 +582,25 @@ export default function VehicleRegistration() {
 
             {selectedReg.status === 'pending' && (
               <div className="detail-actions">
-                <button 
+                <button
                   className="btn-success"
                   onClick={() => handleAcceptClick(selectedReg.id)}
                 >
                   <Check size={18} /> Accept &amp; Generate ID
                 </button>
-                <button 
+                <button
                   className="btn-danger"
                   onClick={openRejectModal}
                 >
                   <X size={18} /> Reject
+                </button>
+              </div>
+            )}
+
+            {selectedReg.status === 'accepted' && (
+              <div className="detail-actions">
+                <button className="btn-outline" onClick={handleViewVehicleQR}>
+                  <Eye size={18} /> View Vehicle QR
                 </button>
               </div>
             )}
@@ -624,6 +661,55 @@ export default function VehicleRegistration() {
                 {submitting ? 'Processing...' : 'Confirm Accept'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: QR Viewer */}
+      {isQRModalOpen && qrDisplayData && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setIsQRModalOpen(false)}>
+          <div className="modal-content qr-viewer-modal">
+            <div className="modal-header">
+              <h2 className="modal-title">{qrDisplayData.title}</h2>
+              <button className="modal-close-btn" onClick={() => setIsQRModalOpen(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            
+            <p className="qr-viewer-subtitle">{qrDisplayData.subtitle}</p>
+            
+            <div className="qr-display-wrapper">
+              {qrDisplayData.type === 'token' ? (
+                <QRCodeSVG
+                  value={qrDisplayData.link}
+                  size={220}
+                  level="H"
+                  includeMargin={true}
+                />
+              ) : (
+                <QRCodeSVG
+                  value={qrDisplayData.payload}
+                  size={220}
+                  level="H"
+                  includeMargin={true}
+                />
+              )}
+            </div>
+
+            <div className="qr-data-box">
+              <p className="qr-label">Encoded Data</p>
+              <code className="qr-code-data">
+                {qrDisplayData.type === 'token' ? qrDisplayData.link : qrDisplayData.payload}
+              </code>
+            </div>
+
+            <button
+              className="btn-primary"
+              onClick={handleCopyQRData}
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              {qrViewerCopied ? <><Check size={16} />Copied!</> : <><Copy size={16} /> Copy Data</>}
+            </button>
           </div>
         </div>
       )}

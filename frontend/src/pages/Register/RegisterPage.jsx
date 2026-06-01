@@ -1,9 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import { registrationApi } from '../../api/registration'
 import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
+
+const SLC_HEADER = (
+  <header className="register-header">
+    <div className="header-content">
+      <div className="header-logo-group">
+        <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+        <div className="header-text">
+          <span className="header-title">SAINT LOUIS COLLEGE</span>
+          <span className="header-subtitle">Vehicle Management System with entry authentication</span>
+        </div>
+      </div>
+    </div>
+  </header>
+)
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
@@ -35,26 +49,25 @@ export default function RegisterPage() {
     privacy_consent: false
   })
 
-  useEffect(() => {
+  const validateToken = useCallback(async () => {
     if (!token) {
       setError("Invalid registration link. Token is missing.")
       setLoading(false)
       return
     }
-
-    const validateToken = async () => {
-      try {
-        const data = await registrationApi.validateToken(token)
-        setRegistrantType(data.registrant_type)
-        setLoading(false)
-      } catch (err) {
-        setError(err.response?.data?.error || "This registration link is invalid, expired, or has already been used.")
-        setLoading(false)
-      }
+    try {
+      const data = await registrationApi.validateToken(token)
+      setRegistrantType(data.registrant_type)
+      setLoading(false)
+    } catch (err) {
+      setError(err.response?.data?.error || "This registration link is invalid, expired, or has already been used.")
+      setLoading(false)
     }
-
-    validateToken()
   }, [token])
+
+  useEffect(() => {
+    validateToken()
+  }, [validateToken])
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -99,17 +112,7 @@ export default function RegisterPage() {
   if (loading) {
     return (
       <div className="register-page">
-        <header className="register-header" id="register-header">
-          <div className="header-content">
-            <div className="header-logo-group">
-              <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
-              <div className="header-text">
-                <span className="header-title">SAINT LOUIS COLLEGE</span>
-                <span className="header-subtitle">Vehicle Management System with entry authentication</span>
-              </div>
-            </div>
-          </div>
-        </header>
+        {SLC_HEADER}
         <main className="register-main">
           <div className="register-container">
             <div className="loading-spinner"></div>
@@ -122,17 +125,7 @@ export default function RegisterPage() {
   if (error) {
     return (
       <div className="register-page">
-        <header className="register-header" id="register-header">
-          <div className="header-content">
-            <div className="header-logo-group">
-              <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
-              <div className="header-text">
-                <span className="header-title">SAINT LOUIS COLLEGE</span>
-                <span className="header-subtitle">Vehicle Management System with entry authentication</span>
-              </div>
-            </div>
-          </div>
-        </header>
+        {SLC_HEADER}
         <main className="register-main">
           <div className="register-card error-card">
             <div className="card-icon error-card-icon">
@@ -150,17 +143,7 @@ export default function RegisterPage() {
   if (submitted) {
     return (
       <div className="register-page">
-        <header className="register-header" id="register-header">
-          <div className="header-content">
-            <div className="header-logo-group">
-              <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
-              <div className="header-text">
-                <span className="header-title">SAINT LOUIS COLLEGE</span>
-                <span className="header-subtitle">Vehicle Management System with entry authentication</span>
-              </div>
-            </div>
-          </div>
-        </header>
+        {SLC_HEADER}
         <main className="register-main">
           <div className="register-card success-card">
             <div className="card-icon success-card-icon">
@@ -178,17 +161,7 @@ export default function RegisterPage() {
 
   return (
     <div className="register-page">
-      <header className="register-header" id="register-header">
-        <div className="header-content">
-          <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
-            <div className="header-text">
-              <span className="header-title">SAINT LOUIS COLLEGE</span>
-              <span className="header-subtitle">Vehicle Management System with entry authentication</span>
-            </div>
-          </div>
-        </div>
-      </header>
+      {SLC_HEADER}
 
       <main className="register-main">
         <div className="register-card">
