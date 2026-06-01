@@ -146,11 +146,12 @@ class AcceptRegistrationView(APIView):
         if User.objects.filter(email=registration.email).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create user
+        # Create user with temporary password
+        temp_password = str(uuid.uuid4())[:8]
         user = User.objects.create_user(
             email=registration.email,
             full_name=registration.full_name,
-            password=str(uuid.uuid4())[:8], # temporary password, though they should reset it or use email link? Wait, the plan said "Switch login to use email instead of full_name". How do they get their password? 
+            password=temp_password,
             role='vehicle_owner'
         )
 
@@ -178,7 +179,7 @@ class AcceptRegistrationView(APIView):
         registration.save()
 
         # Send acceptance email with QR code
-        send_acceptance_email(registration)
+        send_acceptance_email(registration, temp_password)
 
         return Response({"message": "Registration accepted and user created."})
 

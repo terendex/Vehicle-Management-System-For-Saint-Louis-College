@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
+  const [showErrorModal, setShowErrorModal] = useState(false)
 
   const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
 
@@ -31,14 +32,20 @@ export default function LoginPage() {
     }
   }, [rememberMe, email])
 
+  useEffect(() => {
+    if (error) {
+      setShowErrorModal(true)
+    }
+  }, [error])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
+    setShowErrorModal(false)
 
     try {
       const user = await login(email, password)
       
-      // Navigate based on user.role
       if (user.role === 'admin') {
         navigate('/admin')
       } else if (user.role === 'security') {
@@ -46,13 +53,18 @@ export default function LoginPage() {
       } else if (user.role === 'vehicle_owner') {
         navigate('/owner')
       } else {
-        navigate('/') // Fallback if role doesn't match
+        navigate('/')
       }
       
       console.log('Logged in as:', user)
     } catch (err) {
-      // Error is already set in the store
+      setShowErrorModal(true)
     }
+  }
+
+  const closeErrorModal = () => {
+    setShowErrorModal(false)
+    clearError()
   }
 
   return (
@@ -80,7 +92,7 @@ export default function LoginPage() {
           </div>
 
           {/* Error Alert */}
-          {error && (
+          {error && !showErrorModal && (
             <div className="error-alert" id="login-error" role="alert">
               <AlertCircle size={16} />
               <span>{error}</span>
@@ -186,6 +198,20 @@ export default function LoginPage() {
           </form>
         </div>
       </main>
+
+      {/* Error Modal */}
+      {showErrorModal && (
+        <div className="modal-overlay" onClick={closeErrorModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon">
+              <AlertCircle size={28} color="#FFFFFF" />
+            </div>
+            <h2 className="modal-title">Login Failed</h2>
+            <p className="modal-message">{error}</p>
+            <button className="modal-btn" onClick={closeErrorModal}>Try Again</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

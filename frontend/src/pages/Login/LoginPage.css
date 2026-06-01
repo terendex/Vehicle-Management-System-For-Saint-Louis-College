@@ -592,3 +592,101 @@
     font-size: 9.5px;
   }
 }
+
+/* ============================================================
+   ERROR MODAL
+   ============================================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 45, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  animation: modalFadeIn 0.2s ease;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-card {
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 36px 28px 28px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  position: relative;
+  animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3.5px;
+  background: linear-gradient(90deg, #DC2626, #F87171, #DC2626);
+}
+
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.modal-icon {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #DC2626, #F87171);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0 0 6px;
+}
+
+.modal-message {
+  font-size: 13px;
+  color: #5A5F72;
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+.modal-btn {
+  width: 100%;
+  background: #2A2B61;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-btn:hover {
+  background: #1e1f48;
+  box-shadow: 0 4px 12px rgba(42, 43, 97, 0.3);
+}
+
+.modal-btn:active {
+  transform: scale(0.97);
+}

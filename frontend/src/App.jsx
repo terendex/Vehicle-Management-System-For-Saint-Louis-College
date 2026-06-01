@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from './pages/Login/LoginPage'
+import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
 import AdminDashboard from './pages/Admin/AdminDashboard'
 import VehicleRegistration from './pages/Admin/VehicleRegistration'
@@ -44,8 +45,8 @@ export default function App() {
           <Route path="/owner" element={<OwnerDashboard />} />
         </Route>
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        {/* 404 */}
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   )

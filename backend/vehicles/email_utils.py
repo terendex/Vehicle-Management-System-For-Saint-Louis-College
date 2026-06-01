@@ -20,7 +20,7 @@ def _generate_qr_base64(data):
     img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
-def send_acceptance_email(registration):
+def send_acceptance_email(registration, temp_password):
     # Generate the payload for the QR code.
     # In a real app this might be a unique vehicle ID or token.
     # Here we'll use a JSON string or just the plate number.
@@ -38,7 +38,12 @@ def send_acceptance_email(registration):
                 <div style="text-align: center; margin: 30px 0;">
                     <img src="data:image/png;base64,{qr_base64}" alt="Vehicle QR Code" style="border: 2px solid #E2E6EE; border-radius: 8px; padding: 10px; background: white;" />
                 </div>
-                <p>You can also log in to your account at any time to view your details.</p>
+                <p>You can also log in to your account at any time to view your details. Your temporary login credentials are:</p>
+                <div style="background: #F0F2F7; padding: 15px; border-radius: 6px; margin: 15px 0;">
+                    <p style="margin: 0; font-weight: bold;">Email: {registration.email}</p>
+                    <p style="margin: 5px 0 0 0; font-weight: bold;">Password: {temp_password}</p>
+                </div>
+                <p style="color: #DC2626;"><strong>Important:</strong> Please change your password after your first login for security purposes.</p>
                 <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
                 <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Vehicle Management System</p>
             </div>

@@ -2,6 +2,8 @@ import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+export { API_BASE_URL }
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -13,7 +15,8 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token')
-    if (token) {
+    const hasAuthHeader = !!config.headers.Authorization
+    if (token && !hasAuthHeader) {
       config.headers.Authorization = `Bearer ${token}`
     }
     return config
@@ -28,6 +31,11 @@ api.interceptors.response.use(
     const originalRequest = error.config
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      const authEndpoints = ['/api/auth/login/', '/api/auth/refresh/', '/api/auth/verify/']
+      if (authEndpoints.some(endpoint => originalRequest.url.includes(endpoint))) {
+        return Promise.reject(error)
+      }
+
       originalRequest._retry = true
 
       try {
