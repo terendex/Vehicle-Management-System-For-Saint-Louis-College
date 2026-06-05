@@ -105,9 +105,8 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 ### Infrastructure
 | Tool | Purpose |
 |---|---|
-| Docker + Docker Compose | PostgreSQL and Redis containers |
-| PostgreSQL | Main database |
-| Redis | Caching and task queue |
+| PostgreSQL | Main database (installed locally) |
+| Redis | Caching and task queue (installed locally) |
 
 ---
 
@@ -151,7 +150,6 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   └── .env.example
 │
 ├── .gitignore
-├── docker-compose.yml
 └── README.md
 ```
 
@@ -165,7 +163,8 @@ Vehicle-Management-System-For-Saint-Louis-College/
 | VS Code | Latest | https://code.visualstudio.com |
 | Node.js | 20+ | https://nodejs.org |
 | Python | 3.11 | https://python.org/downloads/release/python-3119 |
-| Docker Desktop | Latest | https://docker.com/products/docker-desktop |
+| PostgreSQL | 16 | https://www.postgresql.org/download |
+| Redis | Latest | https://redis.io/downloads (Windows: use [Memurai](https://www.memurai.com) or WSL) |
 
 > ⚠️ **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
 
@@ -180,7 +179,6 @@ Install these when VS Code prompts "Install recommended extensions?" or search m
 - ESLint
 - GitLens
 - GitHub Pull Requests
-- Docker
 - Thunder Client
 - DotENV
 
@@ -205,19 +203,39 @@ cp frontend/.env.example frontend/.env
 
 Open both `.env` files and fill in your values.
 
-### 3. Start Database and Redis
+### 3. Set Up PostgreSQL
+
+Make sure PostgreSQL is running locally, then create the database:
 
 ```bash
-docker compose up db redis -d
+# Open psql as the postgres superuser
+psql -U postgres
+
+# Inside psql, create the database
+CREATE DATABASE plate_db;
+\q
 ```
 
-### 4. Set Up the Backend
+Update `backend/.env` with your local PostgreSQL credentials (`DB_USER`, `DB_PASSWORD`, etc.).
+
+### 4. Set Up Redis
+
+Start Redis locally. On Windows, use **Memurai** (a native Redis-compatible server) or run Redis via **WSL**:
+
+```bash
+# WSL / Linux / Mac
+redis-server
+
+# Or if using Memurai on Windows, it starts automatically as a service
+```
+
+### 5. Set Up the Backend
 
 ```bash
 cd backend
 
-# Create virtual environment — use Python 3.11
-py -3.11 -m venv venv
+# Create virtual environment
+py -m venv venv
 
 # Activate (Windows)
 venv\Scripts\activate
@@ -239,7 +257,7 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-### 5. Set Up the Frontend
+### 6. Set Up the Frontend
 
 ```bash
 cd frontend
@@ -279,15 +297,9 @@ npm install
 
 ## Running the Project
 
-Open **three terminals** in VS Code (`Ctrl+\`` to open terminal, click the split icon to add more).
+Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
 
-### Terminal 1 — Database and Redis
-
-```bash
-docker compose up db redis -d
-```
-
-### Terminal 2 — Backend
+### Terminal 1 — Backend
 
 ```bash
 cd backend
@@ -301,7 +313,7 @@ python manage.py runserver
 | `http://localhost:8000/admin/` | Admin panel (login with superuser) |
 | `http://localhost:8000/api/auth/login/` | Get JWT tokens |
 
-### Terminal 3 — Frontend
+### Terminal 2 — Frontend
 
 ```bash
 cd frontend
@@ -311,6 +323,14 @@ npm run dev
 | URL | Description |
 |---|---|
 | `http://localhost:5173` | React web app |
+
+### Terminal 3 — Celery Worker (optional, for background tasks)
+
+```bash
+cd backend
+venv\Scripts\activate
+celery -A config worker --loglevel=info
+```
 
 ---
 
@@ -396,46 +416,6 @@ npm run dev
 ---
 
 ## Git Workflow
-
-### Branch Naming
-```
-feat/description     # new feature
-fix/description      # bug fix
-chore/description    # config, deps, tooling
-docs/description     # documentation only
-```
-
-### Commit Message Format
-```
-feat(scope): what you added
-fix(scope): what you fixed
-chore(scope): what you changed
-
-# Examples
-feat(scanning): add visitor pass confirmation endpoint
-feat(ui): add mobile scan page with camera
-fix(entry-logic): correct TTHS day mapping
-chore(deps): update djangorestframework
-```
-
-### Daily Workflow
-```bash
-# 1. Always pull latest dev first
-git checkout dev
-git pull origin dev
-
-# 2. Create your branch off dev
-git checkout -b feat/your-feature
-
-# 3. Write code, then commit
-git add .
-git commit -m "feat(scope): description"
-
-# 4. Push your branch
-git push origin feat/your-feature
-
-# 5. Open a Pull Request into dev on GitHub
-```
 
 ### Branch Structure
 ```

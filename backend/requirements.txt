@@ -47,6 +47,7 @@ python-bidi==0.6.10
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 PyYAML==6.0.3
+qrcode==8.2
 redis==7.4.0
 requests==2.34.2
 scikit-image==0.26.0
