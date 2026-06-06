@@ -19,7 +19,7 @@ class ScanView(APIView):
         if not file:
             return Response({'error': 'No image provided'}, status=400)
 
-        plate = read_plate(file.read())
+        plate, bbox = read_plate(file.read())
 
         if not plate:
             AccessLog.objects.create(plate_number='', status='unreadable')
@@ -48,6 +48,7 @@ class ScanView(APIView):
             'message':         entry['message'],
             'vehicle':         VehicleSerializer(vehicle).data,
             'has_violations':  has_violations,
+            'bbox':            bbox,
         })
 
 

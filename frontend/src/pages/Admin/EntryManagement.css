@@ -250,6 +250,23 @@
   }
 }
 
+/* ── Bounding Box ────────────────────────────────────────────── */
+.sd-bounding-box {
+  position: absolute;
+  border: 3px solid #6EE7B7;
+  background: rgba(110, 231, 183, 0.15);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+  pointer-events: none;
+  z-index: 10;
+  border-radius: 4px;
+  animation: sd-bbox-pulse 2s infinite ease-in-out;
+}
+
+@keyframes sd-bbox-pulse {
+  0%, 100% { border-color: #6EE7B7; }
+  50% { border-color: #34D399; }
+}
+
 /* ── Multiple Camera Layout ──────────────────────────────────── */
 .sd-multi-cam-container {
   display: flex;

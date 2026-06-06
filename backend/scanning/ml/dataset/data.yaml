@@ -1,0 +1,25 @@
+# ──────────────────────────────────────────────────────────────────────
+# YOLOv8 Dataset Configuration — Philippine License Plate Detection
+# ──────────────────────────────────────────────────────────────────────
+#
+# Place your labeled images + annotation files in the directories below:
+#   images/train/  and  labels/train/   (~80% of data)
+#   images/val/    and  labels/val/     (~20% of data)
+#
+# Label format (YOLO):
+#   Each .txt file shares the same name as its image.
+#   Each line: <class_id> <x_center> <y_center> <width> <height>
+#   All values are normalized (0–1) relative to image dimensions.
+#   For this project, class_id is always 0 (license_plate).
+#
+# Example label file (img_001.txt):
+#   0 0.52 0.78 0.18 0.06
+# ──────────────────────────────────────────────────────────────────────
+
+path: ./scanning/ml/dataset
+train: images/train
+val: images/val
+
+nc: 1
+names:
+  0: license_plate

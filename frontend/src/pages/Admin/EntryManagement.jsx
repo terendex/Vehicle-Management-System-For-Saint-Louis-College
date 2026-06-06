@@ -205,6 +205,7 @@ export default function EntryManagement() {
   const [cooldown, setCooldown] = useState(false)
   const [flash, setFlash] = useState(false)
   const [result, setResult] = useState(null)
+  const [bbox, setBbox] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
 
@@ -241,6 +242,7 @@ export default function EntryManagement() {
 
   const handleScanSuccess = useCallback((data) => {
     setResult(data)
+    setBbox(data.bbox || null)
     setLogs((prev) => [
       { id: Date.now(), plate_number: data.plate_number, status: data.status, scanned_at: new Date().toISOString() },
       ...prev,
@@ -306,6 +308,7 @@ export default function EntryManagement() {
   const stopCamera = () => {
     setCameraOn(false)
     setResult(null)
+    setBbox(null)
     setCooldown(false)
   }
 
@@ -318,6 +321,7 @@ export default function EntryManagement() {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
     setUploadFile({ file, url: URL.createObjectURL(file) })
     setResult(null)
+    setBbox(null)
   }
 
   const handleDrop = (e) => {
@@ -330,6 +334,7 @@ export default function EntryManagement() {
     if (uploadFile?.url) URL.revokeObjectURL(uploadFile.url)
     setUploadFile(null)
     setResult(null)
+    setBbox(null)
   }
 
   const handlePassCreated = () => {
@@ -365,8 +370,8 @@ export default function EntryManagement() {
                 {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
               </span>
               <div className="sd-mode-toggle">
-                <button className={`sd-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null) }}>Camera</button>
-                <button className={`sd-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null) }}>Upload</button>
+                <button className={`sd-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null); setBbox(null) }}>Camera</button>
+                <button className={`sd-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null); setBbox(null) }}>Upload</button>
               </div>
             </div>
 
@@ -396,6 +401,20 @@ export default function EntryManagement() {
                         </div>
                       </div>
                       {flash && <div className="sd-flash" />}
+                      
+                      {/* Bounding Box overlay */}
+                      {bbox && !scanning && (
+                        <div 
+                          className="sd-bounding-box"
+                          style={{
+                            left: `${bbox.x * 100}%`,
+                            top: `${bbox.y * 100}%`,
+                            width: `${bbox.width * 100}%`,
+                            height: `${bbox.height * 100}%`,
+                          }}
+                        />
+                      )}
+                      
                       <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
                       </div>
@@ -435,8 +454,20 @@ export default function EntryManagement() {
             ) : (
               uploadFile ? (
                 <div className="sd-upload-preview">
-                  <img src={uploadFile.url} alt="Plate capture" />
+                  <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   {flash && <div className="sd-flash" />}
+                  {/* Bounding Box overlay */}
+                  {bbox && !scanning && (
+                    <div 
+                      className="sd-bounding-box"
+                      style={{
+                        left: `${bbox.x * 100}%`,
+                        top: `${bbox.y * 100}%`,
+                        width: `${bbox.width * 100}%`,
+                        height: `${bbox.height * 100}%`,
+                      }}
+                    />
+                  )}
                 </div>
               ) : (
                 <div
