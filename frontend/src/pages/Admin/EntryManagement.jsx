@@ -3,7 +3,7 @@ import Webcam from 'react-webcam'
 import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, ShieldCheck, Zap,
+  ClipboardList, UserPlus, X, ShieldCheck, Zap, Video, Plus
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -208,11 +208,28 @@ export default function EntryManagement() {
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
 
-  const webcamRef = useRef(null)
+  const [cameras, setCameras] = useState([{ id: 1, name: 'Main Gate - Front' }])
+  const [activeCamId, setActiveCamId] = useState(1)
+
+  const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
   const intervalRef = useRef(null)
   const scanningRef = useRef(false)
   const cooldownRef = useRef(false)
+
+  const addCamera = () => {
+    if (cameras.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
+    const id = Date.now()
+    setCameras(prev => [...prev, { id, name: `Angle ${prev.length + 1}` }])
+  }
+
+  const removeCamera = (id) => {
+    setCameras(prev => {
+       const next = prev.filter(c => c.id !== id)
+       if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
+       return next
+    })
+  }
 
   useEffect(() => { scanningRef.current = scanning }, [scanning])
   useEffect(() => { cooldownRef.current = cooldown }, [cooldown])
@@ -222,44 +239,65 @@ export default function EntryManagement() {
     getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => { })
   }, [])
 
+  const handleScanSuccess = useCallback((data) => {
+    setResult(data)
+    setLogs((prev) => [
+      { id: Date.now(), plate_number: data.plate_number, status: data.status, scanned_at: new Date().toISOString() },
+      ...prev,
+    ].slice(0, 20))
+    setCooldown(true)
+    cooldownRef.current = true
+    setTimeout(() => {
+      setCooldown(false)
+      cooldownRef.current = false
+    }, COOLDOWN_MS)
+  }, [])
+
   const doScan = useCallback(async (blob) => {
     setScanning(true)
     scanningRef.current = true
     setFlash(true)
     setTimeout(() => setFlash(false), 450)
+    
     try {
-      const { data } = await scanPlate(blob)
-      if (data?.plate_number) {
-        setResult(data)
-        setLogs((prev) => [
-          { id: Date.now(), plate_number: data.plate_number, status: data.status, scanned_at: new Date().toISOString() },
-          ...prev,
-        ].slice(0, 20))
-        setCooldown(true)
-        cooldownRef.current = true
-        setTimeout(() => {
-          setCooldown(false)
-          cooldownRef.current = false
-        }, COOLDOWN_MS)
+      if (blob) {
+        const { data } = await scanPlate(blob)
+        if (data?.plate_number) handleScanSuccess(data)
+      } else {
+        // Try to scan from all active cameras
+        let foundResult = null
+        for (const cam of cameras) {
+          const ref = webcamRefs.current[cam.id]
+          if (!ref) continue
+          const imageSrc = ref.getScreenshot()
+          if (!imageSrc) continue
+          try {
+            const imgBlob = await fetch(imageSrc).then((r) => r.blob())
+            const { data } = await scanPlate(imgBlob)
+            if (data?.plate_number) {
+              foundResult = data
+              break
+            }
+          } catch {
+            // silently ignore errors per camera
+          }
+        }
+        if (foundResult) handleScanSuccess(foundResult)
       }
     } catch {
-      // Silently ignore — no plate in frame
+      // Silently ignore if no plate found in manual upload
     } finally {
       setScanning(false)
       scanningRef.current = false
     }
-  }, [])
+  }, [cameras, handleScanSuccess])
 
   // Auto-scan loop
   useEffect(() => {
     if (cameraOn && mode === 'camera') {
       intervalRef.current = setInterval(async () => {
         if (scanningRef.current || cooldownRef.current) return
-        if (!webcamRef.current) return
-        const imageSrc = webcamRef.current.getScreenshot()
-        if (!imageSrc) return
-        const blob = await fetch(imageSrc).then((r) => r.blob())
-        doScan(blob)
+        doScan(null)
       }, SCAN_INTERVAL_MS)
     }
     return () => { clearInterval(intervalRef.current); intervalRef.current = null }
@@ -334,25 +372,59 @@ export default function EntryManagement() {
 
             {/* Viewport */}
             {mode === 'camera' ? (
-              <div className="sd-viewport">
+              <div className="sd-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0 }}>
                 {cameraOn ? (
-                  <>
-                    <Webcam
-                      ref={webcamRef}
-                      audio={false}
-                      screenshotFormat="image/jpeg"
-                      screenshotQuality={0.95}
-                      className="sd-video"
-                      videoConstraints={{ facingMode: 'environment' }}
-                    />
-                    <div className="sd-scan-frame">
-                      <div className="sd-scan-bracket">
-                        <div className="sd-scan-inner" />
-                        {!cooldown && <div className="sd-scan-line" />}
+                  <div className="sd-multi-cam-container">
+                    {/* Primary Camera */}
+                    <div className="sd-primary-cam">
+                      {cameras.map(cam => (
+                        <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
+                          <Webcam
+                            ref={(el) => webcamRefs.current[cam.id] = el}
+                            audio={false}
+                            screenshotFormat="image/jpeg"
+                            screenshotQuality={0.95}
+                            className="sd-video"
+                            videoConstraints={{ facingMode: 'environment' }}
+                          />
+                        </div>
+                      ))}
+                      <div className="sd-scan-frame">
+                        <div className="sd-scan-bracket">
+                          <div className="sd-scan-inner" />
+                          {!cooldown && <div className="sd-scan-line" />}
+                        </div>
+                      </div>
+                      {flash && <div className="sd-flash" />}
+                      <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                        {cameras.find(c => c.id === activeCamId)?.name}
                       </div>
                     </div>
-                    {flash && <div className="sd-flash" />}
-                  </>
+
+                    {/* Thumbnails */}
+                    <div className="sd-cam-thumbnails">
+                      {cameras.map(cam => (
+                        <div key={`thumb-${cam.id}`} className={`sd-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`} onClick={() => setActiveCamId(cam.id)}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: activeCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
+                            <Video size={24} />
+                          </div>
+                          <div className="sd-cam-thumb-label">{cam.name}</div>
+                          {cameras.length > 1 && (
+                            <div className="sd-cam-thumb-actions">
+                              <button className="sd-cam-delete" onClick={(e) => { e.stopPropagation(); removeCamera(cam.id) }} title="Remove angle">
+                                <X size={12} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {cameras.length < 4 && (
+                        <div className="sd-cam-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#2A304D', border: '1px dashed #4A5070', cursor: 'pointer' }} onClick={addCamera} title="Add another angle">
+                          <Plus size={20} color="#9BA3BF" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="sd-cam-off">
                     <CameraOff size={52} />

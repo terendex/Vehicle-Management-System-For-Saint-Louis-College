@@ -250,6 +250,84 @@
   }
 }
 
+/* ── Multiple Camera Layout ──────────────────────────────────── */
+.sd-multi-cam-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+}
+.sd-primary-cam {
+  position: relative;
+  background: #08090F;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sd-cam-thumbnails {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.sd-cam-thumb {
+  position: relative;
+  width: 130px;
+  aspect-ratio: 16/9;
+  background: #1A1D2E;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all .2s;
+  flex-shrink: 0;
+}
+.sd-cam-thumb.active {
+  border-color: #60A5FA;
+}
+.sd-cam-thumb-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 10px;
+  padding: 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+.sd-cam-thumb-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: none;
+}
+.sd-cam-thumb:hover .sd-cam-thumb-actions {
+  display: flex;
+}
+.sd-cam-delete {
+  background: rgba(220, 38, 38, 0.85);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.sd-cam-delete:hover {
+  background: #DC2626;
+}
+
 /* ── Camera controls bar ─────────────────────────────────────── */
 .sd-controls {
   padding: .9rem 1.25rem;
