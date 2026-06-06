@@ -161,3 +161,20 @@ Image Input
 
 If no YOLO model is present, it falls back to running EasyOCR on the
 full image (the original behaviour before training).
+
+---
+
+## Installation for Training
+
+If you get `ModuleNotFoundError: No module named 'ultralytics'`, install the required packages:
+
+```bash
+pip install ultralytics
+```
+
+If using Python 3.9, install compatible versions:
+
+```bash
+pip install torch==2.2.0+cpu torchvision==0.17.0+cpu --index-url https://download.pytorch.org/whl/cpu
+pip install ultralytics
+```
