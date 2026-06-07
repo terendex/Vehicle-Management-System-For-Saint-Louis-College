@@ -106,7 +106,8 @@ def train(
         exist_ok=True,
         patience=20,           # early stopping after 20 epochs without improvement
         save=True,
-        plots=True,
+        plots=False,
+        amp=False,             # disabled due to torchvision CUDA compatibility issue
     )
 
     # ── Copy best weights ───────────────────────────────────────────
