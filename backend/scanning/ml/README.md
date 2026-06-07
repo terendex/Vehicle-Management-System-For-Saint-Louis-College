@@ -7,29 +7,79 @@ This directory contains everything needed to train and run the ALPR
 
 ```
 scanning/ml/
-├── reader.py          # Two-stage detection + OCR pipeline
-├── validator.py       # Philippine plate format validation
-├── train.py           # YOLOv8 training script
-├── weights/           # Trained model weights (auto-populated after training)
-│   ├── best.pt        # Best checkpoint (used in production)
-│   └── last.pt        # Latest checkpoint (for resuming training)
+├── reader.py              # Two-stage detection + OCR pipeline
+├── validator.py           # Philippine plate format validation
+├── train.py               # YOLOv8 training script
+├── download_datasets.py   # Roboflow dataset downloader & merger
+├── weights/               # Trained model weights (auto-populated after training)
+│   ├── best.pt            # Best checkpoint (used in production)
+│   └── last.pt            # Latest checkpoint (for resuming training)
 ├── dataset/
-│   ├── data.yaml      # Dataset config for YOLO
+│   ├── data.yaml          # Dataset config for YOLO
 │   ├── images/
-│   │   ├── train/     # Training images (~80%)
-│   │   └── val/       # Validation images (~20%)
+│   │   ├── train/         # Training images (~80%)
+│   │   └── val/           # Validation images (~20%)
 │   └── labels/
-│       ├── train/     # Training annotations
-│       └── val/       # Validation annotations
-└── runs/              # Training logs & metrics (auto-generated)
+│       ├── train/         # Training annotations
+│       └── val/           # Validation annotations
+└── runs/                  # Training logs & metrics (auto-generated)
 ```
 
 ---
 
-## Step 1: Collect Images
+## Quick Start: Download Pre-labeled Datasets from Roboflow
 
-Gather **200–500 photos** of vehicles with visible Philippine license plates.
-More diverse data = better model. Try to include:
+The fastest way to get started is to download pre-labeled Philippine license
+plate datasets from **Roboflow Universe**. We use two datasets:
+
+| # | Dataset | Source |
+|---|---------|--------|
+| 1 | **Local LPR** | https://universe.roboflow.com/philippine-license-plates/local_lpr-117y7 |
+| 2 | **USeP Philippine License Plates** | https://universe.roboflow.com/university-of-southeastern-philippines-cnl9c/philippine-license-plates |
+
+### Prerequisites
+
+1. Create a free account at [roboflow.com](https://roboflow.com)
+2. Go to **Settings → API Key** and copy your API key
+3. Install the Roboflow SDK:
+   ```bash
+   pip install roboflow
+   ```
+
+### Download & Merge Datasets
+
+From the `backend/` directory:
+
+```bash
+# Download both datasets and merge into dataset/ directory
+python -m scanning.ml.download_datasets --api-key YOUR_ROBOFLOW_API_KEY
+
+# Clean existing data and re-download
+python -m scanning.ml.download_datasets --api-key YOUR_KEY --clean
+
+# Specify exact versions
+python -m scanning.ml.download_datasets --api-key YOUR_KEY --ds1-version 1 --ds2-version 2
+```
+
+The script will:
+- Download both datasets in **YOLOv8 format**
+- Merge images and labels into `dataset/images/` and `dataset/labels/`
+- Prefix filenames (`ds1_`, `ds2_`) to avoid collisions
+- Normalize all class IDs to `0` (`license_plate`)
+
+### One-Command Download + Train
+
+```bash
+python -m scanning.ml.train --download --api-key YOUR_KEY --epochs 100 --batch 16
+```
+
+---
+
+## Step 1: Collect Images (Optional — Manual Approach)
+
+If you want to supplement the Roboflow data, gather additional photos
+of vehicles with visible Philippine license plates. More diverse data
+= better model. Try to include:
 
 - ✅ Different **vehicle types**: cars, motorcycles, tricycles, trucks
 - ✅ Different **angles**: front, rear, slight side angles
@@ -166,15 +216,15 @@ full image (the original behaviour before training).
 
 ## Installation for Training
 
-If you get `ModuleNotFoundError: No module named 'ultralytics'`, install the required packages:
+Install the required packages:
 
 ```bash
-pip install ultralytics
+pip install ultralytics roboflow
 ```
 
 If using Python 3.9, install compatible versions:
 
 ```bash
 pip install torch==2.2.0+cpu torchvision==0.17.0+cpu --index-url https://download.pytorch.org/whl/cpu
-pip install ultralytics
+pip install ultralytics roboflow
 ```

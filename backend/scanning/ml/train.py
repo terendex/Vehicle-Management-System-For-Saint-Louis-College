@@ -84,6 +84,17 @@ def train(
     else:
         model = YOLO(f"yolov8{model_size}.pt")
 
+    # ── Ensure data.yaml has absolute path ──────────────────────────
+    import yaml
+    with open(DATA_YAML, "r") as f:
+        data_cfg = yaml.safe_load(f)
+    
+    # YOLOv8 sometimes struggles with relative paths in YAML on Windows.
+    # We dynamically set the absolute path before training.
+    data_cfg["path"] = str(BASE_DIR / "dataset")
+    with open(DATA_YAML, "w") as f:
+        yaml.dump(data_cfg, f, sort_keys=False)
+
     # ── Train ───────────────────────────────────────────────────────
     results = model.train(
         data=str(DATA_YAML),
@@ -125,8 +136,21 @@ if __name__ == "__main__":
     parser.add_argument("--model-size", type=str,  default="n",
                         choices=["n", "s", "m", "l", "x"])
     parser.add_argument("--resume",     action="store_true")
+    parser.add_argument("--download",   action="store_true",
+                        help="Download Roboflow datasets before training")
+    parser.add_argument("--api-key",    type=str,  default=None,
+                        help="Roboflow API key (required with --download)")
 
     args = parser.parse_args()
+
+    # ── Optional: download datasets first ───────────────────────────
+    if args.download:
+        if not args.api_key:
+            print("❌ --api-key is required when using --download")
+            print("   Get your API key from: https://roboflow.com → Settings → API Key")
+            exit(1)
+        from scanning.ml.download_datasets import download_and_merge
+        download_and_merge(api_key=args.api_key)
 
     train(
         epochs=args.epochs,
