@@ -438,18 +438,17 @@ main          ← production only, never push directly
 
 | Role | Access |
 |---|---|
-| **Guard** | Scan plates, create visitor passes, view logs |
-| **Office Staff** | Confirm or reject visitor passes for their office |
-| **Supervisor** | All guard access + view reports and violations |
-| **Admin** | Full access — manage users, vehicles, owners, settings |
+| **Security** | Scan plates, view logs, basic access management |
+| **Vehicle Owner** | View own registered vehicles, history, and status |
+| **Admin** | Full access — manage users, vehicles, owners, rules, settings |
 
 ### Demo Credentials
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@slc.edu.ph | admin123 |
-| Guard | guard@slc.edu.ph | guard123 |
-| Office Staff | office@slc.edu.ph | office123 |
+| Admin | admin@example.com | admin123 |
+| Security | juan@slc.edu | security123 |
+| Vehicle Owner | ana@slc.edu | owner123 |
 
 > **Note:** Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
 
