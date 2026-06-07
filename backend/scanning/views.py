@@ -46,6 +46,7 @@ class ScanView(APIView):
             'status':          entry['status'],
             'allowed':         entry['allowed'],
             'message':         entry['message'],
+            'constraint':      entry.get('constraint'),
             'vehicle':         VehicleSerializer(vehicle).data,
             'has_violations':  has_violations,
             'bbox':            bbox,
@@ -104,3 +105,11 @@ class OfficeListView(APIView):
     def get(self, request):
         offices = Office.objects.all()
         return Response(OfficeSerializer(offices, many=True).data)
+
+
+class AccessLogListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        logs = AccessLog.objects.all().order_by('-scanned_at')[:200]
+        return Response(AccessLogSerializer(logs, many=True).data)

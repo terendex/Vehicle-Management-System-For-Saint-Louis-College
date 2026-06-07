@@ -709,10 +709,14 @@
 }
 
 .sd-rule-dot.purple {
-  background: #8B5CF6;
-}
-
-.sd-rule-text {
+   background: #8B5CF6;
+ }
+ 
+ .sd-rule-dot.orange {
+   background: #F59E0B;
+ }
+ 
+ .sd-rule-text {
   color: #5A5F72;
   line-height: 1.4;
 }

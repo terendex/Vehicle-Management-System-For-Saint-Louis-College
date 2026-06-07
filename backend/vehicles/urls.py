@@ -3,8 +3,10 @@ from rest_framework.routers import DefaultRouter
 from . import views
 
 router = DefaultRouter()
-router.register('owners',   views.OwnerViewSet)
-router.register('',         views.VehicleViewSet, basename='vehicle')
+router.register('rules',       views.RuleConstraintViewSet, basename='rule-constraint')
+router.register('vehicle-types', views.VehicleTypeAccessViewSet, basename='vehicle-type-access')
+router.register('owners',      views.OwnerViewSet)
+router.register('',            views.VehicleViewSet, basename='vehicle')
 
 urlpatterns = [
     # Registration token endpoints (Admin)

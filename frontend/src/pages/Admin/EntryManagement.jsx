@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { scanPlate, getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
+import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 // Reuse the same styles as the security dashboard
 import './EntryManagement.css'
 
@@ -25,6 +26,7 @@ const STATUS_META = {
   pending: { label: 'Awaiting Approval', Icon: Clock, cls: 'pending', logCls: 'pending' },
   unknown: { label: 'Visitor / Unregistered', Icon: HelpCircle, cls: 'visitor', logCls: 'visitor' },
   no_pass: { label: 'No Visitor Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
+  disabled: { label: 'Access Disabled', Icon: XCircle, cls: 'denied', logCls: 'denied' },
 }
 
 function getMeta(status) {
@@ -138,6 +140,12 @@ function ResultCard({ result, offices, onPassCreated }) {
         </div>
         <div className="sd-result-body">
           <p className="sd-result-msg">{result.message}</p>
+          {result.constraint && (
+            <div className="sd-constraint-info" style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 8, background: '#FEF3C7', border: '1px solid #F59E0B', fontSize: 13, color: '#92400E' }}>
+              <AlertTriangle size={13} style={{ display: 'inline', marginRight: 6 }} />
+              Rule blocked: <strong>{result.constraint}</strong>
+            </div>
+          )}
           {owner && (
             <div className="sd-result-rows">
               {owner.full_name && (
@@ -208,6 +216,10 @@ export default function EntryManagement() {
   const [bbox, setBbox] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
+  const [rules, setRules] = useState([])
+  const [loadingRules, setLoadingRules] = useState(true)
+  const [vehicleTypes, setVehicleTypes] = useState([])
+  const [loadingVehicles, setLoadingVehicles] = useState(true)
 
   const [cameras, setCameras] = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId] = useState(1)
@@ -238,6 +250,16 @@ export default function EntryManagement() {
   useEffect(() => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => { })
     getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => { })
+    getRuleConstraints().then((r) => {
+      const data = (r.data?.results ?? r.data ?? [])
+      setRules(data.filter(rule => rule.enabled))
+      setLoadingRules(false)
+    }).catch(() => setLoadingRules(false))
+    getVehicleTypeAccess().then((r) => {
+      const data = (r.data?.results ?? r.data ?? [])
+      setVehicleTypes(data.filter(v => v.enabled))
+      setLoadingVehicles(false)
+    }).catch(() => setLoadingVehicles(false))
   }, [])
 
   const handleScanSuccess = useCallback((data) => {
@@ -543,22 +565,50 @@ export default function EntryManagement() {
                 <span className="sd-card-label"><ShieldCheck size={14} /> Entry Rules</span>
               </div>
               <div className="sd-rules-body">
-                <div className="sd-rule-row">
-                  <span className="sd-rule-dot green" />
-                  <span className="sd-rule-text"><strong>Employees</strong> — allowed every day, anytime</span>
-                </div>
-                <div className="sd-rule-row">
-                  <span className="sd-rule-dot blue" />
-                  <span className="sd-rule-text"><strong>Students (MWF)</strong> — Mon, Wed, Fri only</span>
-                </div>
-                <div className="sd-rule-row">
-                  <span className="sd-rule-dot blue" />
-                  <span className="sd-rule-text"><strong>Students (TTHS)</strong> — Tue, Thu, Sat only</span>
-                </div>
-                <div className="sd-rule-row">
-                  <span className="sd-rule-dot purple" />
-                  <span className="sd-rule-text"><strong>Visitors</strong> — guard creates pass; destination office must confirm</span>
-                </div>
+                <div style={{ marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase', fontWeight: 600, color: '#9BA3BF', letterSpacing: '0.5px' }}>Schedule Restrictions</div>
+                {loadingRules ? (
+                  <p className="sd-log-empty">Loading rules…</p>
+                ) : rules.length === 0 ? (
+                  <p className="sd-log-empty">No rules configured.</p>
+                ) : (
+                  rules.map((rule) => {
+                    const dotColor = rule.constraint_type === 'employee' ? 'green' :
+                                     rule.constraint_type === 'student' ? 'blue' : 'purple'
+                    const daysSummary = rule.days.length === 6 ? 'Mon–Sat'
+                      : rule.days.length === 5 ? 'Mon–Fri'
+                      : rule.days.join(', ').toUpperCase() || 'All days'
+                    return (
+                      <div key={`rule-${rule.id}`} className="sd-rule-row">
+                        <span className={`sd-rule-dot ${dotColor}`} />
+                        <span className="sd-rule-text">
+                          <strong>{rule.constraint_type.charAt(0).toUpperCase() + rule.constraint_type.slice(1)}s</strong>
+                          {' — '}{daysSummary}, {rule.start_time}–{rule.end_time}
+                        </span>
+                      </div>
+                    )
+                  })
+                )}
+
+                <div style={{ marginTop: '16px', marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase', fontWeight: 600, color: '#9BA3BF', letterSpacing: '0.5px' }}>Vehicle Access Privileges</div>
+                {loadingVehicles ? (
+                  <p className="sd-log-empty">Loading vehicle types…</p>
+                ) : vehicleTypes.length === 0 ? (
+                  <p className="sd-log-empty">No vehicle types configured.</p>
+                ) : (
+                  vehicleTypes.map((v) => {
+                    const dotColor = v.status === 'allowed' ? 'green' : 'orange'
+                    const hoursDisplay = v.hours_display || (v.is_all_hours ? 'All hours' : `${v.hours_start || ''}–${v.hours_end || ''}`)
+                    return (
+                      <div key={`vt-${v.id}`} className="sd-rule-row">
+                        <span className={`sd-rule-dot ${dotColor}`} />
+                        <span className="sd-rule-text" title={v.sub}>
+                          <strong>{v.label}</strong>
+                          {' — '}{v.gate}, {hoursDisplay}
+                        </span>
+                      </div>
+                    )
+                  })
+                )}
               </div>
             </div>
 

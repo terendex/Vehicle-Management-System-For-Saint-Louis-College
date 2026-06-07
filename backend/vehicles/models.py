@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 class Owner(models.Model):
     class OwnerType(models.TextChoices):
@@ -111,4 +112,73 @@ class VehicleRegistration(models.Model):
     reviewed_at     = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.full_name} - {self.plate_number} ({self.status})"
+        return f"{self.full_name} - {self.plate_number} ({self.status})"
+
+
+class RuleConstraint(models.Model):
+    class ConstraintType(models.TextChoices):
+        EMPLOYEE = 'employee', 'Employee'
+        STUDENT  = 'student',  'Student'
+        VISITOR  = 'visitor',  'Visitor'
+
+    name        = models.CharField(max_length=120)
+    constraint_type = models.CharField(max_length=20, choices=ConstraintType.choices)
+    days        = models.JSONField(default=list)   # e.g. ["mon","tue","wed","thu","fri","sat"]
+    start_time  = models.CharField(max_length=5, default='06:00')   # HH:MM
+    end_time    = models.CharField(max_length=5, default='20:00')   # HH:MM
+    enabled     = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['constraint_type', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.constraint_type})"
+
+
+class VehicleTypeAccess(models.Model):
+    class Status(models.TextChoices):
+        ALLOWED = 'allowed', 'Allowed'
+        RESTRICTED = 'restricted', 'Restricted Hours'
+
+    VEHICLE_CATEGORIES = [
+        ('four-wheel', '4-Wheel Vehicles'),
+        ('three-wheel', '3-Wheel Vehicles'),
+        ('two-wheel', '2-Wheel Vehicles'),
+        ('ebike', 'E-Bike'),
+        ('escooter', 'E-Scooter'),
+        ('heavy', 'Heavy Vehicles'),
+    ]
+
+    ICON_CHOICES = [
+        ('Car', 'Car'),
+        ('Bike', 'Bike'),
+        ('Truck', 'Truck'),
+        ('Zap', 'Zap'),
+    ]
+
+    GATE_CHOICES = [
+        ('Main Gate 1', 'Main Gate 1'),
+        ('Main Gate 2', 'Main Gate 2'),
+    ]
+
+    category_key = models.CharField(max_length=30, choices=VEHICLE_CATEGORIES, unique=True)
+    label = models.CharField(max_length=100)
+    sub = models.CharField(max_length=200, blank=True)
+    icon = models.CharField(max_length=20, choices=ICON_CHOICES, default='Car')
+    gate = models.CharField(max_length=30, choices=GATE_CHOICES, default='Main Gate 1')
+    is_all_hours = models.BooleanField(default=True)
+    hours_start = models.CharField(max_length=5, default='06:00')   # HH:MM
+    hours_end = models.CharField(max_length=5, default='20:00')     # HH:MM
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ALLOWED)
+    enabled = models.BooleanField(default=True)
+    ordering = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['ordering', 'label']
+
+    def __str__(self):
+        return f"{self.label} ({self.get_status_display()})"

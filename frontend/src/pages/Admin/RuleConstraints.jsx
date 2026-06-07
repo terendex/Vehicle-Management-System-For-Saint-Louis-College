@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   CalendarDays, Clock, Plus, Pencil, Trash2, X,
   ShieldCheck, Car, Bike, Truck,
   BrainCircuit, Info, CheckCircle, AlertTriangle,
-  Settings2,
+  Settings2, Loader2,
+  Zap,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
+import { getRuleConstraints, createRuleConstraint, updateRuleConstraint, deleteRuleConstraint, getVehicleTypeAccess, createVehicleTypeAccess, updateVehicleTypeAccess, deleteVehicleTypeAccess } from '../../api/vehicles'
 import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -47,42 +50,102 @@ const INITIAL_RULES = [
     endTime: '19:00',
     enabled: true,
   },
+  {
+    id: 4,
+    name: 'Visitor Access',
+    type: 'visitor',
+    days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+    startTime: '06:00',
+    endTime: '20:00',
+    enabled: false,
+  },
 ]
-
-const ICON_COMPONENTS = { Car, Bike, Truck }
 
 const INITIAL_VEHICLE_TYPES = [
   {
-    id: 1,
+    category_key: 'four-wheel',
     label: '4-Wheel Vehicles',
     sub: 'Cars, SUVs, Vans',
     icon: 'Car',
     gate: 'Main Gate 1',
-    hours: 'All hours',
+    is_all_hours: true,
+    hours_start: '06:00',
+    hours_end: '20:00',
     status: 'allowed',
     enabled: true,
   },
   {
-    id: 2,
+    category_key: 'three-wheel',
+    label: '3-Wheel Vehicles',
+    sub: 'Tricycles',
+    icon: 'Bike',
+    gate: 'Main Gate 1',
+    is_all_hours: true,
+    hours_start: '06:00',
+    hours_end: '20:00',
+    status: 'allowed',
+    enabled: true,
+  },
+  {
+    category_key: 'two-wheel',
     label: '2-Wheel Vehicles',
     sub: 'Motorcycles, Scooters',
     icon: 'Bike',
     gate: 'Main Gate 2',
-    hours: 'All hours',
+    is_all_hours: true,
+    hours_start: '06:00',
+    hours_end: '20:00',
     status: 'allowed',
     enabled: true,
   },
   {
-    id: 3,
+    category_key: 'ebike',
+    label: 'E-Bike',
+    sub: 'Electric Bicycles',
+    icon: 'Zap',
+    gate: 'Main Gate 1',
+    is_all_hours: true,
+    hours_start: '06:00',
+    hours_end: '20:00',
+    status: 'allowed',
+    enabled: true,
+  },
+  {
+    category_key: 'escooter',
+    label: 'E-Scooter',
+    sub: 'Electric Scooters',
+    icon: 'Zap',
+    gate: 'Main Gate 1',
+    is_all_hours: true,
+    hours_start: '06:00',
+    hours_end: '20:00',
+    status: 'allowed',
+    enabled: true,
+  },
+  {
+    category_key: 'heavy',
     label: 'Heavy Vehicles',
-    sub: 'Delivery Trucks, Service Vehicles',
+    sub: 'Delivery Trucks, Service Vehicles, Trucks',
     icon: 'Truck',
     gate: 'Main Gate 2',
-    hours: '6:00 AM – 8:00 AM',
+    is_all_hours: false,
+    hours_start: '06:00',
+    hours_end: '08:00',
     status: 'restricted',
     enabled: true,
   },
 ]
+
+const ICON_COMPONENTS = { Car, Bike, Truck, Zap }
+
+const VEHICLE_CATEGORIES = {
+  'four-wheel': { label: '4-Wheel Vehicles', icon: 'Car' },
+  'three-wheel': { label: '3-Wheel Vehicles', icon: 'Bike' },
+  'two-wheel': { label: '2-Wheel Vehicles', icon: 'Bike' },
+  'ebike': { label: 'E-Bike', icon: 'Zap' },
+  'escooter': { label: 'E-Scooter', icon: 'Zap' },
+  'heavy': { label: 'Heavy Vehicles', icon: 'Truck' },
+}
 
 function formatTime12(t) {
   const [h, m] = t.split(':').map(Number)
@@ -91,27 +154,15 @@ function formatTime12(t) {
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
-function getThresholdLevel(val) {
-  if (val < 60) return 'low'
-  if (val < 80) return 'medium'
-  return 'high'
-}
-
-function getSliderGradient(val) {
-  const pct = val
-  return `linear-gradient(to right, #EF4444 0%, #F59E0B 40%, #10B981 75%, #059669 100%)`
-}
-
 function getSliderFill(val) {
   const pct = val
   return `linear-gradient(to right, #DC2626, #F59E0B ${Math.min(pct, 40)}%, #10B981 ${Math.min(pct, 75)}%, #059669 100%) 0 0 / ${pct}% 100% no-repeat, #E2E6EE`
 }
 
-const VEHICLE_CATEGORIES = {
-  'four-wheel': { label: '4-Wheel Vehicles', icon: 'Car' },
-  'three-wheel': { label: '3-Wheel Vehicles', icon: 'Bike' },
-  'two-wheel': { label: '2-Wheel Vehicles', icon: 'Bike' },
-  'heavy': { label: 'Heavy Vehicles', icon: 'Truck' },
+function getThresholdLevel(val) {
+  if (val < 60) return 'low'
+  if (val < 80) return 'medium'
+  return 'high'
 }
 
 // ─── Schedule Rule Modal ──────────────────────────────────────────────────────
@@ -234,6 +285,8 @@ function VehicleModal({ vehicle, onSave, onClose }) {
   
   const getInitialCategory = () => {
     if (vehicle?.label === '3-Wheel Vehicles') return 'three-wheel'
+    if (vehicle?.label === 'E-Bike') return 'ebike'
+    if (vehicle?.label === 'E-Scooter') return 'escooter'
     if (vehicle?.icon === 'Bike') return 'two-wheel'
     if (vehicle?.icon === 'Truck') return 'heavy'
     return 'four-wheel'
@@ -245,9 +298,9 @@ function VehicleModal({ vehicle, onSave, onClose }) {
   const [status, setStatus] = useState(vehicle?.status ?? 'allowed')
 
   // Flexible time state
-  const initialIsAllHours = vehicle ? vehicle.hours === 'All hours' : true
-  const initialStart = vehicle && vehicle.hours !== 'All hours' ? vehicle.hours.split(' – ')[0] : '06:00 AM'
-  const initialEnd = vehicle && vehicle.hours !== 'All hours' ? vehicle.hours.split(' – ')[1] : '08:00 PM'
+  const initialIsAllHours = vehicle ? vehicle.is_all_hours : true
+  const initialStart = vehicle && !vehicle.is_all_hours ? vehicle.hours_start : '06:00 AM'
+  const initialEnd = vehicle && !vehicle.is_all_hours ? vehicle.hours_end : '08:00 PM'
 
   const [isAllHours, setIsAllHours] = useState(initialIsAllHours)
   
@@ -269,14 +322,15 @@ function VehicleModal({ vehicle, onSave, onClose }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     const cat = VEHICLE_CATEGORIES[categoryKey]
-    const finalHours = isAllHours ? 'All hours' : `${formatTime12(startTime)} – ${formatTime12(endTime)}`
-    
     onSave({ 
+      category_key: categoryKey,
       label: cat.label, 
       sub: sub.trim(), 
       icon: cat.icon, 
       gate, 
-      hours: finalHours, 
+      is_all_hours: isAllHours,
+      hours_start: formatTime12(startTime), 
+      hours_end: formatTime12(endTime),
       status, 
       enabled: vehicle?.enabled ?? true 
     })
@@ -299,16 +353,18 @@ function VehicleModal({ vehicle, onSave, onClose }) {
             <div className="rc-field-row">
               <div className="rc-field" style={{ flex: 2 }}>
                 <label className="rc-field-label">Vehicle Type</label>
-                <select
-                  className="rc-field-select"
-                  value={categoryKey}
-                  onChange={(e) => setCategoryKey(e.target.value)}
-                >
-                  <option value="four-wheel">4-Wheel Vehicles (Cars, SUVs)</option>
-                  <option value="three-wheel">3-Wheel Vehicles (Tricycles)</option>
-                  <option value="two-wheel">2-Wheel Vehicles (Motorcycles)</option>
-                  <option value="heavy">Heavy Vehicles (Trucks)</option>
-                </select>
+<select
+                       className="rc-field-select"
+                       value={categoryKey}
+                       onChange={(e) => setCategoryKey(e.target.value)}
+                     >
+                       <option value="four-wheel">4-Wheel Vehicles (Cars, SUVs)</option>
+                       <option value="three-wheel">3-Wheel Vehicles (Tricycles)</option>
+                       <option value="two-wheel">2-Wheel Vehicles (Motorcycles, Scooters)</option>
+                       <option value="ebike">E-Bike (Electric Bicycles)</option>
+                       <option value="escooter">E-Scooter (Electric Scooters)</option>
+                       <option value="heavy">Heavy Vehicles (Trucks)</option>
+                     </select>
               </div>
               <div className="rc-field" style={{ flex: 1 }}>
                 <label className="rc-field-label">Status Level</label>
@@ -348,17 +404,17 @@ function VehicleModal({ vehicle, onSave, onClose }) {
               <div className="rc-field">
                 <label className="rc-field-label">Allowed Hours</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <div className="rc-toggle" style={{ margin: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={isAllHours}
-                        onChange={(e) => setIsAllHours(e.target.checked)}
-                      />
-                      <span className="rc-toggle-track" />
-                    </div>
-                    <span style={{ fontSize: '13px', color: '#4B5563', fontWeight: 500 }}>All hours</span>
-                  </label>
+<label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                     <label className="rc-toggle" style={{ margin: 0 }}>
+                       <input
+                         type="checkbox"
+                         checked={isAllHours}
+                         onChange={(e) => setIsAllHours(e.target.checked)}
+                       />
+                       <span className="rc-toggle-track" />
+                     </label>
+                     <span style={{ fontSize: '13px', color: '#4B5563', fontWeight: 500 }}>All hours</span>
+                   </label>
                   
                   {!isAllHours && (
                     <div className="rc-field-row" style={{ marginTop: '4px' }}>
@@ -399,18 +455,87 @@ function VehicleModal({ vehicle, onSave, onClose }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function RuleConstraints() {
-  // Section 1 — Schedule Rules
-  const [rules, setRules] = useState(INITIAL_RULES)
-  const [modalRule, setModalRule] = useState(null)   // null = closed, {} = new, {id,...} = edit
-  const [showModal, setShowModal] = useState(false)
+// Section 1 — Schedule Rules
+   const [rules, setRules] = useState(INITIAL_RULES)
+   const [loadingRules, setLoadingRules] = useState(true)
+   const [modalRule, setModalRule] = useState(null)   // null = closed, {} = new, {id,...} = edit
+   const [showModal, setShowModal] = useState(false)
 
-  // Section 3 — ML threshold
-  const [threshold, setThreshold] = useState(85)
+   const [vehicleTypes, setVehicleTypes] = useState(INITIAL_VEHICLE_TYPES)
+   const [loadingVehicles, setLoadingVehicles] = useState(true)
+   const [modalVehicle, setModalVehicle] = useState(null)
+   const [showVehicleModal, setShowVehicleModal] = useState(false)
+   const [threshold, setThreshold] = useState(85)
 
-  // Section 2 — Vehicle Types
-  const [vehicleTypes, setVehicleTypes] = useState(INITIAL_VEHICLE_TYPES)
-  const [modalVehicle, setModalVehicle] = useState(null)
-  const [showVehicleModal, setShowVehicleModal] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setLoadingRules(true)
+    setLoadingVehicles(true)
+    getRuleConstraints()
+      .then((res) => {
+        if (cancelled) return
+        const data = (res.data?.results ?? res.data ?? []).map((r) => ({
+          id: r.id,
+          name: r.name,
+          type: r.constraint_type,
+          days: r.days || [],
+          startTime: r.start_time || '06:00',
+          endTime: r.end_time || '19:00',
+          enabled: r.enabled,
+        }))
+        if (data.length > 0) {
+          setRules(data)
+        } else {
+          setRules(INITIAL_RULES)
+          INITIAL_RULES.forEach((r) => {
+            createRuleConstraint({
+              name: r.name,
+              constraint_type: r.type,
+              days: r.days,
+              start_time: r.startTime,
+              end_time: r.endTime,
+              enabled: r.enabled,
+            }).catch(() => {})
+          })
+        }
+        setLoadingRules(false)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadingRules(false)
+      })
+
+    getVehicleTypeAccess()
+      .then((res) => {
+        if (cancelled) return
+        const data = (res.data?.results ?? res.data ?? [])
+        if (data.length > 0) {
+          setVehicleTypes(data)
+        } else {
+          setVehicleTypes(INITIAL_VEHICLE_TYPES)
+          INITIAL_VEHICLE_TYPES.forEach((v, index) => {
+            createVehicleTypeAccess({
+              category_key: v.category_key,
+              label: v.label,
+              sub: v.sub,
+              icon: v.icon,
+              gate: v.gate,
+              is_all_hours: v.is_all_hours,
+              hours_start: v.hours_start,
+              hours_end: v.hours_end,
+              status: v.status,
+              enabled: v.enabled,
+              ordering: index,
+            }).catch(() => {})
+          })
+        }
+        setLoadingVehicles(false)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadingVehicles(false)
+      })
+
+    return () => { cancelled = true }
+  }, [])
 
   // ── Rule CRUD ───────────────────────────────────────────────
 
@@ -420,54 +545,103 @@ export default function RuleConstraints() {
 
   const closeModal = () => setShowModal(false)
 
-  const handleSave = (data) => {
-    if (modalRule?.id) {
-      setRules((prev) =>
-        prev.map((r) => (r.id === modalRule.id ? { ...r, ...data } : r))
-      )
-    } else {
-      setRules((prev) => [
-        ...prev,
-        { ...data, id: Date.now() },
-      ])
+  const handleSave = async (data) => {
+    try {
+      if (modalRule?.id) {
+        const { data: saved } = await updateRuleConstraint(modalRule.id, {
+          name: data.name,
+          constraint_type: data.type,
+          days: data.days,
+          start_time: data.startTime,
+          end_time: data.endTime,
+          enabled: data.enabled,
+        })
+        setRules((prev) =>
+          prev.map((r) => (r.id === modalRule.id ? { ...saved } : r))
+        )
+      } else {
+        const { data: saved } = await createRuleConstraint({
+          name: data.name,
+          constraint_type: data.type,
+          days: data.days,
+          start_time: data.startTime,
+          end_time: data.endTime,
+          enabled: data.enabled ?? true,
+        })
+        setRules((prev) => [...prev, saved])
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to save rule constraint.')
     }
   }
 
-  const handleDelete = (id) => {
-    setRules((prev) => prev.filter((r) => r.id !== id))
+  const handleDeleteRule = async (id) => {
+    try {
+      await deleteRuleConstraint(id)
+      setRules((prev) => prev.filter((r) => r.id !== id))
+      toast.success('Rule deleted successfully.')
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to delete rule.')
+    }
   }
 
-  const handleToggleRule = (id) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
-    )
+  const handleToggleRule = async (id) => {
+    const rule = rules.find((r) => r.id === id)
+    if (!rule) return
+    try {
+      const { data: saved } = await updateRuleConstraint(id, { enabled: !rule.enabled })
+      setRules((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, enabled: saved.enabled } : r))
+      )
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to update rule.')
+    }
   }
 
   const openAddVehicle = () => { setModalVehicle(null); setShowVehicleModal(true) }
   const openEditVehicle = (vehicle) => { setModalVehicle(vehicle); setShowVehicleModal(true) }
   const closeVehicleModal = () => setShowVehicleModal(false)
 
-  const handleSaveVehicle = (data) => {
-    if (modalVehicle?.id) {
-      setVehicleTypes((prev) =>
-        prev.map((v) => (v.id === modalVehicle.id ? { ...v, ...data } : v))
-      )
-    } else {
-      setVehicleTypes((prev) => [
-        ...prev,
-        { ...data, id: Date.now() },
-      ])
+  const handleSaveVehicle = async (data) => {
+    try {
+      if (modalVehicle?.id) {
+        const { data: saved } = await updateVehicleTypeAccess(modalVehicle.id, data)
+        setVehicleTypes((prev) =>
+          prev.map((v) => (v.id === modalVehicle.id ? { ...v, ...saved } : v))
+        )
+      } else {
+        const { data: saved } = await createVehicleTypeAccess(data)
+        setVehicleTypes((prev) => [
+          ...prev,
+          saved,
+        ])
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to save vehicle type.')
     }
   }
 
-  const handleDeleteVehicle = (id) => {
-    setVehicleTypes((prev) => prev.filter((v) => v.id !== id))
+  const handleDeleteVehicle = async (id) => {
+    try {
+      await deleteVehicleTypeAccess(id)
+      setVehicleTypes((prev) => prev.filter((v) => v.id !== id))
+      toast.success('Vehicle type deleted successfully.')
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to delete vehicle type.')
+    }
   }
 
-  const handleToggleVehicle = (id) => {
-    setVehicleTypes((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, enabled: !v.enabled } : v))
-    )
+  const handleToggleVehicle = async (id) => {
+    const v = vehicleTypes.find((vt) => vt.id === id)
+    if (!v) return
+    try {
+      const { data: saved } = await updateVehicleTypeAccess(id, { enabled: !v.enabled })
+      setVehicleTypes((prev) =>
+        prev.map((vt) => (vt.id === id ? { ...vt, enabled: saved.enabled } : vt))
+      )
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to update vehicle type.')
+    }
   }
 
 
@@ -526,7 +700,12 @@ export default function RuleConstraints() {
           </div>
 
           <div className="rc-section-body" style={{ padding: 0 }}>
-            {rules.length === 0 ? (
+            {loadingRules ? (
+              <div className="rc-empty">
+                <Loader2 size={36} className="rc-spin" />
+                <p>Loading rule constraints…</p>
+              </div>
+            ) : rules.length === 0 ? (
               <div className="rc-empty">
                 <CalendarDays size={36} />
                 <p>No schedule rules configured yet.<br />Click "Add Rule" to create one.</p>
@@ -592,11 +771,11 @@ export default function RuleConstraints() {
                             >
                               <Pencil size={14} />
                             </button>
-                            <button
-                              className="rc-btn rc-btn-icon delete"
-                              title="Delete rule"
-                              onClick={() => handleDelete(rule.id)}
-                            >
+                              <button
+                                className="rc-btn rc-btn-icon delete"
+                                title="Delete rule"
+                                onClick={() => handleDeleteRule(rule.id)}
+                              >
                               <Trash2 size={14} />
                             </button>
                           </div>
@@ -630,19 +809,24 @@ export default function RuleConstraints() {
             </button>
           </div>
 
-          <div className="rc-section-body">
-            {vehicleTypes.length === 0 ? (
-              <div className="rc-empty">
-                <Car size={36} />
-                <p>No vehicle types configured yet.<br />Click "Add Type" to create one.</p>
-              </div>
-            ) : (
-              <div className="rc-access-grid">
-                {vehicleTypes.map((v) => {
-                  const IconComp = ICON_COMPONENTS[v.icon] || Car
-                  const colorClass = v.icon === 'Car' ? 'four-wheel' : v.icon === 'Bike' ? 'two-wheel' : 'heavy'
-                  return (
-                    <div key={v.id} className={`rc-access-card ${colorClass}`} style={{ opacity: v.enabled ? 1 : 0.55 }}>
+<div className="rc-section-body">
+             {loadingVehicles ? (
+               <div className="rc-empty">
+                 <Loader2 size={36} className="rc-spin" />
+                 <p>Loading vehicle types…</p>
+               </div>
+             ) : vehicleTypes.length === 0 ? (
+               <div className="rc-empty">
+                 <Car size={36} />
+                 <p>No vehicle types configured yet.<br />Click "Add Type" to create one.</p>
+               </div>
+             ) : (
+               <div className="rc-access-grid">
+{vehicleTypes.map((v) => {
+                   const IconComp = ICON_COMPONENTS[v.icon] || Car
+                   const colorClass = v.category_key === 'four-wheel' ? 'four-wheel' : v.category_key === 'heavy' ? 'heavy' : v.category_key === 'ebike' ? 'ebike' : v.category_key === 'escooter' ? 'escooter' : 'two-wheel'
+                   return (
+                     <div key={v.id} className={`rc-access-card ${colorClass}`} style={{ opacity: v.enabled ? 1 : 0.55 }}>
                       <div className="rc-access-card-top">
                         <div>
                           <p className="rc-access-card-title">{v.label}</p>
@@ -660,7 +844,7 @@ export default function RuleConstraints() {
                         </div>
                         <div className="rc-access-row">
                           <span className="rc-access-row-label">Allowed Hours</span>
-                          <span className="rc-access-row-value">{v.hours}</span>
+                          <span className="rc-access-row-value">{v.is_all_hours ? 'All hours' : `${v.hours_start} – ${v.hours_end}`}</span>
                         </div>
                       </div>
 

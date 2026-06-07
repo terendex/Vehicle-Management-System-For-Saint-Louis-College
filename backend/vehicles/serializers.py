@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration
+from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration, RuleConstraint, VehicleTypeAccess
 
 class OwnerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,3 +26,20 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
+
+class RuleConstraintSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RuleConstraint
+        fields = '__all__'
+
+class VehicleTypeAccessSerializer(serializers.ModelSerializer):
+    hours_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VehicleTypeAccess
+        fields = '__all__'
+
+    def get_hours_display(self, obj):
+        if obj.is_all_hours:
+            return 'All hours'
+        return f"{obj.hours_start}–{obj.hours_end}"

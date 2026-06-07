@@ -460,6 +460,8 @@
 .rc-access-card.four-wheel::before { background: #2A2B61; }
 .rc-access-card.two-wheel::before  { background: #3B82F6; }
 .rc-access-card.heavy::before      { background: #F59E0B; }
+.rc-access-card.ebike::before    { background: #10B981; }
+.rc-access-card.escooter::before { background: #8B5CF6; }
 
 .rc-access-card:hover {
   border-color: #C5C8DB;
@@ -490,11 +492,21 @@
 }
 
 .rc-access-card.two-wheel .rc-access-icon {
-  background: #DBEAFE;
-  color: #1E40AF;
-}
-
-.rc-access-card.heavy .rc-access-icon {
+       background: #DBEAFE;
+       color: #1E40AF;
+   }
+   
+   .rc-access-card.ebike .rc-access-icon {
+       background: #D1FAE5;
+       color: #065F46;
+   }
+   
+   .rc-access-card.escooter .rc-access-icon {
+       background: #EDE9FE;
+       color: #5B21B6;
+   }
+   
+   .rc-access-card.heavy .rc-access-icon {
   background: #FEF3C7;
   color: #92400E;
 }
@@ -552,11 +564,21 @@
 }
 
 .rc-access-card.two-wheel .rc-access-gate-badge {
-  background: #DBEAFE;
-  color: #1E40AF;
-}
-
-.rc-access-card.heavy .rc-access-gate-badge {
+       background: #DBEAFE;
+       color: #1E40AF;
+   }
+   
+   .rc-access-card.ebike .rc-access-gate-badge {
+       background: #D1FAE5;
+       color: #065F46;
+   }
+   
+   .rc-access-card.escooter .rc-access-gate-badge {
+       background: #EDE9FE;
+       color: #5B21B6;
+   }
+   
+   .rc-access-card.heavy .rc-access-gate-badge {
   background: #FEF3C7;
   color: #92400E;
 }

@@ -443,6 +443,16 @@ main          ← production only, never push directly
 | **Supervisor** | All guard access + view reports and violations |
 | **Admin** | Full access — manage users, vehicles, owners, settings |
 
+### Demo Credentials
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | admin@slc.edu.ph | admin123 |
+| Guard | guard@slc.edu.ph | guard123 |
+| Office Staff | office@slc.edu.ph | office123 |
+
+> **Note:** Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
+
 ---
 
 ## Team
