@@ -62,29 +62,29 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   }
 
   return (
-    <div className="sd-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="sd-modal">
-        <div className="sd-modal-head">
-          <span className="sd-modal-title"><UserPlus size={17} /> Create Visitor Pass</span>
-          <button className="sd-modal-close" onClick={onClose}><X size={15} /></button>
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><UserPlus size={17} /> Create Visitor Pass</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit}>
-          <div className="sd-modal-body">
-            <div className="sd-field">
-              <label className="sd-label">License Plate</label>
-              <input className="sd-input" value={plate} readOnly />
+          <div className="em-modal-body">
+            <div className="em-field">
+              <label className="em-label">License Plate</label>
+              <input className="em-input" value={plate} readOnly />
             </div>
-            <div className="sd-field">
-              <label className="sd-label">Destination Office</label>
-              <select className="sd-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)} required>
+            <div className="em-field">
+              <label className="em-label">Destination Office</label>
+              <select className="em-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)} required>
                 <option value="">Select office…</option>
                 {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
             </div>
-            <div className="sd-field">
-              <label className="sd-label">Purpose of Visit</label>
+            <div className="em-field">
+              <label className="em-label">Purpose of Visit</label>
               <textarea
-                className="sd-textarea"
+                className="em-textarea"
                 placeholder="e.g. Enrollment inquiry, document pick-up…"
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
@@ -92,10 +92,10 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
               />
             </div>
           </div>
-          <div className="sd-modal-foot">
-            <button type="button" className="sd-btn sd-btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="sd-btn sd-btn-primary" disabled={loading}>
-              {loading ? <><div className="sd-spinner" /> Creating…</> : 'Create Pass'}
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
+              {loading ? <><div className="em-spinner" /> Creating…</> : 'Create Pass'}
             </button>
           </div>
         </form>
@@ -111,15 +111,15 @@ function ResultCard({ result, offices, onPassCreated }) {
 
   if (!result) {
     return (
-      <div className="sd-card sd-result">
-        <div className="sd-result-banner idle">
-          <div className="sd-result-icon idle"><ScanLine size={20} /></div>
-          <div className="sd-result-text">
-            <p className="sd-result-status" style={{ color: '#9BA3BF' }}>Awaiting scan</p>
-            <p className="sd-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
+      <div className="em-card em-result">
+        <div className="em-result-banner idle">
+          <div className="em-result-icon idle"><ScanLine size={20} /></div>
+          <div className="em-result-text">
+            <p className="em-result-status" style={{ color: '#9BA3BF' }}>Awaiting scan</p>
+            <p className="em-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
           </div>
         </div>
-        <p className="sd-idle-hint">Point the camera at a license plate and press Scan Plate.</p>
+        <p className="em-idle-hint">Point the camera at a license plate and press Scan Plate.</p>
       </div>
     )
   }
@@ -130,48 +130,48 @@ function ResultCard({ result, offices, onPassCreated }) {
 
   return (
     <>
-      <div className={`sd-card sd-result ${cls}`}>
-        <div className={`sd-result-banner ${cls}`}>
-          <div className="sd-result-icon"><Icon size={20} /></div>
-          <div className="sd-result-text">
-            <p className="sd-result-status">{label}</p>
-            <p className="sd-result-plate">{result.plate_number || '—'}</p>
+      <div className={`em-card em-result ${cls}`}>
+        <div className={`em-result-banner ${cls}`}>
+          <div className="em-result-icon"><Icon size={20} /></div>
+          <div className="em-result-text">
+            <p className="em-result-status">{label}</p>
+            <p className="em-result-plate">{result.plate_number || '—'}</p>
           </div>
         </div>
-        <div className="sd-result-body">
-          <p className="sd-result-msg">{result.message}</p>
+        <div className="em-result-body">
+          <p className="em-result-msg">{result.message}</p>
           {result.constraint && (
-            <div className="sd-constraint-info" style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 8, background: '#FEF3C7', border: '1px solid #F59E0B', fontSize: 13, color: '#92400E' }}>
-              <AlertTriangle size={13} style={{ display: 'inline', marginRight: 6 }} />
-              Rule blocked: <strong>{result.constraint}</strong>
+            <div className="em-constraint-info" style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 8, background: '#fef3c7', border: '1px solid #f59e0b', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={13} style={{ flexShrink: 0 }} />
+              <span>Rule blocked: <strong>{result.constraint}</strong></span>
             </div>
           )}
           {owner && (
-            <div className="sd-result-rows">
+            <div className="em-result-rows">
               {owner.full_name && (
-                <div className="sd-result-row">
-                  <span className="sd-result-row-label">Owner</span>
-                  <span className="sd-result-row-value">{owner.full_name}</span>
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Owner</span>
+                  <span className="em-result-row-value">{owner.full_name}</span>
                 </div>
               )}
               {owner.owner_type && (
-                <div className="sd-result-row">
-                  <span className="sd-result-row-label">Type</span>
-                  <span className="sd-result-row-value" style={{ textTransform: 'capitalize' }}>
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Type</span>
+                  <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
                     {owner.owner_type.replace('_', ' ')}
                   </span>
                 </div>
               )}
               {owner.schedule && (
-                <div className="sd-result-row">
-                  <span className="sd-result-row-label">Schedule</span>
-                  <span className="sd-result-row-value">{owner.schedule}</span>
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Schedule</span>
+                  <span className="em-result-row-value">{owner.schedule}</span>
                 </div>
               )}
               {result.has_violations && (
-                <div className="sd-result-row">
-                  <span className="sd-result-row-label">Violations</span>
-                  <span className="sd-violation-pill">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Violations</span>
+                  <span className="em-violation-pill">
                     <AlertTriangle size={10} /> Unresolved violations
                   </span>
                 </div>
@@ -180,7 +180,7 @@ function ResultCard({ result, offices, onPassCreated }) {
           )}
           {isVisitor && (
             <button
-              className="sd-btn sd-btn-secondary"
+              className="em-btn em-btn-secondary"
               style={{ width: '100%', marginTop: 4 }}
               onClick={() => setShowModal(true)}
             >
@@ -366,44 +366,44 @@ export default function EntryManagement() {
 
   return (
     <AdminLayout>
-      <div className="sd-page">
+      <div className="em-page">
 
         {/* Header */}
-        <div className="sd-header">
+        <div className="em-header">
           <div>
-            <h1 className="sd-title">Vehicle Entry Management</h1>
-            <p className="sd-subtitle">
+            <h1 className="em-title">Vehicle Entry Management</h1>
+            <p className="em-subtitle">
               Scan license plates using the camera — entry is decided automatically based on registration and schedule.
             </p>
           </div>
-          <div className="sd-live-badge">
-            <span className="sd-live-dot" /> LIVE
+          <div className="em-live-badge">
+            <span className="em-live-dot" /> LIVE
           </div>
         </div>
 
         {/* Main grid */}
-        <div className="sd-grid">
+        <div className="em-grid">
 
           {/* Camera / Upload card */}
-          <div className="sd-card">
-            <div className="sd-card-head">
-              <span className="sd-card-label">
+          <div className="em-card">
+            <div className="em-card-head">
+              <span className="em-card-label">
                 <Camera size={15} />
                 {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
               </span>
-              <div className="sd-mode-toggle">
-                <button className={`sd-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null); setBbox(null) }}>Camera</button>
-                <button className={`sd-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null); setBbox(null) }}>Upload</button>
+              <div className="em-mode-toggle">
+                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null); setBbox(null) }}>Camera</button>
+                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null); setBbox(null) }}>Upload</button>
               </div>
             </div>
 
             {/* Viewport */}
             {mode === 'camera' ? (
-              <div className="sd-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0 }}>
+              <div className="em-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0 }}>
                 {cameraOn ? (
-                  <div className="sd-multi-cam-container">
+                  <div className="em-multi-cam-container">
                     {/* Primary Camera */}
-                    <div className="sd-primary-cam">
+                    <div className="em-primary-cam">
                       {cameras.map(cam => (
                         <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
                           <Webcam
@@ -411,23 +411,23 @@ export default function EntryManagement() {
                             audio={false}
                             screenshotFormat="image/jpeg"
                             screenshotQuality={0.95}
-                            className="sd-video"
+                            className="em-video"
                             videoConstraints={{ facingMode: 'environment' }}
                           />
                         </div>
                       ))}
-                      <div className="sd-scan-frame">
-                        <div className="sd-scan-bracket">
-                          <div className="sd-scan-inner" />
-                          {!cooldown && <div className="sd-scan-line" />}
+                      <div className="em-scan-frame">
+                        <div className="em-scan-bracket">
+                          <div className="em-scan-inner" />
+                          {!cooldown && <div className="em-scan-line" />}
                         </div>
                       </div>
-                      {flash && <div className="sd-flash" />}
+                      {flash && <div className="em-flash" />}
                       
                       {/* Bounding Box overlay */}
                       {bbox && !scanning && (
                         <div 
-                          className="sd-bounding-box"
+                          className="em-bounding-box"
                           style={{
                             left: `${bbox.x * 100}%`,
                             top: `${bbox.y * 100}%`,
@@ -437,22 +437,22 @@ export default function EntryManagement() {
                         />
                       )}
                       
-                      <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                      <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
                       </div>
                     </div>
 
                     {/* Thumbnails */}
-                    <div className="sd-cam-thumbnails">
+                    <div className="em-cam-thumbnails">
                       {cameras.map(cam => (
-                        <div key={`thumb-${cam.id}`} className={`sd-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`} onClick={() => setActiveCamId(cam.id)}>
+                        <div key={`thumb-${cam.id}`} className={`em-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`} onClick={() => setActiveCamId(cam.id)}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: activeCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
                             <Video size={24} />
                           </div>
-                          <div className="sd-cam-thumb-label">{cam.name}</div>
+                          <div className="em-cam-thumb-label">{cam.name}</div>
                           {cameras.length > 1 && (
-                            <div className="sd-cam-thumb-actions">
-                              <button className="sd-cam-delete" onClick={(e) => { e.stopPropagation(); removeCamera(cam.id) }} title="Remove angle">
+                            <div className="em-cam-thumb-actions">
+                              <button className="em-cam-delete" onClick={(e) => { e.stopPropagation(); removeCamera(cam.id) }} title="Remove angle">
                                 <X size={12} />
                               </button>
                             </div>
@@ -460,14 +460,14 @@ export default function EntryManagement() {
                         </div>
                       ))}
                       {cameras.length < 4 && (
-                        <div className="sd-cam-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#2A304D', border: '1px dashed #4A5070', cursor: 'pointer' }} onClick={addCamera} title="Add another angle">
+                        <div className="em-cam-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#2A304D', border: '1px dashed #4A5070', cursor: 'pointer' }} onClick={addCamera} title="Add another angle">
                           <Plus size={20} color="#9BA3BF" />
                         </div>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div className="sd-cam-off">
+                  <div className="em-cam-off">
                     <CameraOff size={52} />
                     <p>Camera is off — press Start Camera to begin</p>
                   </div>
@@ -475,13 +475,13 @@ export default function EntryManagement() {
               </div>
             ) : (
               uploadFile ? (
-                <div className="sd-upload-preview">
+                <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                  {flash && <div className="sd-flash" />}
+                  {flash && <div className="em-flash" />}
                   {/* Bounding Box overlay */}
                   {bbox && !scanning && (
                     <div 
-                      className="sd-bounding-box"
+                      className="em-bounding-box"
                       style={{
                         left: `${bbox.x * 100}%`,
                         top: `${bbox.y * 100}%`,
@@ -493,7 +493,7 @@ export default function EntryManagement() {
                 </div>
               ) : (
                 <div
-                  className={`sd-upload-zone ${dragOver ? 'drag-over' : ''}`}
+                  className={`em-upload-zone ${dragOver ? 'drag-over' : ''}`}
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                   onDragLeave={() => setDragOver(false)}
@@ -514,39 +514,39 @@ export default function EntryManagement() {
             )}
 
             {/* Controls */}
-            <div className="sd-controls">
+            <div className="em-controls">
               {mode === 'camera' ? (
                 cameraOn ? (
                   <>
-                    <div className={`sd-autoscan-status ${cooldown ? 'cooldown' : ''}`}>
+                    <div className={`em-autoscan-status ${cooldown ? 'cooldown' : ''}`}>
                       {cooldown
                         ? <><Clock size={13} /> Cooldown…</>
                         : scanning
-                          ? <><div className="sd-spinner" style={{ borderTopColor: '#065F46', borderColor: 'rgba(6,95,70,.2)' }} /> Scanning…</>
+                          ? <><div className="em-spinner" style={{ borderTopColor: '#065F46', borderColor: 'rgba(6,95,70,.2)' }} /> Scanning…</>
                           : <><Zap size={13} /> Auto-scanning</>
                       }
                     </div>
-                    <button id="btn-stop-camera" className="sd-btn sd-btn-danger" onClick={stopCamera}>
+                    <button id="btn-stop-camera" className="em-btn em-btn-danger" onClick={stopCamera}>
                       <CameraOff size={15} /> Stop
                     </button>
                   </>
                 ) : (
-                  <button id="btn-start-camera" className="sd-btn sd-btn-primary sd-btn-lg" onClick={() => setCameraOn(true)}>
+                  <button id="btn-start-camera" className="em-btn em-btn-primary em-btn-lg" onClick={() => setCameraOn(true)}>
                     <Camera size={17} /> Start Camera
                   </button>
                 )
               ) : (
                 uploadFile ? (
                   <>
-                    <button id="btn-upload-scan" className="sd-btn sd-btn-primary sd-btn-lg" onClick={handleUploadScan} disabled={scanning}>
-                      {scanning ? <><div className="sd-spinner" /> Scanning…</> : <><ScanLine size={17} /> Scan Plate</>}
+                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan} disabled={scanning}>
+                      {scanning ? <><div className="em-spinner" /> Scanning…</> : <><ScanLine size={17} /> Scan Plate</>}
                     </button>
-                    <button id="btn-upload-reset" className="sd-btn sd-btn-secondary sd-btn-icon" onClick={resetUpload} title="Choose a different image" disabled={scanning}>
+                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Choose a different image" disabled={scanning}>
                       <RotateCcw size={15} />
                     </button>
                   </>
                 ) : (
-                  <button id="btn-upload-choose" className="sd-btn sd-btn-secondary sd-btn-lg" onClick={() => fileInputRef.current?.click()}>
+                  <button id="btn-upload-choose" className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
                     <Upload size={15} /> Choose Image
                   </button>
                 )
@@ -555,21 +555,21 @@ export default function EntryManagement() {
           </div>
 
           {/* Right panel */}
-          <div className="sd-right">
+          <div className="em-right">
 
             <ResultCard result={result} offices={offices} onPassCreated={handlePassCreated} />
 
             {/* Entry rules */}
-            <div className="sd-card sd-rules">
-              <div className="sd-card-head">
-                <span className="sd-card-label"><ShieldCheck size={14} /> Entry Rules</span>
+            <div className="em-card em-rules">
+              <div className="em-card-head">
+                <span className="em-card-label"><ShieldCheck size={14} /> Entry Rules</span>
               </div>
-              <div className="sd-rules-body">
-                <div style={{ marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase', fontWeight: 600, color: '#9BA3BF', letterSpacing: '0.5px' }}>Schedule Restrictions</div>
+              <div className="em-rules-body">
+                <div style={{ marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #3b82f6' }}>Schedule Restrictions</div>
                 {loadingRules ? (
-                  <p className="sd-log-empty">Loading rules…</p>
+                  <p className="em-log-empty">Loading rules…</p>
                 ) : rules.length === 0 ? (
-                  <p className="sd-log-empty">No rules configured.</p>
+                  <p className="em-log-empty">No rules configured.</p>
                 ) : (
                   rules.map((rule) => {
                     const dotColor = rule.constraint_type === 'employee' ? 'green' :
@@ -578,9 +578,9 @@ export default function EntryManagement() {
                       : rule.days.length === 5 ? 'Mon–Fri'
                       : rule.days.join(', ').toUpperCase() || 'All days'
                     return (
-                      <div key={`rule-${rule.id}`} className="sd-rule-row">
-                        <span className={`sd-rule-dot ${dotColor}`} />
-                        <span className="sd-rule-text">
+                      <div key={`rule-${rule.id}`} className="em-rule-row">
+                        <span className={`em-rule-dot ${dotColor}`} />
+                        <span className="em-rule-text">
                           <strong>{rule.constraint_type.charAt(0).toUpperCase() + rule.constraint_type.slice(1)}s</strong>
                           {' — '}{daysSummary}, {rule.start_time}–{rule.end_time}
                         </span>
@@ -589,19 +589,19 @@ export default function EntryManagement() {
                   })
                 )}
 
-                <div style={{ marginTop: '16px', marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase', fontWeight: 600, color: '#9BA3BF', letterSpacing: '0.5px' }}>Vehicle Access Privileges</div>
+                <div style={{ marginTop: '16px', marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #f59e0b' }}>Vehicle Access Privileges</div>
                 {loadingVehicles ? (
-                  <p className="sd-log-empty">Loading vehicle types…</p>
+                  <p className="em-log-empty">Loading vehicle types…</p>
                 ) : vehicleTypes.length === 0 ? (
-                  <p className="sd-log-empty">No vehicle types configured.</p>
+                  <p className="em-log-empty">No vehicle types configured.</p>
                 ) : (
                   vehicleTypes.map((v) => {
                     const dotColor = v.status === 'allowed' ? 'green' : 'orange'
                     const hoursDisplay = v.hours_display || (v.is_all_hours ? 'All hours' : `${v.hours_start || ''}–${v.hours_end || ''}`)
                     return (
-                      <div key={`vt-${v.id}`} className="sd-rule-row">
-                        <span className={`sd-rule-dot ${dotColor}`} />
-                        <span className="sd-rule-text" title={v.sub}>
+                      <div key={`vt-${v.id}`} className="em-rule-row">
+                        <span className={`em-rule-dot ${dotColor}`} />
+                        <span className="em-rule-text" title={v.sub}>
                           <strong>{v.label}</strong>
                           {' — '}{v.gate}, {hoursDisplay}
                         </span>
@@ -613,23 +613,23 @@ export default function EntryManagement() {
             </div>
 
             {/* Recent scans */}
-            <div className="sd-card">
-              <div className="sd-card-head">
-                <span className="sd-card-label"><ClipboardList size={14} /> Recent Scans</span>
-                <span className="sd-logs-count">{logs.length}</span>
+            <div className="em-card">
+              <div className="em-card-head">
+                <span className="em-card-label"><ClipboardList size={14} /> Recent Scans</span>
+                <span className="em-logs-count">{logs.length}</span>
               </div>
               {logs.length === 0 ? (
-                <p className="sd-log-empty">No scans yet today.</p>
+                <p className="em-log-empty">No scans yet today.</p>
               ) : (
-                <div className="sd-log-list">
+                <div className="em-log-list">
                   {logs.map((log, i) => {
                     const m = getMeta(log.status)
                     return (
-                      <div key={log.id ?? i} className="sd-log-item">
-                        <span className={`sd-log-dot ${m.logCls}`} />
-                        <span className="sd-log-plate">{log.plate_number}</span>
-                        <span className={`sd-log-badge ${m.logCls}`}>{m.label}</span>
-                        <span className="sd-log-time">{timeAgo(log.scanned_at)}</span>
+                      <div key={log.id ?? i} className="em-log-item">
+                        <span className={`em-log-dot ${m.logCls}`} />
+                        <span className="em-log-plate">{log.plate_number}</span>
+                        <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                        <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
                       </div>
                     )
                   })}
