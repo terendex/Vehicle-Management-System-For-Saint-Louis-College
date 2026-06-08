@@ -1,0 +1,6 @@
+/* ================================================================
+   SECURITY ENTRY MANAGEMENT STYLES
+   Reuses the exact same design system as Admin EntryManagement
+   Theme: SLC Navy #2A2B61 | Background #F0F2F7 | Card #FFFFFF
+   ================================================================ */
+@import '../Admin/EntryManagement.css';

@@ -43,3 +43,28 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.full_name} ({self.role})"
+
+
+class AuditLog(models.Model):
+    class Action(models.TextChoices):
+        USER_CREATED     = 'user_created',    'User Created'
+        USER_UPDATED     = 'user_updated',    'User Updated'
+        USER_DELETED     = 'user_deleted',    'User Deleted'
+        USER_DISABLED    = 'user_disabled',   'User Disabled'
+        USER_ENABLED     = 'user_enabled',    'User Enabled'
+        ADMIN_REPLACED   = 'admin_replaced',   'Admin Replaced'
+        SCAN             = 'scan',             'Vehicle Scanned'
+
+    actor       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='audit_logs')
+    action      = models.CharField(max_length=30, choices=Action.choices)
+    target_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='target_logs')
+    details     = models.TextField(blank=True)
+    ip_address  = models.GenericIPAddressField(null=True, blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        actor_name = self.actor.full_name if self.actor else 'Unknown'
+        return f"{actor_name} - {self.get_action_display()} - {self.created_at}"

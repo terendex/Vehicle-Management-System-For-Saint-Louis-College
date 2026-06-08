@@ -1,0 +1,234 @@
+/* ================================================================
+   SECURITY DASHBOARD
+   Theme: SLC Navy #2A2B61 | Background #F0F2F7 | Card #FFFFFF
+   ================================================================ */
+
+.sd-page {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.sd-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.sd-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #1A1D2E;
+  margin: 0 0 3px;
+}
+
+.sd-subtitle {
+  font-size: 0.85rem;
+  color: #5A5F72;
+  margin: 0;
+}
+
+.sd-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  color: #5A5F72;
+  gap: 16px;
+}
+
+.sd-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #E2E6EE;
+  border-top-color: #2A2B61;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Stats Grid ─────────────────────────────────────────────── */
+.sd-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.sd-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #FFFFFF;
+  border: 1px solid #E2E6EE;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  transition: all 0.2s ease;
+}
+
+.sd-card:hover {
+  box-shadow: 0 4px 16px rgba(42, 43, 97, 0.08);
+  transform: translateY(-1px);
+}
+
+.sd-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sd-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sd-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5A5F72;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.sd-card-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1A1D2E;
+  line-height: 1.2;
+}
+
+.sd-card-sub {
+  font-size: 11.5px;
+  color: #9BA3BF;
+  font-weight: 500;
+}
+
+/* ── Recent Scans ───────────────────────────────────────────── */
+.sd-recent-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E6EE;
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  overflow: hidden;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+}
+
+.sd-recent-head {
+  padding: 14px 20px;
+  border-bottom: 1px solid #E2E6EE;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sd-recent-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.sd-recent-title svg {
+  color: #2A2B61;
+}
+
+.sd-recent-count {
+  font-size: 11px;
+  font-weight: 700;
+  background: #F0F2F7;
+  color: #5A5F72;
+  border-radius: 20px;
+  padding: 2px 8px;
+}
+
+.sd-scan-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 500px;
+}
+
+.sd-scan-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #F4F5F9;
+  transition: background 0.15s;
+}
+
+.sd-scan-item:last-child {
+  border-bottom: none;
+}
+
+.sd-scan-item:hover {
+  background: #FAFBFD;
+}
+
+.sd-scan-plate {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1A1D2E;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+.sd-scan-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 8px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.sd-scan-time {
+  font-size: 11px;
+  color: #9BA3BF;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sd-recent-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #9BA3BF;
+  font-size: 13px;
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sd-stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .sd-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .sd-page {
+    padding: 16px;
+  }
+}

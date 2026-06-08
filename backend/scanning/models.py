@@ -54,3 +54,7 @@ class AccessLog(models.Model):
     denied_reason= models.CharField(max_length=255, blank=True)
     snapshot     = models.ImageField(upload_to='snapshots/', blank=True)
     scanned_at   = models.DateTimeField(auto_now_add=True)
+    scanned_by   = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='scans')
+
+    class Meta:
+        ordering = ['-scanned_at']

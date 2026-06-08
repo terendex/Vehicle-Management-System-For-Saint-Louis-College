@@ -2,13 +2,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 from rest_framework import permissions
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from vehicles.models import Vehicle
 from violations.models import Violation
 from .models import AccessLog, VisitorPass, Office
 from .entry_logic import check_entry
 from .ml.reader import read_plate
 from vehicles.serializers import VehicleSerializer
-from .serializers import VisitorPassSerializer, OfficeSerializer
+from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer
+from accounts.models import AuditLog
+
 
 class ScanView(APIView):
     parser_classes     = [MultiPartParser]
@@ -22,13 +26,13 @@ class ScanView(APIView):
         plate, bbox = read_plate(file.read())
 
         if not plate:
-            AccessLog.objects.create(plate_number='', status='unreadable')
+            AccessLog.objects.create(plate_number='', status='unreadable', scanned_by=request.user)
             return Response({'status': 'unreadable', 'message': 'Could not read a valid PH plate.'})
 
         vehicle = Vehicle.objects.select_related('owner').filter(plate_number=plate).first()
 
         if not vehicle:
-            AccessLog.objects.create(plate_number=plate, status='unknown')
+            AccessLog.objects.create(plate_number=plate, status='unknown', scanned_by=request.user)
             return Response({'plate_number': plate, 'status': 'unknown', 'message': 'Plate not registered.'})
 
         entry   = check_entry(vehicle)
@@ -38,7 +42,15 @@ class ScanView(APIView):
             plate_number  = plate,
             vehicle       = vehicle,
             status        = entry['status'],
-            denied_reason = '' if entry['allowed'] else entry['message']
+            denied_reason = '' if entry['allowed'] else entry['message'],
+            scanned_by    = request.user,
+        )
+
+        AuditLog.objects.create(
+            actor=request.user,
+            action=AuditLog.Action.SCAN,
+            details=f"Plate: {plate}, Status: {entry['status']}",
+            ip_address=self.get_client_ip(request),
         )
 
         return Response({
@@ -51,6 +63,12 @@ class ScanView(APIView):
             'has_violations':  has_violations,
             'bbox':            bbox,
         })
+
+    def get_client_ip(self, request):
+        x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded:
+            return x_forwarded.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR')
 
 
 class VisitorPassView(APIView):

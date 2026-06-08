@@ -14,6 +14,7 @@ class VisitorPassSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class AccessLogSerializer(serializers.ModelSerializer):
+    scanned_by_name = serializers.CharField(source='scanned_by.full_name', read_only=True)
     class Meta:
         model  = AccessLog
         fields = '__all__'

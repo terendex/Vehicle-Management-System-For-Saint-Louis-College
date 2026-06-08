@@ -46,4 +46,16 @@ export const usersApi = {
     const { data } = await api.post('/api/accounts/replace-admin/', adminData)
     return data
   },
+
+  /** Get audit logs (admin sees all, security sees own actions). */
+  getAuditLogs: async (params = {}) => {
+    const { data } = await api.get('/api/accounts/audit-logs/', { params })
+    return data
+  },
+
+  /** Get audit log statistics (admin only). */
+  getAuditLogStats: async () => {
+    const { data } = await api.get('/api/accounts/audit-logs/stats/')
+    return data
+  },
 }

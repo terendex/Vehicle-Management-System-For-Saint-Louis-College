@@ -1,0 +1,359 @@
+/* ============================================================
+   AUDIT LOG STYLES (Admin + Security)
+   Theme: SLC Navy (#2A2B61), BG (#F0F2F7), Card (#FFF)
+   ============================================================ */
+
+.sal-page {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.sal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.sal-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #2A2B61;
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.sal-subtitle {
+  font-size: 14px;
+  color: #5A5F72;
+  margin: 4px 0 0;
+}
+
+.sal-stats-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #EEF0FA;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2A2B61;
+}
+
+.sal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.sal-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sal-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 10px;
+  padding: 0 12px;
+}
+
+.sal-filter-item svg {
+  color: #9CA3AF;
+}
+
+.sal-date-input {
+  padding: 10px 4px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1A1D2E;
+  outline: none;
+  min-width: 140px;
+}
+
+.sal-date-input::placeholder {
+  color: #9CA3AF;
+}
+
+.sal-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #5A5F72;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sal-refresh-btn:hover {
+  background: #F8F9FC;
+  color: #2A2B61;
+  border-color: #B8BAD4;
+}
+
+.sal-table-container {
+  background: #FFFFFF;
+  border-radius: 14px;
+  border: 1px solid #E2E6EE;
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  overflow: hidden;
+}
+
+.sal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.sal-table thead {
+  background: #F8F9FC;
+  border-bottom: 2px solid #E2E6EE;
+}
+
+.sal-table th {
+  text-align: left;
+  padding: 14px 18px;
+  color: #5A5F72;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.sal-table td {
+  padding: 14px 18px;
+  color: #1A1D2E;
+  border-bottom: 1px solid #F0F2F7;
+  vertical-align: middle;
+}
+
+.sal-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.sal-table tbody tr:hover {
+  background: #FAFBFD;
+}
+
+.sal-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sal-details {
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sal-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sal-status-badge.authorized {
+  background: #ECFDF5;
+  color: #059669;
+}
+
+.sal-status-badge.denied {
+  background: #FEF2F2;
+  color: #DC2626;
+}
+
+.sal-status-badge.unknown {
+  background: #FEF3C7;
+  color: #B45309;
+}
+
+.sal-status-badge.other {
+  background: #EEF0FA;
+  color: #2A2B61;
+}
+
+.sal-loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: #5A5F72;
+}
+
+.sal-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #E2E6EE;
+  border-top-color: #2A2B61;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sal-empty {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.sal-empty svg {
+  color: #C7CAD9;
+  margin-bottom: 16px;
+}
+
+.sal-empty h3 {
+  color: #5A5F72;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.sal-empty p {
+  color: #9CA3AF;
+  font-size: 13px;
+  margin: 0;
+}
+
+.sal-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: #FFFFFF;
+  border-top: 1px solid #E2E6EE;
+  font-size: 13px;
+  color: #5A5F72;
+}
+
+.sal-pagination-info {
+  font-weight: 500;
+}
+
+.sal-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sal-page-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #1A1D2E;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sal-page-btn:hover:not(:disabled) {
+  background: #F8F9FC;
+  border-color: #B8BAD4;
+}
+
+.sal-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #F8F9FC;
+}
+
+.sal-page-current {
+  font-weight: 600;
+  color: #1A1D2E;
+}
+
+/* ── Action badge (security audit log) ──────────────────────── */
+.sal-action-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sal-action-badge.created {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+.sal-action-badge.updated {
+  background: #DBEAFE;
+  color: #1E40AF;
+}
+
+.sal-action-badge.deleted {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+
+.sal-action-badge.disabled {
+  background: #FFFBEB;
+  color: #92400E;
+}
+
+.sal-action-badge.enabled {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+.sal-action-badge.replaced {
+  background: #EDE9FE;
+  color: #5B21B6;
+}
+
+.sal-action-badge.scan {
+  background: #EEF0FA;
+  color: #2A2B61;
+}
+
+/* ── Form select (security audit log) ───────────────────────── */
+.sal-form-select {
+  padding: 0 12px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1A1D2E;
+  background: #FFFFFF;
+  height: 42px;
+  min-width: 160px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235A5F72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+  transition: border-color 0.2s;
+}
+
+.sal-form-select:focus {
+  border-color: #2A2B61;
+  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
+}
