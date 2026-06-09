@@ -1,4 +1,5 @@
 from django.db import migrations
+from django.contrib.auth.hashers import make_password
 
 
 def seed_demo_users(apps, schema_editor):
@@ -39,7 +40,7 @@ def seed_demo_users(apps, schema_editor):
             defaults=data,
         )
         if created:
-            user.set_password(pwd)
+            user.password = make_password(pwd)
             user.save()
 
 

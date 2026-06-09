@@ -341,8 +341,10 @@ npm run dev
 ```bash
 cd backend
 venv\Scripts\activate
-python -m celery -A config worker -l info
+python -m celery -A config worker -l info --pool=solo
 ```
+
+> On Windows, `--pool=solo` is required to avoid `billiard` semaphore / fork errors.
 
 ---
 
