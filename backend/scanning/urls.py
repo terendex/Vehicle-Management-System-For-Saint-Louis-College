@@ -7,4 +7,8 @@ urlpatterns = [
     path('visitor-pass/<int:pk>/',  views.ConfirmVisitorView.as_view(), name='confirm-visitor'),
     path('offices/',                views.OfficeListView.as_view(),     name='offices'),
     path('logs/',                   views.AccessLogListView.as_view(),  name='access-logs'),
+    path('ml/samples/',             views.MLTrainingSampleList.as_view(),  name='ml-samples'),
+    path('ml/samples/<int:pk>/',    views.MLTrainingSampleReview.as_view(), name='ml-sample-review'),
+    path('ml/stats/',               views.MLStatsView.as_view(),        name='ml-stats'),
+    path('ml/retrain/',             views.TriggerRetrainView.as_view(), name='ml-retrain'),
 ]

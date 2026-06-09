@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import VisitorPass, Office, AccessLog
+from .models import VisitorPass, Office, AccessLog, MLTrainingSample
 
 class OfficeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -17,4 +17,9 @@ class AccessLogSerializer(serializers.ModelSerializer):
     scanned_by_name = serializers.CharField(source='scanned_by.full_name', read_only=True)
     class Meta:
         model  = AccessLog
+        fields = '__all__'
+
+class MLTrainingSampleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = MLTrainingSample
         fields = '__all__'

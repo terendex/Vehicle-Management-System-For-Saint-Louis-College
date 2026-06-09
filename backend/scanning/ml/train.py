@@ -1,59 +1,94 @@
 """
-──────────────────────────────────────────────────────────────────────
-  train.py — Train a YOLOv8 model for Philippine License Plate Detection
-──────────────────────────────────────────────────────────────────────
+scanning/ml/train.py — Train / resume a YOLOv8 plate-detector.
 
-Usage:
-    cd backend
-    python -m scanning.ml.train                         # default settings
-    python -m scanning.ml.train --epochs 200 --batch 8  # custom settings
-
-The trained weights are saved to:
-    scanning/ml/weights/best.pt
-
-Prerequisites:
-    1. Label your images using Roboflow or LabelImg.
-    2. Place them into:
-         scanning/ml/dataset/images/train/   +   scanning/ml/dataset/labels/train/
-         scanning/ml/dataset/images/val/     +   scanning/ml/dataset/labels/val/
-    3. Run this script.
+Optional --incremental flag augments the YOLO dataset with pseudo-labeled
+MLTrainingSample records stored in the DB by the ML feedback loop before
+training begins (same image + auto-generated bbox labels).
 """
-
 from __future__ import annotations
 
 import argparse
 import shutil
 from pathlib import Path
 
+from django.conf import settings
+
 from ultralytics import YOLO
 
 
-# ── Paths ───────────────────────────────────────────────────────────
-
-BASE_DIR    = Path(__file__).resolve().parent          # scanning/ml/
+BASE_DIR    = Path(__file__).resolve().parent
 DATA_YAML   = BASE_DIR / "dataset" / "data.yaml"
 WEIGHTS_DIR = BASE_DIR / "weights"
+DATASET_IMG = BASE_DIR / "dataset" / "images" / "train"
+DATASET_LBL = BASE_DIR / "dataset" / "labels" / "train"
+
+
+def _export_ml_samples(limit: int = 500) -> int:
+    import django
+    django.setup()
+
+    from django.utils import timezone
+    from scanning.models import MLTrainingSample
+
+    if not DATASET_IMG.exists():
+        DATASET_IMG.mkdir(parents=True, exist_ok=True)
+    if not DATASET_LBL.exists():
+        DATASET_LBL.mkdir(parents=True, exist_ok=True)
+
+    qs = MLTrainingSample.objects.filter(
+        status__in=["auto_labeled", "verified"],
+        used_in_training=False,
+    ).exclude(bbox__isnull=True).exclude(plate_number="").order_by("created_at")[:limit]
+
+    exported = 0
+    for sample in qs:
+        try:
+            src = Path(settings.MEDIA_ROOT) / sample.image
+            if not src.exists():
+                continue
+
+            stem = f"ml_{sample.pk}_{timezone.now().strftime('%Y%m%d%H%M%S')}"
+            dst_img = DATASET_IMG / f"{stem}.jpg"
+            shutil.copy2(src, dst_img)
+
+            bboxes = sample.bbox or []
+            lines  = []
+            for bb in bboxes:
+                x      = bb.get("x", 0)
+                y      = bb.get("y", 0)
+                bw     = bb.get("width", 0)
+                bh     = bb.get("height", 0)
+                label  = f"0 {x} {y} {bw} {bh}"
+                lines.append(label)
+
+            with open(DATASET_LBL / f"{stem}.txt", "w") as lf:
+                lf.write("\n".join(lines))
+
+            sample.used_in_training = True
+            sample.save(update_fields=["used_in_training"])
+            exported += 1
+        except Exception as exc:
+            print(f"⚠️  Failed to export sample {sample.pk}: {exc}")
+
+    print(f"📥 Exported {exported} ML samples into the YOLO dataset")
+    return exported
 
 
 def train(
     epochs: int = 100,
     batch: int = 16,
     imgsz: int = 640,
-    model_size: str = "n",          # n = nano, s = small, m = medium
+    model_size: str = "n",
     resume: bool = False,
+    incremental: bool = False,
 ):
-    """
-    Train or resume training a YOLOv8 plate-detection model.
+    import django
+    django.setup()
 
-    Args:
-        epochs:     Number of training epochs.
-        batch:      Batch size (lower if you run out of VRAM).
-        imgsz:      Input image size (square).
-        model_size: YOLOv8 variant — 'n' (nano/fast), 's', 'm', 'l', 'x'.
-        resume:     If True, resume from the last checkpoint.
-    """
+    if incremental:
+        exported = _export_ml_samples()
+        print(f"🧩 Incremental mode: appended {exported} new samples to the dataset")
 
-    # ── Validate dataset ────────────────────────────────────────────
     train_imgs = BASE_DIR / "dataset" / "images" / "train"
     val_imgs   = BASE_DIR / "dataset" / "images" / "val"
 
@@ -77,25 +112,20 @@ def train(
     print(f"🧠 Model:   YOLOv8{model_size}  |  {epochs} epochs  |  batch {batch}  |  imgsz {imgsz}")
     print()
 
-    # ── Load model ──────────────────────────────────────────────────
     if resume and (WEIGHTS_DIR / "last.pt").exists():
         print("🔄 Resuming from last checkpoint…")
         model = YOLO(str(WEIGHTS_DIR / "last.pt"))
     else:
         model = YOLO(f"yolov8{model_size}.pt")
 
-    # ── Ensure data.yaml has absolute path ──────────────────────────
     import yaml
     with open(DATA_YAML, "r") as f:
         data_cfg = yaml.safe_load(f)
-    
-    # YOLOv8 sometimes struggles with relative paths in YAML on Windows.
-    # We dynamically set the absolute path before training.
+
     data_cfg["path"] = str(BASE_DIR / "dataset")
     with open(DATA_YAML, "w") as f:
         yaml.dump(data_cfg, f, sort_keys=False)
 
-    # ── Train ───────────────────────────────────────────────────────
     results = model.train(
         data=str(DATA_YAML),
         epochs=epochs,
@@ -104,13 +134,12 @@ def train(
         name="plate_detector",
         project=str(BASE_DIR / "runs"),
         exist_ok=True,
-        patience=20,           # early stopping after 20 epochs without improvement
+        patience=20,
         save=True,
         plots=False,
-        amp=False,             # disabled due to torchvision CUDA compatibility issue
+        amp=False,
     )
 
-    # ── Copy best weights ───────────────────────────────────────────
     best_src = Path(results.save_dir) / "weights" / "best.pt"
     last_src = Path(results.save_dir) / "weights" / "last.pt"
 
@@ -127,8 +156,6 @@ def train(
     print(f"   View training plots in: {results.save_dir}")
 
 
-# ── CLI ─────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train YOLOv8 plate detector")
     parser.add_argument("--epochs",     type=int,  default=100)
@@ -137,6 +164,8 @@ if __name__ == "__main__":
     parser.add_argument("--model-size", type=str,  default="n",
                         choices=["n", "s", "m", "l", "x"])
     parser.add_argument("--resume",     action="store_true")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Append collected scan samples to the dataset before training")
     parser.add_argument("--download",   action="store_true",
                         help="Download Roboflow datasets before training")
     parser.add_argument("--api-key",    type=str,  default=None,
@@ -144,7 +173,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # ── Optional: download datasets first ───────────────────────────
     if args.download:
         if not args.api_key:
             print("❌ --api-key is required when using --download")
@@ -159,4 +187,5 @@ if __name__ == "__main__":
         imgsz=args.imgsz,
         model_size=args.model_size,
         resume=args.resume,
+        incremental=args.incremental,
     )

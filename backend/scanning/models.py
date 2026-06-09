@@ -58,3 +58,33 @@ class AccessLog(models.Model):
 
     class Meta:
         ordering = ['-scanned_at']
+
+
+class MLTrainingSample(models.Model):
+    SOURCE_CHOICES = [
+        ('scan',         'Live Scan'),
+        ('manual',       'Manual Label'),
+        ('imported',     'Dataset Import'),
+    ]
+
+    STATUS_CHOICES = [
+        ('unlabeled',    'Unlabeled'),
+        ('auto_labeled', 'Auto-Labeled'),
+        ('verified',     'Verified'),
+        ('rejected',     'Rejected'),
+    ]
+
+    image = models.ImageField(upload_to='ml_samples/')
+    plate_number = models.CharField(max_length=20, blank=True)
+    bbox = models.JSONField(default=dict, blank=True)
+    confidence = models.FloatField(null=True, blank=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='scan')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unlabeled')
+    used_in_training = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.status}] {self.plate_number or '?'} ({self.source})"

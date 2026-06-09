@@ -40,6 +40,7 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 - 📝 **Secure Registration** — admin generates one-time tokens for self-registration
 - 🔐 **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
 - 📋 **Access logs** — full history of every scan and entry attempt
+- 🧠 **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
 
 ---
 
@@ -140,10 +141,15 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   ├── accounts/                    # Users and roles
 │   ├── vehicles/                    # Vehicles and owners
 │   ├── scanning/                    # Plate scanning, access logs, visitor passes
-│   │   └── ml/
-│   │       ├── reader.py            # EasyOCR
-│   │       ├── detector.py          # YOLOv8
-│   │       └── validator.py         # PH plate regex
+│   │   ├── ml/
+│   │   │   ├── reader.py            # YOLO + EasyOCR inference pipeline
+│   │   │   ├── train.py             # YOLOv8 training (offline + incremental)
+│   │   │   ├── validator.py         # Philippine plate regex validation
+│   │   │   └── collector.py         # Auto-collect scan data for retraining
+│   │   ├── tasks.py                 # Celery task: ML retrain job
+│   │   ├── views.py                 # Scan + ML sample/retrain endpoints
+│   │   ├── models.py                # AccessLog, VisitorPass, MLTrainingSample
+│   │   └── serializers.py           # DRF serializers including ML sample
 │   ├── violations/                  # Violation tracking
 │   ├── manage.py
 │   ├── requirements.txt
@@ -167,6 +173,7 @@ Vehicle-Management-System-For-Saint-Louis-College/
 | Redis | Latest | https://redis.io/downloads (Windows: use [Memurai](https://www.memurai.com) or WSL) |
 
 > ⚠️ **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
+> ⚠️ **Redis is required** for the ML feedback loop (Celery task queue). On Windows, use **Memurai** or run Redis via **WSL**.
 
 ### VS Code Extensions
 Install these when VS Code prompts "Install recommended extensions?" or search manually (`Ctrl+Shift+X`):
@@ -284,6 +291,11 @@ npm install
 | `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
 | `ACCESS_TOKEN_LIFETIME_MINUTES` | JWT access token expiry | `60` |
 | `REFRESH_TOKEN_LIFETIME_DAYS` | JWT refresh token expiry | `7` |
+| `ML_SAMPLE_BATCH_SIZE` | New samples needed to trigger retraining | `50` |
+| `ML_CONFIDENCE_THRESHOLD` | Min confidence to auto-label a sample | `0.6` |
+| `ML_AUTO_RETRAIN_ENABLED` | Enable/disable automatic retraining | `true` |
+| `CELERY_BROKER_URL` | Redis broker URL | `redis://127.0.0.1:6379/0` |
+| `CELERY_RESULT_BACKEND` | Redis result backend URL | `redis://127.0.0.1:6379/0` |
 
 ### `frontend/.env`
 
@@ -324,12 +336,12 @@ npm run dev
 |---|---|
 | `http://localhost:5173` | React web app |
 
-### Terminal 3 — Celery Worker (optional, for background tasks)
+### Terminal 3 — Celery Worker (required for ML retraining)
 
 ```bash
 cd backend
 venv\Scripts\activate
-celery -A config worker --loglevel=info
+python -m celery -A config worker -l info
 ```
 
 ---
@@ -375,6 +387,14 @@ celery -A config worker --loglevel=info
 | `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | ✅ |
 | `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | ✅ |
 | `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | ✅ |
+
+### ML Training & Feedback
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `GET` | `/api/scan/ml/samples/` | List collected training samples | ✅ |
+| `PATCH` | `/api/scan/ml/samples/{id}/` | Approve/reject/correct a sample label | ✅ |
+| `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | ✅ |
+| `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | ✅ |
 
 ### Violations
 | Method | Endpoint | Description | Auth |
