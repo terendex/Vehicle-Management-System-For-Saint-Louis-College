@@ -25,62 +25,72 @@ class ScanView(APIView):
             return Response({'error': 'No image provided'}, status=400)
 
         raw_bytes = file.read()
-        plate, bbox = read_plate(raw_bytes)
-
+        plates = read_plate(raw_bytes)
         ml_sample = record_scan(raw_bytes)
 
-        if not plate:
+        results = []
+
+        if not plates:
             AccessLog.objects.create(plate_number='', status='unreadable', scanned_by=request.user)
             return Response({
                 'status': 'unreadable',
                 'message': 'Could not read a valid PH plate.',
+                'results': [],
                 'sample_id': ml_sample.get("sample_id") if ml_sample else None,
             })
 
-        vehicle = Vehicle.objects.select_related('owner').filter(plate_number=plate).first()
+        for plate_info in plates:
+            plate = plate_info["plate_text"]
+            bbox = plate_info["bbox"]
 
-        if not vehicle:
-            AccessLog.objects.create(plate_number=plate, status='unknown', scanned_by=request.user)
-            return Response({
-                'plate_number': plate,
-                'status': 'unknown',
-                'message': 'Plate not registered.',
-                'sample_id': ml_sample.get("sample_id") if ml_sample else None,
-            })
+            vehicle = Vehicle.objects.select_related('owner').filter(plate_number=plate).first()
 
-        entry   = check_entry(vehicle)
-        has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
+            if not vehicle:
+                AccessLog.objects.create(plate_number=plate, status='unknown', scanned_by=request.user)
+                results.append({
+                    'plate_number': plate,
+                    'status': 'unknown',
+                    'message': 'Plate not registered.',
+                    'bbox': bbox,
+                    'sample_id': ml_sample.get("sample_id") if ml_sample else None,
+                })
+                continue
 
-        AccessLog.objects.create(
-            plate_number  = plate,
-            vehicle       = vehicle,
-            status        = entry['status'],
-            denied_reason = '' if entry['allowed'] else entry['message'],
-            scanned_by    = request.user,
-            snapshot      = request.FILES.get('file'),
-        )
+            entry = check_entry(vehicle)
+            has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
 
-        AuditLog.objects.create(
-            actor=request.user,
-            action=AuditLog.Action.SCAN,
-            details=f"Plate: {plate}, Status: {entry['status']}",
-            ip_address=self.get_client_ip(request),
-        )
+            AccessLog.objects.create(
+                plate_number  = plate,
+                vehicle       = vehicle,
+                status        = entry['status'],
+                denied_reason = '' if entry['allowed'] else entry['message'],
+                scanned_by    = request.user,
+                snapshot      = request.FILES.get('file'),
+            )
 
-        resp = {
-            'plate_number':    plate,
-            'status':          entry['status'],
-            'allowed':         entry['allowed'],
-            'message':         entry['message'],
-            'constraint':      entry.get('constraint'),
-            'vehicle':         VehicleSerializer(vehicle).data,
-            'has_violations':  has_violations,
-            'bbox':            bbox,
-        }
-        if ml_sample:
-            resp['sample_id'] = ml_sample['sample_id']
-            resp['ml_confidence'] = ml_sample['confidence']
-        return Response(resp)
+            AuditLog.objects.create(
+                actor=request.user,
+                action=AuditLog.Action.SCAN,
+                details=f"Plate: {plate}, Status: {entry['status']}",
+                ip_address=self.get_client_ip(request),
+            )
+
+            resp = {
+                'plate_number':    plate,
+                'status':          entry['status'],
+                'allowed':         entry['allowed'],
+                'message':         entry['message'],
+                'constraint':      entry.get('constraint'),
+                'vehicle':         VehicleSerializer(vehicle).data,
+                'has_violations':  has_violations,
+                'bbox':            bbox,
+            }
+            if ml_sample:
+                resp['sample_id'] = ml_sample['sample_id']
+                resp['ml_confidence'] = ml_sample['confidence']
+            results.append(resp)
+
+        return Response({'results': results})
 
     def get_client_ip(self, request):
         x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')

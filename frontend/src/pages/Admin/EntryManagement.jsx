@@ -262,13 +262,19 @@ export default function EntryManagement() {
     }).catch(() => setLoadingVehicles(false))
   }, [])
 
-  const handleScanSuccess = useCallback((data) => {
-    setResult(data)
-    setBbox(data.bbox || null)
-    setLogs((prev) => [
-      { id: Date.now(), plate_number: data.plate_number, status: data.status, scanned_at: new Date().toISOString() },
-      ...prev,
-    ].slice(0, 20))
+  const handleScanSuccess = useCallback((results) => {
+    if (!results || results.length === 0) return
+    setResult(results)
+    setBbox(results.map(r => r.bbox).filter(Boolean))
+    setLogs((prev) => {
+      const newLogs = results.map(r => ({
+        id: Date.now() + Math.random(),
+        plate_number: r.plate_number,
+        status: r.status,
+        scanned_at: new Date().toISOString(),
+      }))
+      return [...newLogs, ...prev].slice(0, 20)
+    })
     setCooldown(true)
     cooldownRef.current = true
     setTimeout(() => {
@@ -284,12 +290,21 @@ export default function EntryManagement() {
     setTimeout(() => setFlash(false), 450)
     
     try {
+      const callScan = async (source) => {
+        const { data } = await source
+        if (data?.status === 'unreadable') {
+          setResult([])
+          setBbox([])
+          return
+        }
+        const results = data?.results || []
+        if (results.length > 0) handleScanSuccess(results)
+      }
+
       if (blob) {
-        const { data } = await scanPlate(blob)
-        if (data?.plate_number) handleScanSuccess(data)
+        await callScan(scanPlate(blob))
       } else {
-        // Try to scan from all active cameras
-        let foundResult = null
+        let processed = false
         for (const cam of cameras) {
           const ref = webcamRefs.current[cam.id]
           if (!ref) continue
@@ -297,16 +312,17 @@ export default function EntryManagement() {
           if (!imageSrc) continue
           try {
             const imgBlob = await fetch(imageSrc).then((r) => r.blob())
-            const { data } = await scanPlate(imgBlob)
-            if (data?.plate_number) {
-              foundResult = data
-              break
-            }
+            await callScan(scanPlate(imgBlob))
+            processed = true
+            break
           } catch {
             // silently ignore errors per camera
           }
         }
-        if (foundResult) handleScanSuccess(foundResult)
+        if (!processed) {
+          setResult([])
+          setBbox([])
+        }
       }
     } catch {
       // Silently ignore if no plate found in manual upload
@@ -329,8 +345,8 @@ export default function EntryManagement() {
 
   const stopCamera = () => {
     setCameraOn(false)
-    setResult(null)
-    setBbox(null)
+    setResult([])
+    setBbox([])
     setCooldown(false)
   }
 
@@ -342,8 +358,8 @@ export default function EntryManagement() {
   const handleFileChange = (file) => {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
     setUploadFile({ file, url: URL.createObjectURL(file) })
-    setResult(null)
-    setBbox(null)
+    setResult([])
+    setBbox([])
   }
 
   const handleDrop = (e) => {
@@ -355,8 +371,8 @@ export default function EntryManagement() {
   const resetUpload = () => {
     if (uploadFile?.url) URL.revokeObjectURL(uploadFile.url)
     setUploadFile(null)
-    setResult(null)
-    setBbox(null)
+    setResult([])
+    setBbox([])
   }
 
   const handlePassCreated = () => {
@@ -392,8 +408,8 @@ export default function EntryManagement() {
                 {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
               </span>
               <div className="em-mode-toggle">
-                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null); setBbox(null) }}>Camera</button>
-                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null); setBbox(null) }}>Upload</button>
+                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult([]); setBbox([]) }}>Camera</button>
+                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult([]); setBbox([]) }}>Upload</button>
               </div>
             </div>
 
@@ -424,18 +440,19 @@ export default function EntryManagement() {
                       </div>
                       {flash && <div className="em-flash" />}
                       
-                      {/* Bounding Box overlay */}
-                      {bbox && !scanning && (
-                        <div 
+                      {/* Bounding Box overlays */}
+                      {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
+                        <div
+                          key={`bbox-cam-${i}`}
                           className="em-bounding-box"
                           style={{
-                            left: `${bbox.x * 100}%`,
-                            top: `${bbox.y * 100}%`,
-                            width: `${bbox.width * 100}%`,
-                            height: `${bbox.height * 100}%`,
+                            left: `${b.x * 100}%`,
+                            top: `${b.y * 100}%`,
+                            width: `${b.width * 100}%`,
+                            height: `${b.height * 100}%`,
                           }}
                         />
-                      )}
+                      ))}
                       
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
@@ -478,18 +495,19 @@ export default function EntryManagement() {
                 <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   {flash && <div className="em-flash" />}
-                  {/* Bounding Box overlay */}
-                  {bbox && !scanning && (
-                    <div 
+                  {/* Bounding Box overlays */}
+                  {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
+                    <div
+                      key={`bbox-up-${i}`}
                       className="em-bounding-box"
                       style={{
-                        left: `${bbox.x * 100}%`,
-                        top: `${bbox.y * 100}%`,
-                        width: `${bbox.width * 100}%`,
-                        height: `${bbox.height * 100}%`,
+                        left: `${b.x * 100}%`,
+                        top: `${b.y * 100}%`,
+                        width: `${b.width * 100}%`,
+                        height: `${b.height * 100}%`,
                       }}
                     />
-                  )}
+                  ))}
                 </div>
               ) : (
                 <div
@@ -556,8 +574,15 @@ export default function EntryManagement() {
 
           {/* Right panel */}
           <div className="em-right">
-
-            <ResultCard result={result} offices={offices} onPassCreated={handlePassCreated} />
+            {(result && result.length > 0) ? (
+              <div className="em-results-stack">
+                {result.map((r, idx) => (
+                  <ResultCard key={`result-${idx}-${r.plate_number}`} result={r} offices={offices} onPassCreated={handlePassCreated} />
+                ))}
+              </div>
+            ) : (
+              <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} />
+            )}
 
             {/* Entry rules */}
             <div className="em-card em-rules">

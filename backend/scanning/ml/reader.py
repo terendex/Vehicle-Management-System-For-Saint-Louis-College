@@ -157,22 +157,22 @@ def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
 
 # ── Public API ──────────────────────────────────────────────────────
 
-def read_plate(image_bytes: bytes) -> tuple[str, dict] | tuple[None, None]:
+def read_plate(image_bytes: bytes) -> list[dict]:
     """
-    Main entry point — detect + read a Philippine license plate.
+    Main entry point — detect + read Philippine license plates.
 
-    Returns:
-        (plate_text, bbox_dict)  on success
-        (None, None)             when no plate is found
+    Returns a list of dicts, each with:
+        plate_text — the recognized plate number
+        bbox       — relative bounding box {"x", "y", "width", "height"} (0–1)
 
-    bbox_dict contains relative coordinates:
-        {"x": 0.32, "y": 0.71, "width": 0.18, "height": 0.06}
+    Returns an empty list when no plates are found.
     """
     img = _decode(image_bytes)
     if img is None:
-        return None, None
+        return []
 
     h, w = img.shape[:2]
+    results: list[dict] = []
 
     # ── Stage 1: Try YOLO detection first ───────────────────────────
     detections = _detect_plates(img)
@@ -180,33 +180,35 @@ def read_plate(image_bytes: bytes) -> tuple[str, dict] | tuple[None, None]:
     for det in detections:
         plate_text, _conf = _ocr_crop(det["crop"])
         if plate_text:
-            return plate_text, det["bbox"]
+            results.append({
+                "plate_text": plate_text,
+                "bbox": det["bbox"],
+            })
+
+    if results:
+        return results
 
     # ── Stage 2: Fallback — OCR on the full image ───────────────────
     log.debug("YOLO found no plates — falling back to full-frame OCR")
     processed = _preprocess_for_ocr(img)
     ocr = _get_ocr()
-    results = ocr.readtext(processed)
+    ocr_results = ocr.readtext(processed)
 
-    candidates = []
-    for (bbox, text, confidence) in results:
+    for (bbox, text, confidence) in ocr_results:
         if confidence > 0.5 and is_valid_ph_plate(text):
             xs = [p[0] for p in bbox]
             ys = [p[1] for p in bbox]
             x_min, x_max = min(xs), max(xs)
             y_min, y_max = min(ys), max(ys)
 
-            box_dict = {
-                "x":      float(x_min / w),
-                "y":      float(y_min / h),
-                "width":  float((x_max - x_min) / w),
-                "height": float((y_max - y_min) / h),
-            }
-            candidates.append((confidence, normalize_plate(text), box_dict))
+            results.append({
+                "plate_text": normalize_plate(text),
+                "bbox": {
+                    "x":      float(x_min / w),
+                    "y":      float(y_min / h),
+                    "width":  float((x_max - x_min) / w),
+                    "height": float((y_max - y_min) / h),
+                },
+            })
 
-    if not candidates:
-        return None, None
-
-    candidates.sort(key=lambda c: c[0], reverse=True)
-    best = candidates[0]
-    return best[1], best[2]
+    return results

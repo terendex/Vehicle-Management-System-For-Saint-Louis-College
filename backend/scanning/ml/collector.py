@@ -65,10 +65,10 @@ def record_scan(raw_bytes: bytes) -> dict | None:
     if img is None:
         return None
 
-    plate_text  = None
-    confidence  = None
+    plate_texts: list[str] = []
+    confidences: list[float] = []
     bboxes: list[dict] = []
-    status      = "unlabeled"
+    status = "unlabeled"
 
     try:
         detections = _detect_plates(img)
@@ -77,19 +77,13 @@ def record_scan(raw_bytes: bytes) -> dict | None:
                 text, ocr_conf = _ocr_crop(det["crop"])
                 combined_conf = (det["score"] + ocr_conf) / 2 if ocr_conf else det["score"]
                 if text:
-                    if plate_text is None or combined_conf > confidence:
-                        plate_text = text
-                        confidence = combined_conf
-                        bboxes     = [det["bbox"]]
+                    plate_texts.append(text)
+                    confidences.append(combined_conf)
+                    bboxes.append(det["bbox"])
 
-            if plate_text and confidence >= settings.ML_CONFIDENCE_THRESHOLD:
-                status = "auto_labeled"
-            elif plate_text:
-                status = "auto_labeled"
-            else:
-                status = "auto_labeled"
-        else:
-            pass
+            if plate_texts:
+                best_conf = max(confidences)
+                status = "auto_labeled" if best_conf >= settings.ML_CONFIDENCE_THRESHOLD else "auto_labeled"
 
     except Exception as exc:
         log.error("ML collector error: %s", exc)
@@ -98,14 +92,14 @@ def record_scan(raw_bytes: bytes) -> dict | None:
 
     sample = MLTrainingSample.objects.create(
         image        = media_path,
-        plate_number = plate_text or "",
+        plate_number = ";".join(plate_texts) if plate_texts else "",
         bbox         = bboxes,
-        confidence   = confidence,
+        confidence   = max(confidences) if confidences else None,
         source       = "scan",
         status       = status,
     )
 
-    log.info("Saved MLTrainingSample id=%s plate=%s conf=%s", sample.pk, plate_text, confidence)
+    log.info("Saved MLTrainingSample id=%s plates=%s conf=%s", sample.pk, plate_texts, confidences)
 
     if _should_trigger_retrain() and settings.ML_AUTO_RETRAIN_ENABLED:
         _enqueue_retrain()
@@ -114,7 +108,8 @@ def record_scan(raw_bytes: bytes) -> dict | None:
 
     return {
         "sample_id": sample.pk,
-        "plate":      plate_text,
-        "confidence": confidence,
-        "bbox":       bboxes,
+        "plate":     plate_texts[0] if plate_texts else None,
+        "plates":    plate_texts,
+        "confidence": max(confidences) if confidences else None,
+        "bbox":      bboxes,
     }
