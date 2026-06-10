@@ -77,16 +77,64 @@ def _decode(image_bytes: bytes) -> np.ndarray:
 
 
 def _preprocess_for_ocr(img: np.ndarray) -> np.ndarray:
-    """Convert a BGR image to a thresholded grayscale for OCR."""
+    """Convert a BGR image to a sharpened grayscale for OCR."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+    # Sharpening via unsharp mask
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    sharp = cv2.addWeighted(gray, 1.8, blur, -0.8, 0)
+    return sharp
+
+
+def _deskew_plate(img: np.ndarray) -> np.ndarray:
+    """
+    Try to find the white license plate rectangle within the crop and
+    perspective-correct it. Returns the original img if no rectangle found.
+    """
+    try:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        # Morphological closing to merge plate region
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
+        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return img
+        # Pick the largest contour by area
+        c = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(c)
+        if area < 300:  # too small to be a plate
+            return img
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.03 * peri, True)
+        if len(approx) == 4:
+            # Perspective warp to a flat rectangle
+            pts = approx.reshape(4, 2).astype(np.float32)
+            # Order points: TL, TR, BR, BL
+            rect = np.zeros((4, 2), dtype=np.float32)
+            s = pts.sum(axis=1)
+            rect[0] = pts[np.argmin(s)]
+            rect[2] = pts[np.argmax(s)]
+            diff = np.diff(pts, axis=1)
+            rect[1] = pts[np.argmin(diff)]
+            rect[3] = pts[np.argmax(diff)]
+            tl, tr, br, bl = rect
+            maxW = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+            maxH = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+            if maxW < 30 or maxH < 10:
+                return img
+            dst = np.array([[0, 0], [maxW-1, 0], [maxW-1, maxH-1], [0, maxH-1]], dtype=np.float32)
+            M = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(img, M, (maxW, maxH))
+            log.info("[DESKEW] Perspective correction applied: %dx%d", maxW, maxH)
+            return warped
+    except Exception as e:
+        log.debug("[DESKEW] Failed: %s", e)
+    return img
 
 
 # ── YOLO detection ──────────────────────────────────────────────────
 
-def _detect_plates(img: np.ndarray, conf: float = 0.35):
+def _detect_plates(img: np.ndarray, conf: float = 0.10):
     """
     Run the YOLO model on a BGR image.
 
@@ -97,24 +145,43 @@ def _detect_plates(img: np.ndarray, conf: float = 0.35):
     """
     model = _get_yolo()
     if model is None:
+        log.warning("[DETECT] No YOLO model loaded — skipping detection")
         return []
 
     h, w = img.shape[:2]
+    log.info("[DETECT] Running YOLO on %dx%d image, conf=%.2f", w, h, conf)
     results = model.predict(img, conf=conf, verbose=False)
 
     detections = []
     for r in results:
+        log.info("[DETECT] YOLO returned %d boxes", len(r.boxes))
         for box in r.boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            score = float(box.conf[0])
+            cls_id = int(box.cls[0]) if hasattr(box, 'cls') else -1
+            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f cls=%d", x1, y1, x2, y2, score, cls_id)
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
-            # Add a small padding around the plate for OCR accuracy
-            pad_x = int((x2 - x1) * 0.05)
-            pad_y = int((y2 - y1) * 0.10)
+            box_w = x2 - x1
+            box_h = y2 - y1
+            aspect_ratio = box_w / max(box_h, 1)
+
+            # Motorcycle/tricycle plates are two-row (narrow & tall, aspect < 2.0)
+            # so we need generous bottom padding to capture the second row of digits
+            pad_x = int(box_w * 0.15)
+            pad_y_top = int(box_h * 0.15)
+            if aspect_ratio < 2.0:
+                pad_y_bottom = int(box_h * 1.2)  # capture digits below the YOLO box
+            else:
+                pad_y_bottom = int(box_h * 0.15)
+
             cx1 = max(0, x1 - pad_x)
-            cy1 = max(0, y1 - pad_y)
+            cy1 = max(0, y1 - pad_y_top)
             cx2 = min(w, x2 + pad_x)
-            cy2 = min(h, y2 + pad_y)
+            cy2 = min(h, y2 + pad_y_bottom)
+
+            log.info("[DETECT] aspect=%.2f → pad_x=%d pad_y_top=%d pad_y_bottom=%d crop=(%d,%d)-(%d,%d)",
+                     aspect_ratio, pad_x, pad_y_top, pad_y_bottom, cx1, cy1, cx2, cy2)
 
             detections.append({
                 "crop":  img[cy1:cy2, cx1:cx2],
@@ -124,11 +191,12 @@ def _detect_plates(img: np.ndarray, conf: float = 0.35):
                     "width":  float((x2 - x1) / w),
                     "height": float((y2 - y1) / h),
                 },
-                "score": float(box.conf[0]),
+                "score": score,
             })
 
     # Sort by confidence descending
     detections.sort(key=lambda d: d["score"], reverse=True)
+    log.info("[DETECT] Total detections after YOLO: %d", len(detections))
     return detections
 
 
@@ -139,20 +207,63 @@ def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
     Run EasyOCR on a cropped plate image.
     Returns (normalized_plate, confidence) or (None, None).
     """
-    processed = _preprocess_for_ocr(crop)
+    # Upscale small crops so EasyOCR can read them reliably
+    min_width = 200
+    h_crop, w_crop = crop.shape[:2]
+    if w_crop < min_width:
+        scale = min_width / w_crop
+        crop = cv2.resize(crop, (min_width, int(h_crop * scale)), interpolation=cv2.INTER_CUBIC)
+        log.info("[OCR-CROP] Upscaled crop to %dx%d", crop.shape[1], crop.shape[0])
+
+    # Try to deskew the plate for better OCR accuracy
+    deskewed = _deskew_plate(crop)
+
     ocr = _get_ocr()
-    results = ocr.readtext(processed)
+
+    def _run_ocr(img, label):
+        raw = ocr.readtext(img, text_threshold=0.1, link_threshold=0.1, low_text=0.1)
+        log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
+        for item in raw:
+            if len(item) == 3:
+                _, text, confidence = item
+            else:
+                text, confidence = str(item[1]), 0.0
+            text_clean = normalize_plate(text)
+            valid = is_valid_ph_plate(text)
+            log.info("[OCR-CROP]   %s: text=%r conf=%.3f valid_ph=%s", label, text, float(confidence), valid)
+            yield text_clean, float(confidence), valid
 
     candidates = []
-    for (_bbox, text, confidence) in results:
-        if confidence > 0.4 and is_valid_ph_plate(text):
-            candidates.append((confidence, normalize_plate(text)))
+    fallback_candidates = []
 
-    if not candidates:
-        return None, None
+    # Try multiple image variants in priority order
+    variants = [
+        (deskewed, "deskewed"),
+        (crop, "raw"),
+        (_preprocess_for_ocr(deskewed), "deskewed_sharp"),
+        (_preprocess_for_ocr(crop), "sharp"),
+    ]
 
-    candidates.sort(reverse=True)
-    return candidates[0][1], candidates[0][0]
+    for img_variant, label in variants:
+        for text_clean, confidence, valid in _run_ocr(img_variant, label):
+            if confidence > 0.05:
+                if valid:
+                    candidates.append((confidence, text_clean))
+                elif len(text_clean) >= 3:
+                    fallback_candidates.append((confidence, text_clean))
+
+    if candidates:
+        candidates.sort(reverse=True)
+        log.info("[OCR-CROP] Best valid candidate: %s (conf=%.3f)", candidates[0][1], candidates[0][0])
+        return candidates[0][1], candidates[0][0]
+
+    if fallback_candidates:
+        fallback_candidates.sort(reverse=True)
+        log.info("[OCR-CROP] Best fallback candidate: %s (conf=%.3f)", fallback_candidates[0][1], fallback_candidates[0][0])
+        return fallback_candidates[0][1], fallback_candidates[0][0]
+
+    log.info("[OCR-CROP] No plate candidates found")
+    return None, None
 
 
 # ── Public API ──────────────────────────────────────────────────────
@@ -169,9 +280,11 @@ def read_plate(image_bytes: bytes) -> list[dict]:
     """
     img = _decode(image_bytes)
     if img is None:
+        log.error("[READ] Failed to decode image bytes (len=%d)", len(image_bytes))
         return []
 
     h, w = img.shape[:2]
+    log.info("[READ] Decoded image: %dx%d", w, h)
     results: list[dict] = []
 
     # ── Stage 1: Try YOLO detection first ───────────────────────────
@@ -179,23 +292,25 @@ def read_plate(image_bytes: bytes) -> list[dict]:
 
     for det in detections:
         plate_text, _conf = _ocr_crop(det["crop"])
-        if plate_text:
-            results.append({
-                "plate_text": plate_text,
-                "bbox": det["bbox"],
-            })
+        results.append({
+            "plate_text": plate_text if plate_text else "",
+            "bbox": det["bbox"],
+        })
 
     if results:
+        log.info("[READ] Stage 1 (YOLO+OCR) found %d plates: %s", len(results), [r["plate_text"] for r in results])
         return results
 
     # ── Stage 2: Fallback — OCR on the full image ───────────────────
-    log.debug("YOLO found no plates — falling back to full-frame OCR")
-    processed = _preprocess_for_ocr(img)
+    log.info("[READ] YOLO found no valid plates — falling back to full-frame OCR")
     ocr = _get_ocr()
-    ocr_results = ocr.readtext(processed)
+    ocr_results = ocr.readtext(img)
 
+    log.info("[READ] Full-frame OCR found %d text regions", len(ocr_results))
     for (bbox, text, confidence) in ocr_results:
-        if confidence > 0.5 and is_valid_ph_plate(text):
+        valid = is_valid_ph_plate(text)
+        log.info("[READ]   text=%r conf=%.3f valid_ph=%s", text, confidence, valid)
+        if confidence > 0.2 and valid:
             xs = [p[0] for p in bbox]
             ys = [p[1] for p in bbox]
             x_min, x_max = min(xs), max(xs)
@@ -211,4 +326,5 @@ def read_plate(image_bytes: bytes) -> list[dict]:
                 },
             })
 
+    log.info("[READ] Final results: %d plates: %s", len(results), [r["plate_text"] for r in results])
     return results

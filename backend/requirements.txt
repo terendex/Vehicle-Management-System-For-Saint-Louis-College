@@ -68,3 +68,8 @@ ultralytics-thop==2.0.19
 urllib3==2.7.0
 vine==5.1.0
 wcwidth==0.7.0
+channels~=4.2
+daphne~=4.1
+twisted~=24.11
+autobahn~=24.4
+django-redis~=5.4

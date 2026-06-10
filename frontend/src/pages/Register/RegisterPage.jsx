@@ -99,7 +99,7 @@ export default function RegisterPage() {
 
     setLoading(true)
     try {
-      await registrationApi.submitRegistration(token, formData)
+      await registrationApi.submitRegistration(token, { ...formData, registrant_type: registrantType })
       setSubmitted(true)
     } catch (err) {
       alert(err.response?.data?.error || "Failed to submit registration. Please try again.")

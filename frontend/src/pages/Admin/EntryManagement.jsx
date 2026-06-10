@@ -8,16 +8,16 @@ import {
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
-import { scanPlate, getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
+import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
-// Reuse the same styles as the security dashboard
+import { useScanStream } from '../../hooks/useScanStream'
 import './EntryManagement.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SCAN_INTERVAL_MS = 2000
-const COOLDOWN_MS = 5000
-
+const SCAN_INTERVAL_MS = 500
+const PLATE_COOLDOWN_MS = 3000
+const LOG_LIMIT = 50
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry', Icon: CheckCircle, cls: 'authorized', logCls: 'authorized' },
@@ -27,6 +27,7 @@ const STATUS_META = {
   unknown: { label: 'Visitor / Unregistered', Icon: HelpCircle, cls: 'visitor', logCls: 'visitor' },
   no_pass: { label: 'No Visitor Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
   disabled: { label: 'Access Disabled', Icon: XCircle, cls: 'denied', logCls: 'denied' },
+  unreadable: { label: 'Unreadable Plate', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
 }
 
 function getMeta(status) {
@@ -34,8 +35,7 @@ function getMeta(status) {
 }
 
 function timeAgo(ts) {
-  try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
-  catch { return '' }
+  try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) } catch { return '' }
 }
 
 // ─── Visitor Pass Modal ────────────────────────────────────────────────────────
@@ -209,11 +209,9 @@ export default function EntryManagement() {
   const [cameraOn, setCameraOn] = useState(false)
   const [uploadFile, setUploadFile] = useState(null)
   const [dragOver, setDragOver] = useState(false)
-  const [scanning, setScanning] = useState(false)
-  const [cooldown, setCooldown] = useState(false)
-  const [flash, setFlash] = useState(false)
   const [result, setResult] = useState(null)
   const [bbox, setBbox] = useState(null)
+  const [latestBbox, setLatestBbox] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
   const [rules, setRules] = useState([])
@@ -228,7 +226,20 @@ export default function EntryManagement() {
   const fileInputRef = useRef(null)
   const intervalRef = useRef(null)
   const scanningRef = useRef(false)
-  const cooldownRef = useRef(false)
+  const plateCooldownRef = useRef(new Set())
+
+  const getToken = useCallback(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('access_token') || ''
+    }
+    return ''
+  }, [])
+
+  const { scanning: wsScanning, results: wsResults, bbox: bboxState, flash: flashState, setCameras: wsSetCameras, setActiveCamId: wsSetActiveCamId } = useScanStream(
+    getToken(),
+    cameraOn && mode === 'camera',
+    cameraOn && mode === 'camera',
+  )
 
   const addCamera = () => {
     if (cameras.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
@@ -238,105 +249,63 @@ export default function EntryManagement() {
 
   const removeCamera = (id) => {
     setCameras(prev => {
-       const next = prev.filter(c => c.id !== id)
-       if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
-       return next
+      const next = prev.filter(c => c.id !== id)
+      if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
+      return next
     })
   }
 
-  useEffect(() => { scanningRef.current = scanning }, [scanning])
-  useEffect(() => { cooldownRef.current = cooldown }, [cooldown])
-
-  useEffect(() => {
-    getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => { })
-    getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => { })
-    getRuleConstraints().then((r) => {
-      const data = (r.data?.results ?? r.data ?? [])
-      setRules(data.filter(rule => rule.enabled))
-      setLoadingRules(false)
-    }).catch(() => setLoadingRules(false))
-    getVehicleTypeAccess().then((r) => {
-      const data = (r.data?.results ?? r.data ?? [])
-      setVehicleTypes(data.filter(v => v.enabled))
-      setLoadingVehicles(false)
-    }).catch(() => setLoadingVehicles(false))
-  }, [])
-
   const handleScanSuccess = useCallback((results) => {
     if (!results || results.length === 0) return
+
+    const newBboxes = results.map((r) => r.bbox).filter(Boolean)
     setResult(results)
-    setBbox(results.map(r => r.bbox).filter(Boolean))
+    setBbox(newBboxes)
+    if (newBboxes.length > 0) setLatestBbox(newBboxes[0])
+
     setLogs((prev) => {
-      const newLogs = results.map(r => ({
-        id: Date.now() + Math.random(),
-        plate_number: r.plate_number,
-        status: r.status,
-        scanned_at: new Date().toISOString(),
-      }))
-      return [...newLogs, ...prev].slice(0, 20)
+      const now = Date.now()
+      const newLogs = results
+        .filter((r) => {
+          const cooldowns = plateCooldownRef.current
+          if (cooldowns.has(r.plate_number)) return false
+          cooldowns.add(r.plate_number)
+          setTimeout(() => cooldowns.delete(r.plate_number), PLATE_COOLDOWN_MS)
+          return true
+        })
+        .map((r) => ({
+          id: now + Math.random(),
+          plate_number: r.plate_number,
+          status: r.status,
+          scanned_at: new Date().toISOString(),
+        }))
+      return [...newLogs, ...prev].slice(0, LOG_LIMIT)
     })
-    setCooldown(true)
-    cooldownRef.current = true
-    setTimeout(() => {
-      setCooldown(false)
-      cooldownRef.current = false
-    }, COOLDOWN_MS)
   }, [])
 
+  // Keep the stream hook in sync with local camera state
+  useEffect(() => { wsSetCameras(cameras) }, [cameras, wsSetCameras])
+  useEffect(() => { wsSetActiveCamId(activeCamId) }, [activeCamId, wsSetActiveCamId])
+
+  // When the stream returns results, update the UI
+  useEffect(() => {
+    if (wsResults.length > 0) handleScanSuccess(wsResults)
+  }, [wsResults, handleScanSuccess])
+
+  // Re-open WS if token ever changes
+  useEffect(() => { scanningRef.current = wsScanning }, [wsScanning])
+
+  // Pass the actual webcam instances (not config objects)
+  useEffect(() => { wsSetCameras(webcamRefs.current) }, [wsSetCameras])
+
   const doScan = useCallback(async (blob) => {
-    setScanning(true)
-    scanningRef.current = true
-    setFlash(true)
-    setTimeout(() => setFlash(false), 450)
-    
-    try {
-      const callScan = async (source) => {
-        const { data } = await source
-        if (data?.status === 'unreadable') {
-          setResult([])
-          setBbox([])
-          return
-        }
-        const results = data?.results || []
-        if (results.length > 0) handleScanSuccess(results)
-      }
+  }, [])
 
-      if (blob) {
-        await callScan(scanPlate(blob))
-      } else {
-        let processed = false
-        for (const cam of cameras) {
-          const ref = webcamRefs.current[cam.id]
-          if (!ref) continue
-          const imageSrc = ref.getScreenshot()
-          if (!imageSrc) continue
-          try {
-            const imgBlob = await fetch(imageSrc).then((r) => r.blob())
-            await callScan(scanPlate(imgBlob))
-            processed = true
-            break
-          } catch {
-            // silently ignore errors per camera
-          }
-        }
-        if (!processed) {
-          setResult([])
-          setBbox([])
-        }
-      }
-    } catch {
-      // Silently ignore if no plate found in manual upload
-    } finally {
-      setScanning(false)
-      scanningRef.current = false
-    }
-  }, [cameras, handleScanSuccess])
-
-  // Auto-scan loop
+  // Auto-scan loop — use simple interval + REST POST for upload/manual fallback
   useEffect(() => {
     if (cameraOn && mode === 'camera') {
       intervalRef.current = setInterval(async () => {
-        if (scanningRef.current || cooldownRef.current) return
+        if (scanningRef.current) return
         doScan(null)
       }, SCAN_INTERVAL_MS)
     }
@@ -347,13 +316,12 @@ export default function EntryManagement() {
     setCameraOn(false)
     setResult([])
     setBbox([])
-    setCooldown(false)
+    setLatestBbox(null)
   }
 
   const handleUploadScan = useCallback(async () => {
     if (!uploadFile) return
-    doScan(uploadFile.file)
-  }, [uploadFile, doScan])
+  }, [uploadFile])
 
   const handleFileChange = (file) => {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
@@ -378,6 +346,21 @@ export default function EntryManagement() {
   const handlePassCreated = () => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => { })
   }
+
+  useEffect(() => {
+    getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => { })
+    getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => { })
+    getRuleConstraints().then((r) => {
+      const data = (r.data?.results ?? r.data ?? [])
+      setRules(data.filter(rule => rule.enabled))
+      setLoadingRules(false)
+    }).catch(() => setLoadingRules(false))
+    getVehicleTypeAccess().then((r) => {
+      const data = (r.data?.results ?? r.data ?? [])
+      setVehicleTypes(data.filter(v => v.enabled))
+      setLoadingVehicles(false)
+    }).catch(() => setLoadingVehicles(false))
+  }, [])
 
 
   return (
@@ -435,13 +418,13 @@ export default function EntryManagement() {
                       <div className="em-scan-frame">
                         <div className="em-scan-bracket">
                           <div className="em-scan-inner" />
-                          {!cooldown && <div className="em-scan-line" />}
+                          {!wsScanning && <div className="em-scan-line" />}
                         </div>
                       </div>
-                      {flash && <div className="em-flash" />}
-                      
+                      {flashState && <div className="em-flash" />}
+
                       {/* Bounding Box overlays */}
-                      {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
+                      {bbox && bbox.length > 0 && bbox.map((b, i) => (
                         <div
                           key={`bbox-cam-${i}`}
                           className="em-bounding-box"
@@ -453,7 +436,7 @@ export default function EntryManagement() {
                           }}
                         />
                       ))}
-                      
+
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
                       </div>
@@ -494,9 +477,9 @@ export default function EntryManagement() {
               uploadFile ? (
                 <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                  {flash && <div className="em-flash" />}
+                  {flashState && <div className="em-flash" />}
                   {/* Bounding Box overlays */}
-                  {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
+                  {bbox && bbox.length > 0 && bbox.map((b, i) => (
                     <div
                       key={`bbox-up-${i}`}
                       className="em-bounding-box"
@@ -536,12 +519,10 @@ export default function EntryManagement() {
               {mode === 'camera' ? (
                 cameraOn ? (
                   <>
-                    <div className={`em-autoscan-status ${cooldown ? 'cooldown' : ''}`}>
-                      {cooldown
-                        ? <><Clock size={13} /> Cooldown…</>
-                        : scanning
-                          ? <><div className="em-spinner" style={{ borderTopColor: '#065F46', borderColor: 'rgba(6,95,70,.2)' }} /> Scanning…</>
-                          : <><Zap size={13} /> Auto-scanning</>
+                    <div className="em-autoscan-status scanning">
+                      {wsScanning
+                        ? <><div className="em-spinner" style={{ borderTopColor: '#065F46', borderColor: 'rgba(6,95,70,.2)' }} /> Scanning…</>
+                        : <><Zap size={13} /> Live Scanning</>
                       }
                     </div>
                     <button id="btn-stop-camera" className="em-btn em-btn-danger" onClick={stopCamera}>
@@ -556,10 +537,10 @@ export default function EntryManagement() {
               ) : (
                 uploadFile ? (
                   <>
-                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan} disabled={scanning}>
-                      {scanning ? <><div className="em-spinner" /> Scanning…</> : <><ScanLine size={17} /> Scan Plate</>}
+                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan}>
+                      <ScanLine size={17} /> Scan Plate
                     </button>
-                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Choose a different image" disabled={scanning}>
+                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Choose a different image">
                       <RotateCcw size={15} />
                     </button>
                   </>

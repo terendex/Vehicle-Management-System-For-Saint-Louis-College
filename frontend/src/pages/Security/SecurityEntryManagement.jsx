@@ -23,6 +23,7 @@ const STATUS_META = {
   unknown: { label: 'Visitor / Unregistered', Icon: HelpCircle, cls: 'visitor', logCls: 'visitor' },
   no_pass: { label: 'No Visitor Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
   disabled: { label: 'Access Disabled', Icon: XCircle, cls: 'denied', logCls: 'denied' },
+  unreadable: { label: 'Unreadable Plate', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
 }
 
 function getMeta(status) {

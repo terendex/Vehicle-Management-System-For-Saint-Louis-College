@@ -20,7 +20,7 @@ class ScanView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        file = request.FILES.get('file')
+        file = request.FILES.get('image')
         if not file:
             return Response({'error': 'No image provided'}, status=400)
 
@@ -65,7 +65,7 @@ class ScanView(APIView):
                 status        = entry['status'],
                 denied_reason = '' if entry['allowed'] else entry['message'],
                 scanned_by    = request.user,
-                snapshot      = request.FILES.get('file'),
+                snapshot      = request.FILES.get('image'),
             )
 
             AuditLog.objects.create(
