@@ -2,12 +2,14 @@ import logging
 import base64
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from datetime import timedelta
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
 PLATE_COOLDOWN_SECONDS = 3
 FRAME_SKIP = 0
+BBOX_SMOOTH_ALPHA = 0.4
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
@@ -26,6 +28,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             return
         if not hasattr(self, "_recent"):
             self._recent = {}
+        self._tracked: dict[str, dict] = {}
         await self.accept()
         await self.send_json({"type": "connected", "message": "Stream ready."})
 
@@ -70,6 +73,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 })
                 continue
 
+            bbox = self._smooth_bbox(plate_number, bbox)
+            self._prune_tracked()
+
             key = f"{plate_number}:{now_ts.strftime('%H:%M')}"
             last_seen = self._recent.get(key)
             in_cooldown = last_seen and (now_ts - last_seen).total_seconds() < PLATE_COOLDOWN_SECONDS
@@ -100,6 +106,36 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         )(image_bytes, results)
 
         await self.send_json({"type": "result", "results": results})
+
+    def _smooth_bbox(self, plate_number: str, raw_bbox: dict):
+        prev = self._tracked.get(plate_number)
+        if not prev:
+            self._tracked[plate_number] = {
+                "bbox": raw_bbox,
+                "last_update": timezone.now(),
+            }
+            return raw_bbox
+
+        dt = (timezone.now() - prev["last_update"]).total_seconds()
+        if dt <= 0:
+            dt = 0.016
+
+        alpha = 1.0 - BBOX_SMOOTH_ALPHA ** dt
+
+        smooth = {}
+        for k in ("x", "y", "width", "height"):
+            prev[k] = prev[k] + alpha * (raw_bbox[k] - prev[k])
+            smooth[k] = prev[k]
+
+        prev["last_update"] = timezone.now()
+        self._tracked[plate_number]["bbox"] = prev
+        return smooth
+
+    def _prune_tracked(self):
+        cutoff = timezone.now() - timedelta(seconds=10)
+        stale = [k for k, v in self._tracked.items() if v["last_update"] < cutoff]
+        for k in stale:
+            del self._tracked[k]
 
     def _check_vehicle(self, plate_number, bbox):
         from rest_framework.authtoken.models import Token

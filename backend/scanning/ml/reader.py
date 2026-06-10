@@ -25,6 +25,27 @@ from .validator import is_valid_ph_plate, normalize_plate
 
 log = logging.getLogger(__name__)
 
+_TO_DIGIT = str.maketrans({
+    'B': '8', 'O': '0', 'I': '1', 'L': '1', 'l': '1',
+    'Z': '2', 'S': '5', 'G': '6', 'Q': '9', 'g': '9', 'q': '9',
+})
+
+_TO_LETTER = str.maketrans({
+    '8': 'B', '0': 'O', '1': 'I', '2': 'Z', '5': 'S',
+    '6': 'G', '9': 'Q',
+})
+
+
+def _correct_plate_chars(text: str) -> str:
+    to_digit = text.translate(_TO_DIGIT)
+    to_letter = text.translate(_TO_LETTER)
+    if is_valid_ph_plate(to_digit):
+        return to_digit
+    if is_valid_ph_plate(to_letter):
+        return to_letter
+    return text
+
+
 # ── Lazy singletons ─────────────────────────────────────────────────
 
 _ocr_reader: easyocr.Reader | None = None
@@ -205,9 +226,9 @@ def _detect_plates(img: np.ndarray, conf: float = 0.10):
 def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
     """
     Run EasyOCR on a cropped plate image.
+    Generates multiple sub-crops automatically and ranks results.
     Returns (normalized_plate, confidence) or (None, None).
     """
-    # Upscale small crops so EasyOCR can read them reliably
     min_width = 200
     h_crop, w_crop = crop.shape[:2]
     if w_crop < min_width:
@@ -215,12 +236,12 @@ def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
         crop = cv2.resize(crop, (min_width, int(h_crop * scale)), interpolation=cv2.INTER_CUBIC)
         log.info("[OCR-CROP] Upscaled crop to %dx%d", crop.shape[1], crop.shape[0])
 
-    # Try to deskew the plate for better OCR accuracy
     deskewed = _deskew_plate(crop)
-
     ocr = _get_ocr()
 
     def _run_ocr(img, label):
+        if img is None or getattr(img, "size", 0) == 0:
+            return
         raw = ocr.readtext(img, text_threshold=0.1, link_threshold=0.1, low_text=0.1)
         log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
         for item in raw:
@@ -229,20 +250,49 @@ def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
             else:
                 text, confidence = str(item[1]), 0.0
             text_clean = normalize_plate(text)
-            valid = is_valid_ph_plate(text)
-            log.info("[OCR-CROP]   %s: text=%r conf=%.3f valid_ph=%s", label, text, float(confidence), valid)
-            yield text_clean, float(confidence), valid
+            corrected = _correct_plate_chars(text_clean)
+            valid = is_valid_ph_plate(corrected)
+            conf = float(confidence)
+            if not valid:
+                conf *= 0.9
+            log.info("[OCR-CROP]   %s: '%s' -> '%s' conf=%.3f valid=%s", label, text_clean, corrected, conf, valid)
+            yield corrected, conf, valid
 
-    candidates = []
-    fallback_candidates = []
+    candidates: list[tuple[float, str]] = []
+    fallback: list[tuple[float, str]] = []
 
-    # Try multiple image variants in priority order
-    variants = [
-        (deskewed, "deskewed"),
-        (crop, "raw"),
-        (_preprocess_for_ocr(deskewed), "deskewed_sharp"),
-        (_preprocess_for_ocr(crop), "sharp"),
+    img_a = deskewed
+    img_b = _preprocess_for_ocr(deskewed)
+
+    h_f, w_f = img_a.shape[:2]
+
+    variants: list[tuple[np.ndarray, str]] = [
+        (img_a,                         "deskewed"),
+        (img_b,                         "deskewed_sharp"),
+        (img_a[::2, ::2],               "deskewed_half"),
+        (img_b[::2, ::2],               "deskewed_sharp_half"),
     ]
+
+    if h_f > 40:
+        half = h_f // 2
+        variants.extend([
+            (img_a[:half],               "deskewed_top"),
+            (img_a[half:],              "deskewed_bottom"),
+            (img_b[:half],              "deskewed_sharp_top"),
+            (img_b[half:],              "deskewed_sharp_bottom"),
+        ])
+
+    if w_f > 60:
+        third = w_f // 3
+        two_thirds = 2 * third
+        variants.extend([
+            (img_a[:, :third],          "deskewed_left"),
+            (img_a[:, third:two_thirds],"deskewed_mid"),
+            (img_a[:, two_thirds:],     "deskewed_right"),
+            (img_b[:, :third],          "deskewed_sharp_left"),
+            (img_b[:, third:two_thirds],"deskewed_sharp_mid"),
+            (img_b[:, two_thirds:],     "deskewed_sharp_right"),
+        ])
 
     for img_variant, label in variants:
         for text_clean, confidence, valid in _run_ocr(img_variant, label):
@@ -250,17 +300,17 @@ def _ocr_crop(crop: np.ndarray) -> tuple[str, float] | tuple[None, None]:
                 if valid:
                     candidates.append((confidence, text_clean))
                 elif len(text_clean) >= 3:
-                    fallback_candidates.append((confidence, text_clean))
+                    fallback.append((confidence, text_clean))
 
     if candidates:
         candidates.sort(reverse=True)
-        log.info("[OCR-CROP] Best valid candidate: %s (conf=%.3f)", candidates[0][1], candidates[0][0])
+        log.info("[OCR-CROP] Best valid: %s (conf=%.3f)", candidates[0][1], candidates[0][0])
         return candidates[0][1], candidates[0][0]
 
-    if fallback_candidates:
-        fallback_candidates.sort(reverse=True)
-        log.info("[OCR-CROP] Best fallback candidate: %s (conf=%.3f)", fallback_candidates[0][1], fallback_candidates[0][0])
-        return fallback_candidates[0][1], fallback_candidates[0][0]
+    if fallback:
+        fallback.sort(reverse=True)
+        log.info("[OCR-CROP] Best fallback: %s (conf=%.3f)", fallback[0][1], fallback[0][0])
+        return fallback[0][1], fallback[0][0]
 
     log.info("[OCR-CROP] No plate candidates found")
     return None, None
