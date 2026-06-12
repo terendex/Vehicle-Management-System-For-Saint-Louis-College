@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Webcam from 'react-webcam'
 import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
@@ -8,13 +8,12 @@ import {
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
-import { scanPlate, getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
+import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import './SecurityEntryManagement.css'
 
-const SCAN_INTERVAL_MS = 2000
-const COOLDOWN_MS = 5000
+const TOKEN_KEY = 'security_scan_token'
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry', Icon: CheckCircle, cls: 'authorized', logCls: 'authorized' },
@@ -113,7 +112,7 @@ function ResultCard({ result, offices, onPassCreated }) {
             <p className="em-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
           </div>
         </div>
-        <p className="em-idle-hint">Point the camera at a license plate and press Scan Plate.</p>
+        <p className="em-idle-hint">Point the camera at a license plate to start live scanning.</p>
       </div>
     )
   }
@@ -197,15 +196,12 @@ function ResultCard({ result, offices, onPassCreated }) {
 }
 
 export default function SecurityEntryManagement() {
+  const [authToken, setAuthToken] = useState(null)
   const [mode, setMode] = useState('camera')
   const [cameraOn, setCameraOn] = useState(false)
   const [uploadFile, setUploadFile] = useState(null)
   const [dragOver, setDragOver] = useState(false)
-  const [scanning, setScanning] = useState(false)
   const [cooldown, setCooldown] = useState(false)
-  const [flash, setFlash] = useState(false)
-  const [result, setResult] = useState(null)
-  const [bbox, setBbox] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
   const [rules, setRules] = useState([])
@@ -218,26 +214,26 @@ export default function SecurityEntryManagement() {
 
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
-  const intervalRef = useRef(null)
-  const scanningRef = useRef(false)
-  const cooldownRef = useRef(false)
+  const canvasRef = useRef(null)
 
-  const addCamera = () => {
-    if (cameras.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
-    const id = Date.now()
-    setCameras(prev => [...prev, { id, name: `Angle ${prev.length + 1}` }])
-  }
+  const {
+    scanning,
+    results: wsResults,
+    flash,
+    activeTracks,
+    videoRef,
+  } = useScanStream(authToken, cameraOn)
 
-  const removeCamera = (id) => {
-    setCameras(prev => {
-       const next = prev.filter(c => c.id !== id)
-       if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
-       return next
-    })
-  }
-
-  useEffect(() => { scanningRef.current = scanning }, [scanning])
-  useEffect(() => { cooldownRef.current = cooldown }, [cooldown])
+  useEffect(() => {
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (!token) {
+      const inputToken = prompt('Enter scan token:')
+      if (inputToken) {
+        setAuthToken(inputToken)
+        localStorage.setItem(TOKEN_KEY, inputToken)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => { })
@@ -254,103 +250,44 @@ export default function SecurityEntryManagement() {
     }).catch(() => setLoadingVehicles(false))
   }, [])
 
-  const handleScanSuccess = useCallback((results) => {
-    if (!results || results.length === 0) return
-    setResult(results)
-    setBbox(results.map(r => r.bbox).filter(Boolean))
-    setLogs((prev) => {
-      const newLogs = results.map(r => ({
-        id: Date.now() + Math.random(),
-        plate_number: r.plate_number,
-        status: r.status,
-        scanned_at: new Date().toISOString(),
-      }))
-      return [...newLogs, ...prev].slice(0, 20)
-    })
-    setCooldown(true)
-    cooldownRef.current = true
-    setTimeout(() => {
-      setCooldown(false)
-      cooldownRef.current = false
-    }, COOLDOWN_MS)
-  }, [])
-
-  const doScan = useCallback(async (blob) => {
-    setScanning(true)
-    scanningRef.current = true
-    setFlash(true)
-    setTimeout(() => setFlash(false), 450)
-
-    try {
-      const callScan = async (source) => {
-        const { data } = await source
-        if (data?.status === 'unreadable') {
-          setResult([])
-          setBbox([])
-          return
-        }
-        const results = data?.results || []
-        if (results.length > 0) handleScanSuccess(results)
-      }
-
-      if (blob) {
-        await callScan(scanPlate(blob))
-      } else {
-        let processed = false
-        for (const cam of cameras) {
-          const ref = webcamRefs.current[cam.id]
-          if (!ref) continue
-          const imageSrc = ref.getScreenshot()
-          if (!imageSrc) continue
-          try {
-            const imgBlob = await fetch(imageSrc).then((r) => r.blob())
-            await callScan(scanPlate(imgBlob))
-            processed = true
-            break
-          } catch {
-            // silently ignore errors per camera
-          }
-        }
-        if (!processed) {
-          setResult([])
-          setBbox([])
-        }
-      }
-    } catch {
-      // Silently ignore if no plate found
-    } finally {
-      setScanning(false)
-      scanningRef.current = false
-    }
-  }, [cameras, handleScanSuccess])
-
   useEffect(() => {
-    if (cameraOn && mode === 'camera') {
-      intervalRef.current = setInterval(async () => {
-        if (scanningRef.current || cooldownRef.current) return
-        doScan(null)
-      }, SCAN_INTERVAL_MS)
+    if (wsResults && wsResults.length > 0) {
+      setCooldown(true)
+      setTimeout(() => setCooldown(false), 5000)
+      setLogs((prev) => {
+        const newLogs = wsResults.map(r => ({
+          id: Date.now() + Math.random(),
+          plate_number: r.plate_number,
+          status: r.status,
+          scanned_at: new Date().toISOString(),
+        }))
+        return [...newLogs, ...prev].slice(0, 20)
+      })
     }
-    return () => { clearInterval(intervalRef.current); intervalRef.current = null }
-  }, [cameraOn, mode, doScan])
+  }, [wsResults])
+
+  const addCamera = () => {
+    if (cameras.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
+    const id = Date.now()
+    setCameras(prev => [...prev, { id, name: `Angle ${prev.length + 1}` }])
+  }
+
+  const removeCamera = (id) => {
+    setCameras(prev => {
+       const next = prev.filter(c => c.id !== id)
+       if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
+       return next
+    })
+  }
 
   const stopCamera = () => {
     setCameraOn(false)
-    setResult([])
-    setBbox([])
     setCooldown(false)
   }
-
-  const handleUploadScan = useCallback(async () => {
-    if (!uploadFile) return
-    doScan(uploadFile.file)
-  }, [uploadFile, doScan])
 
   const handleFileChange = (file) => {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
     setUploadFile({ file, url: URL.createObjectURL(file) })
-    setResult([])
-    setBbox([])
   }
 
   const handleDrop = (e) => {
@@ -362,8 +299,29 @@ export default function SecurityEntryManagement() {
   const resetUpload = () => {
     if (uploadFile?.url) URL.revokeObjectURL(uploadFile.url)
     setUploadFile(null)
-    setResult([])
-    setBbox([])
+  }
+
+  const handleUploadScan = async () => {
+    if (!uploadFile) return
+    try {
+      const res = await scanPlate(uploadFile.file)
+      const data = res.data?.results ?? res.data ?? []
+      if (data.length) {
+        setCooldown(true)
+        setTimeout(() => setCooldown(false), 5000)
+        setLogs((prev) => {
+          const newLogs = data.map(r => ({
+            id: Date.now() + Math.random(),
+            plate_number: r.plate_number,
+            status: r.status,
+            scanned_at: new Date().toISOString(),
+          }))
+          return [...newLogs, ...prev].slice(0, 20)
+        })
+      }
+    } catch {
+      toast.error('Upload scan failed')
+    }
   }
 
   const handlePassCreated = () => {
@@ -398,8 +356,8 @@ export default function SecurityEntryManagement() {
                 {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
               </span>
               <div className="em-mode-toggle">
-                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult([]); setBbox([]) }}>Camera</button>
-                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult([]); setBbox([]) }}>Upload</button>
+                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setCooldown(false) }}>Camera</button>
+                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); resetUpload() }}>Upload</button>
               </div>
             </div>
 
@@ -413,7 +371,10 @@ export default function SecurityEntryManagement() {
                       {cameras.map(cam => (
                         <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
                           <Webcam
-                            ref={(el) => webcamRefs.current[cam.id] = el}
+                            ref={(el) => {
+                              webcamRefs.current[cam.id] = el
+                              if (cam.id === activeCamId) videoRef.current = el
+                            }}
                             audio={false}
                             screenshotFormat="image/jpeg"
                             screenshotQuality={0.95}
@@ -430,20 +391,13 @@ export default function SecurityEntryManagement() {
                       </div>
                       {flash && <div className="em-flash" />}
 
-                      {/* Bounding Box overlays */}
-                      {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
-                        <div
-                          key={`bbox-cam-${i}`}
-                          className="em-bounding-box"
-                          style={{
-                            left: `${b.x * 100}%`,
-                            top: `${b.y * 100}%`,
-                            width: `${b.width * 100}%`,
-                            height: `${b.height * 100}%`,
-                          }}
+                      {/* Bounding Box overlays from live stream */}
+                      {activeTracks && activeTracks.length > 0 && (
+                        <canvas
+                          ref={canvasRef}
+                          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
                         />
-                      ))}
-
+                      )}
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
                       </div>
@@ -485,19 +439,6 @@ export default function SecurityEntryManagement() {
                 <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   {flash && <div className="em-flash" />}
-                  {/* Bounding Box overlays */}
-                  {bbox && bbox.length > 0 && !scanning && bbox.map((b, i) => (
-                    <div
-                      key={`bbox-up-${i}`}
-                      className="em-bounding-box"
-                      style={{
-                        left: `${b.x * 100}%`,
-                        top: `${b.y * 100}%`,
-                        width: `${b.width * 100}%`,
-                        height: `${b.height * 100}%`,
-                      }}
-                    />
-                  ))}
                 </div>
               ) : (
                 <div
@@ -534,6 +475,9 @@ export default function SecurityEntryManagement() {
                           : <><Zap size={13} /> Auto-scanning</>
                       }
                     </div>
+                    <button className={`em-btn ${isRecording ? 'em-btn-danger' : 'em-btn-secondary'}`} onClick={isRecording ? stopRecording : startRecording}>
+                      <Video size={15} /> {isRecording ? 'Stop Recording' : 'Record Video'}
+                    </button>
                     <button id="btn-stop-camera" className="em-btn em-btn-danger" onClick={stopCamera}>
                       <CameraOff size={15} /> Stop
                     </button>
@@ -546,10 +490,13 @@ export default function SecurityEntryManagement() {
               ) : (
                 uploadFile ? (
                   <>
-                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan} disabled={scanning}>
-                      {scanning ? <><div className="em-spinner" /> Scanning…</> : <><ScanLine size={17} /> Scan Plate</>}
+                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan}>
+                      <ScanLine size={17} /> Scan Plate
                     </button>
-                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Choose a different image" disabled={scanning}>
+                    <button id="btn-upload-choose" className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
+                      <Upload size={15} /> Choose Different Image
+                    </button>
+                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Reset">
                       <RotateCcw size={15} />
                     </button>
                   </>
@@ -564,9 +511,9 @@ export default function SecurityEntryManagement() {
 
           {/* Right panel */}
             <div className="em-right">
-              {(result && result.length > 0) ? (
+              {(wsResults && wsResults.length > 0) ? (
                 <div className="em-results-stack">
-                  {result.map((r, idx) => (
+                  {wsResults.map((r, idx) => (
                     <ResultCard key={`result-${idx}-${r.plate_number}`} result={r} offices={offices} onPassCreated={handlePassCreated} />
                   ))}
                 </div>
@@ -658,5 +605,3 @@ export default function SecurityEntryManagement() {
     </SecurityLayout>
   )
 }
-
-

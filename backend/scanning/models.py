@@ -88,3 +88,22 @@ class MLTrainingSample(models.Model):
 
     def __str__(self):
         return f"[{self.status}] {self.plate_number or '?'} ({self.source})"
+
+
+class PlateRecognitionRecord(models.Model):
+    track_id = models.IntegerField(db_index=True)
+    plate_text = models.CharField(max_length=20, db_index=True)
+    detection_confidence = models.FloatField()
+    ocr_confidence = models.FloatField()
+    timestamp = models.DateTimeField(db_index=True)
+    snapshot_path = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['plate_text', '-timestamp'], name='plate_text_timestamp_idx'),
+            models.Index(fields=['track_id'], name='track_id_idx'),
+        ]
+
+    def __str__(self):
+        return f"Track {self.track_id}: {self.plate_text} ({self.timestamp})"

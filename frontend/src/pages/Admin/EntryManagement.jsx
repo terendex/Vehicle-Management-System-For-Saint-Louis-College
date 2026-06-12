@@ -8,7 +8,7 @@ import {
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
-import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
+import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import './EntryManagement.css'
@@ -211,7 +211,6 @@ export default function EntryManagement() {
   const [dragOver, setDragOver] = useState(false)
   const [result, setResult] = useState(null)
   const [bbox, setBbox] = useState(null)
-  const [latestBbox, setLatestBbox] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
   const [rules, setRules] = useState([])
@@ -235,9 +234,8 @@ export default function EntryManagement() {
     return ''
   }, [])
 
-  const { scanning: wsScanning, results: wsResults, flash: flashState } = useScanStream(
+  const { scanning: wsScanning, results: wsResults, flash: flashState, videoRef } = useScanStream(
     getToken(),
-    cameraOn && mode === 'camera',
     cameraOn && mode === 'camera',
   )
 
@@ -261,7 +259,6 @@ export default function EntryManagement() {
     const newBboxes = results.map((r) => r.bbox).filter(Boolean)
     setResult(results)
     setBbox(newBboxes)
-    if (newBboxes.length > 0) setLatestBbox(newBboxes[0])
 
     setLogs((prev) => {
       const now = Date.now()
@@ -292,7 +289,31 @@ export default function EntryManagement() {
   useEffect(() => { scanningRef.current = wsScanning }, [wsScanning])
 
   const doScan = useCallback(async (blob) => {
-  }, [])
+    if (scanningRef.current || !cameraOn || mode !== 'camera') return
+    scanningRef.current = true
+    try {
+      const imageBlob = blob || (await new Promise((resolve) => {
+        const capture = webcamRefs.current[activeCamId]?.getScreenshot()
+        if (capture) resolve(capture)
+        else resolve(null)
+      }))
+      if (!imageBlob) {
+        toast.error('Failed to capture image')
+        return
+      }
+      const response = await fetch(imageBlob)
+      const file = await response.blob()
+      const res = await scanPlate(file)
+      const data = res.data?.results ?? res.data ?? []
+      if (data.length) {
+        handleScanSuccess(data)
+      }
+    } catch {
+      toast.error('Scan failed')
+    } finally {
+      scanningRef.current = false
+    }
+  }, [cameraOn, mode, activeCamId, handleScanSuccess])
 
   // Auto-scan loop — use simple interval + REST POST for upload/manual fallback
   useEffect(() => {
@@ -307,20 +328,28 @@ export default function EntryManagement() {
 
   const stopCamera = () => {
     setCameraOn(false)
-    setResult([])
-    setBbox([])
-    setLatestBbox(null)
+    setResult(null)
+    setBbox(null)
   }
 
   const handleUploadScan = useCallback(async () => {
     if (!uploadFile) return
-  }, [uploadFile])
+    try {
+      const res = await scanPlate(uploadFile.file)
+      const data = res.data?.results ?? res.data ?? []
+      if (data.length) {
+        handleScanSuccess(data)
+      }
+    } catch {
+      toast.error('Upload scan failed')
+    }
+  }, [uploadFile, handleScanSuccess])
 
   const handleFileChange = (file) => {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
     setUploadFile({ file, url: URL.createObjectURL(file) })
-    setResult([])
-    setBbox([])
+    setResult(null)
+    setBbox(null)
   }
 
   const handleDrop = (e) => {
@@ -332,8 +361,8 @@ export default function EntryManagement() {
   const resetUpload = () => {
     if (uploadFile?.url) URL.revokeObjectURL(uploadFile.url)
     setUploadFile(null)
-    setResult([])
-    setBbox([])
+    setResult(null)
+    setBbox(null)
   }
 
   const handlePassCreated = () => {
@@ -384,8 +413,8 @@ export default function EntryManagement() {
                 {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
               </span>
               <div className="em-mode-toggle">
-                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult([]); setBbox([]) }}>Camera</button>
-                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult([]); setBbox([]) }}>Upload</button>
+                <button className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`} onClick={() => { setMode('camera'); setResult(null); setBbox(null) }}>Camera</button>
+                <button className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`} onClick={() => { setMode('upload'); stopCamera(); setResult(null); setBbox(null) }}>Upload</button>
               </div>
             </div>
 
@@ -399,7 +428,10 @@ export default function EntryManagement() {
                       {cameras.map(cam => (
                         <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
                           <Webcam
-                            ref={(el) => webcamRefs.current[cam.id] = el}
+                            ref={(el) => {
+                              webcamRefs.current[cam.id] = el
+                              if (cam.id === activeCamId) videoRef.current = el
+                            }}
                             audio={false}
                             screenshotFormat="image/jpeg"
                             screenshotQuality={0.95}

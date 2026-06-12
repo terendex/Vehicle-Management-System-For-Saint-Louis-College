@@ -7,7 +7,7 @@ const WS_BASE =
     "ws"
   );
 
-export function useScanStream(token, cameraOn, autoScan) {
+export function useScanStream(token, cameraOn) {
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState([]);
   const [flash, setFlash] = useState(false);
@@ -16,7 +16,6 @@ export function useScanStream(token, cameraOn, autoScan) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
-  const processingRef = useRef(false);
   const frameCounterRef = useRef(0);
 
   const drawOverlays = useCallback((tracks) => {
@@ -58,40 +57,11 @@ export function useScanStream(token, cameraOn, autoScan) {
     });
   }, []);
 
-  const sendVideoFrame = useCallback(() => {
-    const video = videoRef.current;
-    const ws = wsRef.current;
-
-    if (!video || !ws || ws.readyState !== WebSocket.OPEN) {
-      animationRef.current = requestAnimationFrame(sendVideoFrame);
-      return;
-    }
-
-    frameCounterRef.current++;
-
-    if (video.readyState < 2) {
-      animationRef.current = requestAnimationFrame(sendVideoFrame);
-      return;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-    if (base64) {
-      ws.send(JSON.stringify({ type: "frame", image_b64: base64 }));
-    }
-
-    animationRef.current = requestAnimationFrame(sendVideoFrame);
-  }, []);
-
   useEffect(() => {
     if (!cameraOn || !token) return;
 
-    setScanning(false);
+    let isCancelled = false;
+    setScanning(true);
     setResults([]);
 
     const socket = new WebSocket(
@@ -121,7 +91,7 @@ export function useScanStream(token, cameraOn, autoScan) {
               : t
           ));
         }
-        if (msg.type === "result" && msg.results) {
+        if (msg.type === "result" && msg.results && !isCancelled) {
           setFlash(true);
           setTimeout(() => setFlash(false), 450);
           setResults(msg.results);
@@ -144,36 +114,58 @@ export function useScanStream(token, cameraOn, autoScan) {
       console.log("[WS] Disconnected");
     };
 
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+    const sendFrame = () => {
+      if (isCancelled) return;
+      
+      const video = videoRef.current;
+      const ws = wsRef.current;
+
+      if (!video || !ws || ws.readyState !== WebSocket.OPEN) {
+        animationRef.current = requestAnimationFrame(sendFrame);
+        return;
       }
+
+      frameCounterRef.current++;
+
+      if (video.readyState < 2) {
+        animationRef.current = requestAnimationFrame(sendFrame);
+        return;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+      if (base64 && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "frame", image_b64: base64 }));
+      }
+
+      animationRef.current = requestAnimationFrame(sendFrame);
+    };
+
+    if (cameraOn) {
+      sendFrame();
+    }
+
+    return () => {
+      isCancelled = true;
       socket.close();
       wsRef.current = null;
-    };
-  }, [cameraOn, token, drawOverlays]);
-
-  useEffect(() => {
-    if (!cameraOn || !wsRef.current) return;
-
-    processingRef.current = true;
-    sendVideoFrame();
-
-    return () => {
-      processingRef.current = false;
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [cameraOn, sendVideoFrame]);
+}, [cameraOn, token, drawOverlays]);
 
   return {
     scanning,
     results,
     flash,
     activeTracks,
-    setResults,
     videoRef,
     canvasRef,
-  };
+  }
 }

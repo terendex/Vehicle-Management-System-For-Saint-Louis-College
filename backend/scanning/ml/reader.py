@@ -182,7 +182,7 @@ def _deskew_plate(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
 
 # ── YOLO detection ──────────────────────────────────────────────────
 
-def _detect_plates(img: np.ndarray, conf: float = 0.25):
+def _detect_plates(img: np.ndarray, conf: float = 0.5):
     """
     Run the YOLO model on a BGR image.
 
@@ -214,7 +214,7 @@ def _detect_plates(img: np.ndarray, conf: float = 0.25):
             box_h = y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
 
-            if score < 0.30 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
+            if score < 0.50 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
                 log.info(
                     "[DETECT] Dropped box: conf=%.3f aspect=%.2f", score, aspect_ratio,
                 )
