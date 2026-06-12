@@ -79,6 +79,8 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 | Django REST Framework | REST API |
 | djangorestframework-simplejwt | JWT authentication |
 | django-cors-headers | Cross-origin requests from React |
+| django-channels | WebSocket support |
+| Daphne | ASGI server for WebSockets |
 | psycopg2-binary | PostgreSQL connector |
 | Pillow | Image handling |
 | EasyOCR | Plate text extraction |
@@ -106,8 +108,8 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 ### Infrastructure
 | Tool | Purpose |
 |---|---|
-| PostgreSQL | Main database (installed locally) |
-| Redis | Caching and task queue (installed locally) |
+| PostgreSQL | Main database (installed locally, must be running as service) |
+| Redis | Caching and task queue (Memurai on Windows, installed locally) |
 
 ---
 
@@ -197,10 +199,10 @@ Vehicle-Management-System-For-Saint-Louis-College/
 | Node.js | 20+ | https://nodejs.org |
 | Python | 3.11 | https://python.org/downloads/release/python-3119 |
 | PostgreSQL | 16 | https://www.postgresql.org/download |
-| Redis | Latest | https://redis.io/downloads (Windows: use [Memurai](https://www.memurai.com) or WSL) |
+| Redis | Latest | [Memurai](https://www.memurai.com) (Windows) or https://redis.io/downloads |
 
 > ⚠️ **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
-> ⚠️ **Redis is required** for the ML feedback loop (Celery task queue). On Windows, use **Memurai** or run Redis via **WSL**.
+> ⚠️ **PostgreSQL must be running** before starting the backend. Ensure the PostgreSQL service is started via Services or `pg_ctl`.
 
 ### VS Code Extensions
 Install these when VS Code prompts "Install recommended extensions?" or search manually (`Ctrl+Shift+X`):
@@ -239,7 +241,7 @@ Open both `.env` files and fill in your values.
 
 ### 3. Set Up PostgreSQL
 
-Make sure PostgreSQL is running locally, then create the database:
+Ensure PostgreSQL service is running (check Services app → PostgreSQL → Running), then create the database:
 
 ```bash
 # Open psql as the postgres superuser
@@ -254,13 +256,15 @@ Update `backend/.env` with your local PostgreSQL credentials (`DB_USER`, `DB_PAS
 
 ### 4. Set Up Redis
 
-Start Redis locally. On Windows, use **Memurai** (a native Redis-compatible server) or run Redis via **WSL**:
+Start Redis locally. On Windows, **Memurai** (a native Redis-compatible server) is recommended and starts automatically as a service after installation:
 
 ```bash
 # WSL / Linux / Mac
 redis-server
 
-# Or if using Memurai on Windows, it starts automatically as a service
+# Windows with Memurai — ensure the service is running
+# Check: Services app → Memurai → Running
+# If not running: Services app → Memurai → Start
 ```
 
 ### 5. Set Up the Backend
@@ -339,15 +343,24 @@ npm install
 
 ## Running the Project
 
+> **Prerequisites:** Ensure PostgreSQL and Redis (Memurai) services are running before starting the backend.
+
 Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
 
-### Terminal 1 — Backend
+### Terminal 1 — Backend (Django + Daphne)
+
+Daphne is used as the ASGI server to support WebSocket connections for real-time scanning:
 
 ```bash
 cd backend
 venv\Scripts\activate
-python manage.py runserver
+daphne -b 127.0.0.1 -p 8000 config.asgi:application
 ```
+
+> **Note:** For development without WebSocket features, you can use Django's built-in server:
+> ```bash
+> python manage.py runserver
+> ```
 
 | URL | Description |
 |---|---|
@@ -374,7 +387,7 @@ venv\Scripts\activate
 python -m celery -A config worker -l info --pool=solo
 ```
 
-> On Windows, `--pool=solo` is required to avoid `billiard` semaphore / fork errors.
+> Redis (Memurai) must be running before starting Celery. On Windows, `--pool=solo` is required to avoid `billiard` semaphore / fork errors.
 
 ---
 
