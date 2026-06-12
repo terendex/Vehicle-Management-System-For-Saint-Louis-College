@@ -235,7 +235,7 @@ export default function EntryManagement() {
     return ''
   }, [])
 
-  const { scanning: wsScanning, results: wsResults, bbox: bboxState, flash: flashState, setCameras: wsSetCameras, setActiveCamId: wsSetActiveCamId } = useScanStream(
+  const { scanning: wsScanning, results: wsResults, flash: flashState } = useScanStream(
     getToken(),
     cameraOn && mode === 'camera',
     cameraOn && mode === 'camera',
@@ -283,10 +283,6 @@ export default function EntryManagement() {
     })
   }, [])
 
-  // Keep the stream hook in sync with local camera state
-  useEffect(() => { wsSetCameras(cameras) }, [cameras, wsSetCameras])
-  useEffect(() => { wsSetActiveCamId(activeCamId) }, [activeCamId, wsSetActiveCamId])
-
   // When the stream returns results, update the UI
   useEffect(() => {
     if (wsResults.length > 0) handleScanSuccess(wsResults)
@@ -294,9 +290,6 @@ export default function EntryManagement() {
 
   // Re-open WS if token ever changes
   useEffect(() => { scanningRef.current = wsScanning }, [wsScanning])
-
-  // Pass the actual webcam instances (not config objects)
-  useEffect(() => { wsSetCameras(webcamRefs.current) }, [wsSetCameras])
 
   const doScan = useCallback(async (blob) => {
   }, [])

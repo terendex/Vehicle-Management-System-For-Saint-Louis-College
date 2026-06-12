@@ -10,29 +10,89 @@ const WS_BASE =
 export function useScanStream(token, cameraOn, autoScan) {
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState([]);
-  const [bbox, setBbox] = useState([]);
   const [flash, setFlash] = useState(false);
+  const [activeTracks, setActiveTracks] = useState([]);
   const wsRef = useRef(null);
-  const camerasRef = useRef(null);
-  const activeCamIdRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationRef = useRef(null);
   const processingRef = useRef(false);
-  const INTERVAL_MS = 500;
+  const frameCounterRef = useRef(0);
 
-  const getLatestPlate = useCallback((cam) => {
-    if (!cam) return null;
-    try {
-      return cam.getScreenshot();
-    } catch {
-      return null;
+  const drawOverlays = useCallback((tracks) => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video || !tracks?.length) return;
+
+    const ctx = canvas.getContext("2d");
+    const vw = video.videoWidth || video.offsetWidth;
+    const vh = video.videoHeight || video.offsetHeight;
+
+    canvas.width = vw;
+    canvas.height = vh;
+
+    ctx.clearRect(0, 0, vw, vh);
+    ctx.font = "16px 'Courier New', monospace";
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+
+    tracks.forEach((track) => {
+      const [x, y, w, h] = track.bbox;
+      const px = x * vw;
+      const py = y * vh;
+      const pw = w * vw;
+      const ph = h * vh;
+
+      ctx.strokeStyle = "#00ff88";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(px, py, pw, ph);
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+      const text = track.plate_text || `Track #${track.track_id}`;
+      const textWidth = ctx.measureText(text).width + 12;
+      const textHeight = 24;
+      ctx.fillRect(px, py - textHeight, textWidth, textHeight);
+
+      ctx.fillStyle = "#00ff88";
+      ctx.fillText(text, px + 6, py - textHeight + 4);
+    });
+  }, []);
+
+  const sendVideoFrame = useCallback(() => {
+    const video = videoRef.current;
+    const ws = wsRef.current;
+
+    if (!video || !ws || ws.readyState !== WebSocket.OPEN) {
+      animationRef.current = requestAnimationFrame(sendVideoFrame);
+      return;
     }
+
+    frameCounterRef.current++;
+
+    if (video.readyState < 2) {
+      animationRef.current = requestAnimationFrame(sendVideoFrame);
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+    if (base64) {
+      ws.send(JSON.stringify({ type: "frame", image_b64: base64 }));
+    }
+
+    animationRef.current = requestAnimationFrame(sendVideoFrame);
   }, []);
 
   useEffect(() => {
     if (!cameraOn || !token) return;
 
-    setScanning(true);
+    setScanning(false);
     setResults([]);
-    setBbox([]);
 
     const socket = new WebSocket(
       `${WS_BASE}/ws/scan/live/?token=${token}`
@@ -40,7 +100,6 @@ export function useScanStream(token, cameraOn, autoScan) {
     wsRef.current = socket;
 
     socket.onopen = () => {
-      setScanning(false);
       console.log("[WS] Connected");
     };
 
@@ -51,27 +110,30 @@ export function useScanStream(token, cameraOn, autoScan) {
           toast.error(msg.message);
           return;
         }
-        if (msg.type !== "result") return;
-
-        if (!msg.results || msg.results.length === 0) {
-          setBbox([]);
-          setResults([]);
-          return;
+        if (msg.type === "tracks" && msg.tracks) {
+          setActiveTracks(msg.tracks);
+          drawOverlays(msg.tracks);
         }
-
-        setResults(msg.results);
-        const boxes = msg.results.map((r) => r.bbox).filter(Boolean);
-        setBbox(boxes);
-
-
-        msg.results.forEach((r) => {
-          if (r.vehicle) {
-            const k = r.plate_number;
-            if (!localStorage.getItem(`vehicle:${k}`)) {
-              localStorage.setItem(`vehicle:${k}`, JSON.stringify(r.vehicle));
+        if (msg.type === "ocr_update") {
+          setActiveTracks(prev => prev.map(t =>
+            t.track_id === msg.track_id
+              ? { ...t, plate_text: msg.plate_text }
+              : t
+          ));
+        }
+        if (msg.type === "result" && msg.results) {
+          setFlash(true);
+          setTimeout(() => setFlash(false), 450);
+          setResults(msg.results);
+          msg.results.forEach((r) => {
+            if (r.vehicle) {
+              const k = r.plate_number;
+              if (!localStorage.getItem(`vehicle:${k}`)) {
+                localStorage.setItem(`vehicle:${k}`, JSON.stringify(r.vehicle));
+              }
             }
-          }
-        });
+          });
+        }
       } catch (e) {
         console.error("[WS] Parse error", e);
       }
@@ -80,72 +142,38 @@ export function useScanStream(token, cameraOn, autoScan) {
     socket.onerror = () => toast.error("WebSocket error");
     socket.onclose = () => {
       console.log("[WS] Disconnected");
-      setScanning(false);
     };
 
     return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
       socket.close();
       wsRef.current = null;
     };
-  }, [cameraOn, token]);
+  }, [cameraOn, token, drawOverlays]);
 
   useEffect(() => {
-    if (!cameraOn || !autoScan) return;
-    console.log("[WS-DBG] Interval effect started, cameraOn:", cameraOn, "autoScan:", autoScan);
+    if (!cameraOn || !wsRef.current) return;
 
-    const interval = setInterval(() => {
-      if (processingRef.current) { return; }
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.log("[WS-DBG] tick skipped — WS not open, readyState:", wsRef.current?.readyState);
-        return;
-      }
+    processingRef.current = true;
+    sendVideoFrame();
 
-      const cams = camerasRef.current;
-      const camId = activeCamIdRef.current;
-      const cam = cams?.[camId];
-      if (!cam) {
-        console.log("[WS-DBG] tick skipped — no cam ref. camId:", camId, "cams keys:", cams ? Object.keys(cams) : "null", "cams type:", typeof cams, Array.isArray(cams) ? "ARRAY" : "obj");
-        return;
-      }
-
-      const imgSrc = getLatestPlate(cam);
-      if (!imgSrc) {
-        console.log("[WS-DBG] tick skipped — getScreenshot returned null");
-        return;
-      }
-
-      console.log("[WS-DBG] ✅ Sending frame, base64 length:", imgSrc.length);
-      processingRef.current = true;
-      setScanning(true);
-
-      // Simplify: the imgSrc is already a data URL, just extract base64 directly
-      const base64 = imgSrc.split(",")[1];
-      if (base64 && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "frame", image_b64: base64 }));
-      }
+    return () => {
       processingRef.current = false;
-      setScanning(false);
-    }, INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [cameraOn, autoScan, getLatestPlate]);
-
-  const setCameras = useCallback((cams) => {
-    camerasRef.current = cams;
-  }, []);
-
-  const setActiveCamId = useCallback((id) => {
-    activeCamIdRef.current = id;
-  }, []);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [cameraOn, sendVideoFrame]);
 
   return {
     scanning,
     results,
-    bbox,
     flash,
+    activeTracks,
     setResults,
-    setBbox,
-    setCameras,
-    setActiveCamId,
+    videoRef,
+    canvasRef,
   };
 }

@@ -1,16 +1,43 @@
-# React + Vite
+# Vehicle Management System — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite frontend for the Saint Louis College Vehicle Management System.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Multi-role dashboard** — Admin, Security, and Vehicle Owner views
+- **Mobile camera scanning** — Real-time license plate detection
+- **Visitor pass management** — Create and track visitor entries
+- **Vehicle registration** — Self-service registration with token validation
+- **Access logs** — View scan history and entry decisions
+- **Rule management** — Configure entry schedules and vehicle type restrictions
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19 with Vite 8
+- Tailwind CSS v4
+- TanStack Query + Zustand for state
+- React Hook Form + Zod for validation
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+cd frontend
+npm install
+```
+
+Create `.env`:
+```bash
+cp .env.example .env
+# Edit VITE_API_BASE_URL if backend runs on different port
+```
+
+Run development server:
+```bash
+npm run dev
+```
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `VITE_API_BASE_URL` | Django backend URL (default: `http://localhost:8000`) |

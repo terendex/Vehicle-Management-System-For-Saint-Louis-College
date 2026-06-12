@@ -5,11 +5,12 @@ import {
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, ShieldCheck, Zap, Video, Plus
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { scanPlate, getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
+import { useScanStream } from '../../hooks/useScanStream'
 import './SecurityEntryManagement.css'
 
 const SCAN_INTERVAL_MS = 2000

@@ -1,16 +1,18 @@
 import logging
 import base64
+from datetime import datetime
+from typing import Any
+import asyncio
 from asgiref.sync import sync_to_async
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from datetime import timedelta
 from django.utils import timezone
+from channels.generic.websocket import AsyncJsonWebsocketConsumer
+
+from .ml.tracker import PlateTracker
+from .ml.reader import _detect_plates, _decode, _ocr_crop, normalize_plate
 
 logger = logging.getLogger(__name__)
 
-PLATE_COOLDOWN_SECONDS = 3
-FRAME_SKIP = 0
-BBOX_SMOOTH_ALPHA = 0.4
-
+OCR_INTERVAL_FRAMES = 10
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
@@ -26,13 +28,17 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         if self._user is None:
             await self.close(code=4001, reason="Invalid token")
             return
-        if not hasattr(self, "_recent"):
-            self._recent = {}
-        self._tracked: dict[str, dict] = {}
+        self._recent = {}
+        self._tracker = PlateTracker()
+        self._frame_counter = 0
+        self._pending_ocr = {}
         await self.accept()
         await self.send_json({"type": "connected", "message": "Stream ready."})
 
     async def disconnect(self, code):
+        if hasattr(self, '_ocr_tasks'):
+            for task in self._ocr_tasks:
+                task.cancel()
         logger.info("WS closed (code=%s)", code)
 
     async def receive_json(self, content):
@@ -49,51 +55,141 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": str(exc)})
             return
 
-        now_ts = timezone.now()
-        detections = self._process_frame(image_bytes)
-        if not detections:
-            await self.send_json({"type": "result", "results": []})
-            return
+        self._frame_counter += 1
+        loop = asyncio.get_running_loop()
+        
+        try:
+            detections = await loop.run_in_executor(
+                None, self._run_yolo_detection, image_bytes
+            )
+        except Exception as exc:
+            logger.error("[WS] YOLO error: %s", exc)
+            detections = []
 
-        results = []
-        for det in detections:
-            plate_number = det["plate_text"]
-            bbox = det["bbox"]
-
-            if not plate_number:
-                results.append({
-                    "plate_number": "",
-                    "bbox": bbox,
-                    "status": "unreadable",
-                    "allowed": False,
-                    "message": "Plate detected but unreadable.",
-                    "constraint": None,
-                    "vehicle": None,
-                    "has_violations": False,
-                })
+        now = timezone.now()
+        tracker_output = self._tracker.update(detections, now=now)
+        
+        det_by_idx = {i: d for i, d in enumerate(detections)}
+        
+        active_tracks = []
+        tracks_needing_ocr = []
+        
+        for idx, t_out in enumerate(tracker_output):
+            track_id = t_out["track_id"]
+            bbox = t_out["bbox"]
+            
+            if not bbox:
                 continue
 
-            bbox = self._smooth_bbox(plate_number, bbox)
-            self._prune_tracked()
+            track = self._tracker.get_track(track_id)
+            if track and track.should_run_ocr(OCR_INTERVAL_FRAMES):
+                track.last_ocr_frame = track.frame_count
+                
+                if t_out.get("is_new_track", False):
+                    det = det_by_idx.get(idx)
+                    if det and det.get("crop") is not None:
+                        tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
 
-            key = f"{plate_number}:{now_ts.strftime('%H:%M')}"
-            last_seen = self._recent.get(key)
-            in_cooldown = last_seen and (now_ts - last_seen).total_seconds() < PLATE_COOLDOWN_SECONDS
-            self._recent[key] = now_ts
+            text = t_out.get("plate_text") or (track.plate_number if track else "")
+            active_tracks.append({
+                "track_id": track_id,
+                "plate_text": text,
+                "bbox": [bbox["x"], bbox["y"], bbox["width"], bbox["height"]],
+            })
 
-            if in_cooldown:
+        await self.send_json({
+            "type": "tracks",
+            "tracks": active_tracks,
+            "frame_id": self._frame_counter,
+        })
+
+        if tracks_needing_ocr:
+            asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+
+        if any(t.get("plate_text") for t in active_tracks):
+            await self._process_scan_results(active_tracks, now)
+
+    def _run_yolo_detection(self, image_bytes: bytes) -> list[dict[str, Any]]:
+        img = _decode(image_bytes)
+        if img is None:
+            return []
+        
+        detections = _detect_plates(img)
+        return [
+            {
+                "bbox": det["bbox"],
+                "crop": det["crop"],
+                "confidence": det.get("score", 0.0),
+                "aspect_ratio": det.get("aspect_ratio", 1.0),
+            }
+            for det in detections
+        ]
+
+    async def _run_ocr_for_tracks(self, tracks_to_process: list):
+        loop = asyncio.get_running_loop()
+        
+        for track_id, crop, aspect in tracks_to_process:
+            if track_id in self._pending_ocr:
+                continue
+            
+            self._pending_ocr[track_id] = True
+            try:
+                plate_text, conf = await loop.run_in_executor(
+                    None, _ocr_crop, crop, aspect
+                )
+                
+                track = self._tracker.get_track(track_id)
+                if track and plate_text:
+                    if track.is_initializing:
+                        track.plate_number = plate_text
+                    else:
+                        track.plate_candidates[normalize_plate(plate_text)] = track.plate_candidates.get(normalize_plate(plate_text), 0) + 1
+                        if track.plate_candidates:
+                            sorted_cands = sorted(track.plate_candidates.items(), key=lambda x: x[1], reverse=True)
+                            if sorted_cands:
+                                track.plate_number = sorted_cands[0][0]
+                    
+                    await self.send_json({
+                        "type": "ocr_update",
+                        "track_id": track_id,
+                        "plate_text": track.plate_number,
+                    })
+            except Exception as exc:
+                logger.warning("[OCR] Failed for track %d: %s", track_id, exc)
+            finally:
+                self._pending_ocr.pop(track_id, None)
+
+    async def _process_scan_results(self, tracks_list: list[dict], now: datetime):
+        results = []
+        processed_track_ids = set()
+        
+        for track_data in tracks_list:
+            track_id = track_data["track_id"]
+            plate_number = track_data["plate_text"]
+            bbox = {"x": track_data["bbox"][0], "y": track_data["bbox"][1], 
+                    "width": track_data["bbox"][2], "height": track_data["bbox"][3]}
+
+            if not plate_number or track_id in processed_track_ids:
+                continue
+
+            track = self._tracker.get_track(track_id)
+            if track and track.in_cooldown(now):
                 results.append({
                     "plate_number": plate_number,
                     "bbox": bbox,
-                    "status": "recent",
+                    "status": "cooldown",
                     "allowed": False,
-                    "message": "Recently scanned — still in view.",
+                    "message": "Recently scanned.",
                     "constraint": None,
                     "vehicle": None,
                     "has_violations": False,
                 })
+                processed_track_ids.add(track_id)
                 continue
 
+            self._tracker.mark_scanned(track_id, now)
+            processed_track_ids.add(track_id)
+            
             enriched = await sync_to_async(
                 self._check_vehicle, thread_sensitive=True
             )(plate_number, bbox)
@@ -101,46 +197,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             enriched["bbox"] = bbox
             results.append(enriched)
 
-        await sync_to_async(
-            self._record_ml_sample, thread_sensitive=True
-        )(image_bytes, results)
-
-        await self.send_json({"type": "result", "results": results})
-
-    def _smooth_bbox(self, plate_number: str, raw_bbox: dict):
-        prev = self._tracked.get(plate_number)
-        if not prev:
-            self._tracked[plate_number] = {
-                "bbox": raw_bbox,
-                "last_update": timezone.now(),
-            }
-            return raw_bbox
-
-        dt = (timezone.now() - prev["last_update"]).total_seconds()
-        if dt <= 0:
-            dt = 0.016
-
-        alpha = 1.0 - BBOX_SMOOTH_ALPHA ** dt
-
-        smooth = {}
-        for k in ("x", "y", "width", "height"):
-            prev[k] = prev[k] + alpha * (raw_bbox[k] - prev[k])
-            smooth[k] = prev[k]
-
-        prev["last_update"] = timezone.now()
-        self._tracked[plate_number]["bbox"] = prev
-        return smooth
-
-    def _prune_tracked(self):
-        cutoff = timezone.now() - timedelta(seconds=10)
-        stale = [k for k, v in self._tracked.items() if v["last_update"] < cutoff]
-        for k in stale:
-            del self._tracked[k]
+        if results:
+            await sync_to_async(self._record_ml_sample)(None, results)
+            await self.send_json({"type": "result", "results": results})
 
     def _check_vehicle(self, plate_number, bbox):
-        from rest_framework.authtoken.models import Token
         from vehicles.models import Vehicle
-        from .models import AccessLog, MLTrainingSample
+        from .models import AccessLog
         from .entry_logic import check_entry
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
@@ -195,44 +258,16 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from .models import MLTrainingSample
         from django.conf import settings
         from django.utils import timezone
-        import os, uuid
 
         try:
-            plates = [r["plate_text"] for r in results if r.get("plate_text")]
-            media_dir = os.path.join(str(settings.MEDIA_ROOT), "ml_samples")
-            os.makedirs(media_dir, exist_ok=True)
-            fn = f"scan_{timezone.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jpg"
-            path = os.path.join(media_dir, fn)
-            with open(path, "wb") as f:
-                f.write(raw_bytes)
+            plates = [r["plate_number"] for r in results if r.get("plate_number")]
             MLTrainingSample.objects.create(
-                image=f"ml_samples/{fn}",
                 plate_number=";".join(plates) if plates else "",
-                status="unlabeled",
-                source="scan",
+                status="auto",
+                source="stream",
             )
         except Exception as exc:
             logger.warning("ML sample failed: %s", exc)
-
-    @staticmethod
-    def _process_frame(image_bytes):
-        from .ml.reader import read_plate
-        import logging
-        log = logging.getLogger(__name__)
-
-        try:
-            results = read_plate(image_bytes)
-            log.info("[WS] read_plate returned %d results: %s", len(results), [r["plate_text"] for r in results])
-            return [
-                {
-                    "plate_text": r["plate_text"],
-                    "bbox": r["bbox"],
-                }
-                for r in results
-            ]
-        except Exception as exc:
-            log.error("[WS] read_plate error: %s", exc)
-            return []
 
     @staticmethod
     async def _get_user_from_token(token_key):

@@ -119,15 +119,42 @@ Vehicle-Management-System-For-Saint-Louis-College/
 ├── frontend/                        # React (Vite)
 │   ├── src/
 │   │   ├── api/
-│   │   │   └── client.js            # Axios instance
-│   │   ├── components/              # Reusable UI components
+│   │   │   ├── axios.js               # Axios instance
+│   │   │   ├── auth.js                # Auth endpoints
+│   │   │   ├── vehicles.js
+│   │   │   ├── scanning.js
+│   │   │   ├── registration.js
+│   │   │   └── users.js
+│   │   ├── components/
+│   │   │   ├── Auth/
+│   │   │   │   └── ProtectedRoute.jsx
+│   │   │   └── Layout/
+│   │   │       ├── AdminLayout.jsx
+│   │   │       ├── SecurityLayout.jsx
+│   │   │       └── OwnerLayout.jsx
+│   │   ├── hooks/
+│   │   │   └── useScanStream.js
 │   │   ├── pages/
-│   │   │   ├── LoginPage.jsx
-│   │   │   ├── ScanPage.jsx         # Mobile camera scanner
-│   │   │   ├── DashboardPage.jsx
-│   │   │   └── VehiclesPage.jsx
+│   │   │   ├── Login/
+│   │   │   │   └── LoginPage.jsx
+│   │   │   ├── Register/
+│   │   │   │   └── RegisterPage.jsx
+│   │   │   ├── Admin/
+│   │   │   │   ├── AdminDashboard.jsx
+│   │   │   │   ├── VehicleRegistration.jsx
+│   │   │   │   ├── UserManagement.jsx
+│   │   │   │   ├── EntryManagement.jsx
+│   │   │   │   ├── RuleConstraints.jsx
+│   │   │   │   └── AuditLog.jsx
+│   │   │   ├── Security/
+│   │   │   │   ├── SecurityDashboard.jsx
+│   │   │   │   ├── SecurityEntryManagement.jsx
+│   │   │   │   └── SecurityAuditLog.jsx
+│   │   │   ├── VehicleOwner/
+│   │   │   │   └── OwnerDashboard.jsx
+│   │   │   └── NotFoundPage.jsx
 │   │   ├── stores/
-│   │   │   └── authStore.js         # Zustand auth state
+│   │   │   └── authStore.js           # Zustand auth state
 │   │   ├── App.jsx
 │   │   └── main.jsx
 │   ├── .env.example
@@ -281,21 +308,24 @@ npm install
 |---|---|---|
 | `SECRET_KEY` | Django secret key — keep private | `your-secret-key` |
 | `DEBUG` | Debug mode | `True` |
+| `ALLOWED_HOSTS` | Comma-separated allowed hosts | `localhost,127.0.0.1` |
 | `DB_NAME` | PostgreSQL database name | `plate_db` |
 | `DB_USER` | PostgreSQL user | `postgres` |
 | `DB_PASSWORD` | PostgreSQL password | `password` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
+| `DB_HOST` | PostgreSQL host | `127.0.0.1` |
 | `DB_PORT` | PostgreSQL port | `5432` |
-| `ALLOWED_HOSTS` | Comma-separated allowed hosts | `localhost,127.0.0.1` |
 | `CORS_ALLOWED_ORIGINS` | Allowed frontend origins | `http://localhost:5173` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
+| `EMAIL_HOST_USER` | Gmail email for sending emails | `your-email@gmail.com` |
+| `EMAIL_HOST_PASSWORD` | Gmail app password | `your-app-password` |
+| `FRONTEND_URL` | Frontend URL for emails | `http://localhost:5173` |
+| `BACKEND_URL` | Backend URL for emails | `http://localhost:8000` |
 | `ACCESS_TOKEN_LIFETIME_MINUTES` | JWT access token expiry | `60` |
 | `REFRESH_TOKEN_LIFETIME_DAYS` | JWT refresh token expiry | `7` |
+| `CELERY_BROKER_URL` | Redis broker URL | `redis://127.0.0.1:6379/0` |
+| `CELERY_RESULT_BACKEND` | Redis result backend URL | `redis://127.0.0.1:6379/0` |
 | `ML_SAMPLE_BATCH_SIZE` | New samples needed to trigger retraining | `50` |
 | `ML_CONFIDENCE_THRESHOLD` | Min confidence to auto-label a sample | `0.6` |
 | `ML_AUTO_RETRAIN_ENABLED` | Enable/disable automatic retraining | `true` |
-| `CELERY_BROKER_URL` | Redis broker URL | `redis://127.0.0.1:6379/0` |
-| `CELERY_RESULT_BACKEND` | Redis result backend URL | `redis://127.0.0.1:6379/0` |
 
 ### `frontend/.env`
 
@@ -355,25 +385,44 @@ python -m celery -A config worker -l info --pool=solo
 |---|---|---|---|
 | `POST` | `/api/auth/login/` | Login — returns access + refresh token | ❌ |
 | `POST` | `/api/auth/refresh/` | Refresh access token | ❌ |
+| `POST` | `/api/auth/verify/` | Verify token | ❌ |
 | `GET` | `/api/accounts/me/` | Get current logged-in user | ✅ |
 | `POST` | `/api/accounts/register/` | Create new user (admin only) | ✅ Admin |
+
+### User Management
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `GET` | `/api/accounts/users/` | List all users (non-admin) | ✅ Admin |
+| `GET` | `/api/accounts/users/{id}/` | Get user details | ✅ Admin |
+| `PATCH` | `/api/accounts/users/{id}/update/` | Update user | ✅ Admin |
+| `DELETE` | `/api/accounts/users/{id}/delete/` | Delete user | ✅ Admin |
+| `POST` | `/api/accounts/users/{id}/toggle-status/` | Enable/disable user | ✅ Admin |
+| `POST` | `/api/accounts/replace-admin/` | Replace current admin | ✅ Admin |
+| `GET` | `/api/accounts/audit-logs/` | List audit logs | ✅ |
+| `GET` | `/api/accounts/audit-logs/stats/` | Audit log statistics | ✅ Admin |
 
 ### Vehicles and Owners
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
 | `GET` | `/api/vehicles/` | List all vehicles | ✅ |
-| `POST` | `/api/vehicles/` | Register new vehicle | ✅ |
+| `POST` | `/api/vehicles/` | Register new vehicle | ✅ Admin |
 | `GET` | `/api/vehicles/{id}/` | Get vehicle by ID | ✅ |
-| `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | ✅ |
-| `GET` | `/api/vehicles/owners/` | List all owners | ✅ |
-| `POST` | `/api/vehicles/owners/` | Register new owner | ✅ |
+| `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | ✅ Admin |
+| `GET` | `/api/vehicles/owners/` | List all owners | ✅ Admin |
+| `POST` | `/api/vehicles/owners/` | Register new owner | ✅ Admin |
+| `GET` | `/api/vehicles/rules/` | List entry rules | ✅ Admin |
+| `POST` | `/api/vehicles/rules/` | Create rule | ✅ Admin |
+| `GET` | `/api/vehicles/vehicle-types/` | List vehicle type access rules | ✅ Admin |
+| `POST` | `/api/vehicles/vehicle-types/` | Create vehicle type rule | ✅ Admin |
 
 ### Secure Registration
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
 | `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | ✅ Admin |
 | `GET` | `/api/vehicles/tokens/` | List all registration tokens | ✅ Admin |
+| `DELETE` | `/api/vehicles/tokens/{id}/` | Delete a registration token | ✅ Admin |
 | `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | ✅ Admin |
+| `DELETE` | `/api/vehicles/tokens/clear/` | Clear used/expired tokens | ✅ Admin |
 | `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | ❌ |
 | `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | ❌ |
 | `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | ✅ Admin |
@@ -460,9 +509,9 @@ main          ← production only, never push directly
 
 | Role | Access |
 |---|---|
-| **Security** | Scan plates, view logs, basic access management |
-| **Vehicle Owner** | View own registered vehicles, history, and status |
-| **Admin** | Full access — manage users, vehicles, owners, rules, settings |
+| **Admin** | Full system access — manage users, vehicles, owners, rules, tokens, violations, audits |
+| **Security** | Scan plates, view logs, manage visitor passes, view own statistics |
+| **Vehicle Owner** | View own registered vehicles, history, and entry status |
 
 ### Demo Credentials
 
