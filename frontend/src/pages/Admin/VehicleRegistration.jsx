@@ -15,6 +15,8 @@ export default function VehicleRegistration() {
   const [tokenExpiry, setTokenExpiry] = useState('')
   const [generatedToken, setGeneratedToken] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState(null)
 
   // Registrations State
   const [registrations, setRegistrations] = useState([])
@@ -62,12 +64,17 @@ export default function VehicleRegistration() {
 
   const handleGenerateQR = async (e) => {
     e.preventDefault()
+    setIsGenerating(true)
+    setGenerateError(null)
     try {
       const data = await registrationApi.generateToken(tokenType, tokenExpiry)
       setGeneratedToken(data)
       fetchTokens()
     } catch (error) {
-      console.error("Failed to generate token:", error)
+      console.error('Failed to generate token:', error)
+      setGenerateError(error.response?.data?.error || 'Failed to generate QR. Please try again.')
+    } finally {
+      setIsGenerating(false)
     }
   }
 
@@ -239,6 +246,7 @@ export default function VehicleRegistration() {
                   setGeneratedToken(null)
                   setTokenType('student')
                   setTokenExpiry('')
+                  setGenerateError(null)
                   setIsTokenModalOpen(true)
                 }}
               >
@@ -440,7 +448,7 @@ export default function VehicleRegistration() {
           <div className="modal-content">
             <h2 className="modal-title">Generate Registration QR</h2>
             
-            {!generatedToken ? (
+              {!generatedToken ? (
               <form onSubmit={handleGenerateQR}>
                 <div className="form-group">
                   <label className="form-label">Registrant Type</label>
@@ -448,6 +456,7 @@ export default function VehicleRegistration() {
                     className="form-select"
                     value={tokenType}
                     onChange={(e) => setTokenType(e.target.value)}
+                    disabled={isGenerating}
                   >
                     <option value="student">Student</option>
                     <option value="employee">Employee</option>
@@ -462,13 +471,27 @@ export default function VehicleRegistration() {
                     value={tokenExpiry}
                     min={getMinDateTime()}
                     onChange={(e) => setTokenExpiry(e.target.value)}
+                    disabled={isGenerating}
                     required
                   />
                 </div>
 
+                {generateError && (
+                  <div className="generate-error-banner">
+                    <X size={14} />
+                    {generateError}
+                  </div>
+                )}
+
                 <div className="modal-actions">
-                  <button type="button" className="btn-outline" onClick={() => setIsTokenModalOpen(false)}>Cancel</button>
-                  <button type="submit" className="btn-primary">Generate</button>
+                  <button type="button" className="btn-outline" onClick={() => setIsTokenModalOpen(false)} disabled={isGenerating}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={isGenerating}>
+                    {isGenerating ? (
+                      <><span className="btn-spinner" />Generating...</>
+                    ) : (
+                      <><QrCode size={16} />Generate</>
+                    )}
+                  </button>
                 </div>
               </form>
             ) : (
@@ -551,6 +574,14 @@ export default function VehicleRegistration() {
               )}
               
               <div className="detail-item">
+                <div className="detail-label">Address</div>
+                <div className="detail-value">{selectedReg.address || 'N/A'}</div>
+              </div>
+              <div className="detail-item">
+                <div className="detail-label">Age</div>
+                <div className="detail-value">{selectedReg.age || 'N/A'}</div>
+              </div>
+              <div className="detail-item">
                 <div className="detail-label">Contact Number</div>
                 <div className="detail-value">{selectedReg.contact_number}</div>
               </div>
@@ -558,6 +589,36 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license}</div>
               </div>
+
+              {selectedReg.registrant_type === 'student' && selectedReg.campus_days?.length > 0 && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">Campus Days</div>
+                  <div className="detail-value" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
+                    {selectedReg.campus_days.map(day => (
+                      <span key={day} style={{
+                        display: 'inline-block',
+                        padding: '3px 12px',
+                        borderRadius: '50px',
+                        background: '#2A2B61',
+                        color: '#fff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                      }}>{day}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedReg.status === 'accepted' && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">System ID (Assigned)</div>
+                  <div className="detail-value token-link" style={{ fontSize: '15px', fontWeight: 700, color: '#059669', letterSpacing: '0.5px' }}>
+                    {selectedReg.registrant_type === 'student'
+                      ? selectedReg.system_student_id || '—'
+                      : selectedReg.system_employee_id || '—'}
+                  </div>
+                </div>
+              )}
             </div>
 
             <h3 className="detail-section-title">Vehicle Information</h3>

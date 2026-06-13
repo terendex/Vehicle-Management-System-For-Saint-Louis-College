@@ -58,10 +58,15 @@ class RegistrationToken(models.Model):
 
     @property
     def is_valid(self):
+        from django.utils import timezone as tz
         if not self.is_active or self.is_used:
             return False
-        if self.expires_at and timezone.now() > self.expires_at:
-            return False
+        if self.expires_at:
+            expires = self.expires_at
+            if tz.is_naive(expires):
+                expires = tz.make_aware(expires)
+            if tz.now() > expires:
+                return False
         return True
 
     def __str__(self):
@@ -107,7 +112,11 @@ class VehicleRegistration(models.Model):
     status          = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     rejection_reason = models.TextField(blank=True)
     token           = models.UUIDField(unique=True)  # the registration invite token
-    
+
+    # Auto-assigned unique system IDs (populated on acceptance)
+    system_student_id  = models.CharField(max_length=30, blank=True, unique=True, null=True)
+    system_employee_id = models.CharField(max_length=30, blank=True, unique=True, null=True)
+
     created_at      = models.DateTimeField(auto_now_add=True)
     reviewed_at     = models.DateTimeField(null=True, blank=True)
 
