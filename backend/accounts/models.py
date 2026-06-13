@@ -29,9 +29,17 @@ class User(AbstractUser):
         SECURITY       = 'security',       'Security Personnel'
         VEHICLE_OWNER  = 'vehicle_owner',  'Registered Vehicle Owner'
 
+    # Role-prefixed human-readable ID, e.g. SLC-ADM-000001
+    _ROLE_PREFIX = {
+        'admin':         'ADM',
+        'security':      'SEC',
+        'vehicle_owner': 'OWN',
+    }
+
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
+    user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
 
     # Override username to be nullable/blank, email is used for login
     username = models.CharField(max_length=150, blank=True, null=True)
@@ -40,6 +48,14 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ['full_name']  # email is already required via USERNAME_FIELD
 
     objects = UserManager()
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Generate user_code once after pk is available
+        if not self.user_code:
+            prefix = self._ROLE_PREFIX.get(self.role, 'USR')
+            self.user_code = f"SLC-{prefix}-{str(self.pk).zfill(6)}"
+            User.objects.filter(pk=self.pk).update(user_code=self.user_code)
 
     def __str__(self):
         return f"{self.full_name} ({self.role})"

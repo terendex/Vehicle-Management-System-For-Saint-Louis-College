@@ -24,7 +24,7 @@ def validate_password_strength(password):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
-        fields = ['id', 'full_name', 'email', 'role', 'is_active', 'date_joined']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined']
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
