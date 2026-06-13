@@ -39,7 +39,7 @@ def _get_yolo():
     return _model
 
 
-def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def detect_plates(img: np.ndarray, conf: float = 0.3) -> list[dict]:
     """
     Detect license plates in an image using custom-trained YOLOv8.
     
@@ -56,13 +56,16 @@ def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
     """
     model = _get_yolo()
     if model is None:
+        log.warning("[DETECT] No YOLO model loaded — returning empty detections")
         return []
 
     h, w = img.shape[:2]
+    log.info("[DETECT] Running YOLO on %dx%d image, conf=%.2f", w, h, conf)
     results = model.predict(img, conf=conf, verbose=False)
 
     detections = []
     for r in results:
+        log.info("[DETECT] YOLO returned %d boxes", len(r.boxes))
         for box in r.boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             score = float(box.conf[0])
@@ -72,7 +75,10 @@ def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
 
-            if score < 0.5 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
+            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f aspect=%.2f", x1, y1, x2, y2, score, aspect_ratio)
+            
+            if score < 0.3 or aspect_ratio < 0.6 or aspect_ratio > 4.0:
+                log.info("[DETECT] Dropped: conf=%.3f aspect=%.2f", score, aspect_ratio)
                 continue
 
             pad_x = int(box_w * 0.15)

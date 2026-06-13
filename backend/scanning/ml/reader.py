@@ -39,28 +39,26 @@ _TO_DIGIT = str.maketrans({
 
 _TO_LETTER = str.maketrans({
     '8': 'B', '0': 'O', '1': 'I', '2': 'Z', '5': 'S',
-    '6': 'G', '9': 'Q', '4': 'A', '7': 'T', '3': 'E',
-    '4': 'H',  # 4 -> H (for motorcycle plates)
-    '4': 'N',  # 4 -> N
-    '8': 'B',  # 8 -> B (already there)
+    '6': 'G', '9': 'Q', '3': 'E', '7': 'T',
+    '4': 'A',  # 4 -> A (for motorcycle plates)
     '1': 'L',  # 1 -> L (for I/L confusion)
 })
 
 
 def _correct_plate_chars(text: str) -> str:
-    to_digit = text.translate(_TO_DIGIT)
-    to_letter = text.translate(_TO_LETTER)
-    if is_valid_ph_plate(to_digit):
-        return to_digit
-    if is_valid_ph_plate(to_letter):
-        return to_letter
-    # Try both translations combined for mixed cases
-    mixed = to_digit.translate(_TO_LETTER)
-    if is_valid_ph_plate(mixed):
-        return mixed
-    mixed2 = to_letter.translate(_TO_DIGIT)
-    if is_valid_ph_plate(mixed2):
-        return mixed2
+    to_digit = str.maketrans({'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5', 'G': '6', 'Q': '9'})
+    to_letter = str.maketrans({'H': 'M', 'W': 'M'})
+    
+    candidates = [
+        text.translate(to_digit),
+        text.translate(to_letter),
+        text.translate(to_digit).translate(to_letter),
+        text,
+    ]
+    
+    for candidate in candidates:
+        if is_valid_ph_plate(candidate):
+            return candidate
     return text
 
 

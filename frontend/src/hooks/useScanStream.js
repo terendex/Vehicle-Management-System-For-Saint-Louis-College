@@ -20,40 +20,57 @@ export function useScanStream(token, cameraOn) {
 
   const drawOverlays = useCallback((tracks) => {
     const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video || !tracks?.length) return;
+    const webcam = videoRef.current;
+    if (!canvas || !webcam || !tracks?.length) return;
 
+    let video = null;
+    if (typeof webcam.getVideo === 'function') {
+      video = webcam.getVideo();
+    }
+    if (!video) {
+      video = webcam.video;
+    }
+    
     const ctx = canvas.getContext("2d");
-    const vw = video.videoWidth || video.offsetWidth;
-    const vh = video.videoHeight || video.offsetHeight;
+    const vw = video?.videoWidth || webcam.clientWidth || 640;
+    const vh = video?.videoHeight || webcam.clientHeight || 480;
 
     canvas.width = vw;
     canvas.height = vh;
 
     ctx.clearRect(0, 0, vw, vh);
-    ctx.font = "16px 'Courier New', monospace";
+    ctx.font = "12px 'Courier New', monospace";
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
 
     tracks.forEach((track) => {
-      const [x, y, w, h] = track.bbox;
-      const px = x * vw;
-      const py = y * vh;
-      const pw = w * vw;
-      const ph = h * vh;
+      let px, py, pw, ph;
+      if (track.bbox[0] > 1 || track.bbox[1] > 1) {
+        px = track.bbox[0];
+        py = track.bbox[1];
+        pw = track.bbox[2];
+        ph = track.bbox[3];
+      } else {
+        px = track.bbox[0] * vw;
+        py = track.bbox[1] * vh;
+        pw = track.bbox[2] * vw;
+        ph = track.bbox[3] * vh;
+      }
 
       ctx.strokeStyle = "#00ff88";
       ctx.lineWidth = 3;
       ctx.strokeRect(px, py, pw, ph);
 
-      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
       const text = track.plate_text || `Track #${track.track_id}`;
-      const textWidth = ctx.measureText(text).width + 12;
-      const textHeight = 24;
+      const confText = track.detection_conf ? `conf: ${(track.detection_conf * 100).toFixed(0)}%` : "";
+      const displayText = `${text}${confText ? ' | ' + confText : ''}`;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+      const textWidth = ctx.measureText(displayText).width + 12;
+      const textHeight = 22;
       ctx.fillRect(px, py - textHeight, textWidth, textHeight);
 
       ctx.fillStyle = "#00ff88";
-      ctx.fillText(text, px + 6, py - textHeight + 4);
+      ctx.fillText(displayText, px + 6, py - textHeight + 4);
     });
   }, []);
 
@@ -76,6 +93,7 @@ export function useScanStream(token, cameraOn) {
     socket.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        console.log("[WS] Received:", msg.type, msg);
         if (msg.type === "error") {
           toast.error(msg.message);
           return;
@@ -109,38 +127,58 @@ export function useScanStream(token, cameraOn) {
       }
     };
 
-    socket.onerror = () => toast.error("WebSocket error");
-    socket.onclose = () => {
-      console.log("[WS] Disconnected");
+    socket.onerror = (err) => {
+      console.error("[WS] Error:", err);
+      toast.error("WebSocket error");
+    };
+    socket.onclose = (event) => {
+      console.log("[WS] Disconnected:", event.code, event.reason);
     };
 
-    const sendFrame = () => {
+const sendFrame = () => {
       if (isCancelled) return;
       
-      const video = videoRef.current;
+      const webcam = videoRef.current;
       const ws = wsRef.current;
 
-      if (!video || !ws || ws.readyState !== WebSocket.OPEN) {
+      if (!webcam || !ws || ws.readyState !== WebSocket.OPEN) {
         animationRef.current = requestAnimationFrame(sendFrame);
         return;
       }
 
       frameCounterRef.current++;
 
-      if (video.readyState < 2) {
+      if (frameCounterRef.current % 30 !== 0) {
         animationRef.current = requestAnimationFrame(sendFrame);
         return;
       }
 
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      console.log(`[WS] Capturing frame ${frameCounterRef.current}`);
 
-      const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-      if (base64 && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "frame", image_b64: base64 }));
+      try {
+        let base64 = null;
+        if (typeof webcam.getScreenshot === 'function') {
+          base64 = webcam.getScreenshot({ width: 640, height: 480 });
+        }
+        if (!base64 && webcam.video) {
+          const canvas = document.createElement("canvas");
+          canvas.width = 640;
+          canvas.height = 480;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(webcam.video, 0, 0, 640, 480);
+          base64 = canvas.toDataURL("image/jpeg", 0.85);
+        }
+        if (!base64) {
+          console.log("[WS] Screenshot returned null");
+          animationRef.current = requestAnimationFrame(sendFrame);
+          return;
+        }
+        const jpegBase64 = base64.split(',')[1];
+        if (jpegBase64 && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "frame", image_b64: jpegBase64 }));
+        }
+      } catch (e) {
+        console.error("[WS] Screenshot failed:", e);
       }
 
       animationRef.current = requestAnimationFrame(sendFrame);

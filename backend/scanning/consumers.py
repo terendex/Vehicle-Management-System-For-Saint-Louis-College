@@ -19,20 +19,24 @@ logger = logging.getLogger(__name__)
 
 OCR_INTERVAL_FRAMES = 10
 SNAPSHOT_DIR = "snapshots"
+FRAME_RATE_LIMIT_MS = 2000
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
+        logger.info("[WS] Connection attempt from %s", self.scope.get("REMOTE_ADDR", "unknown"))
         token_key = (
             self.scope["query_string"].decode().split("token=")[-1].split("&")[0]
             if "token=" in self.scope["query_string"].decode()
             else None
         )
         if not token_key:
+            logger.warning("[WS] No token provided")
             await self.close(code=4001, reason="Authentication required")
             return
         self._user = await self._get_user_from_token(token_key)
         if self._user is None:
+            logger.warning("[WS] Invalid token")
             await self.close(code=4001, reason="Invalid token")
             return
         self._recent = {}
@@ -42,14 +46,17 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         self._fps = 0.0
         self._fps_counter = 0
         self._fps_start = None
+        self._last_process_time = 0
         await self.accept()
+        logger.info("[WS] Connection accepted for user: %s", self._user)
         await self.send_json({"type": "connected", "message": "Stream ready.", "gpu": is_gpu_available()})
 
     async def disconnect(self, code):
+        logger.info("[WS] Disconnecting with code %s", code)
         if hasattr(self, '_ocr_tasks'):
             for task in self._ocr_tasks:
                 task.cancel()
-        logger.info("WS closed (code=%s)", code)
+        logger.info("[WS] WS closed")
 
     async def receive_json(self, content):
         msg_type = content.get("type")
@@ -75,20 +82,32 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             self._fps_start = now
             self._fps_counter = 0
 
+        import time
+        current_time = time.time() * 1000
+        if current_time - self._last_process_time < FRAME_RATE_LIMIT_MS:
+            return
+        self._last_process_time = current_time
+        
+        logger.info("[WS] Frame %d received, running detection...", self._frame_counter)
+
         loop = asyncio.get_running_loop()
         
         try:
             detections = await loop.run_in_executor(
                 None, self._run_detection, image_bytes
             )
+            logger.info("[WS] Detection returned %d results", len(detections))
         except Exception as exc:
             logger.error("[WS] Detection error: %s", exc)
             detections = []
 
         now = timezone.now()
-        
         tracker_output = self._tracker.update(detections)
         det_by_idx = {i: d for i, d in enumerate(detections)}
+        
+        logger.info("[WS] Tracks after update: %d", len(tracker_output))
+        
+        logger.info("[WS] Detections: %d, Tracks: %d", len(detections), len(tracker_output))
         
         active_tracks = []
         tracks_needing_ocr = []
@@ -96,16 +115,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         for idx, t_out in enumerate(tracker_output):
             track_id = t_out["track_id"]
             bbox = t_out["bbox"]
+            if isinstance(bbox, dict):
+                bbox_list = [bbox["x"], bbox["y"], bbox["width"], bbox["height"]]
+            else:
+                bbox_list = list(bbox)
             
-            if not bbox:
-                continue
-
             track = self._tracker.get_track(track_id)
+            det = det_by_idx.get(idx)
+            
             if track:
                 if track.should_run_ocr(OCR_INTERVAL_FRAMES):
                     track.last_ocr_frame = track.frame_count
                     
-                    det = det_by_idx.get(idx)
                     if det and det.get("crop") is not None:
                         track.add_crop(det["crop"])
                         tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
@@ -114,7 +135,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 active_tracks.append({
                     "track_id": track_id,
                     "plate_text": text,
-                    "bbox": [bbox["x"], bbox["y"], bbox["width"], bbox["height"]],
+                    "bbox": bbox_list,
                     "detection_conf": det.get("confidence", 0.0) if det else track.det_confidence,
                 })
 
@@ -141,15 +162,26 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         
         detections = detect_plates(img)
         h, w = img.shape[:2]
-        return [
-            {
-                "bbox": det["bbox"],
+        logger.info("[WS] Detection returned %d plates", len(detections))
+        result = []
+        for det in detections:
+            bbox = det["bbox"]
+            abs_x = int(bbox["x"] * w)
+            abs_y = int(bbox["y"] * h)
+            abs_w = int(bbox["width"] * w)
+            abs_h = int(bbox["height"] * h)
+            result.append({
+                "bbox": {
+                    "x": abs_x,
+                    "y": abs_y,
+                    "width": abs_w,
+                    "height": abs_h,
+                },
                 "crop": det["crop"],
-                "confidence": det.get("score", 0.0),
-                "aspect_ratio": det.get("aspect_ratio", 1.0),
-            }
-            for det in detections
-        ]
+                "confidence": det["score"],
+                "aspect_ratio": det["aspect_ratio"],
+            })
+        return result
 
     async def _run_ocr_for_tracks(self, tracks_to_process: list):
         loop = asyncio.get_running_loop()
@@ -173,13 +205,33 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     )
                 
                 if track and plate_text:
+                    logger.info("[WS] OCR result for track %d: %s (conf=%.2f)", track_id, plate_text, conf)
+                    
                     track.mark_ocr_done(track.frame_count, plate_text, conf or 0.0)
+                    
+                    track_bbox = track.bbox
+                    bbox_dict = {"x": track_bbox[0], "y": track_bbox[1], "width": track_bbox[2], "height": track_bbox[3]}
                     
                     await self.send_json({
                         "type": "ocr_update",
                         "track_id": track_id,
                         "plate_text": track.plate_text,
                     })
+                    logger.info("[WS] Sent OCR update for track %d", track_id)
+                    
+                    now = timezone.now()
+                    try:
+                        self._tracker.mark_scanned(track_id, now)
+                        await sync_to_async(self._save_to_db)(track_id, plate_text, 0.0, conf or 0.0, bbox_dict, None)
+                        enriched = await sync_to_async(self._check_vehicle)(plate_text, bbox_dict)
+                        enriched["plate_number"] = plate_text
+                        results = [enriched]
+                        if results:
+                            await sync_to_async(self._record_ml_sample)(None, results)
+                            await self.send_json({"type": "result", "results": results})
+                            logger.info("[WS] Sent result for plate: %s", plate_text)
+                    except Exception as db_exc:
+                        logger.error("[WS] Database error for plate %s: %s", plate_text, db_exc)
             except Exception as exc:
                 logger.warning("[OCR] Failed for track %d: %s", track_id, exc)
             finally:
@@ -223,14 +275,20 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             if track and len(track.image_buffer) > 0 and ocr_conf > 0.5:
                 snapshot_path = await sync_to_async(self._save_snapshot)(track_id, list(track.image_buffer)[-1])
             
-            await sync_to_async(self._save_to_db)(track_id, plate_number, det_conf, ocr_conf, bbox, snapshot_path)
+            try:
+                await sync_to_async(self._save_to_db)(track_id, plate_number, det_conf, ocr_conf, bbox, snapshot_path)
+            except Exception as e:
+                logger.error("[WS] DB save failed for %s: %s", plate_number, e)
             
-            enriched = await sync_to_async(
-                self._check_vehicle, thread_sensitive=True
-            )(plate_number, bbox)
-            enriched["plate_number"] = plate_number
-            enriched["bbox"] = bbox
-            results.append(enriched)
+            try:
+                enriched = await sync_to_async(
+                    self._check_vehicle, thread_sensitive=True
+                )(plate_number, bbox)
+                enriched["plate_number"] = plate_number
+                enriched["bbox"] = bbox
+                results.append(enriched)
+            except Exception as e:
+                logger.error("[WS] Vehicle check failed for %s: %s", plate_number, e)
 
         if results:
             await sync_to_async(self._record_ml_sample)(None, results)

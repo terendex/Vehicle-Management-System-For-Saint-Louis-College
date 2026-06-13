@@ -14,6 +14,7 @@ import logging
 import math
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Deque, Optional
 
 import numpy as np
@@ -89,9 +90,10 @@ class TrackedObject:
     det_confidence: float = 0.0
     ocr_confidence: float = 0.0
     missed_frames: int = 0
-    last_ocr_frame: int = 0
+    last_ocr_frame: int = -100
     frame_count: int = 0
     is_active: bool = True
+    last_scan: Optional[datetime] = None
 
     def __post_init__(self):
         x, y, w, h = self.bbox
@@ -116,6 +118,8 @@ class TrackedObject:
         self.image_buffer.append(crop.copy())
 
     def should_run_ocr(self, frame_idx: int, interval: int = 10) -> bool:
+        if self.last_ocr_frame < 0:
+            return True
         return (frame_idx - self.last_ocr_frame) >= interval
 
     def mark_ocr_done(self, frame_idx: int, plate: str, ocr_conf: float):
@@ -128,17 +132,27 @@ class TrackedObject:
         if self.missed_frames >= MAX_MISSED_FRAMES:
             self.is_active = False
 
+    def in_cooldown(self, now: datetime) -> bool:
+        return False
+
+    def mark_scanned(self, now: datetime):
+        self.last_scan = now
+
 
 class PlateTracker:
     def __init__(self):
         self._tracks: dict[int, TrackedObject] = {}
         self._next_id: int = 1
 
-    def update(self, detections: list[tuple[tuple[int, int, int, int], float, Optional[np.ndarray]]]) -> list[dict]:
+    def update(self, detections: list[dict]) -> list[dict]:
         if not self._tracks:
-            for bbox, conf, crop in detections:
-                if conf >= 0.5:
-                    track = TrackedObject(self._next_id, bbox)
+            for det in detections:
+                bbox = det["bbox"]
+                conf = det.get("confidence", 0.0)
+                crop = det.get("crop")
+                x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+                if conf >= 0.3:
+                    track = TrackedObject(self._next_id, (x, y, w, h))
                     if crop is not None:
                         track.add_crop(crop)
                     self._tracks[self._next_id] = track
@@ -148,24 +162,32 @@ class PlateTracker:
         matches: dict[int, int] = {}
         used_tracks: set[int] = set()
 
-        for d_idx, (bbox, conf, _) in enumerate(detections):
-            if conf < 0.5:
+        for d_idx, det in enumerate(detections):
+            bbox = det["bbox"]
+            conf = det.get("confidence", 0.0)
+            if conf < 0.3:
                 continue
+            x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+            abs_bbox = (x, y, w, h)
             best_iou, best_tid = 0.0, -1
             for t_id, track in self._tracks.items():
                 if t_id in used_tracks:
                     continue
                 pred = track.predict()
-                iou = compute_iou(pred, bbox)
+                iou = compute_iou(pred, abs_bbox)
                 if iou > best_iou and iou >= IOU_THRESHOLD:
                     best_iou, best_tid = iou, t_id
             if best_tid >= 0:
                 matches[d_idx] = best_tid
                 used_tracks.add(best_tid)
 
-        for d_idx, (bbox, conf, crop) in enumerate(detections):
-            if d_idx not in matches and conf >= 0.5:
-                track = TrackedObject(self._next_id, bbox)
+        for d_idx, det in enumerate(detections):
+            bbox = det["bbox"]
+            conf = det.get("confidence", 0.0)
+            crop = det.get("crop")
+            x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+            if d_idx not in matches and conf >= 0.3:
+                track = TrackedObject(self._next_id, (x, y, w, h))
                 if crop is not None:
                     track.add_crop(crop)
                 self._tracks[self._next_id] = track
@@ -173,9 +195,13 @@ class PlateTracker:
                 self._next_id += 1
 
         for d_idx, t_id in matches.items():
-            bbox, conf, crop = detections[d_idx]
+            det = detections[d_idx]
+            bbox = det["bbox"]
+            conf = det.get("confidence", 0.0)
+            crop = det.get("crop")
+            x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
             track = self._tracks[t_id]
-            track.update(bbox, conf, crop)
+            track.update((x, y, w, h), conf, crop)
 
         for t_id in list(self._tracks.keys()):
             if t_id not in matches:
@@ -187,6 +213,11 @@ class PlateTracker:
 
     def get_track(self, track_id: int) -> Optional[TrackedObject]:
         return self._tracks.get(track_id)
+
+    def mark_scanned(self, track_id: int, now: datetime):
+        track = self._tracks.get(track_id)
+        if track:
+            track.mark_scanned(now)
 
     @property
     def tracks(self) -> dict[int, TrackedObject]:

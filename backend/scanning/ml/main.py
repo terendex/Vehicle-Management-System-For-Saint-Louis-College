@@ -30,7 +30,7 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-DETECTION_CONF_THRESHOLD = 0.5
+DETECTION_CONF_THRESHOLD = 0.3
 IOU_THRESHOLD = 0.3
 MAX_MISSED_FRAMES = 30
 OCR_INTERVAL = 10
@@ -38,7 +38,7 @@ BUFFER_SIZE = 10
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
 
-def detect_plates_standalone(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def detect_plates_standalone(img: np.ndarray, conf: float = 0.3) -> list[dict]:
     """Detect plates using YOLOv8 - standalone version."""
     try:
         from ultralytics import YOLO
@@ -137,7 +137,7 @@ class TrackedObject:
         self.det_confidence = 0.0
         self.ocr_confidence = 0.0
         self.missed_frames = 0
-        self.last_ocr_frame = 0
+        self.last_ocr_frame = -100
         self.frame_count = 0
         self.is_active = True
 
@@ -160,6 +160,8 @@ class TrackedObject:
         self.image_buffer.append(crop.copy())
 
     def should_run_ocr(self, frame_idx: int, interval: int = OCR_INTERVAL) -> bool:
+        if self.last_ocr_frame < 0:
+            return True
         return (frame_idx - self.last_ocr_frame) >= interval
 
     def mark_ocr_done(self, frame_idx: int, plate: str, ocr_conf: float):

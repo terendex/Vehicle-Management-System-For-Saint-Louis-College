@@ -17,6 +17,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from .validator import is_valid_ph_plate, normalize_plate
+
 log = logging.getLogger(__name__)
 
 _MIN_WIDTH = 320
@@ -78,8 +80,19 @@ def _deskew(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
 def _correct_chars(text: str) -> str:
     """Correct common OCR misreads for Philippine plates."""
     to_digit = str.maketrans({'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5', 'G': '6', 'Q': '9'})
-    to_letter = str.maketrans({'8': 'B', '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '9': 'Q', '3': 'E', '4': 'A', '7': 'T'})
-    return text.translate(to_digit).translate(to_letter)
+    to_letter = str.maketrans({'H': 'M', 'W': 'M'})
+    
+    candidates = [
+        text.translate(to_digit),
+        text.translate(to_letter),
+        text.translate(to_digit).translate(to_letter),
+        text,
+    ]
+    
+    for candidate in candidates:
+        if is_valid_ph_plate(normalize_plate(candidate)):
+            return candidate
+    return text
 
 
 def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str], float]:
@@ -91,9 +104,11 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
     """
     ocr = _get_ocr()
     if ocr is None:
+        log.error("[OCR] EasyOCR not available")
         return None, 0.0
 
     h, w = crop.shape[:2]
+    log.info("[OCR] Processing crop %dx%d, aspect=%.2f", w, h, aspect_ratio)
     if w < _MIN_WIDTH:
         scale = _MIN_WIDTH / max(w, 1)
         crop = cv2.resize(crop, (_MIN_WIDTH, max(int(h * scale), 20)), interpolation=cv2.INTER_CUBIC)
@@ -118,6 +133,7 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
             log.debug("[OCR] Failed variant %s: %s", label, e)
 
     if not results:
+        log.warning("[OCR] No text results found in any variant")
         return None, 0.0
 
     by_text = {}
@@ -125,7 +141,13 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
         by_text[text] = max(by_text.get(text, 0.0), conf)
     
     best_text = max(by_text.items(), key=lambda x: x[1])
+    log.info("[OCR] Best text: '%s' (conf=%.2f)", best_text[0], best_text[1])
     corrected = _correct_chars(best_text[0])
+    normalized = normalize_plate(corrected)
+    if is_valid_ph_plate(normalized):
+        log.info("[OCR] Valid plate: %s", normalized)
+        return normalized, best_text[1]
+    log.info("[OCR] Invalid plate format: corrected='%s' normalized='%s'", corrected, normalized)
     return corrected, best_text[1]
 
 

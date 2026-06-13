@@ -449,18 +449,25 @@ export default function EntryManagement() {
                       {flashState && <div className="em-flash" />}
 
                       {/* Bounding Box overlays */}
-                      {bbox && bbox.length > 0 && bbox.map((b, i) => (
-                        <div
-                          key={`bbox-cam-${i}`}
-                          className="em-bounding-box"
-                          style={{
-                            left: `${b.x * 100}%`,
-                            top: `${b.y * 100}%`,
-                            width: `${b.width * 100}%`,
-                            height: `${b.height * 100}%`,
-                          }}
-                        />
-                      ))}
+                      {bbox && bbox.length > 0 && bbox.map((b, i) => {
+                        const isAbsolute = b.x > 1 || b.y > 1;
+                        const x = isAbsolute ? b.x / 640 : b.x;
+                        const y = isAbsolute ? b.y / 480 : b.y;
+                        const w = isAbsolute ? b.width / 640 : b.width;
+                        const h = isAbsolute ? b.height / 480 : b.height;
+                        return (
+                          <div
+                            key={`bbox-cam-${i}`}
+                            className="em-bounding-box"
+                            style={{
+                              left: `${x * 100}%`,
+                              top: `${y * 100}%`,
+                              width: `${w * 100}%`,
+                              height: `${h * 100}%`,
+                            }}
+                          />
+                        );
+                      })}
 
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}
@@ -504,18 +511,25 @@ export default function EntryManagement() {
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   {flashState && <div className="em-flash" />}
                   {/* Bounding Box overlays */}
-                  {bbox && bbox.length > 0 && bbox.map((b, i) => (
-                    <div
-                      key={`bbox-up-${i}`}
-                      className="em-bounding-box"
-                      style={{
-                        left: `${b.x * 100}%`,
-                        top: `${b.y * 100}%`,
-                        width: `${b.width * 100}%`,
-                        height: `${b.height * 100}%`,
-                      }}
-                    />
-                  ))}
+                  {bbox && bbox.length > 0 && bbox.map((b, i) => {
+                    const isAbsolute = b.x > 1 || b.y > 1;
+                    const x = isAbsolute ? b.x / 640 : b.x;
+                    const y = isAbsolute ? b.y / 480 : b.y;
+                    const w = isAbsolute ? b.width / 640 : b.width;
+                    const h = isAbsolute ? b.height / 480 : b.height;
+                    return (
+                      <div
+                        key={`bbox-up-${i}`}
+                        className="em-bounding-box"
+                        style={{
+                          left: `${x * 100}%`,
+                          top: `${y * 100}%`,
+                          width: `${w * 100}%`,
+                          height: `${h * 100}%`,
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div
