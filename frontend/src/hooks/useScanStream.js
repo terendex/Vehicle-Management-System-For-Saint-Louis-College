@@ -158,14 +158,14 @@ const sendFrame = () => {
       try {
         let base64 = null;
         if (typeof webcam.getScreenshot === 'function') {
-          base64 = webcam.getScreenshot({ width: 640, height: 480 });
+          base64 = webcam.getScreenshot({ width: 1280, height: 720 });
         }
         if (!base64 && webcam.video) {
           const canvas = document.createElement("canvas");
-          canvas.width = 640;
-          canvas.height = 480;
+          canvas.width = 1280;
+          canvas.height = 720;
           const ctx = canvas.getContext("2d");
-          ctx.drawImage(webcam.video, 0, 0, 640, 480);
+          ctx.drawImage(webcam.video, 0, 0, 1280, 720);
           base64 = canvas.toDataURL("image/jpeg", 0.85);
         }
         if (!base64) {

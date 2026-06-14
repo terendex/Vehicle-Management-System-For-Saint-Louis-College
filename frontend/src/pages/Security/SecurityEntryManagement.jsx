@@ -24,6 +24,7 @@ const STATUS_META = {
   no_pass: { label: 'No Visitor Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
   disabled: { label: 'Access Disabled', Icon: XCircle, cls: 'denied', logCls: 'denied' },
   unreadable: { label: 'Unreadable Plate', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
+  cooldown: { label: 'Recently Scanned', Icon: Clock, cls: 'pending', logCls: 'pending' },
 }
 
 function getMeta(status) {
@@ -475,9 +476,6 @@ export default function SecurityEntryManagement() {
                           : <><Zap size={13} /> Auto-scanning</>
                       }
                     </div>
-                    <button className={`em-btn ${isRecording ? 'em-btn-danger' : 'em-btn-secondary'}`} onClick={isRecording ? stopRecording : startRecording}>
-                      <Video size={15} /> {isRecording ? 'Stop Recording' : 'Record Video'}
-                    </button>
                     <button id="btn-stop-camera" className="em-btn em-btn-danger" onClick={stopCamera}>
                       <CameraOff size={15} /> Stop
                     </button>

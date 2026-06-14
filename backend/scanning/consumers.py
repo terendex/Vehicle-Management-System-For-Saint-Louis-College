@@ -112,7 +112,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         active_tracks = []
         tracks_needing_ocr = []
         
-        for idx, t_out in enumerate(tracker_output):
+        for t_out in tracker_output:
             track_id = t_out["track_id"]
             bbox = t_out["bbox"]
             if isinstance(bbox, dict):
@@ -121,21 +121,33 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 bbox_list = list(bbox)
             
             track = self._tracker.get_track(track_id)
-            det = det_by_idx.get(idx)
+            d_idx = t_out.get("detection_index")
+            det = det_by_idx.get(d_idx) if d_idx is not None else None
             
             if track:
-                if track.should_run_ocr(OCR_INTERVAL_FRAMES):
-                    track.last_ocr_frame = track.frame_count
+                if track.should_run_ocr(self._frame_counter, OCR_INTERVAL_FRAMES):
+                    track.last_ocr_frame = self._frame_counter
                     
                     if det and det.get("crop") is not None:
                         track.add_crop(det["crop"])
                         tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
 
                 text = t_out.get("plate_text") or (track.plate_text if track else "")
+                
+                # Scale absolute tracking coordinates to relative coordinates for the frontend
+                w_img = getattr(self, "_last_img_w", 640)
+                h_img = getattr(self, "_last_img_h", 480)
+                rel_bbox = [
+                    bbox_list[0] / max(w_img, 1),
+                    bbox_list[1] / max(h_img, 1),
+                    bbox_list[2] / max(w_img, 1),
+                    bbox_list[3] / max(h_img, 1)
+                ]
+                
                 active_tracks.append({
                     "track_id": track_id,
                     "plate_text": text,
-                    "bbox": bbox_list,
+                    "bbox": rel_bbox,
                     "detection_conf": det.get("confidence", 0.0) if det else track.det_confidence,
                 })
 
@@ -162,6 +174,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         
         detections = detect_plates(img)
         h, w = img.shape[:2]
+        self._last_img_w = w
+        self._last_img_h = h
         logger.info("[WS] Detection returned %d plates", len(detections))
         result = []
         for det in detections:

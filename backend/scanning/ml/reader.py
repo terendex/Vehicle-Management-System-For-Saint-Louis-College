@@ -21,7 +21,8 @@ import cv2
 import numpy as np
 import easyocr
 
-from .validator import is_valid_ph_plate, normalize_plate
+from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
+from .detection import detect_plates
 
 log = logging.getLogger(__name__)
 
@@ -31,34 +32,96 @@ _TO_DIGIT = str.maketrans({
     'D': '0', 'U': '0', 'A': '4', 'R': '2', 'T': '7', 'J': '1',
     'Y': '7', 'b': '6', 'o': '0', 'i': '1', 'z': '2', 's': '5',
     'g': '9', 'q': '9', 'd': '0',
-    'H': '4',  # H -> 4 (rare but seen)
+    'H': '4',
     'h': '4',
-    'N': '4',  # N -> 4
+    'N': '4',
     'n': '4',
+    'M': '4',
+    'm': '4',
 })
 
 _TO_LETTER = str.maketrans({
     '8': 'B', '0': 'O', '1': 'I', '2': 'Z', '5': 'S',
     '6': 'G', '9': 'Q', '3': 'E', '7': 'T',
-    '4': 'A',  # 4 -> A (for motorcycle plates)
-    '1': 'L',  # 1 -> L (for I/L confusion)
+    '4': 'A',
+    '1': 'L',
+    'M': '4',
+    'm': '4',
 })
 
 
 def _correct_plate_chars(text: str) -> str:
-    to_digit = str.maketrans({'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5', 'G': '6', 'Q': '9'})
-    to_letter = str.maketrans({'H': 'M', 'W': 'M'})
+    """Correct common OCR misreads for Philippine plates — position-aware."""
+    text = text.replace('_', '').replace('+', '').replace('.', '')
+    text = text.upper()
     
-    candidates = [
-        text.translate(to_digit),
-        text.translate(to_letter),
-        text.translate(to_digit).translate(to_letter),
-        text,
+    if is_valid_ph_plate(normalize_plate(text)):
+        return text
+    
+    to_digit = str.maketrans({
+        'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5',
+        'G': '6', 'Q': '9', 'U': '0', 'D': '0', 'A': '4', 'R': '2',
+        'T': '7', 'J': '1', 'Y': '7',
+    })
+    to_letter = str.maketrans({
+        '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '9': 'Q',
+        '4': 'A', '7': 'T', '3': 'E', '8': 'B',
+    })
+    letter_fix = str.maketrans({
+        'H': 'M', 'W': 'M',
+    })
+    
+    clean = normalize_plate(text)
+    
+    layouts = [
+        (3, 'L', 4, 'D'),
+        (3, 'L', 3, 'D'),
+        (3, 'D', 3, 'L'),
+        (2, 'L', 4, 'D'),
+        (2, 'L', 5, 'D'),
+        (1, 'L', 2, 'D', 3, 'L'),
     ]
     
-    for candidate in candidates:
-        if is_valid_ph_plate(candidate):
-            return candidate
+    for layout in layouts:
+        if len(layout) == 4:
+            n1, t1, n2, t2 = layout
+            if len(clean) != n1 + n2:
+                continue
+            part1 = clean[:n1]
+            part2 = clean[n1:]
+            if t1 == 'L':
+                part1_fixed = part1.translate(to_letter).translate(letter_fix)
+            else:
+                part1_fixed = part1.translate(to_digit)
+            if t2 == 'L':
+                part2_fixed = part2.translate(to_letter).translate(letter_fix)
+            else:
+                part2_fixed = part2.translate(to_digit)
+            candidate = normalize_plate(part1_fixed + part2_fixed)
+            if is_valid_ph_plate(candidate):
+                return candidate
+        elif len(layout) == 6:
+            n1, t1, n2, t2, n3, t3 = layout
+            if len(clean) != n1 + n2 + n3:
+                continue
+            parts = [clean[:n1], clean[n1:n1+n2], clean[n1+n2:]]
+            types = [t1, t2, t3]
+            fixed = []
+            for p, t in zip(parts, types):
+                if t == 'L':
+                    fixed.append(p.translate(to_letter).translate(letter_fix))
+                else:
+                    fixed.append(p.translate(to_digit))
+            candidate = normalize_plate(''.join(fixed))
+            if is_valid_ph_plate(candidate):
+                return candidate
+    
+    for i in range(len(clean)):
+        for trans_table in [to_digit, to_letter, letter_fix]:
+            translated = clean[:i] + clean[i:i+1].translate(trans_table) + clean[i+1:]
+            if is_valid_ph_plate(normalize_plate(translated)):
+                return translated
+    
     return text
 
 
@@ -116,9 +179,17 @@ def _decode(image_bytes: bytes) -> np.ndarray:
 def _preprocess_for_ocr(img: np.ndarray) -> np.ndarray:
     """Convert a BGR image to a sharpened grayscale for OCR."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Sharpening via unsharp mask
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
     sharp = cv2.addWeighted(gray, 1.8, blur, -0.8, 0)
+    return sharp
+
+
+def _preprocess_aggressive(img: np.ndarray) -> np.ndarray:
+    """Aggressive preprocessing for difficult plates."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(4, 4))
+    enhanced = clahe.apply(gray)
+    sharp = cv2.filter2D(enhanced, -1, np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]]))
     return sharp
 
 
@@ -181,82 +252,24 @@ def _deskew_plate(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
 # ── YOLO detection ──────────────────────────────────────────────────
 
 def _detect_plates(img: np.ndarray, conf: float = 0.5):
-    """
-    Run the YOLO model on a BGR image.
-
-    Returns a list of dicts, each with:
-        crop  — the cropped plate region (BGR)
-        bbox  — relative bounding box {x, y, width, height}  (0–1)
-        score — detection confidence
-    """
-    model = _get_yolo()
-    if model is None:
-        log.warning("[DETECT] No YOLO model loaded — skipping detection")
-        return []
-
-    h, w = img.shape[:2]
-    log.info("[DETECT] Running YOLO on %dx%d image, conf=%.2f", w, h, conf)
-    results = model.predict(img, conf=conf, verbose=False)
-
-    detections = []
-    for r in results:
-        log.info("[DETECT] YOLO returned %d boxes", len(r.boxes))
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            score = float(box.conf[0])
-            cls_id = int(box.cls[0]) if hasattr(box, 'cls') else -1
-            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f cls=%d", x1, y1, x2, y2, score, cls_id)
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-
-            box_w = x2 - x1
-            box_h = y2 - y1
-            aspect_ratio = box_w / max(box_h, 1)
-
-            if score < 0.50 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
-                log.info(
-                    "[DETECT] Dropped box: conf=%.3f aspect=%.2f", score, aspect_ratio,
-                )
-                continue
-
-            # Motorcycle/tricycle plates are two-row (narrow & tall, aspect < 2.0)
-            # so we need generous bottom padding to capture the second row of digits
-            pad_x = int(box_w * 0.15)
-            pad_y_top = int(box_h * 0.15)
-            if aspect_ratio < 2.0:
-                pad_y_bottom = int(box_h * 1.2)  # capture digits below the YOLO box
-            else:
-                pad_y_bottom = int(box_h * 0.15)
-
-            cx1 = max(0, x1 - pad_x)
-            cy1 = max(0, y1 - pad_y_top)
-            cx2 = min(w, x2 + pad_x)
-            cy2 = min(h, y2 + pad_y_bottom)
-
-            log.info("[DETECT] aspect=%.2f → pad_x=%d pad_y_top=%d pad_y_bottom=%d crop=(%d,%d)-(%d,%d)",
-                     aspect_ratio, pad_x, pad_y_top, pad_y_bottom, cx1, cy1, cx2, cy2)
-
-            crop_w = cx2 - cx1
-            crop_h = cy2 - cy1
-
-            detections.append({
-                "crop":  img[cy1:cy2, cx1:cx2],
-                "bbox":  {
-                    "x":      float(cx1 / w),
-                    "y":      float(cy1 / h),
-                    "width":  float(crop_w / w),
-                    "height": float(crop_h / h),
-                },
-                "score": score,
-                "aspect_ratio": aspect_ratio,
-            })
-
-    # Sort by confidence descending
-    detections.sort(key=lambda d: d["score"], reverse=True)
-    log.info("[DETECT] Total detections after YOLO: %d", len(detections))
-    return detections
+    return detect_plates(img, conf)
 
 
 # ── OCR on a single plate crop ──────────────────────────────────────
+
+def _combine_lmr_text(texts: dict[str, str]) -> str:
+    """Combine L/M/R region texts into a potential plate."""
+    l_text = texts.get('L', '')
+    m_text = texts.get('M', '')
+    r_text = texts.get('R', '')
+    if l_text and m_text and r_text:
+        return l_text + m_text + r_text
+    if m_text and r_text:
+        return m_text + r_text
+    if l_text and m_text:
+        return l_text + m_text
+    return ''
+
 
 def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] | tuple[None, None]:
     """
@@ -265,13 +278,13 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     Generates multiple augmented variants and ranks results.
     Returns (normalized_plate, confidence) or (None, None) on failure.
     """
-    MIN_WIDTH = 320
+    MIN_WIDTH = 400
     h_crop, w_crop = crop.shape[:2]
 
     if w_crop < MIN_WIDTH:
         scale = MIN_WIDTH / max(w_crop, 1)
         crop = cv2.resize(
-            crop, (MIN_WIDTH, max(int(h_crop * scale), 20)),
+            crop, (MIN_WIDTH, max(int(h_crop * scale), 80)),
             interpolation=cv2.INTER_CUBIC,
         )
         log.info("[OCR-CROP] Upscaled crop to %dx%d", crop.shape[1], crop.shape[0])
@@ -283,28 +296,22 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         if img is None or getattr(img, "size", 0) == 0:
             return
         raw = ocr.readtext(
-            img, text_threshold=0.3, link_threshold=0.3, low_text=0.2,
+            img, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5,
         )
         log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
-        for item in raw:
-            if len(item) == 3:
-                _, text, confidence = item
-            else:
-                text, confidence = str(item[1]), 0.0
-            text_raw = str(text).strip()
-            log.info("[OCR-CROP]   %s: raw='%s' conf=%.3f", label, text_raw, confidence)
-            text_clean = normalize_plate(text_raw)
-            if not text_clean:
-                continue
-            corrected = _correct_plate_chars(text_clean)
-            valid = is_valid_ph_plate(corrected)
-            conf = float(confidence)
-            if valid:
-                conf *= 1.15
-                conf = min(conf, 1.0)
-            log.info("[OCR-CROP]   %s: '%s' -> '%s' conf=%.3f valid=%s",
-                     label, text_clean, corrected, conf, valid)
-            yield corrected, conf, valid
+        combined_text, avg_conf = combine_multiline_text(raw)
+        if combined_text:
+            text_clean = normalize_plate(combined_text)
+            if text_clean:
+                corrected = _correct_plate_chars(text_clean)
+                valid = is_valid_ph_plate(corrected)
+                conf = float(avg_conf)
+                if valid:
+                    conf *= 1.15
+                    conf = min(conf, 1.0)
+                log.info("[OCR-CROP]   %s: '%s' -> '%s' conf=%.3f valid=%s",
+                         label, text_clean, corrected, conf, valid)
+                yield corrected, conf, valid
 
     candidates: list[tuple[float, str]] = []
     fallback: list[tuple[float, str]] = []
@@ -328,17 +335,19 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     base_variants.append((enhanced, "clahe"))
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     base_variants.append((cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), "otsu"))
+    base_variants.append((_preprocess_aggressive(deskewed), "aggressive"))
 
     for img_v, label in base_variants:
         for text, conf, valid in _run_ocr(img_v, label):
-            if valid and conf > 0.15:
+            if valid and conf > 0.08:
                 candidates.append((conf, text))
-            elif conf > 0.12:
+            elif conf > 0.05:
                 fallback.append((conf, text))
 
     if w_img > 90:
         third = w_img // 3
         two_thirds = 2 * third
+        lmr_texts: dict[str, str] = {}
         for img_v, label in base_variants:
             variants_l = [
                 (img_v[:, :third],          f"{label}_L"),
@@ -347,10 +356,21 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
             ]
             for sv, sl in variants_l:
                 for text, conf, valid in _run_ocr(sv, sl):
-                    if valid and conf > 0.12:
+                    if valid and conf > 0.08:
                         candidates.append((conf, text))
-                    elif conf > 0.10:
+                    elif conf > 0.05:
                         fallback.append((conf, text))
+                    if sl.endswith('_L') and text:
+                        lmr_texts['L'] = lmr_texts.get('L', '') + text
+                    elif sl.endswith('_M') and text:
+                        lmr_texts['M'] = lmr_texts.get('M', '') + text
+                    elif sl.endswith('_R') and text:
+                        lmr_texts['R'] = lmr_texts.get('R', '') + text
+        
+        combined = _combine_lmr_text(lmr_texts)
+        if combined and is_valid_ph_plate(normalize_plate(combined)):
+            log.info("[OCR-CROP] Valid combined LMR: '%s'", combined)
+            return normalize_plate(combined), 0.5
 
     if candidates:
         candidates.sort(reverse=True)
@@ -358,7 +378,14 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         for conf, text in candidates:
             by_text[text] = max(by_text.get(text, 0.0), conf)
         best_text = max(by_text.items(), key=lambda x: x[1])
-        log.info("[OCR-CROP] Best valid: '%s' (conf=%.3f)", best_text[0], best_text[1])
+        if is_valid_ph_plate(best_text[0]):
+            log.info("[OCR-CROP] Best valid: '%s' (conf=%.3f)", best_text[0], best_text[1])
+            return best_text[0], best_text[1]
+        for candidate in extract_plate_candidates(best_text[0]):
+            if is_valid_ph_plate(candidate):
+                log.info("[OCR-CROP] Valid plate from candidate: '%s'", candidate)
+                return candidate, best_text[1]
+        log.info("[OCR-CROP] Best fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
         return best_text[0], best_text[1]
 
     if fallback:
@@ -367,6 +394,13 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         for conf, text in fallback:
             by_text[text] = max(by_text.get(text, 0.0), conf)
         best_text = max(by_text.items(), key=lambda x: x[1])
+        if is_valid_ph_plate(best_text[0]):
+            log.info("[OCR-CROP] Valid fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
+            return best_text[0], best_text[1]
+        for candidate in extract_plate_candidates(best_text[0]):
+            if is_valid_ph_plate(candidate):
+                log.info("[OCR-CROP] Valid plate from fallback candidate: '%s'", candidate)
+                return candidate, best_text[1]
         log.info("[OCR-CROP] Best fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
         return best_text[0], best_text[1]
 
@@ -389,7 +423,7 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
     up = cv2.resize(bw, (int(bw.shape[1] * scale), int(bw.shape[0] * scale)), interpolation=cv2.INTER_CUBIC)
     try:
         ocr = _get_ocr()
-        raw = ocr.readtext(up, text_threshold=0.2, link_threshold=0.2, low_text=0.1)
+        raw = ocr.readtext(up, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5)
         log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(raw))
         candidates: list[tuple[float, str]] = []
         for item in raw:
@@ -400,7 +434,10 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
             if not text_c:
                 continue
             conf = float(confidence)
-            if is_valid_ph_plate(text_c):
+            corrected = _correct_plate_chars(text_c)
+            if is_valid_ph_plate(normalize_plate(corrected)):
+                candidates.append((conf, corrected))
+            elif is_valid_ph_plate(text_c):
                 candidates.append((conf, text_c))
         if candidates:
             candidates.sort(reverse=True)

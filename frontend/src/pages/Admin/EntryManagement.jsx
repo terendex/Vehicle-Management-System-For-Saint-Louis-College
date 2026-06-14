@@ -28,6 +28,7 @@ const STATUS_META = {
   no_pass: { label: 'No Visitor Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
   disabled: { label: 'Access Disabled', Icon: XCircle, cls: 'denied', logCls: 'denied' },
   unreadable: { label: 'Unreadable Plate', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
+  cooldown: { label: 'Recently Scanned', Icon: Clock, cls: 'pending', logCls: 'pending' },
 }
 
 function getMeta(status) {

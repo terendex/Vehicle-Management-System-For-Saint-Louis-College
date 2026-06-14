@@ -39,7 +39,7 @@ def _get_yolo():
     return _model
 
 
-def detect_plates(img: np.ndarray, conf: float = 0.3) -> list[dict]:
+def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
     """
     Detect license plates in an image using custom-trained YOLOv8.
     
@@ -75,15 +75,31 @@ def detect_plates(img: np.ndarray, conf: float = 0.3) -> list[dict]:
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
 
-            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f aspect=%.2f", x1, y1, x2, y2, score, aspect_ratio)
+            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f aspect=%.2f size=%dx%d", x1, y1, x2, y2, score, aspect_ratio, box_w, box_h)
             
-            if score < 0.3 or aspect_ratio < 0.6 or aspect_ratio > 4.0:
-                log.info("[DETECT] Dropped: conf=%.3f aspect=%.2f", score, aspect_ratio)
+            # Filter criteria:
+            # - conf >= 0.5: minimum detection confidence (filters painted text
+            #   like "7 SERVICE" which has conf ~0.3-0.47)
+            # - aspect 0.5–6.0: Philippine plates range from ~1.0 (motorcycle 2-row)
+            #   to ~5.5 (standard car/tricycle wide plates). 6.0 gives headroom.
+            # - min size 30x10: reject tiny sticker/emblem false positives
+            if score < 0.5 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
+                log.info("[DETECT] Dropped: conf=%.3f aspect=%.2f size=%dx%d", score, aspect_ratio, box_w, box_h)
                 continue
 
-            pad_x = int(box_w * 0.15)
-            pad_y_top = int(box_h * 0.15)
-            pad_y_bottom = int(box_h * 1.2) if aspect_ratio < 2.0 else int(box_h * 0.15)
+            # More generous padding for small motorcycle plates to capture both rows
+            if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
+                pad_x = max(int(box_w * 0.6), 20)
+                pad_y_top = max(int(box_h * 0.5), 15)
+                pad_y_bottom = max(int(box_h * 2.5), 60)
+            elif aspect_ratio < 2.0:
+                pad_x = int(box_w * 0.3)
+                pad_y_top = int(box_h * 0.3)
+                pad_y_bottom = int(box_h * 1.5)
+            else:
+                pad_x = int(box_w * 0.25)
+                pad_y_top = int(box_h * 0.25)
+                pad_y_bottom = int(box_h * 0.3)
 
             cx1, cy1 = max(0, x1 - pad_x), max(0, y1 - pad_y_top)
             cx2, cy2 = min(w, x2 + pad_x), min(h, y2 + pad_y_bottom)

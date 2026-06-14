@@ -133,7 +133,19 @@ class TrackedObject:
             self.is_active = False
 
     def in_cooldown(self, now: datetime) -> bool:
-        return False
+        if self.last_scan is None:
+            return False
+        try:
+            diff = now - self.last_scan
+        except TypeError:
+            from django.utils.timezone import is_aware
+            if is_aware(now) and not is_aware(self.last_scan):
+                diff = now - self.last_scan.replace(tzinfo=now.tzinfo)
+            elif not is_aware(now) and is_aware(self.last_scan):
+                diff = now.replace(tzinfo=self.last_scan.tzinfo) - self.last_scan
+            else:
+                diff = now - self.last_scan
+        return diff < timedelta(seconds=15)
 
     def mark_scanned(self, now: datetime):
         self.last_scan = now
@@ -145,19 +157,31 @@ class PlateTracker:
         self._next_id: int = 1
 
     def update(self, detections: list[dict]) -> list[dict]:
+        track_to_det_idx = {}
+
         if not self._tracks:
-            for det in detections:
+            for d_idx, det in enumerate(detections):
                 bbox = det["bbox"]
                 conf = det.get("confidence", 0.0)
                 crop = det.get("crop")
                 x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
                 if conf >= 0.3:
-                    track = TrackedObject(self._next_id, (x, y, w, h))
+                    track_id = self._next_id
+                    track = TrackedObject(track_id, (x, y, w, h))
                     if crop is not None:
                         track.add_crop(crop)
-                    self._tracks[self._next_id] = track
+                    self._tracks[track_id] = track
+                    track_to_det_idx[track_id] = d_idx
                     self._next_id += 1
-            return [{"track_id": t.track_id, "bbox": t.bbox, "plate_text": t.plate_text} for t in self._tracks.values()]
+            return [
+                {
+                    "track_id": t.track_id,
+                    "bbox": t.bbox,
+                    "plate_text": t.plate_text,
+                    "detection_index": track_to_det_idx.get(t.track_id)
+                }
+                for t in self._tracks.values()
+            ]
 
         matches: dict[int, int] = {}
         used_tracks: set[int] = set()
@@ -187,11 +211,12 @@ class PlateTracker:
             crop = det.get("crop")
             x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
             if d_idx not in matches and conf >= 0.3:
-                track = TrackedObject(self._next_id, (x, y, w, h))
+                track_id = self._next_id
+                track = TrackedObject(track_id, (x, y, w, h))
                 if crop is not None:
                     track.add_crop(crop)
-                self._tracks[self._next_id] = track
-                matches[d_idx] = self._next_id
+                self._tracks[track_id] = track
+                matches[d_idx] = track_id
                 self._next_id += 1
 
         for d_idx, t_id in matches.items():
@@ -202,14 +227,24 @@ class PlateTracker:
             x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
             track = self._tracks[t_id]
             track.update((x, y, w, h), conf, crop)
+            track_to_det_idx[t_id] = d_idx
 
+        matched_track_ids = set(matches.values())
         for t_id in list(self._tracks.keys()):
-            if t_id not in matches:
+            if t_id not in matched_track_ids:
                 self._tracks[t_id].mark_missed()
 
         self._tracks = {k: v for k, v in self._tracks.items() if v.is_active}
 
-        return [{"track_id": t.track_id, "bbox": t.bbox, "plate_text": t.plate_text} for t in self._tracks.values()]
+        return [
+            {
+                "track_id": t.track_id,
+                "bbox": t.bbox,
+                "plate_text": t.plate_text,
+                "detection_index": track_to_det_idx.get(t.track_id)
+            }
+            for t in self._tracks.values()
+        ]
 
     def get_track(self, track_id: int) -> Optional[TrackedObject]:
         return self._tracks.get(track_id)
