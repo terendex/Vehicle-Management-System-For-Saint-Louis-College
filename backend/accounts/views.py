@@ -317,3 +317,74 @@ class AuditLogStatsView(APIView):
             'by_action': AuditLog.objects.values('action').annotate(count=Count('action')),
         }
         return Response(stats)
+
+
+# ──────────────────────────────────────────────
+#  Password Change (any authenticated user)
+# ──────────────────────────────────────────────
+
+class ChangePasswordView(APIView):
+    """Allow any authenticated user to change their own password.
+    Clears the must_change_password flag after a successful change."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        current_password = request.data.get('current_password', '').strip()
+        new_password = request.data.get('new_password', '').strip()
+        confirm_password = request.data.get('confirm_password', '').strip()
+
+        if not current_password:
+            return Response({'error': 'Current password is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not user.check_password(current_password):
+            return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not new_password:
+            return Response({'error': 'New password is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_password != confirm_password:
+            return Response({'error': 'New passwords do not match.'}, status=status.HTTP_400_BAD_REQUEST)
+        if current_password == new_password:
+            return Response({'error': 'New password must be different from current password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate strength
+        import re
+        errors = []
+        if len(new_password) < 8:
+            errors.append('Password must be at least 8 characters.')
+        if not re.search(r'[A-Z]', new_password):
+            errors.append('Password must contain at least one uppercase letter.')
+        if not re.search(r'[a-z]', new_password):
+            errors.append('Password must contain at least one lowercase letter.')
+        if not re.search(r'[0-9]', new_password):
+            errors.append('Password must contain at least one number.')
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\'\"\\|,.<>\/?]', new_password):
+            errors.append('Password must contain at least one special character.')
+        if errors:
+            return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save(update_fields=['password', 'must_change_password'])
+        return Response({'message': 'Password changed successfully.'})
+
+
+# ──────────────────────────────────────────────
+#  Vehicle Owner: own registration record
+# ──────────────────────────────────────────────
+
+class MyRegistrationView(APIView):
+    """Returns the VehicleRegistration record for the logged-in vehicle owner."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'vehicle_owner':
+            return Response({'error': 'Only vehicle owners can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+        from vehicles.models import VehicleRegistration
+        from vehicles.serializers import VehicleRegistrationSerializer
+        try:
+            registration = VehicleRegistration.objects.get(
+                email=request.user.email,
+                status='accepted'
+            )
+            return Response(VehicleRegistrationSerializer(registration).data)
+        except VehicleRegistration.DoesNotExist:
+            return Response({'error': 'No accepted registration found for this account.'}, status=status.HTTP_404_NOT_FOUND)

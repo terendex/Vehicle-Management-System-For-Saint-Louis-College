@@ -57,6 +57,15 @@ const useAuthStore = create((set, get) => ({
     })
   },
 
+  /** Called after a successful password change to clear the must_change_password flag in local state. */
+  clearMustChangePassword: () => {
+    set((state) => {
+      const updatedUser = { ...state.user, must_change_password: false }
+      localStorage.setItem('user', JSON.stringify(updatedUser))
+      return { user: updatedUser }
+    })
+  },
+
   clearError: () => set({ error: null }),
 }))
 

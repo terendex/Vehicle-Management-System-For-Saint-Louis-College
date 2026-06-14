@@ -24,7 +24,7 @@ def validate_password_strength(password):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password']
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -99,16 +99,19 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['role'] = user.role
         token['full_name'] = user.full_name
         token['email'] = user.email
+        token['must_change_password'] = user.must_change_password
         return token
 
     def validate(self, attrs):
         data = super().validate(attrs)
         data['role'] = self.user.role
+        data['must_change_password'] = self.user.must_change_password
         data['user'] = {
             'id': self.user.id,
             'full_name': self.user.full_name,
             'email': self.user.email,
             'role': self.user.role,
+            'must_change_password': self.user.must_change_password,
         }
         return data
 

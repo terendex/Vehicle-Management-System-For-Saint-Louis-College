@@ -3,7 +3,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { QrCode, Copy, Check, X, Eye, Power, PowerOff, Trash2, Eraser, MoreVertical } from 'lucide-react'
+import { QrCode, Copy, Check, X, Eye, Power, PowerOff, Trash2, Eraser, MoreVertical, User, Car, KeyRound, ShieldCheck, Mail } from 'lucide-react'
 import './VehicleRegistration.css'
 
 export default function VehicleRegistration() {
@@ -38,6 +38,8 @@ export default function VehicleRegistration() {
   const [isQRModalOpen, setIsQRModalOpen] = useState(false)
   const [qrDisplayData, setQrDisplayData] = useState(null)
   const [qrViewerCopied, setQrViewerCopied] = useState(false)
+  const [accountModal, setAccountModal] = useState(null) // holds account details after acceptance
+  const [emailFailed, setEmailFailed] = useState(false)
 
   useEffect(() => {
     fetchTokens()
@@ -155,15 +157,21 @@ export default function VehicleRegistration() {
     if (!confirmAcceptModal) return
     setSubmitting(true)
     try {
-      await registrationApi.acceptRegistration(confirmAcceptModal)
+      const result = await registrationApi.acceptRegistration(confirmAcceptModal)
       setIsViewModalOpen(false)
       setConfirmAcceptModal(null)
       fetchRegistrations()
-      showResult("Registration accepted successfully!", "success")
+      // Show account details modal
+      if (result?.account) {
+        setAccountModal(result.account)
+        setEmailFailed(result.email_status === 'failed')
+      } else {
+        showResult('Registration accepted successfully!', 'success')
+      }
     } catch (error) {
-      console.error("Failed to accept registration:", error)
+      console.error('Failed to accept registration:', error)
       setConfirmAcceptModal(null)
-      showResult(error.response?.data?.error || "Failed to accept registration.", "error")
+      showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
     } finally {
       setSubmitting(false)
     }
@@ -801,6 +809,172 @@ export default function VehicleRegistration() {
                 style={{ width: '100%', justifyContent: 'center' }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Account Created — shown after successful registration acceptance */}
+      {accountModal && (
+        <div className="modal-overlay">
+          <div className="modal-content modal-account">
+            {/* Header */}
+            <div className="account-modal-header">
+              <div className="account-success-badge">
+                <ShieldCheck size={28} />
+              </div>
+              <div>
+                <h2 className="modal-title" style={{ marginBottom: 4 }}>Account Created Successfully</h2>
+                <p className="account-modal-subtitle">
+                  The vehicle owner account has been provisioned and credentials sent via email.
+                </p>
+              </div>
+              <button className="modal-close-btn" onClick={() => setAccountModal(null)}>
+                <X size={22} />
+              </button>
+            </div>
+
+            {/* System ID Banner */}
+            <div className="account-id-banner">
+              <div className="account-id-item">
+                <span className="account-id-label">Portal Account ID</span>
+                <span className="account-id-value">{accountModal.user_code || '—'}</span>
+              </div>
+              <div className="account-id-divider" />
+              <div className="account-id-item">
+                <span className="account-id-label">System Registration ID</span>
+                <span className="account-id-value">{accountModal.system_id || '—'}</span>
+              </div>
+            </div>
+
+            {/* Credentials Box */}
+            <div className="account-credentials-box">
+              <div className="account-cred-header">
+                <KeyRound size={16} />
+                Login Credentials
+                <span className="account-cred-note">Sent to owner's email</span>
+              </div>
+              <div className="account-cred-row">
+                <Mail size={14} />
+                <span className="account-cred-field">Email</span>
+                <span className="account-cred-val">{accountModal.email}</span>
+              </div>
+              <div className="account-cred-row">
+                <KeyRound size={14} />
+                <span className="account-cred-field">Password</span>
+                <span className="account-cred-val" style={{ color: '#7C80A3', fontStyle: 'italic' }}>Sent securely to owner's email</span>
+              </div>
+              {emailFailed && (
+                <p className="account-cred-warning" style={{ color: '#DC2626' }}>
+                  ⚠ Email failed to send. Please check your SMTP settings in the .env file and share credentials manually.
+                </p>
+              )}
+              {!emailFailed && (
+                <p className="account-cred-warning" style={{ color: '#059669' }}>
+                  ✓ Credentials have been emailed to the vehicle owner.
+                </p>
+              )}
+            </div>
+
+            <div className="account-sections">
+              {/* Personal Info */}
+              <div className="account-info-section">
+                <div className="account-section-head">
+                  <User size={14} />
+                  Personal Information
+                </div>
+                <div className="account-info-grid">
+                  <div className="account-info-item">
+                    <span className="account-info-label">Full Name</span>
+                    <span className="account-info-val">{accountModal.full_name}</span>
+                  </div>
+                  <div className="account-info-item">
+                    <span className="account-info-label">Type</span>
+                    <span className="account-info-val" style={{ textTransform: 'capitalize' }}>{accountModal.registrant_type}</span>
+                  </div>
+                  {accountModal.registrant_type === 'student' ? (
+                    <>
+                      <div className="account-info-item">
+                        <span className="account-info-label">Student ID</span>
+                        <span className="account-info-val">{accountModal.student_id || '—'}</span>
+                      </div>
+                      <div className="account-info-item">
+                        <span className="account-info-label">Program & Year</span>
+                        <span className="account-info-val">{accountModal.program_year || '—'}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="account-info-item">
+                        <span className="account-info-label">Employee ID</span>
+                        <span className="account-info-val">{accountModal.employee_id || '—'}</span>
+                      </div>
+                      <div className="account-info-item">
+                        <span className="account-info-label">Department</span>
+                        <span className="account-info-val">{accountModal.department || '—'}</span>
+                      </div>
+                    </>
+                  )}
+                  <div className="account-info-item">
+                    <span className="account-info-label">Contact</span>
+                    <span className="account-info-val">{accountModal.contact_number || '—'}</span>
+                  </div>
+                  <div className="account-info-item">
+                    <span className="account-info-label">Driver's License</span>
+                    <span className="account-info-val">{accountModal.drivers_license || '—'}</span>
+                  </div>
+                  {accountModal.registrant_type === 'student' && accountModal.campus_days?.length > 0 && (
+                    <div className="account-info-item" style={{ gridColumn: 'span 2' }}>
+                      <span className="account-info-label">Campus Days</span>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                        {accountModal.campus_days.map(day => (
+                          <span key={day} className="account-day-badge">{day}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="account-info-item" style={{ gridColumn: 'span 2' }}>
+                    <span className="account-info-label">Address</span>
+                    <span className="account-info-val">{accountModal.address || '—'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Vehicle Info */}
+              <div className="account-info-section">
+                <div className="account-section-head">
+                  <Car size={14} />
+                  Vehicle Information
+                </div>
+                <div className="account-info-grid">
+                  <div className="account-info-item">
+                    <span className="account-info-label">Plate Number</span>
+                    <span className="account-info-val account-plate">{accountModal.plate_number}</span>
+                  </div>
+                  <div className="account-info-item">
+                    <span className="account-info-label">Vehicle Type</span>
+                    <span className="account-info-val" style={{ textTransform: 'capitalize' }}>{accountModal.vehicle_type}</span>
+                  </div>
+                  <div className="account-info-item">
+                    <span className="account-info-label">Color</span>
+                    <span className="account-info-val">{accountModal.vehicle_color || '—'}</span>
+                  </div>
+                  <div className="account-info-item">
+                    <span className="account-info-label">Conduction No.</span>
+                    <span className="account-info-val">{accountModal.conduction_number || '—'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 8 }}>
+              <button
+                className="btn-primary"
+                onClick={() => setAccountModal(null)}
+                style={{ flex: 1, justifyContent: 'center' }}
+              >
+                <Check size={16} /> Done
               </button>
             </div>
           </div>

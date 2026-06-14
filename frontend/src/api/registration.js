@@ -55,7 +55,7 @@ export const registrationApi = {
     return data
   },
 
-  // Accept a registration
+  // Accept a registration — returns { message, account: { user_code, system_id, temp_password, ... } }
   acceptRegistration: async (id) => {
     const { data } = await api.post(`/api/vehicles/registrations/${id}/accept/`)
     return data
