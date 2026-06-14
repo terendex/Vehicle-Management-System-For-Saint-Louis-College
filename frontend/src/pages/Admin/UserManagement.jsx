@@ -415,7 +415,7 @@ export default function UserManagement() {
           <table className="um-table">
             <thead>
               <tr>
-                <th>#</th>
+                <th>User ID</th>
                 <th>Full Name</th>
                 <th>Email</th>
                 <th>Role</th>
@@ -426,7 +426,11 @@ export default function UserManagement() {
             <tbody>
               {users.map((u, idx) => (
                 <tr key={u.id}>
-                  <td>{idx + 1}</td>
+                  <td>
+                    <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                      {u.user_code || `#${u.id}`}
+                    </span>
+                  </td>
                   <td>
                     <div className="um-user-cell">
                       <div className={`um-user-avatar ${u.role}`}>
@@ -722,7 +726,9 @@ export default function UserManagement() {
                 </div>
                 <div className="um-profile-item">
                   <span className="um-profile-label">User ID</span>
-                  <span className="um-profile-value">#{selectedUser.id}</span>
+                  <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61', letterSpacing: '0.5px' }}>
+                    {selectedUser.user_code || `#${selectedUser.id}`}
+                  </span>
                 </div>
               </div>
             </div>

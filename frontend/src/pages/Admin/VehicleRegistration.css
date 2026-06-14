@@ -903,3 +903,35 @@
     align-self: flex-end;
   }
 }
+
+/* ===== Generate QR — loading spinner & error ===== */
+
+@keyframes btnSpin {
+  to { transform: rotate(360deg); }
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btnSpin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+.generate-error-banner {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  background: #FEF2F2;
+  border: 1.5px solid #FECACA;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #DC2626;
+  font-weight: 500;
+  margin-bottom: 4px;
+  animation: sectionFadeIn 0.2s ease;
+}

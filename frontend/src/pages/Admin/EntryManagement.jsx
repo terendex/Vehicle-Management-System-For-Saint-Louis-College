@@ -441,10 +441,8 @@ export default function EntryManagement() {
                         </div>
                       ))}
                       <div className="em-scan-frame">
-                        <div className="em-scan-bracket">
                           <div className="em-scan-inner" />
                           {!wsScanning && <div className="em-scan-line" />}
-                        </div>
                       </div>
                       {flashState && <div className="em-flash" />}
 

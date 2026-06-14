@@ -36,6 +36,7 @@ from rest_framework.views import APIView
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from .models import RegistrationToken, VehicleRegistration
 from .serializers import RegistrationTokenSerializer, VehicleRegistrationSerializer
 from accounts.models import User
@@ -52,9 +53,17 @@ class GenerateRegistrationTokenView(APIView):
 
     def post(self, request):
         registrant_type = request.data.get('registrant_type')
-        expires_at = request.data.get('expires_at')
-        if not registrant_type or not expires_at:
+        expires_at_str = request.data.get('expires_at')
+        if not registrant_type or not expires_at_str:
             return Response({"error": "registrant_type and expires_at are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Parse the datetime-local string (e.g. "2026-06-30T10:00") and make it
+        # timezone-aware so it can be safely compared with timezone.now() later.
+        expires_at = parse_datetime(expires_at_str)
+        if expires_at is None:
+            return Response({"error": "Invalid expires_at format. Use YYYY-MM-DDTHH:MM."}, status=status.HTTP_400_BAD_REQUEST)
+        if timezone.is_naive(expires_at):
+            expires_at = timezone.make_aware(expires_at)
 
         token = RegistrationToken.objects.create(
             registrant_type=registrant_type,
@@ -183,6 +192,13 @@ class AcceptRegistrationView(APIView):
             is_authorized=True,
             owner=owner
         )
+
+        # Auto-generate unique system ID
+        padded_id = str(registration.pk).zfill(6)
+        if registration.registrant_type == 'student':
+            registration.system_student_id = f"SLC-STU-{padded_id}"
+        else:
+            registration.system_employee_id = f"SLC-EMP-{padded_id}"
 
         registration.status = VehicleRegistration.Status.ACCEPTED
         registration.reviewed_at = timezone.now()
