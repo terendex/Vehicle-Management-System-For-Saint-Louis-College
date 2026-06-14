@@ -40,6 +40,7 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
     user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
+    must_change_password = models.BooleanField(default=False)  # True for auto-provisioned accounts
 
     # Override username to be nullable/blank, email is used for login
     username = models.CharField(max_length=150, blank=True, null=True)

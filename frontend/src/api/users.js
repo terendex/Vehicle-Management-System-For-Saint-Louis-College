@@ -58,4 +58,20 @@ export const usersApi = {
     const { data } = await api.get('/api/accounts/audit-logs/stats/')
     return data
   },
+
+  /** Get the vehicle owner's own registration record. */
+  getMyRegistration: async () => {
+    const { data } = await api.get('/api/accounts/me/registration/')
+    return data
+  },
+
+  /** Change the authenticated user's password. */
+  changePassword: async (currentPassword, newPassword, confirmPassword) => {
+    const { data } = await api.post('/api/accounts/change-password/', {
+      current_password: currentPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    })
+    return data
+  },
 }

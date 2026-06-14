@@ -1,3 +1,5 @@
+import secrets
+import string
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -41,7 +43,7 @@ from .models import RegistrationToken, VehicleRegistration
 from .serializers import RegistrationTokenSerializer, VehicleRegistrationSerializer
 from accounts.models import User
 from .email_utils import send_acceptance_email, send_rejection_email
-import uuid
+
 
 class IsAdminRole(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -154,6 +156,20 @@ class PendingRegistrationsListView(APIView):
         return Response(VehicleRegistrationSerializer(registrations, many=True).data)
 
 
+def _generate_temp_password():
+    """Generate a secure temporary password that meets all strength requirements."""
+    lowercase = secrets.choice(string.ascii_lowercase)
+    uppercase = secrets.choice(string.ascii_uppercase)
+    digit     = secrets.choice(string.digits)
+    special   = secrets.choice('!@#$%^&*()_+-=')
+    # Fill remaining 8 chars from full set
+    alphabet  = string.ascii_letters + string.digits + '!@#$%^&*()_+-='
+    rest      = [secrets.choice(alphabet) for _ in range(8)]
+    password_chars = [lowercase, uppercase, digit, special] + rest
+    secrets.SystemRandom().shuffle(password_chars)
+    return ''.join(password_chars)
+
+
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminRole]
 
@@ -165,13 +181,14 @@ class AcceptRegistrationView(APIView):
         if User.objects.filter(email=registration.email).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create user with temporary password
-        temp_password = str(uuid.uuid4())[:8]
+        # Create user with a secure temporary password
+        temp_password = _generate_temp_password()
         user = User.objects.create_user(
             email=registration.email,
             full_name=registration.full_name,
             password=temp_password,
-            role='vehicle_owner'
+            role='vehicle_owner',
+            must_change_password=True,  # force password change on first login
         )
 
         # Create Owner
@@ -181,7 +198,6 @@ class AcceptRegistrationView(APIView):
             contact=registration.contact_number,
             address=registration.address,
             owner_type=owner_type,
-            # schedule parsing omitted for brevity
         )
 
         # Create Vehicle
@@ -204,10 +220,44 @@ class AcceptRegistrationView(APIView):
         registration.reviewed_at = timezone.now()
         registration.save()
 
-        # Send acceptance email with QR code
-        send_acceptance_email(registration, temp_password)
+        # Refresh user to get generated user_code
+        user.refresh_from_db()
+        system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
-        return Response({"message": "Registration accepted and user created."})
+        # Send acceptance email with QR code and credentials
+        try:
+            send_acceptance_email(registration, temp_password, user.user_code)
+            email_status = 'sent'
+        except Exception as e:
+            # Log the failure but don't crash the acceptance
+            import traceback
+            print(f"[EMAIL ERROR] Failed to send acceptance email to {registration.email}: {e}")
+            traceback.print_exc()
+            email_status = 'failed'
+
+        return Response({
+            "message": "Registration accepted and user created.",
+            "email_status": email_status,
+            "account": {
+                "user_code": user.user_code,
+                "system_id": system_id,
+                "email": registration.email,
+                "full_name": registration.full_name,
+                "registrant_type": registration.registrant_type,
+                "plate_number": registration.plate_number,
+                "vehicle_type": registration.vehicle_type,
+                "vehicle_color": registration.vehicle_color,
+                "contact_number": registration.contact_number,
+                "address": registration.address,
+                "student_id": registration.student_id,
+                "program_year": registration.program_year,
+                "employee_id": registration.employee_id,
+                "department": registration.department,
+                "campus_days": registration.campus_days,
+                "drivers_license": registration.drivers_license,
+                "conduction_number": registration.conduction_number,
+            }
+        })
 
 
 class RejectRegistrationView(APIView):

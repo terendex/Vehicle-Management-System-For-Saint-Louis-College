@@ -3,7 +3,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
 import {
-  Search, UserPlus, Eye, Pencil, Ban, CheckCircle, Trash2, X,
+  Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
   Check, Circle, MoreVertical, ChevronLeft, ChevronRight
 } from 'lucide-react'
@@ -122,13 +122,6 @@ export default function UserManagement() {
     setModal('add')
   }
 
-  const openEdit = (user) => {
-    setSelectedUser(user)
-    setForm({ full_name: user.full_name, email: user.email, role: user.role, password: '', confirm_password: '' })
-    setFormErrors({})
-    setModal('edit')
-  }
-
   const openView = (user) => {
     setSelectedUser(user)
     setModal('view')
@@ -238,43 +231,6 @@ export default function UserManagement() {
       } else {
         showResult('Failed to replace admin', 'error')
       }
-      setSubmitting(false)
-    }
-  }
-
-  /* ─── handle edit ───── */
-  const onEditClick = () => {
-    const errors = {}
-    if (!form.full_name.trim()) errors.full_name = 'Full name is required.'
-    if (!form.email.trim()) errors.email = 'Email is required.'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errors.email = 'Invalid email format.'
-    setFormErrors(errors)
-    if (Object.keys(errors).length > 0) return
-    setModal('confirmEdit')
-  }
-
-  const handleEdit = async () => {
-    setSubmitting(true)
-    try {
-      await usersApi.updateUser(selectedUser.id, {
-        full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        role: form.role,
-      })
-      fetchUsers()
-      showResult('User updated successfully!')
-    } catch (err) {
-      const data = err.response?.data
-      if (data) {
-        const errors = {}
-        if (data.full_name) errors.full_name = Array.isArray(data.full_name) ? data.full_name[0] : data.full_name
-        if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
-        setFormErrors(errors)
-        setModal('edit')
-      } else {
-        showResult('Failed to update user', 'error')
-      }
-    } finally {
       setSubmitting(false)
     }
   }
@@ -463,9 +419,6 @@ export default function UserManagement() {
                       <div className="um-actions-dropdown" onClick={(e) => e.stopPropagation()}>
                         <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
                           <Eye size={15} /> View Profile
-                        </button>
-                        <button className="um-dropdown-item edit" onClick={() => { openEdit(u); setActiveMenu(null) }}>
-                          <Pencil size={15} /> Edit
                         </button>
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
@@ -739,60 +692,6 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* EDIT USER MODAL */}
-      {modal === 'edit' && selectedUser && (
-        <div className="um-modal-overlay" onClick={closeModal}>
-          <div className="um-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="um-modal-header">
-              <h2>Edit User</h2>
-              <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
-            </div>
-            <div className="um-modal-body">
-              <div className="um-form-group">
-                <label htmlFor="edit-fullname">Full Name</label>
-                <input
-                  id="edit-fullname"
-                  className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
-                  value={form.full_name}
-                  onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                />
-                {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
-              </div>
-              <div className="um-form-group">
-                <label htmlFor="edit-email">Email</label>
-                <input
-                  id="edit-email"
-                  className={`um-form-input ${formErrors.email ? 'error' : ''}`}
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                />
-                {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
-              </div>
-              <div className="um-form-group">
-                <label htmlFor="edit-role">Role</label>
-                <select
-                  id="edit-role"
-                  className="um-form-select"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                >
-                  <option value="security">Security Personnel</option>
-                  <option value="vehicle_owner">Vehicle Owner</option>
-                </select>
-              </div>
-            </div>
-            <div className="um-modal-footer">
-              <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
-              <button className="um-btn-primary" disabled={submitting} onClick={onEditClick}>
-                <Pencil size={16} />
-                Continue
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* DELETE CONFIRMATION */}
       {modal === 'delete' && selectedUser && (
         <div className="um-modal-overlay" onClick={closeModal}>
@@ -880,30 +779,6 @@ export default function UserManagement() {
               <button className="um-btn-secondary" disabled={submitting} onClick={() => setModal('add')}>Back</button>
               <button className="um-btn-primary" disabled={submitting} onClick={addType === 'admin' ? handleReplaceAdmin : handleAddUser}>
                 {submitting ? 'Processing...' : 'Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONFIRM EDIT MODAL */}
-      {modal === 'confirmEdit' && selectedUser && (
-        <div className="um-modal-overlay">
-          <div className="um-modal" style={{ maxWidth: 420 }}>
-            <div className="um-modal-header">
-              <h2>Confirm Changes</h2>
-            </div>
-            <div className="um-modal-body">
-              <div className="um-confirm-body">
-                <div className="um-confirm-icon warning"><Pencil size={24} /></div>
-                <h3>Save Changes?</h3>
-                <p>Are you sure you want to save the changes made to <span className="um-confirm-name">{selectedUser.full_name}</span>?</p>
-              </div>
-            </div>
-            <div className="um-modal-footer">
-              <button className="um-btn-secondary" disabled={submitting} onClick={() => setModal('edit')}>Back</button>
-              <button className="um-btn-primary" disabled={submitting} onClick={handleEdit}>
-                {submitting ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>
