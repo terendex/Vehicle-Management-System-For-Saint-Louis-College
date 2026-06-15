@@ -28,7 +28,7 @@ npm install
 Create `.env`:
 ```bash
 cp .env.example .env
-# Edit VITE_API_BASE_URL if backend runs on different port
+# Edit VITE_API_BASE_URL if backend runs on different port (production only)
 ```
 
 Run development server:
@@ -40,4 +40,6 @@ npm run dev
 
 | Variable | Description |
 |---|---|
-| `VITE_API_BASE_URL` | Django backend URL (default: `http://localhost:8000`) |
+| `VITE_API_BASE_URL` | Django backend URL for production (default: `http://localhost:8000`) |
+
+> **Note:** In development, Vite proxies `/api` requests to the backend automatically.

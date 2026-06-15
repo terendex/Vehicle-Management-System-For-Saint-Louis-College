@@ -1,11 +1,7 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-export { API_BASE_URL }
-
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: '/api',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -31,7 +27,7 @@ api.interceptors.response.use(
     const originalRequest = error.config
 
     if (error.response?.status === 401 && !originalRequest._retry) {
-      const authEndpoints = ['/api/auth/login/', '/api/auth/refresh/', '/api/auth/verify/']
+      const authEndpoints = ['/auth/login/', '/auth/refresh/', '/auth/verify/']
       if (authEndpoints.some(endpoint => originalRequest.url.includes(endpoint))) {
         return Promise.reject(error)
       }
@@ -42,7 +38,7 @@ api.interceptors.response.use(
         const refreshToken = localStorage.getItem('refresh_token')
         if (!refreshToken) throw new Error('No refresh token')
 
-        const { data } = await axios.post(`${API_BASE_URL}/api/auth/refresh/`, {
+        const { data } = await api.post('/auth/refresh/', {
           refresh: refreshToken,
         })
 
