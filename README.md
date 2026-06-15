@@ -532,7 +532,7 @@ main          ← production only, never push directly
 |---|---|---|
 | Admin | admin@example.com | admin123 |
 | Security | juan@slc.edu | security123 |
-| Vehicle Owner | ana@slc.edu | owner123 |
+| Vehicle Owner | ana@slc.edu | TempPass123! |
 
 > **Note:** Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
 
