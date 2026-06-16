@@ -460,6 +460,39 @@ python -m celery -A config worker -l info --pool=solo
 | `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | ✅ |
 | `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | ✅ |
 
+### Video Processing Pipeline
+
+The `backend/scanning/ml/video_pipeline.py` and `video_train.py` modules provide a standalone video processing pipeline:
+
+**Pipeline Steps:**
+1. Load model (YOLOv8 plate detector)
+2. Load video source
+3. Read frames
+4. Detect license plates
+5. Track vehicles
+6. Assign license plates to vehicles
+7. Crop license plates
+8. Process via B&W filter for OCR
+9. Store results
+
+**Usage:**
+```bash
+# Process a video file
+cd backend
+python -m scanning.ml.video_train --source path/to/video.mp4 --output output.mp4 --results-csv results.csv
+
+# Process every N frames (default: 1)
+python -m scanning.ml.video_train --source video.mp4 --process-every 5
+
+# Run training after processing
+python -m scanning.ml.video_train --source video.mp4 --train --epochs 50
+```
+
+**Output:**
+- Annotated video with tracked vehicles and recognized plates
+- Cropped license plate images in `output/crops/`
+- CSV results file with frame, vehicle_id, plate_text, confidence
+
 ### Violations
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
