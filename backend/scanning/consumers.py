@@ -4,20 +4,18 @@ import os
 from datetime import datetime
 from typing import Any
 import asyncio
-from collections import Counter
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from .ml.tracking import PlateTracker
 from .ml.detection import detect_plates, is_gpu_available
-from .ml.ocr import run_ocr, majority_vote_ocr
+from .ml.ocr import run_ocr
 from .ml.database import save_record as db_save_record
+from .ml.proximity_tracker import ProximityTracker
 
 logger = logging.getLogger(__name__)
 
-OCR_INTERVAL_FRAMES = 10
 SNAPSHOT_DIR = "snapshots"
 FRAME_RATE_LIMIT_MS = 2000
 
@@ -40,7 +38,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4001, reason="Invalid token")
             return
         self._recent = {}
-        self._tracker = PlateTracker()
+        self._tracker = ProximityTracker()
         self._frame_counter = 0
         self._pending_ocr = {}
         self._fps = 0.0
@@ -106,7 +104,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         det_by_idx = {i: d for i, d in enumerate(detections)}
         
         logger.info("[WS] Tracks after update: %d", len(tracker_output))
-        
         logger.info("[WS] Detections: %d, Tracks: %d", len(detections), len(tracker_output))
         
         active_tracks = []
@@ -115,41 +112,34 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         for t_out in tracker_output:
             track_id = t_out["track_id"]
             bbox = t_out["bbox"]
-            if isinstance(bbox, dict):
-                bbox_list = [bbox["x"], bbox["y"], bbox["width"], bbox["height"]]
-            else:
-                bbox_list = list(bbox)
+            x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+            bbox_list = [x, y, x + w, y + h]
             
             track = self._tracker.get_track(track_id)
             d_idx = t_out.get("detection_index")
             det = det_by_idx.get(d_idx) if d_idx is not None else None
             
-            if track:
-                if track.should_run_ocr(self._frame_counter, OCR_INTERVAL_FRAMES):
-                    track.last_ocr_frame = self._frame_counter
-                    
-                    if det and det.get("crop") is not None:
-                        track.add_crop(det["crop"])
-                        tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
-
-                text = t_out.get("plate_text") or (track.plate_text if track else "")
-                
-                # Scale absolute tracking coordinates to relative coordinates for the frontend
-                w_img = getattr(self, "_last_img_w", 640)
-                h_img = getattr(self, "_last_img_h", 480)
-                rel_bbox = [
-                    bbox_list[0] / max(w_img, 1),
-                    bbox_list[1] / max(h_img, 1),
-                    bbox_list[2] / max(w_img, 1),
-                    bbox_list[3] / max(h_img, 1)
-                ]
-                
-                active_tracks.append({
-                    "track_id": track_id,
-                    "plate_text": text,
-                    "bbox": rel_bbox,
-                    "detection_conf": det.get("confidence", 0.0) if det else track.det_confidence,
-                })
+            plate_text = t_out.get("plate_text", "")
+            ocr_done = t_out.get("ocr_done", False)
+            
+            if not ocr_done and det and det.get("crop") is not None:
+                tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
+            
+            w_img = getattr(self, "_last_img_w", 640)
+            h_img = getattr(self, "_last_img_h", 480)
+            rel_bbox = [
+                bbox_list[0] / max(w_img, 1),
+                bbox_list[1] / max(h_img, 1),
+                bbox_list[2] / max(w_img, 1),
+                bbox_list[3] / max(h_img, 1)
+            ]
+            
+            active_tracks.append({
+                "track_id": track_id,
+                "plate_text": plate_text,
+                "bbox": rel_bbox,
+                "detection_conf": det.get("confidence", 0.0) if det else 0.0,
+            })
 
         await self.send_json({
             "type": "tracks",
@@ -206,38 +196,27 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             
             self._pending_ocr[track_id] = True
             try:
-                track = self._tracker.get_track(track_id)
-                if track and len(track.image_buffer) > 0:
-                    crops = list(track.image_buffer)
-                    aspects = [aspect] * len(crops)
-                    plate_text, conf = await loop.run_in_executor(
-                        None, majority_vote_ocr, crops, aspects
-                    )
-                else:
-                    plate_text, conf = await loop.run_in_executor(
-                        None, run_ocr, crop, aspect
-                    )
+                plate_text, conf = await loop.run_in_executor(
+                    None, run_ocr, crop, aspect
+                )
                 
-                if track and plate_text:
+                if plate_text:
                     logger.info("[WS] OCR result for track %d: %s (conf=%.2f)", track_id, plate_text, conf)
                     
-                    track.mark_ocr_done(track.frame_count, plate_text, conf or 0.0)
-                    
-                    track_bbox = track.bbox
-                    bbox_dict = {"x": track_bbox[0], "y": track_bbox[1], "width": track_bbox[2], "height": track_bbox[3]}
+                    self._tracker.set_plate_text(track_id, plate_text)
                     
                     await self.send_json({
                         "type": "ocr_update",
                         "track_id": track_id,
-                        "plate_text": track.plate_text,
+                        "plate_text": plate_text,
                     })
                     logger.info("[WS] Sent OCR update for track %d", track_id)
                     
                     now = timezone.now()
                     try:
-                        self._tracker.mark_scanned(track_id, now)
-                        await sync_to_async(self._save_to_db)(track_id, plate_text, 0.0, conf or 0.0, bbox_dict, None)
-                        enriched = await sync_to_async(self._check_vehicle)(plate_text, bbox_dict)
+                        self._tracker.set_plate_text(track_id, plate_text)
+                        await sync_to_async(self._save_to_db)(track_id, plate_text, 0.0, conf or 0.0, None, None)
+                        enriched = await sync_to_async(self._check_vehicle)(plate_text, None)
                         enriched["plate_number"] = plate_text
                         results = [enriched]
                         if results:
@@ -265,32 +244,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             if not plate_number or track_id in processed_track_ids:
                 continue
 
-            track = self._tracker.get_track(track_id)
-            if track and track.in_cooldown(now):
-                results.append({
-                    "plate_number": plate_number,
-                    "bbox": bbox,
-                    "status": "cooldown",
-                    "allowed": False,
-                    "message": "Recently scanned.",
-                    "constraint": None,
-                    "vehicle": None,
-                    "has_violations": False,
-                })
-                processed_track_ids.add(track_id)
-                continue
-
-            self._tracker.mark_scanned(track_id, now)
             processed_track_ids.add(track_id)
             
-            ocr_conf = track.ocr_confidence if track else 0.0
-            
-            snapshot_path = None
-            if track and len(track.image_buffer) > 0 and ocr_conf > 0.5:
-                snapshot_path = await sync_to_async(self._save_snapshot)(track_id, list(track.image_buffer)[-1])
-            
             try:
-                await sync_to_async(self._save_to_db)(track_id, plate_number, det_conf, ocr_conf, bbox, snapshot_path)
+                await sync_to_async(self._save_to_db)(track_id, plate_number, det_conf, 0.0, bbox, None)
             except Exception as e:
                 logger.error("[WS] DB save failed for %s: %s", plate_number, e)
             

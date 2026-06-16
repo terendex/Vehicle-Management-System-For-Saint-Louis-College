@@ -295,8 +295,10 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     def _run_ocr(img, label):
         if img is None or getattr(img, "size", 0) == 0:
             return
+        allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
         raw = ocr.readtext(
             img, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5,
+            allowlist=allowlist,
         )
         log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
         combined_text, avg_conf = combine_multiline_text(raw)
@@ -316,26 +318,11 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     candidates: list[tuple[float, str]] = []
     fallback: list[tuple[float, str]] = []
 
-    clahe_clip = 2.0
-    clahe_grid = 4
-    clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=(clahe_grid, clahe_grid))
-    h_img, w_img = deskewed.shape[:2]
-
-    base_variants: list[tuple[np.ndarray, str]] = [
-        (deskewed,          "raw"),
-        (cv2.GaussianBlur(deskewed, (3, 3), 0), "blur3"),
-    ]
-    sharp_kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-    base_variants.extend([
-        (cv2.filter2D(deskewed, -1, sharp_kernel), "sharpen"),
-        (cv2.addWeighted(deskewed, 1.6, cv2.GaussianBlur(deskewed, (0, 0), 3), -0.6, 0), "unsharp"),
-    ])
     gray = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
-    enhanced = cv2.cvtColor(clahe.apply(gray), cv2.COLOR_GRAY2BGR)
-    base_variants.append((enhanced, "clahe"))
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    base_variants.append((cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), "otsu"))
-    base_variants.append((_preprocess_aggressive(deskewed), "aggressive"))
+    base_variants: list[tuple[np.ndarray, str]] = [
+        (cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), "binary"),
+    ]
 
     for img_v, label in base_variants:
         for text, conf, valid in _run_ocr(img_v, label):
@@ -344,6 +331,7 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
             elif conf > 0.05:
                 fallback.append((conf, text))
 
+    h_img, w_img = deskewed.shape[:2]
     if w_img > 90:
         third = w_img // 3
         two_thirds = 2 * third

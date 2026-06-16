@@ -90,86 +90,53 @@ def _deskew(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
 
 
 def _correct_chars(text: str) -> str:
-    """Correct common OCR misreads for Philippine plates — position-aware."""
-    text = text.replace('_', '').replace('+', '').replace('.', '')
-    text = text.upper()
+    """Correct common OCR misreads for Philippine plates — LTO post-processing."""
+    text = text.replace('_', '').replace('+', '').replace('.', '').replace(' ', '').upper()
     
-    # If already valid, return immediately
-    if is_valid_ph_plate(normalize_plate(text)):
+    if not text:
         return text
     
-    # Position-aware corrections: only fix characters that are in the wrong
-    # zone (digit in a letter zone or vice versa).
-    to_digit = str.maketrans({
-        'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5',
-        'G': '6', 'Q': '9', 'U': '0', 'D': '0', 'A': '4', 'R': '2',
-        'T': '7', 'J': '1', 'Y': '7',
-    })
-    to_letter = str.maketrans({
-        '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '9': 'Q',
-        '4': 'A', '7': 'T', '3': 'E', '8': 'B',
-    })
-    # Common letter-to-letter OCR confusions (no digit mapping)
-    letter_fix = str.maketrans({
-        'H': 'M', 'W': 'M',
-    })
+    n = len(text)
     
-    clean = normalize_plate(text)
+    if n == 7:
+        l1, l2, l3 = text[0], text[1], text[2]
+        d1, d2, d3, d4 = text[3], text[4], text[5], text[6]
+        l1 = 'O' if l1 in ('0', 'D') else l1
+        l2 = 'O' if l2 in ('0', 'D') else l2
+        l3 = 'O' if l3 in ('0', 'D') else l3
+        d1 = '0' if d1 in ('O', 'Q') else d1
+        d2 = '0' if d2 in ('O', 'Q') else d2
+        d3 = '0' if d3 in ('O', 'Q') else d3
+        d4 = '0' if d4 in ('O', 'Q') else d4
+        result = f"{l1}{l2}{l3}{d1}{d2}{d3}{d4}"
+        if is_valid_ph_plate(result):
+            return result
     
-    # Try common Philippine plate layouts with positional correction
-    # Format: LLL DDDD (e.g., ABC 1234)
-    # Format: LLL DDD  (e.g., ABC 123)
-    # Format: DDD LLL  (e.g., 474 ASM)
-    # Format: LL DDDDD (e.g., AB 12345)
-    layouts = [
-        (3, 'L', 4, 'D'),  # ABC1234
-        (3, 'L', 3, 'D'),  # ABC123
-        (3, 'D', 3, 'L'),  # 474ASM
-        (2, 'L', 4, 'D'),  # AB1234
-        (2, 'L', 5, 'D'),  # AB12345
-        (1, 'L', 2, 'D', 3, 'L'),  # A12BCD
-    ]
-    
-    for layout in layouts:
-        if len(layout) == 4:
-            n1, t1, n2, t2 = layout
-            if len(clean) != n1 + n2:
-                continue
-            part1 = clean[:n1]
-            part2 = clean[n1:]
-            if t1 == 'L':
-                part1_fixed = part1.translate(to_letter).translate(letter_fix)
-            else:
-                part1_fixed = part1.translate(to_digit)
-            if t2 == 'L':
-                part2_fixed = part2.translate(to_letter).translate(letter_fix)
-            else:
-                part2_fixed = part2.translate(to_digit)
-            candidate = normalize_plate(part1_fixed + part2_fixed)
-            if is_valid_ph_plate(candidate):
-                return candidate
-        elif len(layout) == 6:
-            n1, t1, n2, t2, n3, t3 = layout
-            if len(clean) != n1 + n2 + n3:
-                continue
-            parts = [clean[:n1], clean[n1:n1+n2], clean[n1+n2:]]
-            types = [t1, t2, t3]
-            fixed = []
-            for p, t in zip(parts, types):
-                if t == 'L':
-                    fixed.append(p.translate(to_letter).translate(letter_fix))
-                else:
-                    fixed.append(p.translate(to_digit))
-            candidate = normalize_plate(''.join(fixed))
-            if is_valid_ph_plate(candidate):
-                return candidate
-    
-    # Fallback: try single-character corrections
-    for i in range(len(clean)):
-        for trans_table in [to_digit, to_letter, letter_fix]:
-            translated = clean[:i] + clean[i:i+1].translate(trans_table) + clean[i+1:]
-            if is_valid_ph_plate(normalize_plate(translated)):
-                return translated
+    if n == 6:
+        if text[0].isdigit():
+            d1, d2, d3 = text[0], text[1], text[2]
+            l1, l2, l3 = text[3], text[4], text[5]
+            d1 = '0' if d1 in ('O',) else d1
+            d2 = '0' if d2 in ('O',) else d2
+            d3 = '0' if d3 in ('O',) else d3
+            l1 = 'O' if l1 in ('0',) else l1
+            l2 = 'O' if l2 in ('0',) else l2
+            l3 = 'O' if l3 in ('0',) else l3
+            result = f"{d1}{d2}{d3}{l1}{l2}{l3}"
+            if is_valid_ph_plate(result):
+                return result
+        else:
+            l1, l2, l3 = text[0], text[1], text[2]
+            d1, d2, d3 = text[3], text[4], text[5]
+            l1 = 'O' if l1 in ('0', 'D') else l1
+            l2 = 'O' if l2 in ('0', 'D') else l2
+            l3 = 'O' if l3 in ('0', 'D') else l3
+            d1 = '0' if d1 in ('O', 'Q') else d1
+            d2 = '0' if d2 in ('O', 'Q') else d2
+            d3 = '0' if d3 in ('O', 'Q') else d3
+            result = f"{l1}{l2}{l3}{d1}{d2}{d3}"
+            if is_valid_ph_plate(result):
+                return result
     
     return text
 
@@ -201,27 +168,23 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
     else:
         gray = deskewed
     
-    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
-    enhanced_gray = clahe.apply(gray)
-    
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     variants = [
-        ("raw", deskewed),
-        ("enhanced", _preprocess(deskewed)),
-        ("binary", cv2.cvtColor(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1], cv2.COLOR_GRAY2BGR)),
-        ("clahe", cv2.cvtColor(enhanced_gray, cv2.COLOR_GRAY2BGR)),
-        ("aggressive", _preprocess_aggressive(deskewed)),
+        ("binary", cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)),
     ]
     
-    dilated = cv2.dilate(enhanced_gray, np.ones((2,2), np.uint8), iterations=1)
-    variants.append(("dilated", cv2.cvtColor(dilated, cv2.COLOR_GRAY2BGR)))
-    
-    eroded = cv2.erode(enhanced_gray, np.ones((2,2), np.uint8), iterations=1)
-    variants.append(("eroded", cv2.cvtColor(eroded, cv2.COLOR_GRAY2BGR)))
-    
     results = []
+    allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
     for label, img_v in variants:
         try:
-            text_results = ocr.readtext(img_v, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5)
+            text_results = ocr.readtext(
+                img_v, 
+                text_threshold=0.15, 
+                link_threshold=0.15, 
+                low_text=0.05, 
+                mag_ratio=1.5,
+                allowlist=allowlist
+            )
             combined_text, avg_conf = combine_multiline_text(text_results)
             if combined_text and avg_conf > 0.15:
                 results.append((combined_text, avg_conf))
