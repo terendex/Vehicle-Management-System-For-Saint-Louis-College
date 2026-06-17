@@ -22,7 +22,7 @@ import numpy as np
 import easyocr
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
-from .detection import detect_plates
+from .detection import detect_plates, VEHICLE_TYPE_CLASSES
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +132,9 @@ _yolo_model = None                       # ultralytics.YOLO | None
 _yolo_loaded = False                     # ensures we only try once
 
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
+
+def requires_digital_id(class_name: str) -> bool:
+    return class_name in VEHICLE_TYPE_CLASSES
 
 
 def _get_ocr():
@@ -439,13 +442,16 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
 
 def read_plate(image_bytes: bytes) -> list[dict]:
     """
-    Main entry point — detect + read Philippine license plates.
+    Main entry point — detect + read Philippine license plates or unplated vehicles.
 
     Returns a list of dicts, each with:
-        plate_text — the recognized plate number
+        plate_text — the recognized plate number (None for unplated vehicles)
+        vehicle_type — bicycle/e_bike/electric_scooter for unplated vehicles
         bbox       — relative bounding box {"x", "y", "width", "height"} (0–1)
+        confidence — detection confidence
+        requires_digital_id — True for unplated vehicles
 
-    Returns an empty list when no plates are found.
+    Returns an empty list when no vehicles are found.
     """
     img = _decode(image_bytes)
     if img is None:
@@ -456,61 +462,32 @@ def read_plate(image_bytes: bytes) -> list[dict]:
     log.info("[READ] Decoded image: %dx%d", w, h)
     results: list[dict] = []
 
-    # ── Stage 1: Try YOLO detection first ───────────────────────────
     detections = _detect_plates(img)
 
     for det in detections:
+        class_name = det.get("class_name", "")
+        vehicle_type = det.get("vehicle_type")
+        
+        if requires_digital_id(class_name) and vehicle_type:
+            results.append({
+                "vehicle_type": vehicle_type,
+                "bbox": det["bbox"],
+                "confidence": det["score"],
+                "plate_text": None,
+                "requires_digital_id": True,
+            })
+            continue
+        
         plate_text, conf = _ocr_crop(det["crop"], det.get("aspect_ratio", 1.0))
         if plate_text:
             results.append({
                 "plate_text": plate_text,
                 "bbox": det["bbox"],
                 "confidence": conf,
+                "vehicle_type": None,
+                "requires_digital_id": False,
             })
 
     if results:
-        log.info("[READ] Stage 1 (YOLO+OCR) found %d plates: %s", len(results), [r["plate_text"] for r in results])
-        return results
-
-    log.info("[READ] YOLO found %d boxes but OCR failed on all — falling back to full-frame OCR", len(detections))
-
-    for det in detections:
-        plate_text, conf = _run_raw_ocr_fallback(det["crop"])
-        if plate_text:
-            results.append({
-                "plate_text": plate_text,
-                "bbox": det["bbox"],
-                "confidence": conf,
-            })
-    if results:
-        log.info("[READ] Raw fallback recovered %d plates", len(results))
-        return results
-
-    # ── Stage 2: Fallback — OCR on the full image ───────────────────
-    log.info("[READ] YOLO found no valid plates — falling back to full-frame OCR")
-    ocr = _get_ocr()
-    ocr_results = ocr.readtext(img)
-
-    log.info("[READ] Full-frame OCR found %d text regions", len(ocr_results))
-    for (bbox, text, confidence) in ocr_results:
-        valid = is_valid_ph_plate(text)
-        log.info("[READ]   text=%r conf=%.3f valid_ph=%s", text, confidence, valid)
-        if confidence > 0.2 and valid:
-            xs = [p[0] for p in bbox]
-            ys = [p[1] for p in bbox]
-            x_min, x_max = min(xs), max(xs)
-            y_min, y_max = min(ys), max(ys)
-
-            results.append({
-                "plate_text": normalize_plate(text),
-                "bbox": {
-                    "x":      float(x_min / w),
-                    "y":      float(y_min / h),
-                    "width":  float((x_max - x_min) / w),
-                    "height": float((y_max - y_min) / h),
-                },
-                "confidence": confidence,
-            })
-
-    log.info("[READ] Final results: %d plates: %s", len(results), [r["plate_text"] for r in results])
+        log.info("[READ] Found %d detections: %s", len(results), results)
     return results

@@ -9,10 +9,11 @@ from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from .ml.detection import detect_plates, is_gpu_available
+from .ml.detection import detect_plates, is_gpu_available, VEHICLE_TYPE_CLASSES
 from .ml.ocr import run_ocr
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
+from .ml.reader import requires_digital_id
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         
         active_tracks = []
         tracks_needing_ocr = []
+        tracks_needing_id = []
         
         for t_out in tracker_output:
             track_id = t_out["track_id"]
@@ -119,10 +121,15 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             d_idx = t_out.get("detection_index")
             det = det_by_idx.get(d_idx) if d_idx is not None else None
             
+            class_name = det.get("class_name", "") if det else ""
+            vehicle_type = det.get("vehicle_type") if det else None
             plate_text = t_out.get("plate_text", "")
             ocr_done = t_out.get("ocr_done", False)
             
-            if not ocr_done and det and det.get("crop") is not None:
+            if requires_digital_id(class_name) and vehicle_type:
+                tracks_needing_id.append((track_id, vehicle_type, det["confidence"] if det else 0.0))
+                ocr_done = True
+            elif not ocr_done and det and det.get("crop") is not None:
                 tracks_needing_ocr.append((track_id, det["crop"], det.get("aspect_ratio", 1.0)))
             
             w_img = getattr(self, "_last_img_w", 640)
@@ -137,6 +144,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             active_tracks.append({
                 "track_id": track_id,
                 "plate_text": plate_text,
+                "vehicle_type": vehicle_type,
+                "class_name": class_name,
                 "bbox": rel_bbox,
                 "detection_conf": det.get("confidence", 0.0) if det else 0.0,
             })
@@ -150,6 +159,15 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+        
+        for track_id, vehicle_type, conf in tracks_needing_id:
+            await self.send_json({
+                "type": "id_required",
+                "track_id": track_id,
+                "vehicle_type": vehicle_type,
+                "message": f"Please show digital ID for {vehicle_type.replace('_', ' ')} entry",
+            })
+            logger.info("[WS] Sent id_required for track %d (vehicle: %s)", track_id, vehicle_type)
 
         if any(t.get("plate_text") for t in active_tracks):
             await self._process_scan_results(active_tracks, now)
@@ -166,14 +184,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         h, w = img.shape[:2]
         self._last_img_w = w
         self._last_img_h = h
-        logger.info("[WS] Detection returned %d plates", len(detections))
+        logger.info("[WS] Detection returned %d detections", len(detections))
         result = []
-        for det in detections:
+        for i, det in enumerate(detections):
             bbox = det["bbox"]
             abs_x = int(bbox["x"] * w)
             abs_y = int(bbox["y"] * h)
             abs_w = int(bbox["width"] * w)
             abs_h = int(bbox["height"] * h)
+            
+            class_name = det.get("class_name", "")
+            vehicle_type = det.get("vehicle_type")
+            
             result.append({
                 "bbox": {
                     "x": abs_x,
@@ -181,9 +203,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "width": abs_w,
                     "height": abs_h,
                 },
-                "crop": det["crop"],
+                "crop": det.get("crop"),
                 "confidence": det["score"],
-                "aspect_ratio": det["aspect_ratio"],
+                "aspect_ratio": det.get("aspect_ratio", 1.0),
+                "class_name": class_name,
+                "vehicle_type": vehicle_type,
+                "detection_index": i,
             })
         return result
 

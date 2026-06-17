@@ -28,6 +28,12 @@ backend/*.log
 *.weights
 backend/runs/
 backend/models/
+backend/dl_temp/
+backend/scanning/ml/_rf_downloads/
+backend/scanning/ml/runs/
+backend/scanning/ml/unplated_dataset/
+backend/unplated_ds/
+*.zip
 
 # ===== NODE =====
 node_modules/

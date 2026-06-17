@@ -47,14 +47,25 @@ class AccessLog(models.Model):
         UNKNOWN      = 'unknown',       'Unknown Plate'
         UNREADABLE   = 'unreadable',    'Unreadable'
 
-    vehicle      = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
-    plate_number = models.CharField(max_length=20)
-    status       = models.CharField(max_length=20, choices=Status.choices)
-    gate_id      = models.CharField(max_length=50, default='main')
-    denied_reason= models.CharField(max_length=255, blank=True)
-    snapshot     = models.ImageField(upload_to='snapshots/', blank=True)
-    scanned_at   = models.DateTimeField(auto_now_add=True)
-    scanned_by   = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='scans')
+    vehicle        = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
+    plate_number   = models.CharField(max_length=20, blank=True)
+    vehicle_type   = models.CharField(
+        max_length=20, blank=True,
+        help_text="bicycle, e_bike, electric_scooter for unplated vehicles",
+    )
+    digital_id_used = models.CharField(
+        max_length=50, blank=True,
+        help_text="The digital ID (user_code / ID number) presented by an unplated vehicle rider",
+    )
+    status         = models.CharField(max_length=20, choices=Status.choices)
+    gate_id        = models.CharField(max_length=50, default='main')
+    denied_reason  = models.CharField(max_length=255, blank=True)
+    snapshot       = models.ImageField(upload_to='snapshots/', blank=True)
+    scanned_at     = models.DateTimeField(auto_now_add=True)
+    scanned_by     = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='scans',
+    )
 
     class Meta:
         ordering = ['-scanned_at']

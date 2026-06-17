@@ -4,10 +4,11 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework import permissions
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from vehicles.models import Vehicle
+from django.db.models import Q
+from vehicles.models import Vehicle, Owner
 from violations.models import Violation
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample
-from .entry_logic import check_entry
+from .entry_logic import check_entry, check_owner_entry
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
@@ -92,11 +93,130 @@ class ScanView(APIView):
 
         return Response({'results': results})
 
+
+class DigitalIDVerifyView(APIView):
+    """
+    Verify digital ID for unplated vehicle entry (bicycle, e_bike, electric_scooter).
+
+    The digital_id payload can be:
+      • A SLC user code, e.g. "SLC-OWN-000001"   (primary — QR or typed)
+      • A system student/employee ID, e.g. "SLC-STU-000001" / "SLC-EMP-000001"
+      • A VehicleRegistration system_student_id or system_employee_id
+      • Owner full_name or contact (fallback — guard-typed)
+
+    Lookup order:
+      1. accounts.User.user_code (exact) → Owner via full_name match on User.full_name
+      2. VehicleRegistration.system_student_id / system_employee_id (exact)
+         → find matching Owner by full_name
+      3. Owner.full_name (case-insensitive contains) or Owner.contact (contains)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        digital_id = (request.data.get('digital_id') or '').strip()
+        vehicle_type = request.data.get('vehicle_type', 'bicycle')
+
+        if not digital_id:
+            return Response({'error': 'digital_id is required'}, status=400)
+
+        owner = self._lookup_owner(digital_id)
+
+        if not owner:
+            AccessLog.objects.create(
+                plate_number='',
+                vehicle_type=vehicle_type,
+                digital_id_used=digital_id,
+                status='unknown',
+                scanned_by=request.user,
+            )
+            return Response({
+                'status': 'unknown',
+                'message': 'Digital ID not recognized.',
+                'vehicle_type': vehicle_type,
+            })
+
+        entry = check_owner_entry(owner, vehicle_type)
+
+        # Violations are linked to Vehicle, not directly to Owner.
+        # Check if any vehicle owned by this owner has unresolved violations.
+        has_violations = Violation.objects.filter(
+            vehicle__owner=owner, is_resolved=False
+        ).exists()
+
+        AccessLog.objects.create(
+            plate_number='',
+            vehicle_type=vehicle_type,
+            digital_id_used=digital_id,
+            status=entry['status'],
+            denied_reason='' if entry['allowed'] else entry['message'],
+            scanned_by=request.user,
+        )
+
+        AuditLog.objects.create(
+            actor=request.user,
+            action=AuditLog.Action.SCAN,
+            details=(
+                f"Digital ID: {digital_id}, Vehicle: {vehicle_type}, "
+                f"Owner: {owner.full_name}, Status: {entry['status']}"
+            ),
+        )
+
+        return Response({
+            'status':     entry['status'],
+            'allowed':    entry['allowed'],
+            'message':    entry['message'],
+            'constraint': entry.get('constraint'),
+            'owner': {
+                'full_name':  owner.full_name,
+                'owner_type': owner.owner_type,
+                'schedule':   owner.schedule,
+            },
+            'vehicle_type':   vehicle_type,
+            'has_violations': has_violations,
+        })
+
+    def _lookup_owner(self, digital_id: str):
+        """
+        Multi-tier owner lookup by digital ID.
+
+        Returns the matching Owner instance, or None if not found.
+        """
+        from accounts.models import User
+        from vehicles.models import Owner, VehicleRegistration
+
+        # Tier 1: accounts.User.user_code (e.g. "SLC-OWN-000001")
+        try:
+            user = User.objects.get(user_code__iexact=digital_id)
+            # Find the Owner whose full_name matches the User's full_name
+            owner = Owner.objects.filter(full_name__iexact=user.full_name).first()
+            if owner:
+                return owner
+        except User.DoesNotExist:
+            pass
+
+        # Tier 2: VehicleRegistration system IDs (system_student_id / system_employee_id)
+        reg = VehicleRegistration.objects.filter(
+            Q(system_student_id__iexact=digital_id) |
+            Q(system_employee_id__iexact=digital_id)
+        ).first()
+        if reg:
+            owner = Owner.objects.filter(full_name__iexact=reg.full_name).first()
+            if owner:
+                return owner
+
+        # Tier 3: Owner.full_name or Owner.contact (fallback for guard-typed input)
+        owner = Owner.objects.filter(
+            Q(full_name__icontains=digital_id) |
+            Q(contact__icontains=digital_id)
+        ).first()
+        return owner
+
     def get_client_ip(self, request):
         x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded:
             return x_forwarded.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
+
 
 
 class VisitorPassView(APIView):
