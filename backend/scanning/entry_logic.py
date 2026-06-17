@@ -174,6 +174,11 @@ def check_owner_entry(owner, vehicle_type: str = None) -> dict:
     if not owner:
         return _result('denied', False, 'No owner associated with this entry.', None)
 
+    from accounts.models import User
+    user = User.objects.filter(full_name__iexact=owner.full_name).first()
+    if user and not user.is_active:
+        return _result('denied', False, 'Owner account is suspended/disabled.', None)
+
     owner_type = owner.owner_type
     today_weekday = timezone.localdate().weekday()
     now = timezone.localtime()
