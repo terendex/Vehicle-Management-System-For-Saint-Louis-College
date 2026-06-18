@@ -198,6 +198,7 @@ class AcceptRegistrationView(APIView):
             contact=registration.contact_number,
             address=registration.address,
             owner_type=owner_type,
+            user_code=user.user_code,
         )
 
         # Create Vehicle

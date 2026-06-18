@@ -57,6 +57,13 @@ def check_entry(vehicle) -> dict:
     if not vehicle.is_authorized:
         return _result('denied', False, 'Vehicle is not authorized for entry.', None)
 
+    from accounts.models import User
+    user = None
+    if owner.user_code:
+        user = User.objects.filter(user_code__iexact=owner.user_code).first()
+    if user and not user.is_active:
+        return _result('denied', False, 'Owner account is suspended/disabled.', None)
+
     owner_type = owner.owner_type
     today_weekday = timezone.localdate().weekday()
     now = timezone.localtime()
@@ -175,7 +182,9 @@ def check_owner_entry(owner, vehicle_type: str = None) -> dict:
         return _result('denied', False, 'No owner associated with this entry.', None)
 
     from accounts.models import User
-    user = User.objects.filter(full_name__iexact=owner.full_name).first()
+    user = None
+    if owner.user_code:
+        user = User.objects.filter(user_code__iexact=owner.user_code).first()
     if user and not user.is_active:
         return _result('denied', False, 'Owner account is suspended/disabled.', None)
 

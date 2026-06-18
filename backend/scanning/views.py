@@ -187,9 +187,11 @@ class DigitalIDVerifyView(APIView):
         # Tier 1: accounts.User.user_code (e.g. "SLC-OWN-000001")
         try:
             user = User.objects.get(user_code__iexact=digital_id)
-            # Find the Owner whose full_name matches the User's full_name
             owner = Owner.objects.filter(full_name__iexact=user.full_name).first()
             if owner:
+                if not owner.user_code:
+                    owner.user_code = user.user_code
+                    owner.save(update_fields=['user_code'])
                 return owner
         except User.DoesNotExist:
             pass
@@ -202,6 +204,11 @@ class DigitalIDVerifyView(APIView):
         if reg:
             owner = Owner.objects.filter(full_name__iexact=reg.full_name).first()
             if owner:
+                if not owner.user_code:
+                    user = User.objects.filter(full_name__iexact=reg.full_name).first()
+                    if user:
+                        owner.user_code = user.user_code
+                        owner.save(update_fields=['user_code'])
                 return owner
 
         # Tier 3: Owner.full_name or Owner.contact (fallback for guard-typed input)

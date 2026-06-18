@@ -12,6 +12,7 @@ class Owner(models.Model):
         MWF  = 'MWF',  'Monday-Wednesday-Friday'
         TTHS = 'TTHS', 'Tuesday-Thursday-Saturday'
         ANY  = 'ANY',  'Any Day'               # for employees
+        ALL  = 'ALL',  'All Days'              # for visitors
 
     full_name   = models.CharField(max_length=255)
     contact     = models.CharField(max_length=50, blank=True)
@@ -19,6 +20,8 @@ class Owner(models.Model):
     photo       = models.ImageField(upload_to='owners/', blank=True)
     owner_type  = models.CharField(max_length=20, choices=OwnerType.choices, default=OwnerType.STUDENT)
     schedule    = models.CharField(max_length=10, choices=Schedule.choices, default=Schedule.MWF)
+    user_code   = models.CharField(max_length=20, blank=True, db_index=True,
+                                    help_text="SLC user code (e.g., SLC-OWN-000001) linking to accounts.User")
     created_at  = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
