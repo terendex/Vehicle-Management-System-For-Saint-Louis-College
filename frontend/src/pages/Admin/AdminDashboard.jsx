@@ -1,12 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
-import { registrationApi } from '../../api/registration'
-import { getVehicleTypeAccess } from '../../api/vehicles'
 import {
-  Users, Car, ShieldCheck, FileSliders,
-  ClipboardList, UserPlus, UserMinus, UserCheck,
-  Activity, TrendingUp, Clock, Shield, Car as CarIcon
+  Users, Car, ShieldCheck, ClipboardList,
+  Activity, Shield, RefreshCw, CheckCircle, XCircle,
+  AlertTriangle, Car as CarIcon
 } from 'lucide-react'
 import './AdminDashboard.css'
 
@@ -18,7 +16,7 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
       </div>
       <div className="ad-card-body">
         <span className="ad-card-label">{label}</span>
-        <span className="ad-card-value">{value}</span>
+        <span className="ad-card-value">{value ?? '—'}</span>
         {sub && <span className="ad-card-sub">{sub}</span>}
       </div>
     </div>
@@ -51,36 +49,28 @@ function ActivityItem({ log }) {
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [recentActivity, setRecentActivity] = useState([])
+  const [lastUpdated, setLastUpdated] = useState(null)
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await usersApi.getDashboardStats()
+      setStats(data)
+      setLastUpdated(new Date())
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        const [statsRes, logsRes] = await Promise.all([
-          usersApi.getAuditLogStats().catch(() => null),
-          usersApi.getAuditLogs({ page_size: 20 }).catch(() => null),
-        ])
-
-        if (cancelled) return
-
-        if (statsRes?.data) setStats(statsRes.data)
-
-        if (logsRes?.data?.results) {
-          setRecentActivity(logsRes.data.results.slice(0, 15))
-        } else if (Array.isArray(logsRes?.data)) {
-          setRecentActivity(logsRes.data.slice(0, 15))
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
     fetchData()
-    return () => { cancelled = true }
-  }, [])
+  }, [fetchData])
+
+  const lastUpdatedStr = lastUpdated
+    ? lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    : null
 
   return (
     <AdminLayout>
@@ -88,53 +78,81 @@ export default function AdminDashboard() {
         <div className="ad-header">
           <div>
             <h1 className="ad-title">Dashboard Overview</h1>
-            <p className="ad-subtitle">Welcome back. Here's what's happening across the system.</p>
+            <p className="ad-subtitle">
+              Welcome back. Here's what's happening across the system.
+              {lastUpdatedStr && <span className="ad-last-updated"> Updated at {lastUpdatedStr}</span>}
+            </p>
           </div>
+          <button className="ad-refresh-btn" onClick={fetchData} disabled={loading} title="Refresh">
+            <RefreshCw size={15} className={loading ? 'ad-spin' : ''} />
+            <span>Refresh</span>
+          </button>
         </div>
 
-        {loading ? (
+        {loading && !stats ? (
           <div className="ad-loading">
             <div className="ad-spinner" />
             <p>Loading dashboard...</p>
           </div>
         ) : (
           <>
-            {/* Stat Cards */}
+            {/* User & Vehicle Stats */}
             <div className="ad-stats-grid">
               <StatCard
                 icon={Users}
                 label="Total Users"
-                value={stats?.users?.total ?? '—'}
-                sub={`${stats?.users?.active ?? 0} active, ${stats?.users?.disabled ?? 0} disabled`}
+                value={stats?.users?.total}
+                sub={`${stats?.users?.active ?? 0} active · ${stats?.users?.disabled ?? 0} disabled`}
                 color="#2A2B61"
               />
               <StatCard
                 icon={ShieldCheck}
                 label="Security Personnel"
-                value={stats?.users?.security ?? '—'}
-                sub="Gate staff"
+                value={stats?.users?.security}
+                sub={`${stats?.users?.vehicle_owner ?? 0} vehicle owners`}
                 color="#059669"
               />
               <StatCard
                 icon={CarIcon}
                 label="Registered Vehicles"
-                value={stats?.vehicles?.total ?? '—'}
+                value={stats?.vehicles?.total}
                 sub={`${stats?.vehicles?.authorized ?? 0} authorized`}
                 color="#2A2B61"
               />
               <StatCard
+                icon={AlertTriangle}
+                label="Unauthorized Vehicles"
+                value={stats?.vehicles?.unauthorized}
+                sub="Not yet cleared"
+                color="#DC2626"
+              />
+              <StatCard
                 icon={ClipboardList}
                 label="Pending Registrations"
-                value={stats?.registrations?.pending ?? '—'}
+                value={stats?.registrations?.pending}
                 sub="Awaiting review"
                 color="#D97706"
               />
               <StatCard
                 icon={Activity}
                 label="Scans Today"
-                value={stats?.scans?.today ?? '—'}
+                value={stats?.scans?.today}
                 sub={`${stats?.scans?.week ?? 0} this week`}
                 color="#7C3AED"
+              />
+              <StatCard
+                icon={CheckCircle}
+                label="Authorized Today"
+                value={stats?.scans?.authorized_today}
+                sub="Allowed entry"
+                color="#059669"
+              />
+              <StatCard
+                icon={XCircle}
+                label="Denied Today"
+                value={stats?.scans?.denied_today}
+                sub="Blocked entry"
+                color="#DC2626"
               />
             </div>
 
@@ -148,7 +166,6 @@ export default function AdminDashboard() {
               </div>
 
               <div className="ad-activity-grid">
-                {/* Admin Activity */}
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
                     <Shield size={14} />
@@ -165,7 +182,6 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* Security Activity */}
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
                     <ShieldCheck size={14} />

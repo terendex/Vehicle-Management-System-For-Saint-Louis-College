@@ -2,19 +2,19 @@
 detection.py — YOLOv8 vehicle detection for Philippine vehicles.
 
 Detects:
-- Cars with license plates
-- Bicycles
-- E-bikes  
-- Electric scooters
+- License plates
+- Bicycles, e-bikes, electric scooters (unplated — require digital ID)
 
-Returns bounding boxes with confidence scores above 0.5 threshold.
+Uses the model's own class names at runtime so a retrained model with a
+different class list never silently misclassifies.  If weights are missing
+or class names don't match, detection is disabled with a clear ERROR log
+rather than returning empty results silently.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -23,149 +23,170 @@ log = logging.getLogger(__name__)
 
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
-CLASS_NAMES = ["license_plate", "car", "bicycle", "e_bike", "electric_scooter"]
+# Expected class names in the order the model was trained.
+# Used only for validation — actual inference uses model.names at runtime.
+CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
 
 VEHICLE_TYPE_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
 
 _model = None
+_load_attempted = False  # only try once; avoids re-loading on every frame after failure
 
 
-def _get_yolo():
-    """Lazy-load the YOLO plate-detection model."""
-    global _model
-    if _model is None:
-        try:
-            from ultralytics import YOLO
-            if WEIGHTS_PATH.exists():
-                _model = YOLO(str(WEIGHTS_PATH))
-                log.info("[DETECT] YOLO loaded from %s", WEIGHTS_PATH)
-                _validate_model_classes(_model)
-            else:
-                log.warning("[DETECT] No YOLO weights found at %s", WEIGHTS_PATH)
-        except ImportError:
-            log.error("[DETECT] ultralytics not installed")
-    return _model
-
-
-def _validate_model_classes(model) -> None:
+def _validate_model_classes(model) -> bool:
     """
-    Validate that the loaded model's class names match CLASS_NAMES.
-
-    A mismatch means the model was trained with a different class ordering
-    than the code expects — detections will be silently misclassified.
-    Logs a clear warning with the mismatch details so the operator can
-    retrain or update CLASS_NAMES accordingly.
+    Validate loaded model class names against CLASS_NAMES.
+    Returns True if OK (or validation can't run), False if mismatch.
+    A mismatch means the weights were trained with a different class order —
+    inference would silently produce wrong labels so we refuse to run it.
     """
     try:
-        model_names: dict[int, str] = model.names  # {0: "cls", 1: "cls2", …}
+        model_names: dict[int, str] = model.names
         model_class_list = [model_names.get(i, f"<unknown_{i}>") for i in range(len(model_names))]
-
         if model_class_list != CLASS_NAMES:
-            log.warning(
-                "[DETECT] ⚠️  CLASS NAME MISMATCH between model weights and code!\n"
+            log.error(
+                "[DETECT] CLASS MISMATCH — inference disabled to prevent silent misclassification.\n"
                 "  Model classes : %s\n"
                 "  Code expects  : %s\n"
-                "  This will cause silent misclassification. "
-                "Retrain or update CLASS_NAMES in detection.py.",
+                "  Fix: retrain with the same class list, or update CLASS_NAMES in detection.py.",
                 model_class_list,
                 CLASS_NAMES,
             )
-        else:
-            log.info("[DETECT] ✅ Model class names validated: %s", CLASS_NAMES)
+            return False
+        log.info("[DETECT] Class names OK: %s", CLASS_NAMES)
+        return True
     except Exception as exc:
-        log.debug("[DETECT] Class validation skipped: %s", exc)
+        log.warning("[DETECT] Class validation skipped (non-fatal): %s", exc)
+        return True  # don't block if validation itself errors
 
 
-def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def _get_yolo():
+    """Lazy-load the YOLO model. Tries once; permanent None on any failure."""
+    global _model, _load_attempted
+    if _load_attempted:
+        return _model
+    _load_attempted = True
+
+    if not WEIGHTS_PATH.exists():
+        log.error(
+            "[DETECT] CRITICAL: No YOLO weights at %s — all detections disabled. "
+            "Train a model and place best.pt at that path.",
+            WEIGHTS_PATH,
+        )
+        return None
+
+    try:
+        from ultralytics import YOLO
+        candidate = YOLO(str(WEIGHTS_PATH))
+        if not _validate_model_classes(candidate):
+            return None
+        _model = candidate
+        if is_gpu_available():
+            import torch
+            _model.to("cuda")
+            # Ampere (RTX 30xx) and later: allow TF32 for matmuls — free ~10% speedup
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+            log.info("[DETECT] YOLO on GPU (CUDA) — TF32+cuDNN benchmark enabled: %s", WEIGHTS_PATH)
+        else:
+            log.info("[DETECT] YOLO on CPU — no CUDA GPU found: %s", WEIGHTS_PATH)
+    except ImportError:
+        log.error("[DETECT] ultralytics is not installed — cannot load YOLO model")
+    except Exception as exc:
+        log.error("[DETECT] Failed to load YOLO model: %s", exc)
+
+    return _model
+
+
+def detect_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     """
     Detect vehicles and license plates in an image using custom-trained YOLOv8.
-    
+
     Args:
-        img: BGR image (OpenCV format)
-        conf: Confidence threshold (default 0.5)
-    
+        img:  BGR image (OpenCV format)
+        conf: Confidence threshold (default 0.25)
+
     Returns:
-        List of dicts with:
-        - crop: Cropped plate region (BGR) - only for license_plate class
-        - bbox: Relative bounding box {x, y, width, height}
-        - score: Detection confidence
-        - aspect_ratio: Width/height ratio
-        - class_name: The detected class name
-        - vehicle_type: For unplated vehicles (bicycle, e_bike, electric_scooter)
+        List of dicts:
+          crop        — cropped region (BGR)
+          bbox        — relative {x, y, width, height} (0-1)
+          score       — detection confidence
+          aspect_ratio
+          class_name  — from model.names (runtime class list)
+          vehicle_type — set for unplated classes, else None
     """
     model = _get_yolo()
     if model is None:
-        log.warning("[DETECT] No YOLO model loaded — returning empty detections")
         return []
 
     h, w = img.shape[:2]
-    log.info("[DETECT] Running YOLO on %dx%d image, conf=%.2f", w, h, conf)
-    results = model.predict(img, conf=conf, verbose=False)
+    # half=True uses FP16 Tensor Cores on RTX GPUs — ~2x faster, no accuracy loss for detection
+    results = model.predict(img, conf=conf, verbose=False, max_det=100,
+                            half=is_gpu_available())
 
     detections = []
     for r in results:
-        log.info("[DETECT] YOLO returned %d boxes", len(r.boxes))
         for box in r.boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             score = float(box.conf[0])
-            cls_id = int(box.cls[0]) if hasattr(box, 'cls') else -1
-            class_name = CLASS_NAMES[cls_id] if 0 <= cls_id < len(CLASS_NAMES) else f"class_{cls_id}"
+            cls_id = int(box.cls[0]) if hasattr(box, "cls") else -1
+
+            # Use the model's own names — immune to CLASS_NAMES ordering bugs
+            class_name = model.names.get(cls_id, f"class_{cls_id}")
 
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
-            
-            log.info("[DETECT] Box: (%.0f,%.0f)-(%.0f,%.0f) conf=%.3f class=%s aspect=%.2f size=%dx%d", 
-                     x1, y1, x2, y2, score, class_name, aspect_ratio, box_w, box_h)
-            
+
             is_unplated = class_name in VEHICLE_TYPE_CLASSES
-            
+
             if is_unplated:
-                if score < 0.5 or box_w < 30 or box_h < 10:
-                    log.info("[DETECT] Dropping unplated vehicle: conf=%.3f size=%dx%d", score, box_w, box_h)
+                if score < 0.25 or box_w < 30 or box_h < 10:
                     continue
             else:
-                if score < 0.5 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
-                    log.info("[DETECT] Dropped: conf=%.3f aspect=%.2f size=%dx%d", score, aspect_ratio, box_w, box_h)
+                if score < 0.25 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
                     continue
 
-            crop = None
             vehicle_type = None
-            
-            if class_name == "license_plate":
-                if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
-                    pad_x = max(int(box_w * 0.6), 20)
-                    pad_y_top = max(int(box_h * 0.5), 15)
-                    pad_y_bottom = max(int(box_h * 2.5), 60)
-                elif aspect_ratio < 2.0:
-                    pad_x = int(box_w * 0.3)
-                    pad_y_top = int(box_h * 0.3)
-                    pad_y_bottom = int(box_h * 1.5)
-                else:
-                    pad_x = int(box_w * 0.25)
-                    pad_y_top = int(box_h * 0.25)
-                    pad_y_bottom = int(box_h * 0.3)
 
-                cx1, cy1 = max(0, x1 - pad_x), max(0, y1 - pad_y_top)
-                cx2, cy2 = min(w, x2 + pad_x), min(h, y2 + pad_y_bottom)
-                crop = img[cy1:cy2, cx1:cx2]
+            if class_name == "license_plate":
+                # Contextual padding: motorcycle plates are square/small, car plates are wide
+                if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
+                    pad_x      = max(int(box_w * 0.6), 20)
+                    pad_y_top  = max(int(box_h * 0.5), 15)
+                    pad_y_bot  = max(int(box_h * 2.5), 60)
+                elif aspect_ratio < 2.0:
+                    pad_x      = int(box_w * 0.3)
+                    pad_y_top  = int(box_h * 0.3)
+                    pad_y_bot  = int(box_h * 1.5)
+                else:
+                    pad_x      = int(box_w * 0.25)
+                    pad_y_top  = int(box_h * 0.25)
+                    pad_y_bot  = int(box_h * 0.3)
+
+                cx1 = max(0, x1 - pad_x)
+                cy1 = max(0, y1 - pad_y_top)
+                cx2 = min(w, x2 + pad_x)
+                cy2 = min(h, y2 + pad_y_bot)
             else:
                 cx1, cy1 = max(0, x1), max(0, y1)
                 cx2, cy2 = min(w, x2), min(h, y2)
-                crop = img[cy1:cy2, cx1:cx2]
                 vehicle_type = class_name
+
+            crop = img[cy1:cy2, cx1:cx2]
 
             detections.append({
                 "crop": crop,
                 "bbox": {
-                    "x": float(cx1 / w),
-                    "y": float(cy1 / h),
-                    "width": float((cx2 - cx1) / w),
+                    "x":      float(cx1 / w),
+                    "y":      float(cy1 / h),
+                    "width":  float((cx2 - cx1) / w),
                     "height": float((cy2 - cy1) / h),
                 },
-                "score": score,
+                "score":        score,
                 "aspect_ratio": aspect_ratio,
-                "class_name": class_name,
+                "class_name":   class_name,
                 "vehicle_type": vehicle_type,
             })
 
@@ -174,7 +195,6 @@ def detect_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
 
 
 def is_gpu_available() -> bool:
-    """Check if CUDA/GPU is available for YOLO inference."""
     try:
         import torch
         return torch.cuda.is_available()
@@ -183,14 +203,16 @@ def is_gpu_available() -> bool:
 
 
 def set_gpu_enabled(enabled: bool = True):
-    """Enable or disable GPU for YOLO inference."""
-    global _model
+    global _model, _load_attempted
     if enabled and is_gpu_available():
         try:
             from ultralytics import YOLO
             if WEIGHTS_PATH.exists():
-                _model = YOLO(str(WEIGHTS_PATH))
-                _model.to('cuda')
-                log.info("[DETECT] YOLO GPU enabled")
-        except Exception as e:
-            log.warning("[DETECT] GPU enable failed: %s", e)
+                candidate = YOLO(str(WEIGHTS_PATH))
+                if _validate_model_classes(candidate):
+                    _model = candidate
+                    _model.to("cuda")
+                    _load_attempted = True
+                    log.info("[DETECT] YOLO GPU enabled")
+        except Exception as exc:
+            log.warning("[DETECT] GPU enable failed: %s", exc)

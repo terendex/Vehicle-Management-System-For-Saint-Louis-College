@@ -41,7 +41,12 @@ def _get_ocr_reader():
     if _ocr_reader is None:
         try:
             import easyocr
-            _ocr_reader = easyocr.Reader(["en"], gpu=False)
+            try:
+                import torch as _torch
+                _use_gpu = _torch.cuda.is_available()
+            except ImportError:
+                _use_gpu = False
+            _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
         except ImportError:
             pass
     return _ocr_reader
@@ -133,7 +138,7 @@ class VehicleTracker:
         return self._tracks
 
 
-def detect_license_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def detect_license_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     try:
         from .detection import detect_plates
         detections = detect_plates(img, conf)
@@ -227,7 +232,7 @@ def process_video(video_path: str, output_path: Optional[str] = None, process_ev
         
         h, w = frame.shape[:2]
         
-        plate_detections = detect_license_plates(frame, conf=0.5)
+        plate_detections = detect_license_plates(frame, conf=0.25)
         
         if not plate_detections:
             if out:

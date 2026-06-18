@@ -25,13 +25,23 @@ _MIN_WIDTH = 400
 _ocr_reader = None
 
 
+def _gpu_available() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
+
 def _get_ocr():
-    """Lazy-load EasyOCR reader."""
+    """Lazy-load EasyOCR reader — uses GPU when CUDA is available."""
     global _ocr_reader
     if _ocr_reader is None:
         try:
             import easyocr
-            _ocr_reader = easyocr.Reader(["en"], gpu=False)
+            use_gpu = _gpu_available()
+            _ocr_reader = easyocr.Reader(["en"], gpu=use_gpu)
+            log.info("[OCR] EasyOCR loaded (gpu=%s)", use_gpu)
         except ImportError:
             log.error("[OCR] easyocr not installed")
     return _ocr_reader

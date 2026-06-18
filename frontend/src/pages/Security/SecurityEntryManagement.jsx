@@ -14,24 +14,22 @@ import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import './SecurityEntryManagement.css'
 
-const TOKEN_KEY = 'security_scan_token'
-
 const STATUS_META = {
-  authorized: { label: 'Approved for Entry',    Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
-  wrong_day:  { label: 'Wrong Schedule Day',    Icon: XCircle,       cls: 'wrong_day',  logCls: 'wrong_day'  },
-  denied:     { label: 'Entry Denied',          Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
-  pending:    { label: 'Awaiting Approval',     Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
-  unknown:    { label: 'Visitor / Unregistered',Icon: HelpCircle,    cls: 'visitor',    logCls: 'visitor'    },
-  no_pass:    { label: 'No Visitor Pass',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
-  disabled:   { label: 'Access Disabled',       Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
-  unreadable: { label: 'Unreadable Plate',      Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
-  cooldown:   { label: 'Recently Scanned',      Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
+  authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
+  wrong_day:  { label: 'Wrong Schedule Day',     Icon: XCircle,       cls: 'wrong_day',  logCls: 'wrong_day'  },
+  denied:     { label: 'Entry Denied',           Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
+  pending:    { label: 'Awaiting Approval',      Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
+  unknown:    { label: 'Visitor / Unregistered', Icon: HelpCircle,    cls: 'visitor',    logCls: 'visitor'    },
+  no_pass:    { label: 'No Visitor Pass',        Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
+  disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
+  unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
+  cooldown:   { label: 'Recently Scanned',       Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
 }
 
 const VEHICLE_TYPE_META = {
-  bicycle:          { label: 'Bicycle',        Icon: Bike, color: '#3b82f6', cls: 'vehicle-bicycle' },
-  e_bike:           { label: 'E-Bike',         Icon: Bike, color: '#8b5cf6', cls: 'vehicle-e-bike'  },
-  electric_scooter: { label: 'Electric Scooter', Icon: Zap, color: '#10b981', cls: 'vehicle-scooter' },
+  bicycle:          { label: 'Bicycle',         Icon: Bike, color: '#3b82f6' },
+  e_bike:           { label: 'E-Bike',          Icon: Bike, color: '#8b5cf6' },
+  electric_scooter: { label: 'Electric Scooter', Icon: Zap,  color: '#10b981' },
 }
 
 function getMeta(status) {
@@ -43,9 +41,7 @@ function timeAgo(ts) {
   catch { return '' }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VisitorPassModal
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── VisitorPassModal ─────────────────────────────────────────────────────────
 function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   const [officeId, setOfficeId] = useState('')
   const [purpose, setPurpose] = useState('')
@@ -110,9 +106,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DigitalIDModal
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── DigitalIDModal ───────────────────────────────────────────────────────────
 function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
   const [digitalId, setDigitalId] = useState('')
   const [loading, setLoading] = useState(false)
@@ -133,10 +127,6 @@ function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
     }
   }
 
-  const handleScan = () => {
-    toast.info('QR scanning coming soon — use manual entry for now.')
-  }
-
   const meta = VEHICLE_TYPE_META[vehicleType] || { label: vehicleType, Icon: Type, color: '#6b7280' }
   const Icon = meta.Icon
 
@@ -149,16 +139,10 @@ function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
         </div>
         <div className="em-modal-body">
           <div className="em-tabs">
-            <button
-              className={`em-tab ${scanMode === 'manual' ? 'active' : ''}`}
-              onClick={() => setScanMode('manual')}
-            >
+            <button className={`em-tab ${scanMode === 'manual' ? 'active' : ''}`} onClick={() => setScanMode('manual')}>
               Manual Entry
             </button>
-            <button
-              className={`em-tab ${scanMode === 'scan' ? 'active' : ''}`}
-              onClick={() => setScanMode('scan')}
-            >
+            <button className={`em-tab ${scanMode === 'scan' ? 'active' : ''}`} onClick={() => setScanMode('scan')}>
               Scan QR Code
             </button>
           </div>
@@ -167,7 +151,7 @@ function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
             <div className="em-qr-scan-area">
               <QrCode size={64} color="#6b7280" />
               <p>Align QR code within the frame</p>
-              <button className="em-btn em-btn-secondary" onClick={handleScan}>
+              <button className="em-btn em-btn-secondary" onClick={() => toast.info('QR scanning coming soon.')}>
                 Capture QR Code
               </button>
             </div>
@@ -205,9 +189,7 @@ function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ResultCard
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── ResultCard ───────────────────────────────────────────────────────────────
 function ResultCard({ result, offices, onPassCreated }) {
   const [showModal, setShowModal] = useState(false)
 
@@ -227,13 +209,10 @@ function ResultCard({ result, offices, onPassCreated }) {
   }
 
   const { Icon, label, cls } = getMeta(result.status)
-  // For digital-ID results, owner comes at top level; for plate results, via result.vehicle.owner
   const owner = result.owner ?? result.vehicle?.owner
   const isVisitor = result.status === 'unknown' || result.status === 'no_pass'
   const vehicleType = result.vehicle_type
-  const vMeta = vehicleType
-    ? (VEHICLE_TYPE_META[vehicleType] || { label: vehicleType, Icon: Type, color: '#6b7280' })
-    : null
+  const vMeta = vehicleType ? (VEHICLE_TYPE_META[vehicleType] || { label: vehicleType, Icon: Type, color: '#6b7280' }) : null
 
   return (
     <>
@@ -243,9 +222,7 @@ function ResultCard({ result, offices, onPassCreated }) {
           <div className="em-result-text">
             <p className="em-result-status">{label}</p>
             {vMeta ? (
-              <p className="em-result-plate">
-                <vMeta.Icon size={14} /> {vMeta.label}
-              </p>
+              <p className="em-result-plate"><vMeta.Icon size={14} /> {vMeta.label}</p>
             ) : (
               <p className="em-result-plate">{result.plate_number || '—'}</p>
             )}
@@ -254,7 +231,7 @@ function ResultCard({ result, offices, onPassCreated }) {
         <div className="em-result-body">
           <p className="em-result-msg">{result.message}</p>
           {result.constraint && (
-            <div className="em-constraint-info" style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 8, background: '#fef3c7', border: '1px solid #f59e0b', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="em-constraint-info">
               <AlertTriangle size={13} style={{ flexShrink: 0 }} />
               <span>Rule blocked: <strong>{result.constraint}</strong></span>
             </div>
@@ -292,11 +269,7 @@ function ResultCard({ result, offices, onPassCreated }) {
             </div>
           )}
           {isVisitor && !vehicleType && (
-            <button
-              className="em-btn em-btn-secondary"
-              style={{ width: '100%', marginTop: 4 }}
-              onClick={() => setShowModal(true)}
-            >
+            <button className="em-btn em-btn-secondary" style={{ width: '100%', marginTop: 4 }} onClick={() => setShowModal(true)}>
               <UserPlus size={14} /> Create Visitor Pass
             </button>
           )}
@@ -315,34 +288,35 @@ function ResultCard({ result, offices, onPassCreated }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SecurityEntryManagement (page)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SecurityEntryManagement (page) ──────────────────────────────────────────
 export default function SecurityEntryManagement() {
-  const [authToken, setAuthToken] = useState(null)
-  const [mode, setMode] = useState('camera')
-  const [cameraOn, setCameraOn] = useState(false)
-  const [uploadFile, setUploadFile] = useState(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [cooldown, setCooldown] = useState(false)
-  const [logs, setLogs] = useState([])
-  const [offices, setOffices] = useState([])
-  const [rules, setRules] = useState([])
+  // Use the same JWT access token as the admin page — no prompt needed
+  const token = localStorage.getItem('access_token') || ''
+
+  const [mode, setMode]               = useState('camera')
+  const [cameraOn, setCameraOn]       = useState(false)
+  const [uploadFile, setUploadFile]   = useState(null)
+  const [dragOver, setDragOver]       = useState(false)
+  const [cooldown, setCooldown]       = useState(false)
+  const [displayResult, setDisplayResult] = useState(null)
+  const [logs, setLogs]               = useState([])
+  const [offices, setOffices]         = useState([])
+  const [rules, setRules]             = useState([])
   const [loadingRules, setLoadingRules] = useState(true)
   const [vehicleTypes, setVehicleTypes] = useState([])
   const [loadingVehicles, setLoadingVehicles] = useState(true)
   const [idModalState, setIdModalState] = useState({ open: false, trackId: null, vehicleType: null })
 
-  const [cameras, setCameras] = useState([{ id: 1, name: 'Main Gate - Front' }])
+  const [cameras, setCameras]         = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId] = useState(1)
 
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
-  // Track IDs for which the digital-ID modal has already been shown this session
   const openedModalIds = useRef(new Set())
 
   const {
     scanning,
+    connected,
     results: wsResults,
     flash,
     activeTracks,
@@ -350,23 +324,9 @@ export default function SecurityEntryManagement() {
     videoRef,
     canvasRef,
     dismissIdRequired,
-  } = useScanStream(authToken, cameraOn)
+  } = useScanStream(token, cameraOn)
 
-  // ── Auth token ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const stored = localStorage.getItem(TOKEN_KEY)
-    if (stored) {
-      setAuthToken(stored)
-    } else {
-      const inputToken = prompt('Enter scan token:')
-      if (inputToken) {
-        setAuthToken(inputToken)
-        localStorage.setItem(TOKEN_KEY, inputToken)
-      }
-    }
-  }, [])
-
-  // ── Fetch initial data ─────────────────────────────────────────────────────
+  // ── Data fetching ───────────────────────────────────────────────────────────
   useEffect(() => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
@@ -380,38 +340,38 @@ export default function SecurityEntryManagement() {
     }).catch(() => setLoadingVehicles(false))
   }, [])
 
-  // ── WebSocket plate results → log ──────────────────────────────────────────
+  // ── WS plate results → display + log ───────────────────────────────────────
   useEffect(() => {
-    if (wsResults && wsResults.length > 0) {
-      setCooldown(true)
-      setTimeout(() => setCooldown(false), 5000)
-      setLogs((prev) => {
-        const newLogs = wsResults.map(r => ({
-          id: Date.now() + Math.random(),
-          plate_number: r.plate_number,
-          status: r.status,
-          scanned_at: new Date().toISOString(),
-        }))
-        return [...newLogs, ...prev].slice(0, 20)
-      })
-    }
+    if (!wsResults?.length) return
+    setDisplayResult(wsResults)
+    setCooldown(true)
+    setTimeout(() => setCooldown(false), 5000)
+    setLogs((prev) => {
+      const newLogs = wsResults.map(r => ({
+        id: Date.now() + Math.random(),
+        plate_number: r.plate_number,
+        status: r.status,
+        scanned_at: new Date().toISOString(),
+      }))
+      return [...newLogs, ...prev].slice(0, 20)
+    })
   }, [wsResults])
 
-  // ── id_required events → open modal (once per track) ──────────────────────
+  // ── id_required events → open modal (once per track) ───────────────────────
   useEffect(() => {
     const entries = Object.entries(idRequiredTracks)
-    if (entries.length === 0) return
+    if (!entries.length) return
     for (const [trackId, info] of entries) {
       const tid = parseInt(trackId)
       if (!openedModalIds.current.has(tid)) {
         openedModalIds.current.add(tid)
         setIdModalState({ open: true, trackId: tid, vehicleType: info.vehicle_type })
-        break  // show one modal at a time
+        break
       }
     }
   }, [idRequiredTracks])
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
+  // ── Handlers ────────────────────────────────────────────────────────────────
   const handleIdVerify = (trackId, result) => {
     const vMeta = VEHICLE_TYPE_META[result.vehicle_type]
     const displayLabel = vMeta ? vMeta.label : (result.vehicle_type || 'Unplated')
@@ -447,11 +407,13 @@ export default function SecurityEntryManagement() {
   const stopCamera = () => {
     setCameraOn(false)
     setCooldown(false)
+    setDisplayResult(null)
   }
 
   const handleFileChange = (file) => {
     if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
     setUploadFile({ file, url: URL.createObjectURL(file) })
+    setDisplayResult(null)
   }
 
   const handleDrop = (e) => {
@@ -463,6 +425,7 @@ export default function SecurityEntryManagement() {
   const resetUpload = () => {
     if (uploadFile?.url) URL.revokeObjectURL(uploadFile.url)
     setUploadFile(null)
+    setDisplayResult(null)
   }
 
   const handleUploadScan = async () => {
@@ -471,6 +434,7 @@ export default function SecurityEntryManagement() {
       const res = await scanPlate(uploadFile.file)
       const data = res.data?.results ?? res.data ?? []
       if (data.length) {
+        setDisplayResult(data)
         setCooldown(true)
         setTimeout(() => setCooldown(false), 5000)
         setLogs((prev) => {
@@ -482,6 +446,8 @@ export default function SecurityEntryManagement() {
           }))
           return [...newLogs, ...prev].slice(0, 20)
         })
+      } else {
+        toast.info('No plate detected in this image.')
       }
     } catch {
       toast.error('Upload scan failed')
@@ -492,7 +458,7 @@ export default function SecurityEntryManagement() {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <SecurityLayout>
       <div className="em-page">
@@ -505,9 +471,16 @@ export default function SecurityEntryManagement() {
               Scan license plates or unplated vehicles — entry is decided automatically based on registration and schedule.
             </p>
           </div>
-          <div className="em-live-badge">
-            <span className="em-live-dot" /> LIVE
-          </div>
+          {cameraOn ? (
+            <div className={`em-live-badge ${connected ? '' : 'connecting'}`}>
+              <span className="em-live-dot" />
+              {connected ? 'LIVE' : 'CONNECTING…'}
+            </div>
+          ) : (
+            <div className="em-live-badge offline">
+              <span className="em-live-dot" /> OFFLINE
+            </div>
+          )}
         </div>
 
         {/* Main grid */}
@@ -523,7 +496,7 @@ export default function SecurityEntryManagement() {
               <div className="em-mode-toggle">
                 <button
                   className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`}
-                  onClick={() => { setMode('camera'); setCooldown(false) }}
+                  onClick={() => { setMode('camera'); setCooldown(false); setDisplayResult(null) }}
                 >Camera</button>
                 <button
                   className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`}
@@ -537,7 +510,6 @@ export default function SecurityEntryManagement() {
               <div className="em-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0 }}>
                 {cameraOn ? (
                   <div className="em-multi-cam-container">
-                    {/* Primary Camera */}
                     <div className="em-primary-cam">
                       {cameras.map(cam => (
                         <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
@@ -562,8 +534,7 @@ export default function SecurityEntryManagement() {
                       </div>
                       {flash && <div className="em-flash" />}
 
-                      {/* Bounding Box overlays from live stream */}
-                      {activeTracks && activeTracks.length > 0 && (
+                      {activeTracks.length > 0 && (
                         <canvas
                           ref={canvasRef}
                           style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
@@ -574,7 +545,6 @@ export default function SecurityEntryManagement() {
                       </div>
                     </div>
 
-                    {/* Thumbnails */}
                     <div className="em-cam-thumbnails">
                       {cameras.map(cam => (
                         <div
@@ -655,30 +625,30 @@ export default function SecurityEntryManagement() {
                           : <><Zap size={13} /> Auto-scanning</>
                       }
                     </div>
-                    <button id="btn-stop-camera" className="em-btn em-btn-danger" onClick={stopCamera}>
+                    <button className="em-btn em-btn-danger" onClick={stopCamera}>
                       <CameraOff size={15} /> Stop
                     </button>
                   </>
                 ) : (
-                  <button id="btn-start-camera" className="em-btn em-btn-primary em-btn-lg" onClick={() => setCameraOn(true)}>
+                  <button className="em-btn em-btn-primary em-btn-lg" onClick={() => setCameraOn(true)}>
                     <Camera size={17} /> Start Camera
                   </button>
                 )
               ) : (
                 uploadFile ? (
                   <>
-                    <button id="btn-upload-scan" className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan}>
+                    <button className="em-btn em-btn-primary em-btn-lg" onClick={handleUploadScan}>
                       <ScanLine size={17} /> Scan Plate
                     </button>
-                    <button id="btn-upload-choose" className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
-                      <Upload size={15} /> Choose Different Image
+                    <button className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
+                      <Upload size={15} /> Choose Different
                     </button>
-                    <button id="btn-upload-reset" className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Reset">
+                    <button className="em-btn em-btn-secondary em-btn-icon" onClick={resetUpload} title="Reset">
                       <RotateCcw size={15} />
                     </button>
                   </>
                 ) : (
-                  <button id="btn-upload-choose" className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
+                  <button className="em-btn em-btn-secondary em-btn-lg" onClick={() => fileInputRef.current?.click()}>
                     <Upload size={15} /> Choose Image
                   </button>
                 )
@@ -688,9 +658,9 @@ export default function SecurityEntryManagement() {
 
           {/* Right panel */}
           <div className="em-right">
-            {(wsResults && wsResults.length > 0) ? (
+            {displayResult?.length > 0 ? (
               <div className="em-results-stack">
-                {wsResults.map((r, idx) => (
+                {displayResult.map((r, idx) => (
                   <ResultCard key={`result-${idx}-${r.plate_number}`} result={r} offices={offices} onPassCreated={handlePassCreated} />
                 ))}
               </div>
@@ -704,7 +674,7 @@ export default function SecurityEntryManagement() {
                 <span className="em-card-label"><ShieldCheck size={14} /> Entry Rules</span>
               </div>
               <div className="em-rules-body">
-                <div style={{ marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #3b82f6' }}>Schedule Restrictions</div>
+                <div className="em-rules-section-label" style={{ borderColor: '#3b82f6' }}>Schedule Restrictions</div>
                 {loadingRules ? (
                   <p className="em-log-empty">Loading rules…</p>
                 ) : rules.length === 0 ? (
@@ -728,7 +698,7 @@ export default function SecurityEntryManagement() {
                   })
                 )}
 
-                <div style={{ marginTop: '16px', marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #f59e0b' }}>Vehicle Access Privileges</div>
+                <div className="em-rules-section-label" style={{ borderColor: '#f59e0b', marginTop: 16 }}>Vehicle Access Privileges</div>
                 {loadingVehicles ? (
                   <p className="em-log-empty">Loading vehicle types…</p>
                 ) : vehicleTypes.length === 0 ? (
@@ -741,8 +711,7 @@ export default function SecurityEntryManagement() {
                       <div key={`vt-${v.id}`} className="em-rule-row">
                         <span className={`em-rule-dot ${dotColor}`} />
                         <span className="em-rule-text" title={v.sub}>
-                          <strong>{v.label}</strong>
-                          {' — '}{v.gate}, {hoursDisplay}
+                          <strong>{v.label}</strong>{' — '}{v.gate}, {hoursDisplay}
                         </span>
                       </div>
                     )
@@ -775,7 +744,6 @@ export default function SecurityEntryManagement() {
                 </div>
               )}
             </div>
-
           </div>
         </div>
       </div>

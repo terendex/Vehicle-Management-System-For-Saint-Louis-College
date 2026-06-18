@@ -88,7 +88,8 @@ VEHICLE_TYPE_BEHAVIOR = {
     "e_bike":           {"requires_digital_id": True,  "triggers_ocr": False},
     "electric_scooter": {"requires_digital_id": True,  "triggers_ocr": False},
     "license_plate":    {"requires_digital_id": False, "triggers_ocr": True},
-    "car":              {"requires_digital_id": False, "triggers_ocr": True},
+    "vehicle":          {"requires_digital_id": False, "triggers_ocr": True},
+    "motorcycle":       {"requires_digital_id": False, "triggers_ocr": True},
 }
 
 

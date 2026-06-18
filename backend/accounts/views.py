@@ -4,6 +4,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from .models import User, AuditLog
 from .serializers import (
     UserSerializer,
@@ -189,7 +190,7 @@ class DashboardStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from django.db.models import Count, Q
+        from django.db.models import Count
         from django.utils import timezone
         from datetime import timedelta
         from scanning.models import AccessLog
@@ -199,56 +200,73 @@ class DashboardStatsView(APIView):
         week_ago = today - timedelta(days=7)
 
         if user.role == 'admin':
-            total_users = User.objects.count()
-            security_count = User.objects.filter(role='security').count()
-            vehicle_owner_count = User.objects.filter(role='vehicle_owner').count()
-            active_users = User.objects.filter(is_active=True).count()
-            disabled_users = User.objects.filter(is_active=False).count()
-
             from vehicles.models import Vehicle, VehicleRegistration
-            total_vehicles = Vehicle.objects.count()
-            authorized_vehicles = Vehicle.objects.filter(is_authorized=True).count()
-            pending_registrations = VehicleRegistration.objects.filter(status=VehicleRegistration.Status.PENDING).count()
 
-            today_scans = AuditLog.objects.filter(action=AuditLog.Action.SCAN, created_at__date=today).count()
-            week_scans = AuditLog.objects.filter(action=AuditLog.Action.SCAN, created_at__date__gte=week_ago).count()
+            total_users         = User.objects.count()
+            security_count      = User.objects.filter(role='security').count()
+            vehicle_owner_count = User.objects.filter(role='vehicle_owner').count()
+            active_users        = User.objects.filter(is_active=True).count()
+            disabled_users      = User.objects.filter(is_active=False).count()
 
-            recent_admin_logs = AuditLog.objects.filter(actor__role='admin').order_by('-created_at')[:10]
-            recent_security_logs = AuditLog.objects.filter(actor__role='security').order_by('-created_at')[:10]
+            total_vehicles        = Vehicle.objects.count()
+            authorized_vehicles   = Vehicle.objects.filter(is_authorized=True).count()
+            unauthorized_vehicles = total_vehicles - authorized_vehicles
+            pending_registrations = VehicleRegistration.objects.filter(
+                status=VehicleRegistration.Status.PENDING
+            ).count()
+
+            today_scans      = AccessLog.objects.filter(scanned_at__date=today).count()
+            week_scans       = AccessLog.objects.filter(scanned_at__date__gte=week_ago).count()
+            authorized_today = AccessLog.objects.filter(scanned_at__date=today, status='authorized').count()
+            denied_today     = AccessLog.objects.filter(
+                scanned_at__date=today, status__in=['denied', 'wrong_day']
+            ).count()
+            unknown_today    = AccessLog.objects.filter(scanned_at__date=today, status='unknown').count()
+
+            recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
+                actor__role='admin'
+            ).order_by('-created_at')[:10]
+            recent_security_logs = AuditLog.objects.select_related('actor', 'target_user').filter(
+                actor__role='security'
+            ).order_by('-created_at')[:10]
 
             data = {
                 'role': 'admin',
                 'users': {
-                    'total': total_users,
-                    'security': security_count,
+                    'total':         total_users,
+                    'security':      security_count,
                     'vehicle_owner': vehicle_owner_count,
-                    'active': active_users,
-                    'disabled': disabled_users,
+                    'active':        active_users,
+                    'disabled':      disabled_users,
                 },
                 'vehicles': {
-                    'total': total_vehicles,
-                    'authorized': authorized_vehicles,
+                    'total':        total_vehicles,
+                    'authorized':   authorized_vehicles,
+                    'unauthorized': unauthorized_vehicles,
                 },
                 'registrations': {
                     'pending': pending_registrations,
                 },
                 'scans': {
-                    'today': today_scans,
-                    'week': week_scans,
+                    'today':            today_scans,
+                    'week':             week_scans,
+                    'authorized_today': authorized_today,
+                    'denied_today':     denied_today,
+                    'unknown_today':    unknown_today,
                 },
                 'recent_activity': {
-                    'admin': AuditLogSerializer(recent_admin_logs, many=True).data,
+                    'admin':    AuditLogSerializer(recent_admin_logs, many=True).data,
                     'security': AuditLogSerializer(recent_security_logs, many=True).data,
                 },
             }
         else:
-            my_scans_today = AuditLog.objects.filter(
-                actor=user, action=AuditLog.Action.SCAN, created_at__date=today
+            my_scans_today = AccessLog.objects.filter(scanned_by=user, scanned_at__date=today).count()
+            my_scans_week  = AccessLog.objects.filter(scanned_at__date__gte=week_ago, scanned_by=user).count()
+            my_total_scans = AccessLog.objects.filter(scanned_by=user).count()
+            my_authorized  = AccessLog.objects.filter(scanned_by=user, scanned_at__date=today, status='authorized').count()
+            my_denied      = AccessLog.objects.filter(
+                scanned_by=user, scanned_at__date=today, status__in=['denied', 'wrong_day']
             ).count()
-            my_scans_week = AuditLog.objects.filter(
-                actor=user, action=AuditLog.Action.SCAN, created_at__date__gte=week_ago
-            ).count()
-            my_total_scans = AuditLog.objects.filter(actor=user, action=AuditLog.Action.SCAN).count()
 
             my_access_logs = AccessLog.objects.filter(scanned_by=user).order_by('-scanned_at')[:10]
 
@@ -256,9 +274,11 @@ class DashboardStatsView(APIView):
             data = {
                 'role': 'security',
                 'scans': {
-                    'today': my_scans_today,
-                    'week': my_scans_week,
-                    'total': my_total_scans,
+                    'today':            my_scans_today,
+                    'week':             my_scans_week,
+                    'total':            my_total_scans,
+                    'authorized_today': my_authorized,
+                    'denied_today':     my_denied,
                 },
                 'recent_scans': AccessLogSerializer(my_access_logs, many=True).data,
             }
@@ -278,23 +298,30 @@ class AuditLogListView(generics.ListAPIView):
 
     def get_queryset(self):
         if self.request.user.role == 'admin':
-            qs = AuditLog.objects.all()
+            qs = AuditLog.objects.select_related('actor', 'target_user').all()
         else:
-            qs = AuditLog.objects.filter(actor=self.request.user)
-        
-        # Filter by action type
+            qs = AuditLog.objects.select_related('actor', 'target_user').filter(actor=self.request.user)
+
         action = self.request.query_params.get('action', '').strip()
         if action:
             qs = qs.filter(action=action)
-        
-        # Filter by date range
+
         date_from = self.request.query_params.get('date_from', '').strip()
-        date_to = self.request.query_params.get('date_to', '').strip()
+        date_to   = self.request.query_params.get('date_to', '').strip()
         if date_from:
             qs = qs.filter(created_at__date__gte=date_from)
         if date_to:
             qs = qs.filter(created_at__date__lte=date_to)
-        
+
+        # Actor search: match user_code, full_name, or email (case-insensitive)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(actor__user_code__icontains=search) |
+                Q(actor__full_name__icontains=search) |
+                Q(actor__email__icontains=search)
+            )
+
         return qs.order_by('-created_at')
 
 

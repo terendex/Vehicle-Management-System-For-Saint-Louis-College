@@ -34,13 +34,13 @@ def _get_vehicle_model():
     return _model
 
 
-def detect_vehicles(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def detect_vehicles(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     model = _get_vehicle_model()
     if model is None:
         h, w = img.shape[:2]
         return [{"bbox": (0, 0, w, h), "confidence": 1.0, "crop": img}]
     
-    results = model.predict(img, conf=conf, verbose=False)
+    results = model.predict(img, conf=conf, verbose=False, max_det=100)
     detections = []
     for r in results:
         for box in r.boxes:

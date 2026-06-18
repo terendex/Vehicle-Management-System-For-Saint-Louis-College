@@ -1,13 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import './SecurityDashboard.css'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { usersApi } from '../../api/users'
 import { getAccessLogs } from '../../api/scanning'
 import {
-  ShieldCheck, Activity, Clock, ScanLine,
-  Camera, ClipboardList, TrendingUp, UserCheck
+  ScanLine, Clock, TrendingUp, ClipboardList,
+  CheckCircle, XCircle, RefreshCw
 } from 'lucide-react'
-import './SecurityDashboard.css'
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
@@ -17,7 +16,7 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
       </div>
       <div className="sd-card-body">
         <span className="sd-card-label">{label}</span>
-        <span className="sd-card-value">{value}</span>
+        <span className="sd-card-value">{value ?? '—'}</span>
         {sub && <span className="sd-card-sub">{sub}</span>}
       </div>
     </div>
@@ -30,10 +29,10 @@ function ScanRow({ log }) {
   })
   const statusColors = {
     authorized: '#059669',
-    denied: '#DC2626',
-    wrong_day: '#DC2626',
-    pending: '#D97706',
-    unknown: '#7C3AED',
+    denied:     '#DC2626',
+    wrong_day:  '#DC2626',
+    pending:    '#D97706',
+    unknown:    '#7C3AED',
     unreadable: '#6B7280',
   }
   const color = statusColors[log.status] || '#6B7280'
@@ -50,38 +49,35 @@ function ScanRow({ log }) {
 }
 
 export default function SecurityDashboard() {
-  const [stats, setStats] = useState(null)
+  const [stats, setStats]           = useState(null)
   const [recentScans, setRecentScans] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading]       = useState(true)
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [statsData, logsRes] = await Promise.all([
+        usersApi.getDashboardStats().catch(() => null),
+        getAccessLogs({ limit: 20 }).catch(() => null),
+      ])
+
+      if (statsData) setStats(statsData)
+
+      if (logsRes?.results) {
+        setRecentScans(logsRes.results.slice(0, 15))
+      } else if (Array.isArray(logsRes)) {
+        setRecentScans(logsRes.slice(0, 15))
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        const [statsRes, logsRes] = await Promise.all([
-          usersApi.getAuditLogStats().catch(() => null),
-          getAccessLogs({ limit: 20 }).catch(() => null),
-        ])
-
-        if (cancelled) return
-
-        if (statsRes?.data) setStats(statsRes.data)
-
-        if (logsRes?.data?.results) {
-          setRecentScans(logsRes.data.results.slice(0, 15))
-        } else if (Array.isArray(logsRes?.data)) {
-          setRecentScans(logsRes.data.slice(0, 15))
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
     fetchData()
-    return () => { cancelled = true }
-  }, [])
+  }, [fetchData])
 
   return (
     <SecurityLayout>
@@ -91,41 +87,56 @@ export default function SecurityDashboard() {
             <h1 className="sd-title">Security Dashboard</h1>
             <p className="sd-subtitle">Welcome back. Here's your gate activity summary.</p>
           </div>
+          <button className="sd-refresh-btn" onClick={fetchData} disabled={loading} title="Refresh">
+            <RefreshCw size={15} />
+          </button>
         </div>
 
-        {loading ? (
+        {loading && !stats ? (
           <div className="sd-loading">
             <div className="sd-spinner" />
             <p>Loading dashboard...</p>
           </div>
         ) : (
           <>
-            {/* My Stats */}
             <div className="sd-stats-grid">
               <StatCard
                 icon={ScanLine}
                 label="Scans Today"
-                value={stats?.scans?.today ?? '—'}
+                value={stats?.scans?.today}
                 sub={`${stats?.scans?.week ?? 0} this week`}
                 color="#2A2B61"
               />
               <StatCard
+                icon={CheckCircle}
+                label="Authorized Today"
+                value={stats?.scans?.authorized_today}
+                sub="Allowed entry"
+                color="#059669"
+              />
+              <StatCard
+                icon={XCircle}
+                label="Denied Today"
+                value={stats?.scans?.denied_today}
+                sub="Blocked entry"
+                color="#DC2626"
+              />
+              <StatCard
                 icon={Clock}
                 label="Total Scans"
-                value={stats?.scans?.total ?? '—'}
+                value={stats?.scans?.total}
                 sub="All time"
-                color="#059669"
+                color="#7C3AED"
               />
               <StatCard
                 icon={TrendingUp}
                 label="Weekly Activity"
-                value={stats?.scans?.week ?? '—'}
+                value={stats?.scans?.week}
                 sub="Last 7 days"
-                color="#7C3AED"
+                color="#D97706"
               />
             </div>
 
-            {/* Recent Scans */}
             <div className="sd-recent-card">
               <div className="sd-recent-head">
                 <span className="sd-recent-title">

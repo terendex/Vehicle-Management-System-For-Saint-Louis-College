@@ -34,6 +34,32 @@
   margin: 0;
 }
 
+.sd-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #5A5F72;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.sd-refresh-btn:hover:not(:disabled) {
+  background: #F8F9FC;
+  color: #2A2B61;
+  border-color: #B8BAD4;
+}
+
+.sd-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .sd-loading {
   display: flex;
   flex-direction: column;

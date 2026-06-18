@@ -32,6 +32,13 @@
   margin: 4px 0 0;
 }
 
+.al-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .al-stats-badge {
   display: flex;
   align-items: center;
@@ -42,6 +49,34 @@
   font-size: 13px;
   font-weight: 600;
   color: #2A2B61;
+}
+
+.al-export-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #5A5F72;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.al-export-btn:hover:not(:disabled) {
+  background: #F8F9FC;
+  color: #2A2B61;
+  border-color: #B8BAD4;
+}
+
+.al-export-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .al-toolbar {
@@ -55,10 +90,10 @@
 
 .al-search-wrapper {
   position: relative;
-  width: 280px;
+  width: 300px;
 }
 
-.al-search-wrapper svg {
+.al-search-wrapper > svg:first-child {
   position: absolute;
   left: 12px;
   top: 50%;
@@ -67,9 +102,58 @@
   pointer-events: none;
 }
 
+.al-search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: #E2E6EE;
+  color: #5A5F72;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.al-search-clear:hover {
+  background: #C7CAD9;
+}
+
+.al-clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1.5px solid #FECACA;
+  background: #FEF2F2;
+  color: #DC2626;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.al-clear-btn:hover {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
+}
+
+.al-clear-btn-center {
+  margin: 12px auto 0;
+}
+
 .al-search-input {
   width: 100%;
-  padding: 10px 14px 10px 40px;
+  padding: 10px 36px 10px 40px;
   border: 1.5px solid #E2E6EE;
   border-radius: 10px;
   font-size: 14px;
