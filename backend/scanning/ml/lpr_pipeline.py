@@ -167,13 +167,13 @@ def get_yolo_model():
     return _yolo_model
 
 
-def detect_license_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+def detect_license_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     model = get_yolo_model()
     if model is None:
         return []
     h, w = img.shape[:2]
     try:
-        results = model.predict(img, conf=conf, verbose=False)
+        results = model.predict(img, conf=conf, verbose=False, max_det=100)
     except Exception as e:
         log.error("[DETECT] YOLO error: %s", e)
         return []
@@ -185,7 +185,7 @@ def detect_license_plates(img: np.ndarray, conf: float = 0.5) -> list[dict]:
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
-            if score < 0.5 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
+            if score < 0.25 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
                 continue
             detections.append({
                 "bbox": (x1, y1, box_w, box_h),
@@ -201,7 +201,12 @@ def get_easyocr_reader():
     if _ocr_reader is None:
         try:
             import easyocr
-            _ocr_reader = easyocr.Reader(["en"], gpu=False, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-')
+            try:
+                import torch as _torch
+                _use_gpu = _torch.cuda.is_available()
+            except ImportError:
+                _use_gpu = False
+            _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-')
         except ImportError:
             pass
     return _ocr_reader

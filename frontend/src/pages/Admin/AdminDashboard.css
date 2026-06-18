@@ -32,6 +32,48 @@
   margin: 4px 0 0;
 }
 
+.ad-last-updated {
+  color: #9BA3BF;
+  font-size: 12px;
+}
+
+.ad-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #5A5F72;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ad-refresh-btn:hover:not(:disabled) {
+  background: #F8F9FC;
+  color: #2A2B61;
+  border-color: #B8BAD4;
+}
+
+.ad-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes ad-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ad-spin {
+  animation: ad-spin 0.7s linear infinite;
+}
+
 .ad-loading {
   display: flex;
   flex-direction: column;

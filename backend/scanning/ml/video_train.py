@@ -45,7 +45,12 @@ def _get_ocr_reader():
     if _ocr_reader is None:
         try:
             import easyocr
-            _ocr_reader = easyocr.Reader(["en"], gpu=False)
+            try:
+                import torch as _torch
+                _use_gpu = _torch.cuda.is_available()
+            except ImportError:
+                _use_gpu = False
+            _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
         except ImportError:
             pass
     return _ocr_reader
@@ -192,7 +197,7 @@ def process_video(video_path: str, vehicle_model, plate_model, output_path: Opti
         
         plate_detections = []
         if plate_model is not None:
-            detections = plate_model.predict(frame, conf=0.5, verbose=False)
+            detections = plate_model.predict(frame, conf=0.25, verbose=False, max_det=100)
             for r in detections:
                 for box in r.boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()

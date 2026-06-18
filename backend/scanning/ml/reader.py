@@ -22,7 +22,7 @@ import numpy as np
 import easyocr
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
-from .detection import detect_plates, VEHICLE_TYPE_CLASSES
+from .detection import detect_plates, VEHICLE_TYPE_CLASSES, is_gpu_available
 
 log = logging.getLogger(__name__)
 
@@ -128,20 +128,45 @@ def _correct_plate_chars(text: str) -> str:
 # ── Lazy singletons ─────────────────────────────────────────────────
 
 _ocr_reader: easyocr.Reader | None = None
-_yolo_model = None                       # ultralytics.YOLO | None
-_yolo_loaded = False                     # ensures we only try once
+_ocr_load_failures = 0
+_OCR_MAX_RETRIES = 3
+
+_yolo_model = None
+_yolo_loaded = False
 
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
+
+# Confidence above which we skip the expensive L/M/R tiled passes
+_OCR_EARLY_EXIT_CONF = 0.60
+
 
 def requires_digital_id(class_name: str) -> bool:
     return class_name in VEHICLE_TYPE_CLASSES
 
 
 def _get_ocr():
-    """Lazy-load EasyOCR (takes ~2 s on first call)."""
-    global _ocr_reader
-    if _ocr_reader is None:
-        _ocr_reader = easyocr.Reader(["en"], gpu=False)
+    """Lazy-load EasyOCR with up to _OCR_MAX_RETRIES attempts."""
+    global _ocr_reader, _ocr_load_failures
+    if _ocr_reader is not None:
+        return _ocr_reader
+    if _ocr_load_failures >= _OCR_MAX_RETRIES:
+        log.error(
+            "[OCR] EasyOCR failed to load after %d attempts — OCR is disabled. "
+            "Restart the server to retry.",
+            _OCR_MAX_RETRIES,
+        )
+        return None
+    try:
+        _use_gpu = is_gpu_available()
+        _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
+        log.info("[OCR] EasyOCR loaded OK (gpu=%s)", _use_gpu)
+        _ocr_load_failures = 0
+    except Exception as exc:
+        _ocr_load_failures += 1
+        log.error(
+            "[OCR] EasyOCR load failed (attempt %d/%d): %s",
+            _ocr_load_failures, _OCR_MAX_RETRIES, exc,
+        )
     return _ocr_reader
 
 
@@ -254,7 +279,7 @@ def _deskew_plate(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
 
 # ── YOLO detection ──────────────────────────────────────────────────
 
-def _detect_plates(img: np.ndarray, conf: float = 0.5):
+def _detect_plates(img: np.ndarray, conf: float = 0.25):
     return detect_plates(img, conf)
 
 
@@ -331,6 +356,9 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         for text, conf, valid in _run_ocr(img_v, label):
             if valid and conf > 0.08:
                 candidates.append((conf, text))
+                if conf >= _OCR_EARLY_EXIT_CONF:
+                    log.info("[OCR-CROP] Early exit — high-conf valid plate: '%s' (%.2f)", text, conf)
+                    return text, conf
             elif conf > 0.05:
                 fallback.append((conf, text))
 

@@ -31,6 +31,7 @@ function getTrackColor(track) {
 
 export function useScanStream(token, cameraOn) {
   const [scanning, setScanning] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [results, setResults] = useState([]);
   const [flash, setFlash] = useState(false);
   const [activeTracks, setActiveTracks] = useState([]);
@@ -160,6 +161,7 @@ export function useScanStream(token, cameraOn) {
 
     socket.onopen = () => {
       console.log("[WS] Connected");
+      setConnected(true);
     };
 
     socket.onmessage = (event) => {
@@ -227,7 +229,10 @@ export function useScanStream(token, cameraOn) {
     };
     socket.onclose = (event) => {
       console.log("[WS] Disconnected:", event.code, event.reason);
-      if (!isCancelled) setScanning(false);
+      if (!isCancelled) {
+        setScanning(false);
+        setConnected(false);
+      }
     };
 
     const sendFrame = () => {
@@ -306,6 +311,7 @@ export function useScanStream(token, cameraOn) {
 
   return {
     scanning,
+    connected,
     results,
     flash,
     activeTracks,

@@ -59,6 +59,12 @@ export const usersApi = {
     return data
   },
 
+  /** Get rich dashboard stats (users, vehicles, scans, recent activity). */
+  getDashboardStats: async () => {
+    const { data } = await api.get('/accounts/dashboard/stats/')
+    return data
+  },
+
   /** Get the vehicle owner's own registration record. */
   getMyRegistration: async () => {
     const { data } = await api.get('/accounts/me/registration/')

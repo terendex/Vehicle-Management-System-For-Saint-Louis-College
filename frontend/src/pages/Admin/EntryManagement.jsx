@@ -235,7 +235,7 @@ export default function EntryManagement() {
     return ''
   }, [])
 
-  const { scanning: wsScanning, results: wsResults, flash: flashState, videoRef } = useScanStream(
+  const { scanning: wsScanning, connected: wsConnected, results: wsResults, flash: flashState, videoRef } = useScanStream(
     getToken(),
     cameraOn && mode === 'camera',
   )
@@ -299,7 +299,6 @@ export default function EntryManagement() {
         else resolve(null)
       }))
       if (!imageBlob) {
-        toast.error('Failed to capture image')
         return
       }
       const response = await fetch(imageBlob)
@@ -398,9 +397,16 @@ export default function EntryManagement() {
               Scan license plates using the camera — entry is decided automatically based on registration and schedule.
             </p>
           </div>
-          <div className="em-live-badge">
-            <span className="em-live-dot" /> LIVE
-          </div>
+          {cameraOn ? (
+            <div className={`em-live-badge ${wsConnected ? '' : 'connecting'}`}>
+              <span className="em-live-dot" />
+              {wsConnected ? 'LIVE' : 'CONNECTING…'}
+            </div>
+          ) : (
+            <div className="em-live-badge offline">
+              <span className="em-live-dot" /> OFFLINE
+            </div>
+          )}
         </div>
 
         {/* Main grid */}

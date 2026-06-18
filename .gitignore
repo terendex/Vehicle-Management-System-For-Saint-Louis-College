@@ -33,6 +33,11 @@ backend/scanning/ml/_rf_downloads/
 backend/scanning/ml/runs/
 backend/scanning/ml/unplated_dataset/
 backend/unplated_ds/
+backend/scanning/ml/raw_frames/
+backend/scanning/ml/motorcycle_ds/
+backend/scanning/ml/visualizations/
+backend/scanning/ml/labeled/
+runs/
 *.zip
 
 # ===== NODE =====

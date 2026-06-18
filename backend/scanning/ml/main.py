@@ -38,7 +38,7 @@ BUFFER_SIZE = 10
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
 
-def detect_plates_standalone(img: np.ndarray, conf: float = 0.3) -> list[dict]:
+def detect_plates_standalone(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     """Detect plates using YOLOv8 - standalone version."""
     try:
         from ultralytics import YOLO
@@ -46,7 +46,7 @@ def detect_plates_standalone(img: np.ndarray, conf: float = 0.3) -> list[dict]:
             return []
         model = YOLO(str(WEIGHTS_PATH))
         h, w = img.shape[:2]
-        results = model.predict(img, conf=conf, verbose=False)
+        results = model.predict(img, conf=conf, verbose=False, max_det=100)
         detections = []
         for r in results:
             for box in r.boxes:
@@ -55,7 +55,7 @@ def detect_plates_standalone(img: np.ndarray, conf: float = 0.3) -> list[dict]:
                 x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
                 box_w, box_h = x2 - x1, y2 - y1
                 aspect_ratio = box_w / max(box_h, 1)
-                if score < 0.5 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
+                if score < 0.25 or aspect_ratio < 0.8 or aspect_ratio > 3.5:
                     continue
                 pad_x = int(box_w * 0.15)
                 pad_y_top = int(box_h * 0.15)
@@ -261,7 +261,12 @@ def run_ocr_standalone(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Opt
     """Standalone OCR using EasyOCR."""
     try:
         import easyocr
-        ocr = easyocr.Reader(["en"], gpu=False)
+        try:
+            import torch as _torch
+            _use_gpu = _torch.cuda.is_available()
+        except ImportError:
+            _use_gpu = False
+        ocr = easyocr.Reader(["en"], gpu=_use_gpu)
         h, w = crop.shape[:2]
         if w < 320:
             scale = 320 / max(w, 1)
