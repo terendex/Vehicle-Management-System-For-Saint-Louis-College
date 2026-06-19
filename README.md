@@ -1,10 +1,10 @@
-# 🚗 Vehicle Management System — Saint Louis College
+# Vehicle Management System — Saint Louis College
 
 An AI-powered vehicle entry management system using license plate recognition, built for Philippine plate formats. Manages entry rules for students, employees, fetchers/droppers, and visitors.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
@@ -29,18 +29,18 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 
 ## Features
 
-- 📷 **Camera-based plate scanning** — automatic detection at entry gates
-- 🤖 **ML plate recognition** — YOLOv8 detection + EasyOCR text extraction
-- 🇵🇭 **Philippine plate validation** — supports all standard PH plate formats
-- 🗓️ **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
-- 👔 **Employee open access** — employees allowed entry any day
-- 🪪 **Visitor pass system** — visitors declare office destination, office confirms entry
-- ⚠️ **Violation tracking** — flags vehicles with unresolved violations
-- 📱 **Mobile web scanner** — guards can scan plates from any device
-- 📝 **Secure Registration** — admin generates one-time tokens for self-registration
-- 🔐 **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
-- 📋 **Access logs** — full history of every scan and entry attempt
-- 🧠 **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
+- **Camera-based plate scanning** — automatic detection at entry gates
+- **ML plate recognition** — YOLOv8 detection + EasyOCR text extraction
+- **Philippine plate validation** — supports all standard PH plate formats
+- **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
+- **Employee open access** — employees allowed entry any day
+- **Visitor pass system** — visitors declare office destination, office confirms entry
+- **Violation tracking** — flags vehicles with unresolved violations
+- **Mobile web scanner** — guards can scan plates from any device
+- **Secure Registration** — admin generates one-time tokens for self-registration
+- **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
+- **Access logs** — full history of every scan and entry attempt
+- **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
 
 ---
 
@@ -82,6 +82,8 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 | django-channels | WebSocket support |
 | Daphne | ASGI server for WebSockets |
 | psycopg2-binary | PostgreSQL connector |
+| dj-database-url | Parse DATABASE_URL connection string |
+| django-storages + boto3 | Cloudflare R2 image storage |
 | Pillow | Image handling |
 | EasyOCR | Plate text extraction |
 | OpenCV | Image preprocessing |
@@ -106,10 +108,11 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 | TanStack Table | Data tables |
 
 ### Infrastructure
-| Tool | Purpose |
+| Service | Purpose |
 |---|---|
-| PostgreSQL | Main database (installed locally, must be running as service) |
-| Redis | Caching and task queue (Memurai on Windows, installed locally) |
+| Neon (PostgreSQL) | Shared cloud database — no local PostgreSQL needed |
+| Cloudflare R2 | Image storage for scan snapshots, ML samples, owner photos |
+| Redis (Memurai on Windows) | Celery task queue — still runs locally |
 
 ---
 
@@ -174,7 +177,11 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │   ├── reader.py            # YOLO + EasyOCR inference pipeline
 │   │   │   ├── train.py             # YOLOv8 training (offline + incremental)
 │   │   │   ├── validator.py         # Philippine plate regex validation
-│   │   │   └── collector.py         # Auto-collect scan data for retraining
+│   │   │   ├── collector.py         # Auto-collect scan data for retraining
+│   │   │   ├── weights/             # Trained model weights (not in git — transfer manually)
+│   │   │   │   ├── best.pt          # Best checkpoint (used in production)
+│   │   │   │   └── last.pt          # Latest checkpoint (for resuming)
+│   │   │   └── dataset/             # Training images and YOLO labels
 │   │   ├── tasks.py                 # Celery task: ML retrain job
 │   │   ├── views.py                 # Scan + ML sample/retrain endpoints
 │   │   ├── models.py                # AccessLog, VisitorPass, MLTrainingSample
@@ -183,6 +190,9 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   ├── manage.py
 │   ├── requirements.txt
 │   └── .env.example
+│
+├── docs/
+│   └── DATA_AND_ML_MIGRATION.md     # Guide for migrating DB and ML assets
 │
 ├── .gitignore
 └── README.md
@@ -198,11 +208,10 @@ Vehicle-Management-System-For-Saint-Louis-College/
 | VS Code | Latest | https://code.visualstudio.com |
 | Node.js | 20+ | https://nodejs.org |
 | Python | 3.11 | https://python.org/downloads/release/python-3119 |
-| PostgreSQL | 16 | https://www.postgresql.org/download |
 | Redis | Latest | [Memurai](https://www.memurai.com) (Windows) or https://redis.io/downloads |
 
-> ⚠️ **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
-> ⚠️ **PostgreSQL must be running** before starting the backend. Ensure the PostgreSQL service is started via Services or `pg_ctl`.
+> **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
+> **PostgreSQL is no longer required locally.** The project uses a shared Neon cloud database — get the `.env` file from a teammate.
 
 ### VS Code Extensions
 Install these when VS Code prompts "Install recommended extensions?" or search manually (`Ctrl+Shift+X`):
@@ -232,42 +241,26 @@ code .
 
 ### 2. Set Up Environment Files
 
+Get the shared `.env` file from a teammate (sent via group chat — never committed to Git) and place it at `backend/.env`.
+
+For the frontend:
 ```bash
-cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-Open both `.env` files and fill in your values.
+The frontend `.env` only needs `VITE_API_BASE_URL=http://localhost:8000` — no secrets.
 
-### 3. Set Up PostgreSQL
+### 3. Set Up Redis
 
-Ensure PostgreSQL service is running (check Services app → PostgreSQL → Running), then create the database:
+Redis is still required locally for Celery background tasks. On Windows, install **Memurai** and ensure the service is running:
 
-```bash
-# Open psql as the postgres superuser
-psql -U postgres
-
-# Inside psql, create the database
-CREATE DATABASE plate_db;
-\q
+```
+Services app → Memurai → Running
 ```
 
-Update `backend/.env` with your local PostgreSQL credentials (`DB_USER`, `DB_PASSWORD`, etc.).
+If not running: right-click → Start.
 
-### 4. Set Up Redis
-
-Start Redis locally. On Windows, **Memurai** (a native Redis-compatible server) is recommended and starts automatically as a service after installation:
-
-```bash
-# WSL / Linux / Mac
-redis-server
-
-# Windows with Memurai — ensure the service is running
-# Check: Services app → Memurai → Running
-# If not running: Services app → Memurai → Start
-```
-
-### 5. Set Up the Backend
+### 4. Set Up the Backend
 
 ```bash
 cd backend
@@ -278,24 +271,16 @@ py -m venv venv
 # Activate (Windows)
 venv\Scripts\activate
 
-# Activate (Mac/Linux)
-# source venv/bin/activate
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Run migrations per app
-python manage.py makemigrations accounts
-python manage.py makemigrations vehicles
-python manage.py makemigrations scanning
-python manage.py makemigrations violations
+# Apply any pending migrations
 python manage.py migrate
-
-# Create admin user
-python manage.py createsuperuser
 ```
 
-### 6. Set Up the Frontend
+> No need to create a local database — `DATABASE_URL` in your `.env` points to the shared Neon database.
+
+### 5. Set Up the Frontend
 
 ```bash
 cd frontend
@@ -310,19 +295,26 @@ npm install
 
 | Variable | Description | Example |
 |---|---|---|
-| `SECRET_KEY` | Django secret key — keep private | `your-secret-key` |
+| `SECRET_KEY` | Django secret key | `your-secret-key` |
 | `DEBUG` | Debug mode | `True` |
 | `ALLOWED_HOSTS` | Comma-separated allowed hosts | `localhost,127.0.0.1` |
-| `DB_NAME` | PostgreSQL database name | `plate_db` |
-| `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | `password` |
-| `DB_HOST` | PostgreSQL host | `127.0.0.1` |
-| `DB_PORT` | PostgreSQL port | `5432` |
+| `DATABASE_URL` | Neon PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
+| `DB_NAME` | Local DB fallback (ignored when DATABASE_URL is set) | `plate_db` |
+| `DB_USER` | Local DB fallback | `postgres` |
+| `DB_PASSWORD` | Local DB fallback | `password` |
+| `DB_HOST` | Local DB fallback | `127.0.0.1` |
+| `DB_PORT` | Local DB fallback | `5432` |
+| `USE_R2` | Enable Cloudflare R2 image storage | `true` |
+| `R2_ACCESS_KEY_ID` | R2 API access key | — |
+| `R2_SECRET_ACCESS_KEY` | R2 API secret key | — |
+| `R2_BUCKET_NAME` | R2 bucket name | `slc-entry-management-ml` |
+| `R2_ACCOUNT_ID` | Cloudflare account ID | — |
+| `R2_PUBLIC_URL` | R2 public bucket URL | `pub-xxxx.r2.dev` |
 | `CORS_ALLOWED_ORIGINS` | Allowed frontend origins | `http://localhost:5173` |
 | `EMAIL_HOST_USER` | Gmail email for sending emails | `your-email@gmail.com` |
 | `EMAIL_HOST_PASSWORD` | Gmail app password | `your-app-password` |
 | `FRONTEND_URL` | Frontend URL for emails | `http://localhost:5173` |
-| `BACKEND_URL` | Backend URL for emails | `http://localhost:8000` |
+| `BACKEND_URL` | Backend URL | `http://localhost:8000` |
 | `ACCESS_TOKEN_LIFETIME_MINUTES` | JWT access token expiry | `60` |
 | `REFRESH_TOKEN_LIFETIME_DAYS` | JWT refresh token expiry | `7` |
 | `CELERY_BROKER_URL` | Redis broker URL | `redis://127.0.0.1:6379/0` |
@@ -337,19 +329,17 @@ npm install
 |---|---|---|
 | `VITE_API_BASE_URL` | Django backend URL | `http://localhost:8000` |
 
-> ⚠️ **Never commit `.env` files.** Only `.env.example` files are tracked in Git.
+> **Never commit `.env` files.** Only `.env.example` files are tracked in Git.
 
 ---
 
 ## Running the Project
 
-> **Prerequisites:** Ensure PostgreSQL and Redis (Memurai) services are running before starting the backend.
+> **Prerequisite:** Ensure Redis (Memurai) is running before starting the backend.
 
 Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
 
 ### Terminal 1 — Backend (Django + Daphne)
-
-Daphne is used as the ASGI server to support WebSocket connections for real-time scanning:
 
 ```bash
 cd backend
@@ -357,7 +347,7 @@ venv\Scripts\activate
 daphne -b 127.0.0.1 -p 8000 config.asgi:application
 ```
 
-> **Note:** For development without WebSocket features, you can use Django's built-in server:
+> For development without WebSocket features:
 > ```bash
 > python manage.py runserver
 > ```
@@ -365,7 +355,7 @@ daphne -b 127.0.0.1 -p 8000 config.asgi:application
 | URL | Description |
 |---|---|
 | `http://localhost:8000/api/` | Django REST API |
-| `http://localhost:8000/admin/` | Admin panel (login with superuser) |
+| `http://localhost:8000/admin/` | Admin panel |
 | `http://localhost:8000/api/auth/login/` | Get JWT tokens |
 
 ### Terminal 2 — Frontend
@@ -387,7 +377,7 @@ venv\Scripts\activate
 python -m celery -A config worker -l info --pool=solo
 ```
 
-> Redis (Memurai) must be running before starting Celery. On Windows, `--pool=solo` is required to avoid `billiard` semaphore / fork errors.
+> `--pool=solo` is required on Windows to avoid `billiard` semaphore errors.
 
 ---
 
@@ -396,109 +386,76 @@ python -m celery -A config worker -l info --pool=solo
 ### Auth
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `POST` | `/api/auth/login/` | Login — returns access + refresh token | ❌ |
-| `POST` | `/api/auth/refresh/` | Refresh access token | ❌ |
-| `POST` | `/api/auth/verify/` | Verify token | ❌ |
-| `GET` | `/api/accounts/me/` | Get current logged-in user | ✅ |
-| `POST` | `/api/accounts/register/` | Create new user (admin only) | ✅ Admin |
+| `POST` | `/api/auth/login/` | Login — returns access + refresh token | No |
+| `POST` | `/api/auth/refresh/` | Refresh access token | No |
+| `POST` | `/api/auth/verify/` | Verify token | No |
+| `GET` | `/api/accounts/me/` | Get current logged-in user | Yes |
+| `POST` | `/api/accounts/register/` | Create new user (admin only) | Admin |
 
 ### User Management
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `GET` | `/api/accounts/users/` | List all users (non-admin) | ✅ Admin |
-| `GET` | `/api/accounts/users/{id}/` | Get user details | ✅ Admin |
-| `PATCH` | `/api/accounts/users/{id}/update/` | Update user | ✅ Admin |
-| `DELETE` | `/api/accounts/users/{id}/delete/` | Delete user | ✅ Admin |
-| `POST` | `/api/accounts/users/{id}/toggle-status/` | Enable/disable user | ✅ Admin |
-| `POST` | `/api/accounts/replace-admin/` | Replace current admin | ✅ Admin |
-| `GET` | `/api/accounts/audit-logs/` | List audit logs | ✅ |
-| `GET` | `/api/accounts/audit-logs/stats/` | Audit log statistics | ✅ Admin |
+| `GET` | `/api/accounts/users/` | List all users | Admin |
+| `GET` | `/api/accounts/users/{id}/` | Get user details | Admin |
+| `PATCH` | `/api/accounts/users/{id}/update/` | Update user | Admin |
+| `DELETE` | `/api/accounts/users/{id}/delete/` | Delete user | Admin |
+| `POST` | `/api/accounts/users/{id}/toggle-status/` | Enable/disable user | Admin |
+| `POST` | `/api/accounts/replace-admin/` | Replace current admin | Admin |
+| `GET` | `/api/accounts/audit-logs/` | List audit logs | Yes |
+| `GET` | `/api/accounts/audit-logs/stats/` | Audit log statistics | Admin |
 
 ### Vehicles and Owners
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `GET` | `/api/vehicles/` | List all vehicles | ✅ |
-| `POST` | `/api/vehicles/` | Register new vehicle | ✅ Admin |
-| `GET` | `/api/vehicles/{id}/` | Get vehicle by ID | ✅ |
-| `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | ✅ Admin |
-| `GET` | `/api/vehicles/owners/` | List all owners | ✅ Admin |
-| `POST` | `/api/vehicles/owners/` | Register new owner | ✅ Admin |
-| `GET` | `/api/vehicles/rules/` | List entry rules | ✅ Admin |
-| `POST` | `/api/vehicles/rules/` | Create rule | ✅ Admin |
-| `GET` | `/api/vehicles/vehicle-types/` | List vehicle type access rules | ✅ Admin |
-| `POST` | `/api/vehicles/vehicle-types/` | Create vehicle type rule | ✅ Admin |
+| `GET` | `/api/vehicles/` | List all vehicles | Yes |
+| `POST` | `/api/vehicles/` | Register new vehicle | Admin |
+| `GET` | `/api/vehicles/{id}/` | Get vehicle by ID | Yes |
+| `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | Admin |
+| `GET` | `/api/vehicles/owners/` | List all owners | Admin |
+| `POST` | `/api/vehicles/owners/` | Register new owner | Admin |
+| `GET` | `/api/vehicles/rules/` | List entry rules | Admin |
+| `POST` | `/api/vehicles/rules/` | Create rule | Admin |
+| `GET` | `/api/vehicles/vehicle-types/` | List vehicle type access rules | Admin |
+| `POST` | `/api/vehicles/vehicle-types/` | Create vehicle type rule | Admin |
 
 ### Secure Registration
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | ✅ Admin |
-| `GET` | `/api/vehicles/tokens/` | List all registration tokens | ✅ Admin |
-| `DELETE` | `/api/vehicles/tokens/{id}/` | Delete a registration token | ✅ Admin |
-| `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | ✅ Admin |
-| `DELETE` | `/api/vehicles/tokens/clear/` | Clear used/expired tokens | ✅ Admin |
-| `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | ❌ |
-| `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | ❌ |
-| `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | ✅ Admin |
-| `POST` | `/api/vehicles/registrations/{id}/accept/` | Accept registration and create vehicle/owner | ✅ Admin |
-| `POST` | `/api/vehicles/registrations/{id}/reject/` | Reject registration application | ✅ Admin |
+| `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | Admin |
+| `GET` | `/api/vehicles/tokens/` | List all registration tokens | Admin |
+| `DELETE` | `/api/vehicles/tokens/{id}/` | Delete a registration token | Admin |
+| `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | Admin |
+| `DELETE` | `/api/vehicles/tokens/clear/` | Clear used/expired tokens | Admin |
+| `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | No |
+| `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | No |
+| `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | Admin |
+| `POST` | `/api/vehicles/registrations/{id}/accept/` | Accept registration | Admin |
+| `POST` | `/api/vehicles/registrations/{id}/reject/` | Reject registration | Admin |
 
 ### Scanning
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `POST` | `/api/scan/` | Scan plate image — returns entry decision | ✅ |
-| `GET` | `/api/scan/logs/` | List recent access logs | ✅ |
-| `GET` | `/api/scan/offices/` | List all offices | ✅ |
-| `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | ✅ |
-| `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | ✅ |
-| `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | ✅ |
+| `POST` | `/api/scan/` | Scan plate image — returns entry decision | Yes |
+| `GET` | `/api/scan/logs/` | List recent access logs | Yes |
+| `GET` | `/api/scan/offices/` | List all offices | Yes |
+| `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | Yes |
+| `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | Yes |
+| `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | Yes |
 
 ### ML Training & Feedback
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `GET` | `/api/scan/ml/samples/` | List collected training samples | ✅ |
-| `PATCH` | `/api/scan/ml/samples/{id}/` | Approve/reject/correct a sample label | ✅ |
-| `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | ✅ |
-| `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | ✅ |
-
-### Video Processing Pipeline
-
-The `backend/scanning/ml/video_pipeline.py` and `video_train.py` modules provide a standalone video processing pipeline:
-
-**Pipeline Steps:**
-1. Load model (YOLOv8 plate detector)
-2. Load video source
-3. Read frames
-4. Detect license plates
-5. Track vehicles
-6. Assign license plates to vehicles
-7. Crop license plates
-8. Process via B&W filter for OCR
-9. Store results
-
-**Usage:**
-```bash
-# Process a video file
-cd backend
-python -m scanning.ml.video_train --source path/to/video.mp4 --output output.mp4 --results-csv results.csv
-
-# Process every N frames (default: 1)
-python -m scanning.ml.video_train --source video.mp4 --process-every 5
-
-# Run training after processing
-python -m scanning.ml.video_train --source video.mp4 --train --epochs 50
-```
-
-**Output:**
-- Annotated video with tracked vehicles and recognized plates
-- Cropped license plate images in `output/crops/`
-- CSV results file with frame, vehicle_id, plate_text, confidence
+| `GET` | `/api/scan/ml/samples/` | List collected training samples | Yes |
+| `PATCH` | `/api/scan/ml/samples/{id}/` | Approve/reject/correct a sample label | Yes |
+| `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | Yes |
+| `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | Yes |
 
 ### Violations
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `GET` | `/api/violations/` | List all violations | ✅ |
-| `POST` | `/api/violations/` | Add a violation | ✅ |
-| `PATCH` | `/api/violations/{id}/` | Update or resolve violation | ✅ |
+| `GET` | `/api/violations/` | List all violations | Yes |
+| `POST` | `/api/violations/` | Add a violation | Yes |
+| `PATCH` | `/api/violations/{id}/` | Update or resolve violation | Yes |
 
 ### Scan Response Examples
 
@@ -567,7 +524,7 @@ main          ← production only, never push directly
 | Security | juan@slc.edu | security123 |
 | Vehicle Owner | ana@slc.edu | TempPass123! |
 
-> **Note:** Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
+> Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
 
 ---
 
