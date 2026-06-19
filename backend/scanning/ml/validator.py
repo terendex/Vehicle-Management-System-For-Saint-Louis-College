@@ -1,18 +1,31 @@
 import re
 
 PH_PLATE_PATTERNS = [
-    re.compile(r'^[A-Z]{3}\s?[0-9]{4}$'),
-    re.compile(r'^[A-Z]{3}\s?[0-9]{3}$'),
-    re.compile(r'^[A-Z]{2}\s?[0-9]{4}$'),
-    re.compile(r'^[A-Z]{2}\s?[0-9]{5}$'),
-    re.compile(r'^[0-9]{3}[A-Z]{3}$'),
-    re.compile(r'^[A-Z]{1,3}[0-9]{1,6}$'),
-    re.compile(r'^[0-9]{4}$'),
-    re.compile(r'^[A-Z]{1,4}[0-9]{1,4}[A-Z]?$'),
-    re.compile(r'^[A-Z][0-9]{2}[A-Z]{3}$'),
-    re.compile(r'^[0-9]{3}[A-Z]{1,3}$'),
-    re.compile(r'^[0-9]{2}[A-Z]{3,4}$'),
+    # ── 7-character plates ───────────────────────────────────────
+    re.compile(r'^[A-Z]{3}[0-9]{4}$'),           # ABC1234  — private/PUV/govt (post-2014)
+
+    # ── 6-character plates ───────────────────────────────────────
+    re.compile(r'^[A-Z]{3}[0-9]{3}$'),           # ABC123   — pre-2014 car
+    re.compile(r'^[0-9]{3}[A-Z]{3}$'),           # 123ABC   — private/PUV/govt
+    re.compile(r'^[A-Z][0-9]{3}[A-Z]{2}$'),      # N123BC   — private/PUV/govt
+    re.compile(r'^[A-Z]{2}[0-9]{3}[A-Z]$'),      # NB123C   — private/PUV/govt
+    re.compile(r'^[A-Z][0-9]{4}[A-Z]$'),         # N1234C   — private
+
+    # ── Letters-both-ends variants ───────────────────────────────
+    re.compile(r'^[A-Z]{1,2}[0-9]{4}[A-Z]{1,2}$'),  # AB1234C / A1234BC
+    re.compile(r'^[A-Z]{1,2}[0-9]{3}[A-Z]{1,2}$'),  # AB123C  / A123BC
+
+    # ── Diplomatic (7 digits) ────────────────────────────────────
+    re.compile(r'^[0-9]{7}$'),                    # 0011234
+
+    # ── Older / other formats ────────────────────────────────────
+    re.compile(r'^[A-Z]{2}\s?[0-9]{4}$'),        # AB1234
+    re.compile(r'^[A-Z]{2}\s?[0-9]{5}$'),        # AB12345
+    re.compile(r'^[0-9]{3}[A-Z]{1,3}$'),         # 123AB
+    re.compile(r'^[0-9]{2}[A-Z]{3,4}$'),         # 12ABCD
+    re.compile(r'^[0-9]{4}$'),                    # 1234 (old motorcycle)
     re.compile(r'^[0-9]{1,3}[A-Z]{2,4}[0-9]{0,2}$'),
+    re.compile(r'^[A-Z]{1,3}[0-9]{1,6}$'),
 ]
 
 def is_valid_ph_plate(text: str) -> bool:
@@ -61,38 +74,37 @@ def extract_plate_candidates(text: str) -> list[str]:
             normalized_variants.append(v_clean)
     normalized_variants = list(set(normalized_variants))
 
+    def tl(chars, mapping):
+        return translate_chars(chars, mapping)
+
+    def L(s): return tl(s, to_letters_map)   # force-convert to letters
+    def D(s): return tl(s, to_digits_map)     # force-convert to digits
+
     candidates = []
     for v in normalized_variants:
         candidates.append(v)
+
         if len(v) == 6:
-            # 3 letters + 3 digits
-            f1 = translate_chars(v[:3], to_letters_map) + translate_chars(v[3:], to_digits_map)
-            candidates.append(f1)
-            # 3 digits + 3 letters (e.g. 474ASM)
-            digits_part = translate_chars(v[:3], to_digits_map)
-            
-            letters_part = translate_chars(v[3:], to_letters_map)
-            letters_part_variants = [letters_part]
-            # H is commonly misread for M in OCR
-            for idx_l in range(len(v[3:])):
-                if v[3 + idx_l] in ('H', '4', 'W'):
-                    variant = list(letters_part)
-                    variant[idx_l] = 'M'
-                    letters_part_variants.append(''.join(variant))
-            for lp in letters_part_variants:
-                candidates.append(digits_part + lp)
-                
-            # 2 letters + 4 digits
-            f3 = translate_chars(v[:2], to_letters_map) + translate_chars(v[2:], to_digits_map)
-            candidates.append(f3)
-            
+            # All official 6-char Philippine plate layouts:
+            candidates.append(L(v[:3]) + D(v[3:]))          # ABC123  — 3L+3D
+            candidates.append(D(v[:3]) + L(v[3:]))          # 123ABC  — 3D+3L
+            candidates.append(L(v[0]) + D(v[1:4]) + L(v[4:]))  # N123BC  — 1L+3D+2L
+            candidates.append(L(v[:2]) + D(v[2:5]) + L(v[5]))  # NB123C  — 2L+3D+1L
+            candidates.append(L(v[0]) + D(v[1:5]) + L(v[5]))   # N1234C  — 1L+4D+1L
+
+            # H/W → M misread fix on the letter portions
+            for f in list(candidates):
+                if any(c in f for c in ('H', 'W')):
+                    candidates.append(f.replace('H', 'M').replace('W', 'M'))
+
         elif len(v) == 7:
-            # 3 letters + 4 digits
-            f1 = translate_chars(v[:3], to_letters_map) + translate_chars(v[3:], to_digits_map)
-            candidates.append(f1)
-            # 2 letters + 5 digits
-            f2 = translate_chars(v[:2], to_letters_map) + translate_chars(v[2:], to_digits_map)
-            candidates.append(f2)
+            # All official 7-char Philippine plate layouts:
+            candidates.append(L(v[:3]) + D(v[3:]))              # ABC1234 — 3L+4D
+            candidates.append(D(v[:3]) + L(v[3:]))              # 123ABCD — 3D+4L (rare)
+            candidates.append(L(v[:2]) + D(v[2:6]) + L(v[6]))  # AB1234C — 2L+4D+1L
+            candidates.append(L(v[0]) + D(v[1:5]) + L(v[5:]))  # A1234BC — 1L+4D+2L
+            candidates.append(L(v[:2]) + D(v[2:]))              # AB12345 — 2L+5D
+            candidates.append(D(v))                              # 0011234 — diplomatic (7D)
 
     # Legacy fallback candidate generation
     for v in normalized_variants:

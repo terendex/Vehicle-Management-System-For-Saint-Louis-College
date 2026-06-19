@@ -288,6 +288,27 @@ function ResultCard({ result, offices, onPassCreated }) {
   )
 }
 
+// ─── BBoxLegend ───────────────────────────────────────────────────────────────
+const BBOX_LEGEND = [
+  { color: '#00ff88', label: 'Plate / Vehicle' },
+  { color: '#3b82f6', label: 'Motor'           },
+  { color: '#8b5cf6', label: 'E-Bike'          },
+  { color: '#10b981', label: 'E-Scooter'       },
+]
+
+function BBoxLegend() {
+  return (
+    <div className="em-bbox-legend">
+      {BBOX_LEGEND.map(({ color, label }) => (
+        <div key={label} className="em-bbox-legend-item">
+          <span className="em-bbox-legend-swatch" style={{ background: color }} />
+          <span className="em-bbox-legend-label">{label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── SecurityEntryManagement (page) ──────────────────────────────────────────
 export default function SecurityEntryManagement() {
   // Use the same JWT access token as the admin page — no prompt needed
@@ -526,6 +547,7 @@ export default function SecurityEntryManagement() {
                           />
                         </div>
                       ))}
+                      {cameraOn && <BBoxLegend />}
                       <div className="em-scan-frame">
                         <div className="em-scan-bracket">
                           <div className="em-scan-inner" />

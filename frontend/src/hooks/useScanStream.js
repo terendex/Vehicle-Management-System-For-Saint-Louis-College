@@ -9,18 +9,17 @@ const WS_BASE =
 
 // ── Vehicle-type bounding box colours (matches VEHICLE_TYPE_META in the UI) ──
 const TRACK_COLORS = {
-  license_plate:    "#00ff88",   // green  — plate detections
-  car:              "#00ff88",   // green  — car body detections
-  bicycle:          "#3b82f6",   // blue
-  e_bike:           "#8b5cf6",   // purple
-  electric_scooter: "#10b981",   // emerald
-  _default:         "#facc15",   // yellow — unknown / future classes
+  license_plate: "#00ff88",   // green  — plate detections
+  vehicle:       "#00ff88",   // green  — car/jeep/bus body
+  motor:         "#3b82f6",   // blue   — motorcycle/tricycle
+  ebike:         "#8b5cf6",   // purple
+  escooter:      "#10b981",   // emerald
+  _default:      "#facc15",   // yellow — unknown / future classes
 };
 
 const VEHICLE_TYPE_LABELS = {
-  bicycle:          "Bicycle",
-  e_bike:           "E-Bike",
-  electric_scooter: "E-Scooter",
+  ebike:   "E-Bike",
+  escooter: "E-Scooter",
 };
 
 function getTrackColor(track) {
