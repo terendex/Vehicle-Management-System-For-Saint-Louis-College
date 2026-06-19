@@ -109,6 +109,7 @@ def _correct_chars(text: str) -> str:
     n = len(text)
     
     if n == 7:
+        # Try ABC1234 layout (3L + 4D)
         l1, l2, l3 = text[0], text[1], text[2]
         d1, d2, d3, d4 = text[3], text[4], text[5], text[6]
         l1 = 'O' if l1 in ('0', 'D') else l1
@@ -121,30 +122,51 @@ def _correct_chars(text: str) -> str:
         result = f"{l1}{l2}{l3}{d1}{d2}{d3}{d4}"
         if is_valid_ph_plate(result):
             return result
+
+        # Try AB1234C layout (2L + 4D + 1L)
+        la, lb = text[0], text[1]
+        d1, d2, d3, d4 = text[2], text[3], text[4], text[5]
+        lc = text[6]
+        la = 'O' if la in ('0', 'D') else la
+        lb = 'O' if lb in ('0', 'D') else lb
+        d1 = '0' if d1 in ('O', 'Q') else d1
+        d2 = '0' if d2 in ('O', 'Q') else d2
+        d3 = '0' if d3 in ('O', 'Q') else d3
+        d4 = '0' if d4 in ('O', 'Q') else d4
+        lc = 'O' if lc in ('0', 'D') else lc
+        result = f"{la}{lb}{d1}{d2}{d3}{d4}{lc}"
+        if is_valid_ph_plate(result):
+            return result
+
+        # Try A1234BC layout (1L + 4D + 2L)
+        la = text[0]
+        d1, d2, d3, d4 = text[1], text[2], text[3], text[4]
+        lb, lc = text[5], text[6]
+        la = 'O' if la in ('0', 'D') else la
+        d1 = '0' if d1 in ('O', 'Q') else d1
+        d2 = '0' if d2 in ('O', 'Q') else d2
+        d3 = '0' if d3 in ('O', 'Q') else d3
+        d4 = '0' if d4 in ('O', 'Q') else d4
+        lb = 'O' if lb in ('0', 'D') else lb
+        lc = 'O' if lc in ('0', 'D') else lc
+        result = f"{la}{d1}{d2}{d3}{d4}{lb}{lc}"
+        if is_valid_ph_plate(result):
+            return result
     
     if n == 6:
-        if text[0].isdigit():
-            d1, d2, d3 = text[0], text[1], text[2]
-            l1, l2, l3 = text[3], text[4], text[5]
-            d1 = '0' if d1 in ('O',) else d1
-            d2 = '0' if d2 in ('O',) else d2
-            d3 = '0' if d3 in ('O',) else d3
-            l1 = 'O' if l1 in ('0',) else l1
-            l2 = 'O' if l2 in ('0',) else l2
-            l3 = 'O' if l3 in ('0',) else l3
-            result = f"{d1}{d2}{d3}{l1}{l2}{l3}"
-            if is_valid_ph_plate(result):
-                return result
-        else:
-            l1, l2, l3 = text[0], text[1], text[2]
-            d1, d2, d3 = text[3], text[4], text[5]
-            l1 = 'O' if l1 in ('0', 'D') else l1
-            l2 = 'O' if l2 in ('0', 'D') else l2
-            l3 = 'O' if l3 in ('0', 'D') else l3
-            d1 = '0' if d1 in ('O', 'Q') else d1
-            d2 = '0' if d2 in ('O', 'Q') else d2
-            d3 = '0' if d3 in ('O', 'Q') else d3
-            result = f"{l1}{l2}{l3}{d1}{d2}{d3}"
+        def _l(c): return 'O' if c in ('0', 'D') else c
+        def _d(c): return '0' if c in ('O', 'Q') else c
+        t = text
+        six_layouts = [
+            # (layout_string using the corrected chars)
+            lambda t: f"{_l(t[0])}{_l(t[1])}{_l(t[2])}{_d(t[3])}{_d(t[4])}{_d(t[5])}",  # ABC123 / 3L+3D
+            lambda t: f"{_d(t[0])}{_d(t[1])}{_d(t[2])}{_l(t[3])}{_l(t[4])}{_l(t[5])}",  # 123ABC / 3D+3L
+            lambda t: f"{_l(t[0])}{_d(t[1])}{_d(t[2])}{_d(t[3])}{_l(t[4])}{_l(t[5])}",  # N123BC / 1L+3D+2L
+            lambda t: f"{_l(t[0])}{_l(t[1])}{_d(t[2])}{_d(t[3])}{_d(t[4])}{_l(t[5])}",  # NB123C / 2L+3D+1L
+            lambda t: f"{_l(t[0])}{_d(t[1])}{_d(t[2])}{_d(t[3])}{_d(t[4])}{_l(t[5])}",  # N1234C / 1L+4D+1L
+        ]
+        for layout_fn in six_layouts:
+            result = layout_fn(t)
             if is_valid_ph_plate(result):
                 return result
     

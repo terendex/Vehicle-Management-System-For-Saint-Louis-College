@@ -100,99 +100,164 @@ def _get_yolo():
     return _model
 
 
-def detect_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
+# Per-class confidence minimums — plates need higher recall than vehicles
+_CONF_PLATE   = 0.10   # low threshold; aspect ratio + size filters catch false positives
+_CONF_VEHICLE = 0.25   # standard threshold for vehicle/motor/ebike/escooter
+
+
+def _apply_clahe(img: np.ndarray) -> np.ndarray:
+    """Boost local contrast — helps dim, distant, or shadowed plates."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+
+def _box_iou(b1, b2) -> float:
+    """IoU for two (x1,y1,x2,y2) boxes."""
+    xi1, yi1 = max(b1[0], b2[0]), max(b1[1], b2[1])
+    xi2, yi2 = min(b1[2], b2[2]), min(b1[3], b2[3])
+    inter = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    a1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
+    a2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
+    union = a1 + a2 - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _nms(dets: list[dict], iou_thresh: float = 0.45) -> list[dict]:
+    """Per-class NMS to remove duplicate boxes from tiled passes."""
+    dets = sorted(dets, key=lambda d: d["score"], reverse=True)
+    kept = []
+    for d in dets:
+        suppress = False
+        for k in kept:
+            if k["class_name"] != d["class_name"]:
+                continue
+            if _box_iou(d["_xyxy"], k["_xyxy"]) > iou_thresh:
+                suppress = True
+                break
+        if not suppress:
+            kept.append(d)
+    return kept
+
+
+def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
+                 model, offset_x: int = 0, offset_y: int = 0) -> list[dict]:
+    """Convert YOLO result boxes into detection dicts with padding applied."""
+    dets = []
+    for r in results:
+        for box in r.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            score = float(box.conf[0])
+            cls_id = int(box.cls[0]) if hasattr(box, "cls") else -1
+            class_name = model.names.get(cls_id, f"class_{cls_id}")
+
+            # Shift tile-relative coords back to full-image coords
+            x1, y1, x2, y2 = (int(x1) + offset_x, int(y1) + offset_y,
+                               int(x2) + offset_x, int(y2) + offset_y)
+            box_w, box_h = x2 - x1, y2 - y1
+            aspect_ratio = box_w / max(box_h, 1)
+
+            is_plate    = class_name == "license_plate"
+            is_unplated = class_name in VEHICLE_TYPE_CLASSES
+            min_conf    = _CONF_PLATE if is_plate else _CONF_VEHICLE
+
+            if score < min_conf or box_w < 20 or box_h < 8:
+                continue
+            if not is_plate and not is_unplated:
+                if aspect_ratio < 0.3 or aspect_ratio > 8.0:
+                    continue
+
+            vehicle_type = None
+            if is_plate:
+                if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
+                    pad_x, pad_y_top, pad_y_bot = (max(int(box_w * 0.6), 20),
+                                                    max(int(box_h * 0.5), 15),
+                                                    max(int(box_h * 2.5), 60))
+                elif aspect_ratio < 2.0:
+                    pad_x, pad_y_top, pad_y_bot = (int(box_w * 0.3),
+                                                    int(box_h * 0.3),
+                                                    int(box_h * 1.5))
+                else:
+                    pad_x, pad_y_top, pad_y_bot = (int(box_w * 0.25),
+                                                    int(box_h * 0.25),
+                                                    int(box_h * 0.3))
+                cx1 = max(0, x1 - pad_x)
+                cy1 = max(0, y1 - pad_y_top)
+                cx2 = min(img_w, x2 + pad_x)
+                cy2 = min(img_h, y2 + pad_y_bot)
+            else:
+                cx1, cy1 = max(0, x1), max(0, y1)
+                cx2, cy2 = min(img_w, x2), min(img_h, y2)
+                vehicle_type = class_name
+
+            dets.append({
+                "crop": img[cy1:cy2, cx1:cx2],
+                "bbox": {
+                    "x":      float(cx1 / img_w),
+                    "y":      float(cy1 / img_h),
+                    "width":  float((cx2 - cx1) / img_w),
+                    "height": float((cy2 - cy1) / img_h),
+                },
+                "score":        score,
+                "aspect_ratio": aspect_ratio,
+                "class_name":   class_name,
+                "vehicle_type": vehicle_type,
+                "_xyxy":        (x1, y1, x2, y2),  # kept for NMS, stripped before return
+            })
+    return dets
+
+
+def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
     """
     Detect vehicles and license plates in an image using custom-trained YOLOv8.
 
-    Args:
-        img:  BGR image (OpenCV format)
-        conf: Confidence threshold (default 0.25)
+    Improvements over a bare model.predict call:
+      - CLAHE preprocessing improves recall on dim/shadowed plates
+      - imgsz=960 prevents plates from being shrunk to <30px on HD frames
+      - Per-class confidence: plates at 0.10, vehicles at 0.25
+      - Tiled pass on large frames catches distant plates missed by the full pass
 
-    Returns:
-        List of dicts:
-          crop        — cropped region (BGR)
-          bbox        — relative {x, y, width, height} (0-1)
-          score       — detection confidence
-          aspect_ratio
-          class_name  — from model.names (runtime class list)
-          vehicle_type — set for unplated classes, else None
+    Returns list of dicts: crop, bbox, score, aspect_ratio, class_name, vehicle_type
     """
     model = _get_yolo()
     if model is None:
         return []
 
     h, w = img.shape[:2]
-    # half=True uses FP16 Tensor Cores on RTX GPUs — ~2x faster, no accuracy loss for detection
-    results = model.predict(img, conf=conf, verbose=False, max_det=100,
-                            half=is_gpu_available())
+    gpu = is_gpu_available()
+    img_proc = _apply_clahe(img)
 
-    detections = []
-    for r in results:
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            score = float(box.conf[0])
-            cls_id = int(box.cls[0]) if hasattr(box, "cls") else -1
+    # Full-frame pass at imgsz=960 — better than 640 for HD cameras
+    results = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
+                            half=gpu, imgsz=960)
+    all_dets = _parse_boxes(results, img, w, h, model)
 
-            # Use the model's own names — immune to CLASS_NAMES ordering bugs
-            class_name = model.names.get(cls_id, f"class_{cls_id}")
-
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            box_w, box_h = x2 - x1, y2 - y1
-            aspect_ratio = box_w / max(box_h, 1)
-
-            is_unplated = class_name in VEHICLE_TYPE_CLASSES
-
-            if is_unplated:
-                if score < 0.25 or box_w < 30 or box_h < 10:
+    # Tiled pass for large frames (1080p+) to catch small/distant plates
+    if w > 1280 or h > 960:
+        tile, overlap = 640, 0.2
+        stride = int(tile * (1 - overlap))
+        for y0 in range(0, h, stride):
+            for x0 in range(0, w, stride):
+                x2t, y2t = min(x0 + tile, w), min(y0 + tile, h)
+                patch = img_proc[y0:y2t, x0:x2t]
+                ph, pw = patch.shape[:2]
+                if pw < 64 or ph < 64:
                     continue
-            else:
-                if score < 0.25 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
-                    continue
+                tile_res = model.predict(patch, conf=conf, verbose=False,
+                                         max_det=50, half=gpu, imgsz=640)
+                all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
+                                             offset_x=x0, offset_y=y0))
 
-            vehicle_type = None
+        all_dets = _nms(all_dets)
 
-            if class_name == "license_plate":
-                # Contextual padding: motorcycle plates are square/small, car plates are wide
-                if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
-                    pad_x      = max(int(box_w * 0.6), 20)
-                    pad_y_top  = max(int(box_h * 0.5), 15)
-                    pad_y_bot  = max(int(box_h * 2.5), 60)
-                elif aspect_ratio < 2.0:
-                    pad_x      = int(box_w * 0.3)
-                    pad_y_top  = int(box_h * 0.3)
-                    pad_y_bot  = int(box_h * 1.5)
-                else:
-                    pad_x      = int(box_w * 0.25)
-                    pad_y_top  = int(box_h * 0.25)
-                    pad_y_bot  = int(box_h * 0.3)
+    # Strip the internal NMS key before returning
+    for d in all_dets:
+        d.pop("_xyxy", None)
 
-                cx1 = max(0, x1 - pad_x)
-                cy1 = max(0, y1 - pad_y_top)
-                cx2 = min(w, x2 + pad_x)
-                cy2 = min(h, y2 + pad_y_bot)
-            else:
-                cx1, cy1 = max(0, x1), max(0, y1)
-                cx2, cy2 = min(w, x2), min(h, y2)
-                vehicle_type = class_name
-
-            crop = img[cy1:cy2, cx1:cx2]
-
-            detections.append({
-                "crop": crop,
-                "bbox": {
-                    "x":      float(cx1 / w),
-                    "y":      float(cy1 / h),
-                    "width":  float((cx2 - cx1) / w),
-                    "height": float((cy2 - cy1) / h),
-                },
-                "score":        score,
-                "aspect_ratio": aspect_ratio,
-                "class_name":   class_name,
-                "vehicle_type": vehicle_type,
-            })
-
-    detections.sort(key=lambda d: d["score"], reverse=True)
-    return detections
+    all_dets.sort(key=lambda d: d["score"], reverse=True)
+    return all_dets
 
 
 def is_gpu_available() -> bool:

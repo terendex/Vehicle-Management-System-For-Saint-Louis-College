@@ -155,49 +155,29 @@ class VehicleTracker:
         return list(self._tracks.values())
 
 
-_yolo_model = None
-
-
-def get_yolo_model():
-    global _yolo_model
-    if _yolo_model is None:
-        try:
-            from ultralytics import YOLO
-            model_path = Path(__file__).resolve().parent / "weights" / "best.pt"
-            if model_path.exists():
-                _yolo_model = YOLO(str(model_path))
-        except ImportError:
-            pass
-    return _yolo_model
-
-
-def detect_license_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
-    model = get_yolo_model()
-    if model is None:
-        return []
-    h, w = img.shape[:2]
+def detect_license_plates(img: np.ndarray) -> list[dict]:
+    """Detect plates and vehicles — delegates to detection.py for CLAHE, tiling, and NMS."""
+    from .detection import detect_plates
     try:
-        results = model.predict(img, conf=conf, verbose=False, max_det=100)
+        raw = detect_plates(img)
     except Exception as e:
         log.error("[DETECT] YOLO error: %s", e)
         return []
-    detections = []
-    for r in results:
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            score = float(box.conf[0])
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            box_w, box_h = x2 - x1, y2 - y1
-            aspect_ratio = box_w / max(box_h, 1)
-            if score < 0.25 or aspect_ratio < 0.5 or aspect_ratio > 6.0 or box_w < 30 or box_h < 10:
-                continue
-            detections.append({
-                "bbox": (x1, y1, box_w, box_h),
-                "score": score,
-                "crop": img[y1:y2, x1:x2],
-            })
-    detections.sort(key=lambda d: d["score"], reverse=True)
-    return detections
+    # Normalise bbox to (x, y, w, h) pixel tuple expected by the tracker
+    out = []
+    for d in raw:
+        bx = d["bbox"]
+        h, w = img.shape[:2]
+        px = int(bx["x"] * w)
+        py = int(bx["y"] * h)
+        pw = int(bx["width"] * w)
+        ph = int(bx["height"] * h)
+        out.append({
+            "bbox":  (px, py, pw, ph),
+            "score": d["score"],
+            "crop":  d["crop"],
+        })
+    return out
 
 
 from .reader import _ocr_crop
