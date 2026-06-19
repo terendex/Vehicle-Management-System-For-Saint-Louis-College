@@ -14,9 +14,8 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
-import re
 
 from pathlib import Path
 
@@ -28,12 +27,17 @@ import logging
 
 log = logging.getLogger(__name__)
 
+_MIN_CONF_STORE = 0.20   # minimum confidence to record a read
+_LOCK_CONF      = 0.70   # confidence above which we stop re-reading
+_MAX_OCR_ATTEMPTS = 5    # fall back to best-so-far after this many reads
+
 
 @dataclass
 class Track:
     track_id: int
     bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
     plate_text: str = ""
+    plate_conf: float = 0.0
     missed_frames: int = 0
     is_active: bool = True
 
@@ -196,71 +200,15 @@ def detect_license_plates(img: np.ndarray, conf: float = 0.25) -> list[dict]:
     return detections
 
 
-def get_easyocr_reader():
-    global _ocr_reader
-    if _ocr_reader is None:
-        try:
-            import easyocr
-            try:
-                import torch as _torch
-                _use_gpu = _torch.cuda.is_available()
-            except ImportError:
-                _use_gpu = False
-            _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-')
-        except ImportError:
-            pass
-    return _ocr_reader
-
-
-_ocr_reader = None
-
-
-def sanitize_plate_text(text: str) -> str:
-    text = re.sub(r'[^A-Z0-9-]', '', text.upper())
-    if len(text) == 7 and text[3].isdigit() and text[4].isdigit() and text[5].isdigit() and text[6].isdigit():
-        letters = text[:3]
-        numbers = text[3:7]
-        letters = letters.replace('0', 'O')
-        numbers = numbers.replace('O', '0').replace('I', '1')
-        return letters + numbers
-    elif len(text) == 6:
-        if text[0].isdigit() and text[1].isdigit() and text[2].isdigit():
-            digits = text[:3]
-            letters = text[3:6]
-            digits = digits.replace('O', '0').replace('I', '1')
-            return digits + letters
-        elif text[0].isalpha() and text[1].isalpha() and text[2].isalpha():
-            letters = text[:3]
-            numbers = text[3:6]
-            letters = letters.replace('0', 'O')
-            numbers = numbers.replace('O', '0').replace('I', '1')
-            return letters + numbers
-    return text
-
-
-def run_ocr_on_crop(crop: np.ndarray) -> str:
-    reader = get_easyocr_reader()
-    if reader is None or crop is None or crop.size == 0:
-        return ""
-    try:
-        results = reader.readtext(crop, min_size=30)
-        if not results:
-            return ""
-        best_text = max(results, key=lambda x: x[2] if len(x) > 2 else 0.0)[1]
-        return sanitize_plate_text(best_text)
-    except Exception as e:
-        log.error("[OCR] Error: %s", e)
-        return ""
-
-
-ocr_memory: dict[int, str] = {}
+from .reader import _ocr_crop
 
 
 class LPRPipeline:
     def __init__(self, source, iou_threshold: float = 0.3):
         self.stream = VideoStreamThread(source)
         self.tracker = VehicleTracker(iou_threshold=iou_threshold)
-        self.ocr_memory = ocr_memory
+        # track_id → {text, conf, votes, attempts, locked}
+        self.ocr_memory: dict[int, dict] = {}
         self.running = False
 
     def start(self):
@@ -271,26 +219,73 @@ class LPRPipeline:
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         detections = detect_license_plates(frame)
         tracks = self.tracker.update([(d["bbox"], d["score"]) for d in detections])
+
         for track in tracks:
-            if track.track_id in self.ocr_memory:
-                track.plate_text = self.ocr_memory[track.track_id]
-            else:
-                for d in detections:
-                    if d["bbox"] == track.bbox:
-                        plate_text = run_ocr_on_crop(d["crop"])
-                        if plate_text:
-                            self.ocr_memory[track.track_id] = plate_text
-                            track.plate_text = plate_text
-                        break
+            entry = self.ocr_memory.get(track.track_id)
+
+            if entry and entry["locked"]:
+                track.plate_text = entry["text"]
+                track.plate_conf = entry["conf"]
+                continue
+
+            # Find matching detection crop for this track
+            crop = None
+            aspect_ratio = 1.0
+            for d in detections:
+                if d["bbox"] == track.bbox:
+                    bw, bh = d["bbox"][2], d["bbox"][3]
+                    aspect_ratio = bw / max(bh, 1)
+                    crop = d["crop"]
+                    break
+
+            if crop is None or crop.size == 0:
+                if entry:
+                    track.plate_text = entry.get("text", "")
+                    track.plate_conf = entry.get("conf", 0.0)
+                continue
+
+            text, conf = _ocr_crop(crop, aspect_ratio)
+            if conf is None:
+                conf = 0.0
+
+            if entry is None:
+                entry = {"text": "", "conf": 0.0, "votes": {}, "attempts": 0, "locked": False}
+                self.ocr_memory[track.track_id] = entry
+
+            entry["attempts"] += 1
+
+            if text and conf >= _MIN_CONF_STORE:
+                # Accumulate confidence-weighted votes across reads
+                entry["votes"][text] = entry["votes"].get(text, 0.0) + conf
+                best_text = max(entry["votes"], key=entry["votes"].get)
+                entry["text"] = best_text
+                entry["conf"] = conf
+
+                if conf >= _LOCK_CONF:
+                    entry["locked"] = True
+                    log.info("[LPR] Locked plate %s (conf=%.2f) for track %d",
+                             best_text, conf, track.track_id)
+
+            if entry["attempts"] >= _MAX_OCR_ATTEMPTS and not entry["locked"]:
+                entry["locked"] = True
+                log.info("[LPR] Max attempts reached for track %d — locking '%s'",
+                         track.track_id, entry.get("text", ""))
+
+            track.plate_text = entry.get("text", "")
+            track.plate_conf = entry.get("conf", 0.0)
+
         return self._draw_overlay(frame, tracks)
 
     def _draw_overlay(self, frame: np.ndarray, tracks: list[Track]) -> np.ndarray:
         for track in tracks:
             x, y, w, h = track.bbox
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.putText(frame, f"ID:{track.track_id}", (x, y - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, f"ID:{track.track_id}", (x, y - 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             if track.plate_text:
-                cv2.putText(frame, track.plate_text, (x, y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                label = f"{track.plate_text} ({track.plate_conf:.0%})"
+                cv2.putText(frame, label, (x, y - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         return frame
 
     def stop(self):

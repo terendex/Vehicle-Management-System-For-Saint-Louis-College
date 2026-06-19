@@ -25,9 +25,10 @@ WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
 # Expected class names in the order the model was trained.
 # Used only for validation — actual inference uses model.names at runtime.
-CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
+CLASS_NAMES = ["license_plate", "vehicle", "motor", "ebike", "escooter"]
 
-VEHICLE_TYPE_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
+# Classes that require a digital ID instead of a license plate
+VEHICLE_TYPE_CLASSES = {"ebike", "escooter"}
 
 _model = None
 _load_attempted = False  # only try once; avoids re-loading on every frame after failure

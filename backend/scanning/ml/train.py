@@ -100,9 +100,47 @@ def _fix_data_yaml_path(yaml_path: Path) -> None:
         yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
 
 
+def _validate_labels(dataset_dir: Path) -> None:
+    """Check all YOLO label files for invalid bounding boxes and remove bad ones."""
+    bad_files = []
+    for split in ("train", "val"):
+        lbl_dir = dataset_dir / "labels" / split
+        if not lbl_dir.exists():
+            continue
+        for lbl_file in lbl_dir.glob("*.txt"):
+            lines = lbl_file.read_text().strip().splitlines()
+            clean_lines = []
+            has_bad = False
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) != 5:
+                    has_bad = True
+                    continue
+                try:
+                    cls, cx, cy, w, h = int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+                except ValueError:
+                    has_bad = True
+                    continue
+                if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
+                    has_bad = True
+                    continue
+                clean_lines.append(line)
+            if has_bad:
+                bad_files.append(lbl_file)
+                lbl_file.write_text("\n".join(clean_lines))
+    if bad_files:
+        print(f"⚠️  Fixed {len(bad_files)} label files with invalid bounding boxes:")
+        for f in bad_files[:10]:
+            print(f"   {f.name}")
+        if len(bad_files) > 10:
+            print(f"   ... and {len(bad_files) - 10} more")
+    else:
+        print("✅ All label files validated — no invalid bounding boxes found")
+
+
 def train(
     epochs:       int  = 100,
-    batch:        int  = 16,
+    batch:        int  = 8,
     imgsz:        int  = 640,
     model_size:   str  = "s",
     resume:       bool = False,
@@ -132,6 +170,8 @@ def train(
     val_imgs   = UNPLATED_DIR / "images" / "val"
     train_count = len(list(train_imgs.glob("*"))) if train_imgs.exists() else 0
     val_count   = len(list(val_imgs.glob("*")))   if val_imgs.exists()   else 0
+
+    _validate_labels(UNPLATED_DIR)
 
     if train_count == 0:
         print("=" * 60)
@@ -188,7 +228,7 @@ def train(
         "perspective":     0.0,      # no perspective warp (fixed mount)
         "flipud":          0.0,      # no vertical flip (cameras don't invert)
         "fliplr":          0.5,      # horizontal flip (vehicles go both ways)
-        "mosaic":          1.0,      # mosaic augmentation (good for small objects)
+        "mosaic":          0.5,      # mosaic augmentation — reduced to ease GPU memory pressure
         "copy_paste":      0.0,      # disabled
     }
 
