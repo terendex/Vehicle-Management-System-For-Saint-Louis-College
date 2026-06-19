@@ -10,23 +10,21 @@ from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from .ml.detection import detect_plates, is_gpu_available, VEHICLE_TYPE_CLASSES
-from .ml.ocr import run_ocr
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
-from .ml.reader import requires_digital_id
+from .ml.reader import _ocr_crop, requires_digital_id
 
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_DIR = "snapshots"
 
-# How often a frame is submitted for detection (ms).
-# 100 ms = 10 FPS — RTX 3060 handles YOLO at ~15-25ms so this is sustainable.
 FRAME_RATE_LIMIT_MS = 100
-
-# Seconds a plate result is cached to suppress duplicate AccessLog entries.
-# If the same plate is seen again within this window, we re-broadcast the
-# cached result without touching the database.
 PLATE_DEDUP_SECONDS = 30
+
+# Per-track OCR accumulation settings
+_OCR_LOCK_CONF    = 0.70   # lock immediately if any single read reaches this
+_OCR_MIN_CONF     = 0.20   # ignore reads below this threshold
+_OCR_MAX_ATTEMPTS = 5      # force-lock after this many attempts (keeps best vote)
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
@@ -53,6 +51,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         self._tracker = ProximityTracker()
         self._frame_counter = 0
         self._pending_ocr: dict[int, bool] = {}
+        # track_id → {votes, attempts, locked}
+        self._ocr_state: dict[int, dict] = {}
 
         # plate_text → (processed_at_timestamp, cached_result_dict)
         self._plate_cache: dict[str, tuple[float, dict]] = {}
@@ -213,7 +213,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             })
         return result
 
-    # ── OCR (async task per track) ─────────────────────────────────────────────
+    # ── OCR (async task per track, with confidence accumulation) ──────────────
 
     async def _run_ocr_for_tracks(self, tracks_to_process: list):
         loop = asyncio.get_running_loop()
@@ -222,51 +222,79 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             if track_id in self._pending_ocr:
                 continue
 
+            state = self._ocr_state.get(track_id)
+            if state and state["locked"]:
+                continue
+
             self._pending_ocr[track_id] = True
             try:
-                plate_text, conf = await loop.run_in_executor(None, run_ocr, crop, aspect)
+                plate_text, conf = await loop.run_in_executor(None, _ocr_crop, crop, aspect)
+                if conf is None:
+                    conf = 0.0
 
-                if not plate_text:
+                state = self._ocr_state.setdefault(track_id, {
+                    "votes": {}, "attempts": 0, "locked": False,
+                })
+                state["attempts"] += 1
+
+                if not plate_text or conf < _OCR_MIN_CONF:
+                    # Low-quality read — force-lock if we've hit the attempt limit
+                    if state["attempts"] >= _OCR_MAX_ATTEMPTS and state["votes"]:
+                        best = max(state["votes"], key=state["votes"].get)
+                        state["locked"] = True
+                        self._tracker.set_plate_text(track_id, best)
+                        logger.info("[WS] Max attempts (no lock) track %d → %s", track_id, best)
+                        await self._finalize_plate(track_id, best, 0.0)
                     continue
 
-                logger.info("[WS] OCR track %d → %s (conf=%.2f)", track_id, plate_text, conf)
-                self._tracker.set_plate_text(track_id, plate_text)
+                # Accumulate confidence-weighted votes across reads
+                state["votes"][plate_text] = state["votes"].get(plate_text, 0.0) + conf
+                best = max(state["votes"], key=state["votes"].get)
 
+                # Always push the current best to the overlay immediately
                 await self.send_json({
                     "type":       "ocr_update",
                     "track_id":   track_id,
-                    "plate_text": plate_text,
+                    "plate_text": best,
                 })
+                logger.info("[WS] OCR track %d read=%d → %s (conf=%.2f)",
+                            track_id, state["attempts"], best, conf)
 
-                # Dedup: check if this plate was already processed recently
-                cached = self._plate_cache.get(plate_text)
-                now_ts = time.time()
-                if cached and (now_ts - cached[0]) < PLATE_DEDUP_SECONDS:
-                    # Re-broadcast the existing result — no new DB write
-                    logger.info("[WS] Plate %s in dedup window — skipping DB write", plate_text)
-                    await self.send_json({"type": "result", "results": [cached[1]]})
-                    continue
-
-                try:
-                    await sync_to_async(self._save_to_db)(
-                        track_id, plate_text, 0.0, conf or 0.0, None, None
-                    )
-                    enriched = await sync_to_async(self._check_vehicle)(plate_text, None)
-                    enriched["plate_number"] = plate_text
-
-                    # Store in cache before broadcasting
-                    self._plate_cache[plate_text] = (time.time(), enriched)
-                    self._evict_cache()
-
-                    await sync_to_async(self._record_ml_sample)(None, [enriched])
-                    await self.send_json({"type": "result", "results": [enriched]})
-                except Exception as db_exc:
-                    logger.error("[WS] DB error for plate %s: %s", plate_text, db_exc)
+                # Lock when confident or attempts exhausted
+                if conf >= _OCR_LOCK_CONF or state["attempts"] >= _OCR_MAX_ATTEMPTS:
+                    state["locked"] = True
+                    self._tracker.set_plate_text(track_id, best)
+                    logger.info("[WS] Locked track %d → %s (conf=%.2f, attempts=%d)",
+                                track_id, best, conf, state["attempts"])
+                    await self._finalize_plate(track_id, best, conf)
 
             except Exception as exc:
                 logger.warning("[OCR] Failed for track %d: %s", track_id, exc)
             finally:
                 self._pending_ocr.pop(track_id, None)
+
+    async def _finalize_plate(self, track_id: int, plate_text: str, conf: float):
+        """Write to DB and broadcast result once a plate is locked."""
+        cached = self._plate_cache.get(plate_text)
+        now_ts = time.time()
+        if cached and (now_ts - cached[0]) < PLATE_DEDUP_SECONDS:
+            logger.info("[WS] Plate %s in dedup window — skipping DB write", plate_text)
+            await self.send_json({"type": "result", "results": [cached[1]]})
+            return
+        try:
+            await sync_to_async(self._save_to_db)(
+                track_id, plate_text, 0.0, conf, None, None
+            )
+            enriched = await sync_to_async(self._check_vehicle)(plate_text, None)
+            enriched["plate_number"] = plate_text
+
+            self._plate_cache[plate_text] = (time.time(), enriched)
+            self._evict_cache()
+
+            await sync_to_async(self._record_ml_sample)(None, [enriched])
+            await self.send_json({"type": "result", "results": [enriched]})
+        except Exception as db_exc:
+            logger.error("[WS] DB error for plate %s: %s", plate_text, db_exc)
 
     # ── process tracks that already have plate text ────────────────────────────
 

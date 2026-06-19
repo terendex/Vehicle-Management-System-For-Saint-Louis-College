@@ -358,8 +358,17 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
 
     gray = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    # Inverted binary — handles plates where characters are lighter than background
+    binary_inv = cv2.bitwise_not(binary)
+    # CLAHE-sharpened — improves contrast on dim, faded, or shadowed plates
+    _cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe_gray = _cl.apply(gray)
+    clahe_sharp = cv2.addWeighted(clahe_gray, 1.5,
+                                  cv2.GaussianBlur(clahe_gray, (3, 3), 0), -0.5, 0)
     base_variants: list[tuple[np.ndarray, str]] = [
-        (cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), "binary"),
+        (cv2.cvtColor(binary,      cv2.COLOR_GRAY2BGR), "binary"),
+        (cv2.cvtColor(binary_inv,  cv2.COLOR_GRAY2BGR), "binary_inv"),
+        (cv2.cvtColor(clahe_sharp, cv2.COLOR_GRAY2BGR), "clahe"),
     ]
 
     for img_v, label in base_variants:
