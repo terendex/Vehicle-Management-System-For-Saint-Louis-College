@@ -1,61 +1,89 @@
 """
-Class mapping configuration for merging unplated vehicle datasets.
+Class mapping configuration for vehicle detection datasets.
 
-This module defines how to map various label names from different datasets
-into our standardized class names: bicycle, e_bike, electric_scooter.
+Canonical classes:
+  license_plate — the plate itself (triggers OCR)
+  vehicle       — car, jeep, jeepney, bus, truck, van, SUV, pickup (4-wheel+)
+  motor         — motorcycle, motorbike, tricycle (2–3 wheel motorized)
+  ebike         — electric bicycle (requires digital ID, no plate)
+  escooter      — electric scooter (requires digital ID, no plate)
 """
 from __future__ import annotations
 from typing import Optional
 
-VEHICLE_TYPE_CLASSES = ["bicycle", "e_bike", "electric_scooter"]
 LICENSE_PLATE_CLASS = "license_plate"
 
+# Classes that need a digital ID instead of a license plate
+VEHICLE_TYPE_CLASSES = ["ebike", "escooter"]
+
 CLASS_MAPPING = {
-    # ── Bicycle labels ──────────────────────────────────────────
-    "bicycle":       "bicycle",
-    "bike":          "bicycle",
-    "Bike":          "bicycle",
-    "Bicycle":       "bicycle",
-    "Person-Bike":   "bicycle",   # review: paired detection label — included
-    "Car-Bike":      "bicycle",   # review: paired detection label — included
-    "MC-Bike":       "bicycle",   # review: paired detection label — included
-    "Truck-Bike":    "bicycle",   # review: paired detection label — included
-    "Van-Bike":      "bicycle",   # review: paired detection label — included
-    "bicycles-escooters-skateboards": "bicycle",
+    # ── License plate ────────────────────────────────────────────
+    "license_plate":    "license_plate",
+    "plate":            "license_plate",
+    "lp":               "license_plate",
 
+    # ── Vehicle (4-wheel and up) ─────────────────────────────────
+    "vehicle":          "vehicle",
+    "car":              "vehicle",
+    "Car":              "vehicle",
+    "automobile":       "vehicle",
+    "jeep":             "vehicle",
+    "jeepney":          "vehicle",
+    "Jeepney":          "vehicle",
+    "bus":              "vehicle",
+    "Bus":              "vehicle",
+    "truck":            "vehicle",
+    "Truck":            "vehicle",
+    "van":              "vehicle",
+    "Van":              "vehicle",
+    "suv":              "vehicle",
+    "SUV":              "vehicle",
+    "pickup":           "vehicle",
+    "minivan":          "vehicle",
+    "4wheel":           "vehicle",
 
-    # ── E-bike labels ────────────────────────────────────────────
-    "e_bike":        "e_bike",
-    "ebike":         "e_bike",
-    "EBike":         "e_bike",
-    "E-Bike":        "e_bike",
-    "Electric Bike": "e_bike",
-    "electric_bike": "e_bike",
+    # ── Motor (motorcycle, tricycle) ─────────────────────────────
+    "motor":            "motor",
+    "motorcycle":       "motor",
+    "Motorcycle":       "motor",
+    "motorbike":        "motor",
+    "Motorbike":        "motor",
+    "tricycle":         "motor",
+    "Tricycle":         "motor",
+    "trike":            "motor",
+    "bike":             "motor",
+    "Bike":             "motor",
+    "bicycle":          "motor",   # existing bicycle labels map to motor
+    "Bicycle":          "motor",
 
-    # ── Electric scooter labels ───────────────────────────────────
-    "electric_scooter":  "electric_scooter",
-    "escooter":          "electric_scooter",
-    "E-Scooter":         "electric_scooter",
-    "E-scooter":         "electric_scooter",
-    "Electric Scooter":  "electric_scooter",
-    "ElectricScooter":   "electric_scooter",
-    "Electric scooter":  "electric_scooter",
-    "scooter":           "electric_scooter",
-    "Scooter":           "electric_scooter",
-    "e-scooter":         "electric_scooter",
-    "motorized_scooter": "electric_scooter",
-    "electricscooter":   "electric_scooter",
-    "kickboard":         "electric_scooter",
+    # ── E-bike ───────────────────────────────────────────────────
+    "ebike":            "ebike",
+    "e_bike":           "ebike",
+    "EBike":            "ebike",
+    "E-Bike":           "ebike",
+    "Electric Bike":    "ebike",
+    "electric_bike":    "ebike",
+    "electric bike":    "ebike",
+
+    # ── Electric scooter ─────────────────────────────────────────
+    "escooter":              "escooter",
+    "electric_scooter":      "escooter",
+    "E-Scooter":             "escooter",
+    "E-scooter":             "escooter",
+    "Electric Scooter":      "escooter",
+    "ElectricScooter":       "escooter",
+    "Electric scooter":      "escooter",
+    "scooter":               "escooter",
+    "Scooter":               "escooter",
+    "e-scooter":             "escooter",
+    "motorized_scooter":     "escooter",
+    "electricscooter":       "escooter",
+    "kickboard":             "escooter",
 }
 
-# Labels found in datasets that are deliberately excluded — logged for review
+# Labels found in datasets that are deliberately excluded
 EXCLUDED_LABELS = {
     "person",
-    "car",
-    "motorcycle",
-    "truck",
-    "van",
-    "bus",
     "helmet",
     "no_helmet",
     "rickshaw",
@@ -67,29 +95,31 @@ EXCLUDED_LABELS = {
 
 # Reverse mapping: canonical name → all raw aliases (for reporting)
 REVERSE_CLASS_MAPPING: dict[str, list[str]] = {
-    "bicycle": [
-        "bicycle", "bike", "Bike", "Bicycle",
-        "Person-Bike", "Car-Bike", "MC-Bike", "Truck-Bike", "Van-Bike",
+    "license_plate": ["license_plate", "plate", "lp"],
+    "vehicle": [
+        "vehicle", "car", "Car", "automobile", "jeep", "jeepney",
+        "bus", "Bus", "truck", "Truck", "van", "Van", "suv", "SUV",
+        "pickup", "minivan", "4wheel",
     ],
-    "e_bike": [
-        "e_bike", "ebike", "EBike", "E-Bike", "Electric Bike", "electric_bike",
+    "motor": [
+        "motor", "motorcycle", "Motorcycle", "motorbike", "Motorbike",
+        "tricycle", "Tricycle", "trike", "bike", "Bike", "bicycle", "Bicycle",
     ],
-    "electric_scooter": [
-        "electric_scooter", "escooter", "E-Scooter", "E-scooter", "Electric Scooter",
-        "ElectricScooter", "Electric scooter", "scooter", "Scooter",
+    "ebike": ["ebike", "e_bike", "EBike", "E-Bike", "Electric Bike", "electric_bike"],
+    "escooter": [
+        "escooter", "electric_scooter", "E-Scooter", "E-scooter",
+        "Electric Scooter", "ElectricScooter", "scooter", "Scooter",
         "e-scooter", "motorized_scooter", "electricscooter", "kickboard",
     ],
 }
 
-# ── Single source-of-truth for per-class behavior ─────────────────────────────
-# All pipeline code reads from this dict — never scatter if/else across files.
+# Single source-of-truth for per-class pipeline behavior
 VEHICLE_TYPE_BEHAVIOR = {
-    "bicycle":          {"requires_digital_id": True,  "triggers_ocr": False},
-    "e_bike":           {"requires_digital_id": True,  "triggers_ocr": False},
-    "electric_scooter": {"requires_digital_id": True,  "triggers_ocr": False},
-    "license_plate":    {"requires_digital_id": False, "triggers_ocr": True},
-    "vehicle":          {"requires_digital_id": False, "triggers_ocr": True},
-    "motorcycle":       {"requires_digital_id": False, "triggers_ocr": True},
+    "license_plate": {"requires_digital_id": False, "triggers_ocr": True},
+    "vehicle":       {"requires_digital_id": False, "triggers_ocr": True},
+    "motor":         {"requires_digital_id": False, "triggers_ocr": True},
+    "ebike":         {"requires_digital_id": True,  "triggers_ocr": False},
+    "escooter":      {"requires_digital_id": True,  "triggers_ocr": False},
 }
 
 

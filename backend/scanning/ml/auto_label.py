@@ -27,20 +27,19 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 
 CLASS_NAMES = [
-    "license_plate",    # 0 — from best.pt
-    "vehicle",          # 1 — car, jeep, truck, bus (same PH plate format)
-    "bicycle",          # 2 — COCO cls 1
-    "e_bike",           # 3 — best.pt cls 3 (low coverage)
-    "electric_scooter", # 4 — best.pt cls 4 (low coverage)
-    "motorcycle",       # 5 — COCO cls 3 (different PH plate format)
+    "license_plate",  # 0 — from best.pt
+    "vehicle",        # 1 — car, jeep, truck, bus (4-wheel and up)
+    "motor",          # 2 — motorcycle, tricycle
+    "ebike",          # 3 — electric bicycle
+    "escooter",       # 4 — electric scooter
 ]
 
 # COCO class IDs → our class name
 COCO_VEHICLE_MAP = {
-    1: "bicycle",
+    1: "motor",      # bicycle → motor (closest proxy until real motor data is collected)
     2: "vehicle",    # car
-    3: "motorcycle",
-    5: "vehicle",    # bus / jeep — all plated the same way
+    3: "motor",      # motorcycle
+    5: "vehicle",    # bus
     7: "vehicle",    # truck
 }
 
@@ -249,7 +248,7 @@ def run_auto_label(model_best, model_coco, frames_dir: Path, output_dir: Path):
             for lbl in final_labels:
                 cls_id = CLASS_NAMES.index(lbl["class"]) if lbl["class"] in CLASS_NAMES else 0
                 cx, cy, bw, bh = lbl["bbox"]
-                f.write(f"{cls_id} {lbl['conf']:.4f} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
+                f.write(f"{cls_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
 
         # Fallback progress when tqdm is not installed
         if tqdm is None and stats["total_frames"] % 100 == 0:
