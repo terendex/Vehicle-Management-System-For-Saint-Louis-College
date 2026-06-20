@@ -4,21 +4,30 @@ import { usersApi } from '../../api/users'
 import {
   Users, Car, ShieldCheck, ClipboardList,
   Activity, Shield, RefreshCw, CheckCircle, XCircle,
-  AlertTriangle, Car as CarIcon
+  AlertTriangle, Car as CarIcon, Inbox
 } from 'lucide-react'
 import './AdminDashboard.css'
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
-    <div className="ad-card">
-      <div className="ad-card-icon" style={{ background: color }}>
-        <Icon size={20} color="#fff" />
-      </div>
-      <div className="ad-card-body">
+    <div className="ad-card" style={{ '--c': color, '--cl': color + '18' }}>
+      <div className="ad-card-header">
         <span className="ad-card-label">{label}</span>
-        <span className="ad-card-value">{value ?? '—'}</span>
-        {sub && <span className="ad-card-sub">{sub}</span>}
+        <div className="ad-card-icon">
+          <Icon size={15} />
+        </div>
       </div>
+      <span className="ad-card-value">{value ?? '—'}</span>
+      {sub && <span className="ad-card-sub">{sub}</span>}
+    </div>
+  )
+}
+
+function SectionLabel({ children, live }) {
+  return (
+    <div className="ad-section-label">
+      {live && <span className="ad-live-dot" />}
+      {children}
     </div>
   )
 }
@@ -42,6 +51,15 @@ function ActivityItem({ log }) {
         )}
         <span className="ad-activity-time">{time}</span>
       </div>
+    </div>
+  )
+}
+
+function EmptyActivity({ message }) {
+  return (
+    <div className="ad-activity-empty">
+      <Inbox size={30} strokeWidth={1.4} className="ad-activity-empty-icon" />
+      <p>{message}</p>
     </div>
   )
 }
@@ -72,6 +90,10 @@ export default function AdminDashboard() {
     ? lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     : null
 
+  const today = new Date().toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric'
+  })
+
   return (
     <AdminLayout>
       <div className="ad-page">
@@ -79,12 +101,12 @@ export default function AdminDashboard() {
           <div>
             <h1 className="ad-title">Dashboard Overview</h1>
             <p className="ad-subtitle">
-              Welcome back. Here's what's happening across the system.
-              {lastUpdatedStr && <span className="ad-last-updated"> Updated at {lastUpdatedStr}</span>}
+              {today}
+              {lastUpdatedStr && <span className="ad-last-updated"> · Updated at {lastUpdatedStr}</span>}
             </p>
           </div>
           <button className="ad-refresh-btn" onClick={fetchData} disabled={loading} title="Refresh">
-            <RefreshCw size={15} className={loading ? 'ad-spin' : ''} />
+            <RefreshCw size={14} className={loading ? 'ad-spin' : ''} />
             <span>Refresh</span>
           </button>
         </div>
@@ -92,12 +114,12 @@ export default function AdminDashboard() {
         {loading && !stats ? (
           <div className="ad-loading">
             <div className="ad-spinner" />
-            <p>Loading dashboard...</p>
+            <p>Loading dashboard…</p>
           </div>
         ) : (
           <>
-            {/* User & Vehicle Stats */}
-            <div className="ad-stats-grid">
+            <SectionLabel>System Overview</SectionLabel>
+            <div className="ad-stats-grid ad-grid-5">
               <StatCard
                 icon={Users}
                 label="Total Users"
@@ -133,6 +155,10 @@ export default function AdminDashboard() {
                 sub="Awaiting review"
                 color="#D97706"
               />
+            </div>
+
+            <SectionLabel live>Today's Activity</SectionLabel>
+            <div className="ad-stats-grid ad-grid-3">
               <StatCard
                 icon={Activity}
                 label="Scans Today"
@@ -156,11 +182,10 @@ export default function AdminDashboard() {
               />
             </div>
 
-            {/* Recent Activity */}
             <div className="ad-activity-section">
               <div className="ad-section-head">
                 <h2 className="ad-section-title">
-                  <Activity size={18} />
+                  <Activity size={16} />
                   Recent Activity
                 </h2>
               </div>
@@ -168,7 +193,7 @@ export default function AdminDashboard() {
               <div className="ad-activity-grid">
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
-                    <Shield size={14} />
+                    <Shield size={13} />
                     <span>Admin Actions</span>
                   </div>
                   <div className="ad-activity-list">
@@ -177,14 +202,14 @@ export default function AdminDashboard() {
                         <ActivityItem key={log.id} log={log} />
                       ))
                     ) : (
-                      <p className="ad-activity-empty">No recent admin activity.</p>
+                      <EmptyActivity message="No recent admin activity." />
                     )}
                   </div>
                 </div>
 
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
-                    <ShieldCheck size={14} />
+                    <ShieldCheck size={13} />
                     <span>Security Personnel Actions</span>
                   </div>
                   <div className="ad-activity-list">
@@ -193,7 +218,7 @@ export default function AdminDashboard() {
                         <ActivityItem key={log.id} log={log} />
                       ))
                     ) : (
-                      <p className="ad-activity-empty">No recent security activity.</p>
+                      <EmptyActivity message="No recent security activity." />
                     )}
                   </div>
                 </div>
