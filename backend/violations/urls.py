@@ -5,4 +5,7 @@ from . import views
 router = DefaultRouter()
 router.register('', views.ViolationViewSet, basename='violation')
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path('my/', views.MyViolationsView.as_view(), name='my-violations'),
+    path('', include(router.urls)),
+]

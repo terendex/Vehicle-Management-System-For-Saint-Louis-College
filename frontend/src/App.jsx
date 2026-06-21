@@ -8,6 +8,7 @@ import UserManagement from './pages/Admin/UserManagement'
 import EntryManagement from './pages/Admin/EntryManagement'
 import RuleConstraints from './pages/Admin/RuleConstraints'
 import AuditLog from './pages/Admin/AuditLog'
+import ParkingManagement from './pages/Admin/ParkingManagement'
 import SecurityDashboard from './pages/Security/SecurityDashboard'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityAuditLog from './pages/Security/SecurityAuditLog'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/admin/entries" element={<EntryManagement />} />
           <Route path="/admin/rules" element={<RuleConstraints />} />
           <Route path="/admin/audit" element={<AuditLog />} />
+          <Route path="/admin/parking" element={<ParkingManagement />} />
         </Route>
         
         {/* Security Routes */}

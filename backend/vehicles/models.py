@@ -53,7 +53,7 @@ from django.utils import timezone
 
 class RegistrationToken(models.Model):
     token           = models.UUIDField(default=uuid.uuid4, unique=True)
-    registrant_type = models.CharField(max_length=20, choices=[('student','Student'),('employee','Employee')])
+    registrant_type = models.CharField(max_length=20, choices=[('student','Student'),('employee','Employee'),('fetcher','Fetcher/Drop&Go')])
     is_used         = models.BooleanField(default=False)
     is_active       = models.BooleanField(default=True)   # admin can disable
     expires_at      = models.DateTimeField()  # required expiration
@@ -85,16 +85,32 @@ class VehicleRegistration(models.Model):
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
+        FETCHER  = 'fetcher',  'Fetcher/Drop&Go'
+
+    class Schedule(models.TextChoices):
+        MWF  = 'MWF',  'Monday-Wednesday-Friday'
+        TTHS = 'TTHS', 'Tuesday-Thursday-Saturday'
+        ANY  = 'ANY',  'Any Day'
+
+    # Link to the created User account (populated on acceptance)
+    user = models.ForeignKey(
+        'accounts.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='registrations',
+    )
 
     # Common fields
     registrant_type = models.CharField(max_length=20, choices=RegistrantType.choices)
     full_name       = models.CharField(max_length=255)
-    email           = models.EmailField()
+    email           = models.EmailField(db_index=True)
     address         = models.TextField(blank=True)
     contact_number  = models.CharField(max_length=100, blank=True)
     age             = models.PositiveIntegerField(null=True, blank=True)
     drivers_license = models.CharField(max_length=100, blank=True)
     campus_days     = models.JSONField(default=list)  # e.g. ["Monday","Wednesday","Friday"]
+    schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
     # Student-specific
     student_id      = models.CharField(max_length=50, blank=True)
@@ -105,16 +121,17 @@ class VehicleRegistration(models.Model):
     department      = models.CharField(max_length=100, blank=True)
 
     # Vehicle fields
-    plate_number      = models.CharField(max_length=20)
+    plate_number      = models.CharField(max_length=20, db_index=True)
     conduction_number = models.CharField(max_length=50, blank=True)
     vehicle_type      = models.CharField(max_length=50)
     vehicle_color     = models.CharField(max_length=50, blank=True)
     body_number       = models.CharField(max_length=50, blank=True)
 
-    # Status
-    status          = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Status & admin review
+    status           = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
     rejection_reason = models.TextField(blank=True)
-    token           = models.UUIDField(unique=True)  # the registration invite token
+    or_number        = models.CharField(max_length=100, blank=True, help_text="Official Receipt number from Accounting Office")
+    token            = models.UUIDField(unique=True, null=True, blank=True)  # null for direct (non-token) registrations
 
     # Auto-assigned unique system IDs (populated on acceptance)
     system_student_id  = models.CharField(max_length=30, blank=True, unique=True, null=True)
@@ -193,4 +210,74 @@ class VehicleTypeAccess(models.Model):
         ordering = ['ordering', 'label']
 
     def __str__(self):
-        return f"{self.label} ({self.get_status_display()})"
+        return f"{self.label} ({self.get_status_display()})"
+
+
+class ParkingZone(models.Model):
+    """A named camera view / parking area. Spaces are drawn on top of its reference image."""
+    class VehicleCategory(models.TextChoices):
+        MOTORCYCLE = 'motorcycle', 'Motorcycle'
+        CAR        = 'car',        'Car'
+
+    name             = models.CharField(max_length=100)
+    vehicle_category = models.CharField(max_length=20, choices=VehicleCategory.choices)
+    reference_image  = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
+    created_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['vehicle_category', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_vehicle_category_display()})"
+
+
+class ParkingSpace(models.Model):
+    class VehicleCategory(models.TextChoices):
+        MOTORCYCLE = 'motorcycle', 'Motorcycle'
+        CAR        = 'car',        'Car'
+
+    zone             = models.ForeignKey(
+        ParkingZone, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='spaces',
+    )
+    space_number     = models.CharField(max_length=20)
+    vehicle_category = models.CharField(max_length=20, choices=VehicleCategory.choices)
+    # Bounding box in 0.0–1.0 normalised coords of the zone reference image
+    x1               = models.FloatField(null=True, blank=True)
+    y1               = models.FloatField(null=True, blank=True)
+    x2               = models.FloatField(null=True, blank=True)
+    y2               = models.FloatField(null=True, blank=True)
+    is_occupied      = models.BooleanField(default=False)
+    occupied_by      = models.CharField(max_length=20, blank=True, help_text="Plate number of occupying vehicle")
+    updated_at       = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['vehicle_category', 'space_number']
+
+    def __str__(self):
+        status = f"({self.occupied_by})" if self.is_occupied else "(free)"
+        return f"{self.get_vehicle_category_display()} Space {self.space_number} {status}"
+
+
+class Department(models.Model):
+    name      = models.CharField(max_length=200, unique=True)
+    is_active = models.BooleanField(default=True)
+    order     = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class Program(models.Model):
+    name      = models.CharField(max_length=200, unique=True)
+    is_active = models.BooleanField(default=True)
+    order     = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'name']
+
+    def __str__(self):
+        return self.name
