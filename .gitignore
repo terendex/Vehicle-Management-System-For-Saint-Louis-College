@@ -37,6 +37,7 @@ backend/scanning/ml/raw_frames/
 backend/scanning/ml/motorcycle_ds/
 backend/scanning/ml/visualizations/
 backend/scanning/ml/labeled/
+backend/scanning/ml/used/
 runs/
 *.zip
 

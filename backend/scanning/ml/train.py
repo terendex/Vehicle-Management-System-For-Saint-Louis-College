@@ -147,6 +147,7 @@ def train(
     incremental:  bool = False,
     freeze:       bool = True,
     freeze_layers: int = 10,
+    data_yaml:    Path | None = None,
 ) -> None:
     """
     Train or fine-tune the multi-class vehicle detector.
@@ -155,6 +156,7 @@ def train(
         freeze:        If True, freeze the first `freeze_layers` backbone layers.
                        Strongly recommended when fine-tuning from existing best.pt.
         freeze_layers: Number of backbone layers to freeze (YOLOv8n/s: 10 is safe).
+        data_yaml:     Path to a custom data.yaml. Defaults to unplated_ds/data.yaml.
     """
     import django
     django.setup()
@@ -165,9 +167,15 @@ def train(
 
     from ultralytics import YOLO
 
+    # Resolve dataset
+    dataset_dir = data_yaml.parent if data_yaml else UNPLATED_DIR
+    global DATA_YAML
+    if data_yaml:
+        DATA_YAML = Path(data_yaml)
+
     # Validate dataset
-    train_imgs = UNPLATED_DIR / "images" / "train"
-    val_imgs   = UNPLATED_DIR / "images" / "val"
+    train_imgs = dataset_dir / "images" / "train"
+    val_imgs   = dataset_dir / "images" / "val"
     train_count = len(list(train_imgs.glob("*"))) if train_imgs.exists() else 0
     val_count   = len(list(val_imgs.glob("*")))   if val_imgs.exists()   else 0
 
@@ -237,14 +245,16 @@ def train(
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
-        workers=0,               # Avoid multi-process DataLoader memory errors on Windows
+        workers=2,
         name="vehicle_unplated_detector",
         project=str(BASE_DIR / "runs"),
         exist_ok=True,
         patience=25,
         save=True,
         plots=True,
-        amp=False,
+        amp=True,
+        cache="ram",
+        optimizer="Adam",        # Muon optimizer uses BF16 cuBLAS which fails on older GPUs
         **augment_kwargs,
     )
 
@@ -289,6 +299,8 @@ def _print_class_eval(results) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multi-class vehicle detector (YOLOv8)")
+    parser.add_argument("--data",          type=str,   default=None,
+                        help="Path to data.yaml (default: unplated_ds/data.yaml)")
     parser.add_argument("--epochs",        type=int,   default=100)
     parser.add_argument("--batch",         type=int,   default=16)
     parser.add_argument("--imgsz",         type=int,   default=640)
@@ -328,4 +340,5 @@ if __name__ == "__main__":
         incremental=args.incremental,
         freeze=args.freeze,
         freeze_layers=args.freeze_layers,
+        data_yaml=Path(args.data) if args.data else None,
     )
