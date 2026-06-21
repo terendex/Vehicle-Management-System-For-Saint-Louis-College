@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
-  Circle, AlertTriangle, Copy, LogOut, RefreshCw
+  Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
+  ParkingCircle, Bike, Loader2
 } from 'lucide-react'
 import OwnerLayout from '../../components/Layout/OwnerLayout'
 import useAuthStore from '../../stores/authStore'
 import { usersApi } from '../../api/users'
+import { violationsApi } from '../../api/violations'
+import { registrationApi } from '../../api/registration'
 import './OwnerDashboard.css'
 
 /* ── password strength rules ── */
@@ -30,6 +33,16 @@ function pwStrength(pw) {
 
 const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
 
+const VIOLATION_TYPE_LABELS = {
+  no_sticker: 'No Sticker',
+  expired_registration: 'Expired Registration',
+  unauthorized: 'Unauthorized Entry',
+  other: 'Other',
+}
+
+const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle', 'E-Bike', 'e-bike', 'ebike']
+const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().includes(m.toLowerCase()))
+
 export default function OwnerDashboard() {
   const { user, logout, clearMustChangePassword } = useAuthStore()
 
@@ -37,6 +50,17 @@ export default function OwnerDashboard() {
   const [reg, setReg] = useState(null)
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState(null)
+
+  /* ── violations ── */
+  const [violations, setViolations] = useState([])
+  const [violationsLoading, setViolationsLoading] = useState(false)
+  const [violationsError, setViolationsError] = useState(null)
+
+  /* ── parking availability ── */
+  const [parking, setParking] = useState(null)  // { spaces, summary }
+  const [parkingLoading, setParkingLoading] = useState(false)
+  const [parkingError, setParkingError] = useState(null)
+  const [parkingCategory, setParkingCategory] = useState(null)
 
   /* ── password change modal ── */
   const mustChange = user?.must_change_password === true
@@ -55,6 +79,7 @@ export default function OwnerDashboard() {
 
   useEffect(() => {
     fetchReg()
+    fetchViolations()
   }, [])
 
   const fetchReg = async () => {
@@ -63,10 +88,40 @@ export default function OwnerDashboard() {
     try {
       const data = await usersApi.getMyRegistration()
       setReg(data)
+      // Determine parking category from vehicle type
+      const cat = isMotorcycle(data?.vehicle_type) ? 'motorcycle' : 'car'
+      setParkingCategory(cat)
+      fetchParking(cat)
     } catch (err) {
       setFetchError(err.response?.data?.error || 'Failed to load registration data.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchViolations = async () => {
+    setViolationsLoading(true)
+    setViolationsError(null)
+    try {
+      const data = await violationsApi.getMyViolations()
+      setViolations(data)
+    } catch (err) {
+      setViolationsError('Could not load violations.')
+    } finally {
+      setViolationsLoading(false)
+    }
+  }
+
+  const fetchParking = async (category) => {
+    setParkingLoading(true)
+    setParkingError(null)
+    try {
+      const data = await registrationApi.getParkingAvailability(category)
+      setParking(data)
+    } catch {
+      setParkingError('Could not load parking availability.')
+    } finally {
+      setParkingLoading(false)
     }
   }
 
@@ -97,7 +152,6 @@ export default function OwnerDashboard() {
     }
   }
 
-  /* ── derived ── */
   const systemId = reg?.system_student_id || reg?.system_employee_id || '—'
   const qrPayload = reg ? `VEHICLE:${reg.plate_number}|ID:${reg.id}` : ''
   const strength  = pwStrength(pwForm.new)
@@ -107,12 +161,13 @@ export default function OwnerDashboard() {
     window.location.href = '/login'
   }
 
+  /* ── Parking grid helpers ── */
+  const parkingSummary = parking?.summary?.[parkingCategory] || null
+  const parkingSpaces  = (parking?.spaces || []).filter(s => s.vehicle_category === parkingCategory)
+
   return (
     <OwnerLayout>
-      {/* ──────────────────────────────────────────────────────
-          FORCE PASSWORD CHANGE MODAL
-          (blocks everything if must_change_password is true)
-          ────────────────────────────────────────────────────── */}
+      {/* Force password change modal */}
       {pwModal && (
         <div className="od-modal-overlay">
           <div className="od-modal">
@@ -124,9 +179,7 @@ export default function OwnerDashboard() {
               </div>
             ) : (
               <>
-                <div className="od-modal-icon warn">
-                  <AlertTriangle size={26} />
-                </div>
+                <div className="od-modal-icon warn"><AlertTriangle size={26} /></div>
                 <h2 className="od-modal-title">Change Your Password</h2>
                 <p className="od-modal-subtitle">
                   {mustChange
@@ -135,39 +188,19 @@ export default function OwnerDashboard() {
                 </p>
 
                 <form onSubmit={handlePwChange} className="od-pw-form">
-                  {/* Current Password */}
                   <div className="od-form-group">
                     <label>Current (Temporary) Password</label>
                     <div className="od-pw-wrap">
-                      <input
-                        type={showCurrent ? 'text' : 'password'}
-                        value={pwForm.current}
-                        onChange={e => setPwForm({ ...pwForm, current: e.target.value })}
-                        placeholder="Enter current password"
-                        required
-                        autoComplete="current-password"
-                      />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowCurrent(v => !v)}>
-                        {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
+                      <input type={showCurrent ? 'text' : 'password'} value={pwForm.current} onChange={e => setPwForm({ ...pwForm, current: e.target.value })} placeholder="Enter current password" required autoComplete="current-password" />
+                      <button type="button" className="od-pw-eye" onClick={() => setShowCurrent(v => !v)}>{showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                     </div>
                   </div>
 
-                  {/* New Password */}
                   <div className="od-form-group">
                     <label>New Password</label>
                     <div className="od-pw-wrap">
-                      <input
-                        type={showNew ? 'text' : 'password'}
-                        value={pwForm.new}
-                        onChange={e => setPwForm({ ...pwForm, new: e.target.value })}
-                        placeholder="Enter new password"
-                        required
-                        autoComplete="new-password"
-                      />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowNew(v => !v)}>
-                        {showNew ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
+                      <input type={showNew ? 'text' : 'password'} value={pwForm.new} onChange={e => setPwForm({ ...pwForm, new: e.target.value })} placeholder="Enter new password" required autoComplete="new-password" />
+                      <button type="button" className="od-pw-eye" onClick={() => setShowNew(v => !v)}>{showNew ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                     </div>
                     {pwForm.new && (
                       <div className="od-strength-wrap">
@@ -187,28 +220,17 @@ export default function OwnerDashboard() {
                     )}
                   </div>
 
-                  {/* Confirm Password */}
                   <div className="od-form-group">
                     <label>Confirm New Password</label>
                     <div className="od-pw-wrap">
-                      <input
-                        type={showConfirm ? 'text' : 'password'}
-                        value={pwForm.confirm}
-                        onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })}
-                        placeholder="Re-enter new password"
-                        required
-                        autoComplete="new-password"
-                      />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowConfirm(v => !v)}>
-                        {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
+                      <input type={showConfirm ? 'text' : 'password'} value={pwForm.confirm} onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} placeholder="Re-enter new password" required autoComplete="new-password" />
+                      <button type="button" className="od-pw-eye" onClick={() => setShowConfirm(v => !v)}>{showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                     </div>
                     {pwForm.confirm && pwForm.new && pwForm.confirm !== pwForm.new && (
                       <p className="od-field-error">Passwords do not match.</p>
                     )}
                   </div>
 
-                  {/* Backend errors */}
                   {pwError && <div className="od-error-banner">{pwError}</div>}
                   {pwErrors.length > 0 && (
                     <div className="od-error-banner">
@@ -217,21 +239,9 @@ export default function OwnerDashboard() {
                   )}
 
                   <div className="od-pw-actions">
-                    {!mustChange && (
-                      <button type="button" className="od-btn-outline" onClick={() => setPwModal(false)}>
-                        Cancel
-                      </button>
-                    )}
-                    {mustChange && (
-                      <button type="button" className="od-btn-logout" onClick={handleLogout}>
-                        <LogOut size={15} /> Log Out
-                      </button>
-                    )}
-                    <button
-                      type="submit"
-                      className="od-btn-primary"
-                      disabled={pwSubmitting || strength.score < 5 || pwForm.new !== pwForm.confirm}
-                    >
+                    {!mustChange && <button type="button" className="od-btn-outline" onClick={() => setPwModal(false)}>Cancel</button>}
+                    {mustChange && <button type="button" className="od-btn-logout" onClick={handleLogout}><LogOut size={15} /> Log Out</button>}
+                    <button type="submit" className="od-btn-primary" disabled={pwSubmitting || strength.score < 5 || pwForm.new !== pwForm.confirm}>
                       {pwSubmitting ? 'Saving…' : <><KeyRound size={15} /> Set New Password</>}
                     </button>
                   </div>
@@ -242,9 +252,7 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* ──────────────────────────────────────────────────────
-          MAIN DASHBOARD CONTENT
-          ────────────────────────────────────────────────────── */}
+      {/* ── Main dashboard ── */}
       <div className="od-page">
 
         {/* Welcome Banner */}
@@ -279,10 +287,7 @@ export default function OwnerDashboard() {
         </div>
 
         {loading ? (
-          <div className="od-loading">
-            <div className="od-spinner" />
-            <p>Loading your registration details…</p>
-          </div>
+          <div className="od-loading"><div className="od-spinner" /><p>Loading your registration details…</p></div>
         ) : fetchError ? (
           <div className="od-error-card">
             <AlertTriangle size={24} />
@@ -290,165 +295,233 @@ export default function OwnerDashboard() {
             <button className="od-btn-primary" onClick={fetchReg}><RefreshCw size={14} /> Retry</button>
           </div>
         ) : reg && (
-          <div className="od-grid">
+          <>
+            {/* ── Main info + QR grid ── */}
+            <div className="od-grid">
 
-            {/* ── Left Column: Info ── */}
-            <div className="od-info-col">
-
-              {/* Personal Information */}
-              <div className="od-card">
-                <div className="od-card-head">
-                  <User size={16} />
-                  Personal Information
-                </div>
-                <div className="od-details-grid">
-                  <div className="od-detail">
-                    <span className="od-detail-label">Full Name</span>
-                    <span className="od-detail-val">{reg.full_name}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Email</span>
-                    <span className="od-detail-val">{reg.email}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Type</span>
-                    <span className="od-detail-val od-capitalize">{reg.registrant_type}</span>
-                  </div>
-                  {reg.registrant_type === 'student' ? (
-                    <>
-                      <div className="od-detail">
-                        <span className="od-detail-label">Student ID</span>
-                        <span className="od-detail-val">{reg.student_id || '—'}</span>
-                      </div>
+              {/* Left: Personal + Vehicle Info */}
+              <div className="od-info-col">
+                <div className="od-card">
+                  <div className="od-card-head"><User size={16} /> Personal Information</div>
+                  <div className="od-details-grid">
+                    <div className="od-detail"><span className="od-detail-label">Full Name</span><span className="od-detail-val">{reg.full_name}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Email</span><span className="od-detail-val">{reg.email}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Type</span><span className="od-detail-val od-capitalize">{reg.registrant_type}</span></div>
+                    {reg.registrant_type === 'student' ? (
+                      <>
+                        <div className="od-detail"><span className="od-detail-label">Student ID</span><span className="od-detail-val">{reg.student_id || '—'}</span></div>
+                        <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Program &amp; Year</span><span className="od-detail-val">{reg.program_year || '—'}</span></div>
+                      </>
+                    ) : reg.registrant_type === 'employee' ? (
+                      <>
+                        <div className="od-detail"><span className="od-detail-label">Employee ID</span><span className="od-detail-val">{reg.employee_id || '—'}</span></div>
+                        <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Department</span><span className="od-detail-val">{reg.department || '—'}</span></div>
+                      </>
+                    ) : null}
+                    <div className="od-detail"><span className="od-detail-label">Contact Number</span><span className="od-detail-val">{reg.contact_number || '—'}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Age</span><span className="od-detail-val">{reg.age || '—'}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Driver's License</span><span className="od-detail-val">{reg.drivers_license || '—'}</span></div>
+                    <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Address</span><span className="od-detail-val">{reg.address || '—'}</span></div>
+                    {reg.schedule && (
                       <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                        <span className="od-detail-label">Program &amp; Year</span>
-                        <span className="od-detail-val">{reg.program_year || '—'}</span>
+                        <span className="od-detail-label">Assigned Schedule</span>
+                        <span className="od-day-badges">
+                          <span className="od-day-badge">{reg.schedule}</span>
+                          <span className="od-day-badge-sub">
+                            {reg.schedule === 'MWF' ? 'Mon · Wed · Fri' : reg.schedule === 'TTHS' ? 'Tue · Thu · Sat' : reg.schedule}
+                          </span>
+                        </span>
                       </div>
-                    </>
+                    )}
+                    {reg.campus_days?.length > 0 && !reg.schedule && (
+                      <div className="od-detail" style={{ gridColumn: 'span 2' }}>
+                        <span className="od-detail-label">Campus Days</span>
+                        <div className="od-day-badges">{reg.campus_days.map(d => <span key={d} className="od-day-badge">{d}</span>)}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="od-card">
+                  <div className="od-card-head"><Car size={16} /> Vehicle Information</div>
+                  <div className="od-details-grid">
+                    <div className="od-detail"><span className="od-detail-label">Plate Number</span><span className="od-detail-val od-plate">{reg.plate_number}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Vehicle Type</span><span className="od-detail-val od-capitalize">{reg.vehicle_type}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Color</span><span className="od-detail-val">{reg.vehicle_color || '—'}</span></div>
+                    <div className="od-detail"><span className="od-detail-label">Conduction Number</span><span className="od-detail-val">{reg.conduction_number || '—'}</span></div>
+                    {reg.body_number && (
+                      <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Body Number</span><span className="od-detail-val">{reg.body_number}</span></div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: QR + Status */}
+              <div className="od-qr-col">
+                <div className="od-card od-qr-card">
+                  <div className="od-card-head"><ShieldCheck size={16} /> Vehicle Access QR Code</div>
+                  <p className="od-qr-hint">Present this code to security personnel upon entry.</p>
+                  <div className="od-qr-display">
+                    <QRCodeSVG value={qrPayload} size={200} level="H" includeMargin={true} />
+                  </div>
+                  <div className="od-qr-data-box">
+                    <span className="od-qr-data-label">QR Data</span>
+                    <code className="od-qr-data-code">{qrPayload}</code>
+                  </div>
+                  <button
+                    className="od-copy-btn"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(qrPayload)
+                      setQrCopied(true)
+                      setTimeout(() => setQrCopied(false), 2000)
+                    }}
+                  >
+                    {qrCopied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy QR Data</>}
+                  </button>
+                </div>
+
+                <div className="od-card od-status-card">
+                  <div className="od-card-head"><ShieldCheck size={16} /> Registration Status</div>
+                  <div className="od-status-badge accepted"><Check size={16} /> Accepted &amp; Authorized</div>
+                  <p className="od-status-note">
+                    Your vehicle is authorized to enter the Saint Louis College campus premises.
+                    Always carry your QR code for scanning at the gate.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Violations Section ── */}
+            <div className="od-section-title-row">
+              <AlertCircle size={17} />
+              <h2 className="od-section-title">Violations</h2>
+            </div>
+            <div className="od-card od-violations-card">
+              <div className="od-card-head"><AlertCircle size={16} /> My Violation Record</div>
+              {violationsLoading ? (
+                <div className="od-inner-loading"><Loader2 size={20} className="od-spin-icon" /> Loading violations…</div>
+              ) : violationsError ? (
+                <div className="od-inner-error">
+                  <AlertTriangle size={16} /> {violationsError}
+                  <button className="od-retry-link" onClick={fetchViolations}>Retry</button>
+                </div>
+              ) : violations.length === 0 ? (
+                <div className="od-clean-record">
+                  <div className="od-clean-icon"><ShieldCheck size={32} /></div>
+                  <p className="od-clean-text">No violations on record.</p>
+                  <span className="od-clean-sub">Keep up your good driving behavior on campus!</span>
+                </div>
+              ) : (
+                <div className="od-violations-table-wrap">
+                  <table className="od-violations-table">
+                    <thead>
+                      <tr>
+                        <th>Violation</th>
+                        <th>Notes</th>
+                        <th>Date Issued</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {violations.map(v => (
+                        <tr key={v.id} className={v.is_resolved ? 'od-viol-resolved' : 'od-viol-active'}>
+                          <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                          <td className="od-viol-notes">{v.notes || '—'}</td>
+                          <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                          <td>
+                            <span className={`od-viol-badge ${v.is_resolved ? 'resolved' : 'active'}`}>
+                              {v.is_resolved ? 'Resolved' : 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Parking Availability Section ── */}
+            <div className="od-section-title-row">
+              {parkingCategory === 'motorcycle' ? <Bike size={17} /> : <ParkingCircle size={17} />}
+              <h2 className="od-section-title">
+                Live Parking Availability — {parkingCategory === 'motorcycle' ? 'Motorcycle' : 'Car'} Area
+              </h2>
+              <button className="od-refresh-btn" onClick={() => fetchParking(parkingCategory)} title="Refresh">
+                <RefreshCw size={14} />
+              </button>
+            </div>
+            <div className="od-card od-parking-card">
+              <div className="od-card-head">
+                {parkingCategory === 'motorcycle' ? <Bike size={16} /> : <ParkingCircle size={16} />}
+                {parkingCategory === 'motorcycle' ? 'Motorcycle' : 'Car'} Parking Spaces
+              </div>
+
+              {parkingLoading ? (
+                <div className="od-inner-loading"><Loader2 size={20} className="od-spin-icon" /> Loading parking data…</div>
+              ) : parkingError ? (
+                <div className="od-inner-error">
+                  <AlertTriangle size={16} /> {parkingError}
+                  <button className="od-retry-link" onClick={() => fetchParking(parkingCategory)}>Retry</button>
+                </div>
+              ) : (
+                <>
+                  {/* Summary counters */}
+                  {parkingSummary ? (
+                    <div className="od-parking-summary">
+                      <div className="od-parking-stat available">
+                        <span className="od-parking-stat-num">{parkingSummary.available}</span>
+                        <span className="od-parking-stat-label">Available</span>
+                      </div>
+                      <div className="od-parking-stat occupied">
+                        <span className="od-parking-stat-num">{parkingSummary.occupied}</span>
+                        <span className="od-parking-stat-label">Occupied</span>
+                      </div>
+                      <div className="od-parking-stat total">
+                        <span className="od-parking-stat-num">{parkingSummary.total}</span>
+                        <span className="od-parking-stat-label">Total</span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Parking grid */}
+                  {parkingSpaces.length > 0 ? (
+                    <div className="od-parking-grid">
+                      {parkingSpaces.map(space => (
+                        <div
+                          key={space.id}
+                          className={`od-parking-space ${space.is_occupied ? 'occupied' : 'free'}`}
+                          title={space.is_occupied ? `Occupied${space.occupied_by ? ` by ${space.occupied_by}` : ''}` : 'Available'}
+                        >
+                          <span className="od-space-num">{space.space_number}</span>
+                          {space.is_occupied && space.occupied_by && (
+                            <span className="od-space-plate">{space.occupied_by}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   ) : (
-                    <>
-                      <div className="od-detail">
-                        <span className="od-detail-label">Employee ID</span>
-                        <span className="od-detail-val">{reg.employee_id || '—'}</span>
-                      </div>
-                      <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                        <span className="od-detail-label">Department</span>
-                        <span className="od-detail-val">{reg.department || '—'}</span>
-                      </div>
-                    </>
-                  )}
-                  <div className="od-detail">
-                    <span className="od-detail-label">Contact Number</span>
-                    <span className="od-detail-val">{reg.contact_number || '—'}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Age</span>
-                    <span className="od-detail-val">{reg.age || '—'}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Driver's License</span>
-                    <span className="od-detail-val">{reg.drivers_license || '—'}</span>
-                  </div>
-                  <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                    <span className="od-detail-label">Address</span>
-                    <span className="od-detail-val">{reg.address || '—'}</span>
-                  </div>
-                  {reg.registrant_type === 'student' && reg.campus_days?.length > 0 && (
-                    <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                      <span className="od-detail-label">Campus Days</span>
-                      <div className="od-day-badges">
-                        {reg.campus_days.map(d => (
-                          <span key={d} className="od-day-badge">{d}</span>
-                        ))}
-                      </div>
+                    <div className="od-parking-empty">
+                      <p>No parking spaces configured yet.</p>
+                      <span className="od-parking-cctv-note">
+                        Parking availability will be updated in real time once CCTV integration is enabled.
+                        Each space is monitored via camera overview with designated zones.
+                      </span>
                     </div>
                   )}
-                </div>
-              </div>
 
-              {/* Vehicle Information */}
-              <div className="od-card">
-                <div className="od-card-head">
-                  <Car size={16} />
-                  Vehicle Information
-                </div>
-                <div className="od-details-grid">
-                  <div className="od-detail">
-                    <span className="od-detail-label">Plate Number</span>
-                    <span className="od-detail-val od-plate">{reg.plate_number}</span>
+                  <div className="od-parking-legend">
+                    <span className="od-legend-item free"><span className="od-legend-dot free" />Available</span>
+                    <span className="od-legend-item occupied"><span className="od-legend-dot occupied" />Occupied</span>
                   </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Vehicle Type</span>
-                    <span className="od-detail-val od-capitalize">{reg.vehicle_type}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Color</span>
-                    <span className="od-detail-val">{reg.vehicle_color || '—'}</span>
-                  </div>
-                  <div className="od-detail">
-                    <span className="od-detail-label">Conduction Number</span>
-                    <span className="od-detail-val">{reg.conduction_number || '—'}</span>
-                  </div>
-                  {reg.body_number && (
-                    <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                      <span className="od-detail-label">Body Number</span>
-                      <span className="od-detail-val">{reg.body_number}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
+                  <p className="od-parking-note">
+                    Parking data is updated by security personnel and will be linked to CCTV camera zones.
+                    Only {parkingCategory === 'motorcycle' ? 'motorcycle/e-bike' : 'car/van/SUV'} spaces are shown for your vehicle type.
+                  </p>
+                </>
+              )}
             </div>
-
-            {/* ── Right Column: QR + Status ── */}
-            <div className="od-qr-col">
-              <div className="od-card od-qr-card">
-                <div className="od-card-head">
-                  <ShieldCheck size={16} />
-                  Vehicle Access QR Code
-                </div>
-                <p className="od-qr-hint">Present this code to security personnel upon entry.</p>
-                <div className="od-qr-display">
-                  <QRCodeSVG
-                    value={qrPayload}
-                    size={200}
-                    level="H"
-                    includeMargin={true}
-                  />
-                </div>
-                <div className="od-qr-data-box">
-                  <span className="od-qr-data-label">QR Data</span>
-                  <code className="od-qr-data-code">{qrPayload}</code>
-                </div>
-                <button
-                  className="od-copy-btn"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(qrPayload)
-                    setQrCopied(true)
-                    setTimeout(() => setQrCopied(false), 2000)
-                  }}
-                >
-                  {qrCopied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy QR Data</>}
-                </button>
-              </div>
-
-              {/* Status card */}
-              <div className="od-card od-status-card">
-                <div className="od-card-head">
-                  <ShieldCheck size={16} />
-                  Registration Status
-                </div>
-                <div className="od-status-badge accepted">
-                  <Check size={16} /> Accepted &amp; Authorized
-                </div>
-                <p className="od-status-note">
-                  Your vehicle is authorized to enter the Saint Louis College campus premises.
-                  Always carry your QR code for scanning at the gate.
-                </p>
-              </div>
-            </div>
-
-          </div>
+          </>
         )}
       </div>
     </OwnerLayout>

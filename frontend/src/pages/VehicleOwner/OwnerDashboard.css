@@ -724,6 +724,320 @@
   text-align: center;
 }
 
+/* ===== Section title rows ===== */
+
+.od-section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 0 10px;
+  color: #2A2B61;
+}
+
+.od-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #2A2B61;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+  flex: 1;
+}
+
+.od-refresh-btn {
+  background: none;
+  border: 1.5px solid #D0D3E8;
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  color: #7C80A3;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+.od-refresh-btn:hover { background: #F0F2F7; color: #2A2B61; }
+
+/* ===== Inner loading / error ===== */
+
+.od-inner-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 20px;
+  font-size: 13px;
+  color: #7C80A3;
+}
+
+.od-spin-icon {
+  animation: odSpin 1s linear infinite;
+}
+
+.od-inner-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  font-size: 13px;
+  color: #DC2626;
+}
+
+.od-retry-link {
+  background: none;
+  border: none;
+  color: #2A2B61;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: 4px;
+}
+
+/* ===== Violations card ===== */
+
+.od-violations-card {}
+
+.od-clean-record {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  text-align: center;
+  gap: 10px;
+}
+
+.od-clean-icon {
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, #D1FAE5, #A7F3D0);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #059669;
+  box-shadow: 0 4px 14px rgba(5,150,105,0.15);
+}
+
+.od-clean-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0;
+}
+
+.od-clean-sub {
+  font-size: 12px;
+  color: #7C80A3;
+}
+
+.od-violations-table-wrap {
+  overflow-x: auto;
+}
+
+.od-violations-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.od-violations-table thead tr {
+  background: #F8FAFC;
+}
+
+.od-violations-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7C80A3;
+  border-bottom: 1px solid #E2E6EE;
+}
+
+.od-violations-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #F1F3F9;
+  color: #1A1D2E;
+  font-weight: 500;
+}
+
+.od-violations-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.od-viol-resolved td { opacity: 0.6; }
+
+.od-viol-type { font-weight: 700; color: #DC2626; }
+.od-viol-resolved .od-viol-type { color: #7C80A3; }
+
+.od-viol-date { font-family: 'SF Mono', monospace; font-size: 12px; white-space: nowrap; }
+
+.od-viol-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 50px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.od-viol-badge.active   { background: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; }
+.od-viol-badge.resolved { background: #D1FAE5; color: #059669; border: 1px solid #A7F3D0; }
+
+/* ===== Parking card ===== */
+
+.od-parking-card {}
+
+.od-parking-summary {
+  display: flex;
+  gap: 0;
+  margin: 16px 20px;
+  border: 1px solid #E2E6EE;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.od-parking-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 10px;
+  border-right: 1px solid #E2E6EE;
+}
+
+.od-parking-stat:last-child { border-right: none; }
+
+.od-parking-stat-num {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.od-parking-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+
+.od-parking-stat.available .od-parking-stat-num { color: #059669; }
+.od-parking-stat.available .od-parking-stat-label { color: #059669; }
+.od-parking-stat.available { background: #F0FDF4; }
+
+.od-parking-stat.occupied .od-parking-stat-num { color: #DC2626; }
+.od-parking-stat.occupied .od-parking-stat-label { color: #DC2626; }
+.od-parking-stat.occupied { background: #FEF2F2; }
+
+.od-parking-stat.total .od-parking-stat-num { color: #2A2B61; }
+.od-parking-stat.total .od-parking-stat-label { color: #7C80A3; }
+.od-parking-stat.total { background: #F8FAFC; }
+
+.od-parking-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  padding: 16px 20px;
+}
+
+.od-parking-space {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 10px 6px;
+  border: 2px solid;
+  min-height: 56px;
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.od-parking-space.free {
+  background: #F0FDF4;
+  border-color: #86EFAC;
+}
+
+.od-parking-space.occupied {
+  background: #FEF2F2;
+  border-color: #FCA5A5;
+}
+
+.od-space-num {
+  font-size: 12px;
+  font-weight: 800;
+  color: inherit;
+}
+
+.od-parking-space.free .od-space-num { color: #059669; }
+.od-parking-space.occupied .od-space-num { color: #DC2626; }
+
+.od-space-plate {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: 'SF Mono', monospace;
+  color: #DC2626;
+  margin-top: 2px;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-parking-legend {
+  display: flex;
+  gap: 20px;
+  padding: 0 20px 8px;
+  font-size: 12px;
+  color: #7C80A3;
+}
+
+.od-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.od-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.od-legend-dot.free     { background: #059669; }
+.od-legend-dot.occupied { background: #DC2626; }
+
+.od-parking-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 20px;
+  text-align: center;
+  gap: 10px;
+  color: #7C80A3;
+}
+
+.od-parking-cctv-note {
+  font-size: 12px;
+  max-width: 420px;
+  line-height: 1.7;
+  color: #9CA3B0;
+}
+
+.od-parking-note {
+  font-size: 11px;
+  color: #9CA3B0;
+  padding: 0 20px 16px;
+  line-height: 1.6;
+}
+
+.od-day-badge-sub {
+  font-size: 11px;
+  color: #6EE7B7;
+  color: #A7F3D0;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
 /* ===== Responsive ===== */
 
 @media (max-width: 960px) {

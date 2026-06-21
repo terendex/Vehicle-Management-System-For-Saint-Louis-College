@@ -1,10 +1,11 @@
 import secrets
 import string
+import uuid
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Owner, Vehicle, RuleConstraint, VehicleTypeAccess
-from .serializers import OwnerSerializer, VehicleSerializer, RuleConstraintSerializer, VehicleTypeAccessSerializer
+from .models import Owner, Vehicle, RuleConstraint, VehicleTypeAccess, ParkingSpace, ParkingZone, Department, Program
+from .serializers import OwnerSerializer, VehicleSerializer, RuleConstraintSerializer, VehicleTypeAccessSerializer, ParkingSpaceSerializer, ParkingZoneSerializer
 
 class OwnerViewSet(viewsets.ModelViewSet):
     queryset           = Owner.objects.all()
@@ -32,6 +33,60 @@ class VehicleTypeAccessViewSet(viewsets.ModelViewSet):
     queryset           = VehicleTypeAccess.objects.all()
     serializer_class   = VehicleTypeAccessSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+class ParkingSpaceViewSet(viewsets.ModelViewSet):
+    queryset           = ParkingSpace.objects.all()
+    serializer_class   = ParkingSpaceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class ParkingZoneViewSet(viewsets.ModelViewSet):
+    queryset           = ParkingZone.objects.prefetch_related('spaces').all()
+    serializer_class   = ParkingZoneSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
+
+    @action(detail=True, methods=['post'], url_path='upload-image')
+    def upload_image(self, request, pk=None):
+        zone = self.get_object()
+        img  = request.FILES.get('image')
+        if not img:
+            return Response({'error': 'No image provided.'}, status=400)
+        zone.reference_image = img
+        zone.save()
+        return Response(self.get_serializer(zone).data)
+
+    @action(detail=True, methods=['post'], url_path='save-layout')
+    def save_layout(self, request, pk=None):
+        """Bulk update the parking space layout for this zone."""
+        zone        = self.get_object()
+        spaces_data = request.data.get('spaces', [])
+        submitted   = {s['space_number'] for s in spaces_data}
+
+        # Remove spaces the admin deleted
+        zone.spaces.exclude(space_number__in=submitted).delete()
+
+        # Update or create each space (preserving is_occupied / occupied_by)
+        result = []
+        for s in spaces_data:
+            space, _ = ParkingSpace.objects.update_or_create(
+                zone=zone,
+                space_number=s['space_number'],
+                defaults={
+                    'vehicle_category': zone.vehicle_category,
+                    'x1': s.get('x1'),
+                    'y1': s.get('y1'),
+                    'x2': s.get('x2'),
+                    'y2': s.get('y2'),
+                },
+            )
+            result.append(space)
+
+        return Response(ParkingSpaceSerializer(result, many=True).data)
 
 
 from rest_framework.views import APIView
@@ -178,6 +233,13 @@ class AcceptRegistrationView(APIView):
         if registration.status != VehicleRegistration.Status.PENDING:
             return Response({"error": "Only pending registrations can be accepted."}, status=status.HTTP_400_BAD_REQUEST)
 
+        or_number = request.data.get('or_number', '').strip()
+        if not or_number:
+            return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Admin may override the schedule (e.g. if original choice is full)
+        schedule_override = request.data.get('schedule', '').strip()
+
         if User.objects.filter(email=registration.email).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -217,6 +279,10 @@ class AcceptRegistrationView(APIView):
         else:
             registration.system_employee_id = f"SLC-EMP-{padded_id}"
 
+        registration.or_number = or_number
+        registration.user = user  # direct FK — eliminates email-string lookups
+        if schedule_override:
+            registration.schedule = schedule_override
         registration.status = VehicleRegistration.Status.ACCEPTED
         registration.reviewed_at = timezone.now()
         registration.save()
@@ -282,3 +348,159 @@ class RejectRegistrationView(APIView):
         send_rejection_email(registration, reason)
 
         return Response({"message": "Registration rejected."})
+
+
+# ──────────────────────────────────────────────
+# Registration Window & Open Public Registration
+# ──────────────────────────────────────────────
+
+REGISTRATION_OPEN_MONTH  = 6   # June  (tentative — 2 months before school year)
+REGISTRATION_OPEN_DAY    = 1
+REGISTRATION_CLOSE_MONTH = 10  # October (tentative — end of first semester enrollment window)
+REGISTRATION_CLOSE_DAY   = 31
+SCHEDULE_SLOT_LIMIT      = 100  # per schedule (MWF / TTHS)
+
+
+def _registration_window():
+    now = timezone.localtime(timezone.now())
+    m, d = now.month, now.day
+    is_open = (
+        (REGISTRATION_OPEN_MONTH, REGISTRATION_OPEN_DAY)
+        <= (m, d)
+        <= (REGISTRATION_CLOSE_MONTH, REGISTRATION_CLOSE_DAY)
+    )
+    return {
+        "is_open": is_open,
+        "open_date": f"June 1 (tentative)",
+        "close_date": f"October 31 (tentative)",
+        "slot_limit": SCHEDULE_SLOT_LIMIT,
+    }
+
+
+class RegistrationStatusView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response(_registration_window())
+
+
+class ScheduleSlotsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from django.db.models import Q
+        active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+        base = VehicleRegistration.objects.filter(status__in=active)
+        # Count registrations that include at least one day from each group
+        mwf_q = (
+            Q(campus_days__contains=['Monday']) |
+            Q(campus_days__contains=['Wednesday']) |
+            Q(campus_days__contains=['Friday'])
+        )
+        tths_q = (
+            Q(campus_days__contains=['Tuesday']) |
+            Q(campus_days__contains=['Thursday']) |
+            Q(campus_days__contains=['Saturday'])
+        )
+        mwf_count  = base.filter(mwf_q).count()
+        tths_count = base.filter(tths_q).count()
+        limit = SCHEDULE_SLOT_LIMIT
+        return Response({
+            "MWF":  {"used": mwf_count,  "limit": limit, "available": max(0, limit - mwf_count)},
+            "TTHS": {"used": tths_count, "limit": limit, "available": max(0, limit - tths_count)},
+        })
+
+
+class PublicOpenRegistrationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        window = _registration_window()
+        if not window["is_open"]:
+            return Response(
+                {"error": "Vehicle Pass registration is currently closed.", "period_closed": True},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        registrant_type = request.data.get('registrant_type', '')
+        if registrant_type not in ['student', 'employee', 'fetcher']:
+            return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = dict(request.data)
+
+        if registrant_type == 'employee' or registrant_type == 'fetcher':
+            data['schedule'] = 'ANY'
+            data['campus_days'] = []
+        else:
+            # Derive schedule group from selected campus_days
+            campus_days = data.get('campus_days', [])
+            if not campus_days:
+                return Response({"error": "Students must select at least one campus day."}, status=status.HTTP_400_BAD_REQUEST)
+            mwf_days  = {'Monday', 'Wednesday', 'Friday'}
+            tths_days = {'Tuesday', 'Thursday', 'Saturday'}
+            days_set  = set(campus_days)
+            mwf_n  = len(days_set & mwf_days)
+            tths_n = len(days_set & tths_days)
+            if mwf_n >= tths_n and mwf_n > 0:
+                data['schedule'] = 'MWF'
+            elif tths_n > 0:
+                data['schedule'] = 'TTHS'
+
+        data['token'] = str(uuid.uuid4())  # internal uniqueness token
+
+        serializer = VehicleRegistrationSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save(registrant_type=registrant_type)
+            return Response({"message": "Registration submitted successfully."}, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ──────────────────────────────────────────────
+# Department & Program lists (public, for registration form)
+# ──────────────────────────────────────────────
+
+class DepartmentListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        names = list(Department.objects.filter(is_active=True).values_list('name', flat=True))
+        return Response(names)
+
+
+class ProgramListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        names = list(Program.objects.filter(is_active=True).values_list('name', flat=True))
+        return Response(names)
+
+
+# ──────────────────────────────────────────────
+# Parking Availability (for vehicle owners)
+# ──────────────────────────────────────────────
+
+class IsVehicleOwnerRole(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'vehicle_owner')
+
+
+class ParkingAvailabilityView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        category = request.query_params.get('category', '')
+        qs = ParkingSpace.objects.all()
+        if category in ['motorcycle', 'car']:
+            qs = qs.filter(vehicle_category=category)
+        spaces = ParkingSpaceSerializer(qs, many=True).data
+        summary = {}
+        for s in spaces:
+            cat = s['vehicle_category']
+            if cat not in summary:
+                summary[cat] = {'total': 0, 'occupied': 0, 'available': 0}
+            summary[cat]['total'] += 1
+            if s['is_occupied']:
+                summary[cat]['occupied'] += 1
+            else:
+                summary[cat]['available'] += 1
+        return Response({"spaces": spaces, "summary": summary})

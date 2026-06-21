@@ -1,12 +1,12 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { 
-  LayoutDashboard, 
-  Car, 
-  Users, 
-  ShieldCheck, 
-  FileSliders, 
+  LayoutDashboard,
+  Car,
+  Users,
+  ShieldCheck,
+  FileSliders,
   ClipboardList,
-  Search,
+  ParkingCircle,
   HelpCircle,
   LogOut
 } from 'lucide-react'
@@ -30,6 +30,7 @@ export default function AdminLayout({ children }) {
     { name: 'Entry Management', path: '/admin/entries', icon: <ShieldCheck size={18} /> },
     { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
     { name: 'Audit Log', path: '/admin/audit', icon: <ClipboardList size={18} /> },
+    { name: 'Parking', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
   ]
 
   return (

@@ -1,7 +1,7 @@
 import api from './axios'
 
 export const registrationApi = {
-  // Generate a new QR token
+  // ── Admin: token management (kept for legacy use) ──
   generateToken: async (registrantType, expiresAt) => {
     const { data } = await api.post('/vehicles/tokens/generate/', {
       registrant_type: registrantType,
@@ -9,61 +9,76 @@ export const registrationApi = {
     })
     return data
   },
-
-  // List all tokens
   listTokens: async () => {
     const { data } = await api.get('/vehicles/tokens/')
     return data
   },
-
-  // Toggle token active status
   toggleToken: async (id) => {
     const { data } = await api.post(`/vehicles/tokens/${id}/toggle/`)
     return data
   },
-
-  // Delete token
   deleteToken: async (id) => {
     const { data } = await api.delete(`/vehicles/tokens/${id}/`)
     return data
   },
-
-  // Clear expired/used tokens
   clearTokens: async () => {
     const { data } = await api.delete('/vehicles/tokens/clear/')
     return data
   },
 
-  // Validate a token (public)
+  // ── Token-based registration (legacy) ──
   validateToken: async (token) => {
     const { data } = await api.get(`/vehicles/register/validate-token/${token}/`)
     return data
   },
-
-  // Submit a registration (public)
   submitRegistration: async (token, registrationData) => {
-    const { data } = await api.post('/vehicles/register/submit/', {
-      token,
-      ...registrationData
-    })
+    const { data } = await api.post('/vehicles/register/submit/', { token, ...registrationData })
     return data
   },
 
-  // Get pending registrations (Admin)
+  // ── Public open registration (no token required) ──
+  getRegistrationStatus: async () => {
+    const { data } = await api.get('/vehicles/register/status/')
+    return data
+  },
+  getScheduleSlots: async () => {
+    const { data } = await api.get('/vehicles/register/schedule-slots/')
+    return data
+  },
+  getDepartments: async () => {
+    const { data } = await api.get('/vehicles/departments/')
+    return data
+  },
+  getPrograms: async () => {
+    const { data } = await api.get('/vehicles/programs/')
+    return data
+  },
+  submitOpenRegistration: async (registrationData) => {
+    const { data } = await api.post('/vehicles/register/open/', registrationData)
+    return data
+  },
+
+  // ── Admin: pending registrations ──
   getPendingRegistrations: async (status = 'pending') => {
     const { data } = await api.get(`/vehicles/registrations/pending/?status=${status}`)
     return data
   },
-
-  // Accept a registration — returns { message, account: { user_code, system_id, temp_password, ... } }
-  acceptRegistration: async (id) => {
-    const { data } = await api.post(`/vehicles/registrations/${id}/accept/`)
+  // orNumber and scheduleOverride are now required/optional for acceptance
+  acceptRegistration: async (id, orNumber, scheduleOverride) => {
+    const payload = { or_number: orNumber }
+    if (scheduleOverride) payload.schedule = scheduleOverride
+    const { data } = await api.post(`/vehicles/registrations/${id}/accept/`, payload)
     return data
   },
-
-  // Reject a registration
   rejectRegistration: async (id, reason) => {
     const { data } = await api.post(`/vehicles/registrations/${id}/reject/`, { reason })
     return data
-  }
+  },
+
+  // ── Parking availability ──
+  getParkingAvailability: async (category) => {
+    const params = category ? { category } : {}
+    const { data } = await api.get('/vehicles/parking-availability/', { params })
+    return data
+  },
 }
