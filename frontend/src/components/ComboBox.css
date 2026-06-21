@@ -1,0 +1,146 @@
+/* ── ComboBox — searchable dropdown ── */
+
+.cb-wrap {
+  position: relative;
+  width: 100%;
+}
+
+/* Input row — all three elements are flex siblings, no absolute positioning */
+.cb-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 12px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cb-field--open,
+.cb-field:focus-within {
+  border-color: #2A2B61;
+  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
+}
+
+.cb-search-icon {
+  flex-shrink: 0;
+  color: #A8ACC4;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+
+.cb-input {
+  flex: 1;
+  /* !important overrides .form-group input[type="text"] from RegisterPage.css */
+  padding: 11px 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 14px;
+  color: #1A1D2E;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+
+.cb-input:focus {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.cb-input::placeholder {
+  color: #A8ACC4;
+}
+
+.cb-chevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #A8ACC4;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s, transform 0.2s;
+}
+
+.cb-chevron:hover {
+  background: #F0F2FF;
+  color: #2A2B61;
+}
+
+.cb-chevron--open {
+  color: #2A2B61;
+  transform: rotate(180deg);
+}
+
+/* Dropdown list */
+.cb-list {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 12px;
+  box-shadow:
+    0 4px 6px rgba(42, 43, 97, 0.04),
+    0 12px 30px rgba(42, 43, 97, 0.12);
+  max-height: 232px;
+  overflow-y: auto;
+  z-index: 1200;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  /* Custom scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #C7C9E8 transparent;
+}
+
+.cb-list::-webkit-scrollbar       { width: 5px; }
+.cb-list::-webkit-scrollbar-track { background: transparent; }
+.cb-list::-webkit-scrollbar-thumb { background: #C7C9E8; border-radius: 4px; }
+
+/* Options */
+.cb-option {
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 13.5px;
+  color: #2A2B61;
+  cursor: pointer;
+  transition: background 0.1s;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.cb-option:hover,
+.cb-option--active {
+  background: #F0F2FF;
+  color: #1A1D2E;
+}
+
+.cb-option--selected {
+  background: #EEEEFF;
+  font-weight: 600;
+  color: #2A2B61;
+}
+
+.cb-option--selected.cb-option--active {
+  background: #E4E6FF;
+}
+
+/* Empty state */
+.cb-empty {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: #A8ACC4;
+  font-style: italic;
+  text-align: center;
+}

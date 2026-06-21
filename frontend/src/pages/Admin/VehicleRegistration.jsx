@@ -3,165 +3,98 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { QrCode, Copy, Check, X, Eye, Power, PowerOff, Trash2, Eraser, MoreVertical, User, Car, KeyRound, ShieldCheck, Mail } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays } from 'lucide-react'
 import './VehicleRegistration.css'
 
-export default function VehicleRegistration() {
-  // Token State
-  const [tokens, setTokens] = useState([])
-  const [isTokenModalOpen, setIsTokenModalOpen] = useState(false)
-  const [openActionId, setOpenActionId] = useState(null)
-  const [tokenType, setTokenType] = useState('student')
-  const [tokenExpiry, setTokenExpiry] = useState('')
-  const [generatedToken, setGeneratedToken] = useState(null)
-  const [copied, setCopied] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [generateError, setGenerateError] = useState(null)
+const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day' }
 
+export default function VehicleRegistration() {
   // Registrations State
   const [registrations, setRegistrations] = useState([])
   const [statusFilter, setStatusFilter] = useState('pending')
-  const [selectedReg, setSelectedReg] = useState(null)
-  
-  // Pagination State
-  const [tokenPage, setTokenPage] = useState(1)
+
+  // Pagination
   const [regPage, setRegPage] = useState(1)
-  const itemsPerPage = 5
-  
+  const itemsPerPage = 10
+
   // Modals
+  const [selectedReg, setSelectedReg] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
-  const [confirmAcceptModal, setConfirmAcceptModal] = useState(null) // holds registration id
-  const [resultModal, setResultModal] = useState(null) // { message, type }
+
+  // Accept flow — OR number + schedule
+  const [acceptModal, setAcceptModal] = useState(null)  // holds registration object
+  const [orNumber, setOrNumber] = useState('')
+  const [scheduleOverride, setScheduleOverride] = useState('')
+
+  const [resultModal, setResultModal] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [isQRModalOpen, setIsQRModalOpen] = useState(false)
   const [qrDisplayData, setQrDisplayData] = useState(null)
   const [qrViewerCopied, setQrViewerCopied] = useState(false)
-  const [accountModal, setAccountModal] = useState(null) // holds account details after acceptance
+  const [accountModal, setAccountModal] = useState(null)
   const [emailFailed, setEmailFailed] = useState(false)
 
   useEffect(() => {
-    fetchTokens()
     fetchRegistrations()
   }, [statusFilter])
-
-  const fetchTokens = async () => {
-    try {
-      const data = await registrationApi.listTokens()
-      setTokens(data)
-    } catch (error) {
-      console.error("Failed to fetch tokens:", error)
-    }
-  }
 
   const fetchRegistrations = async () => {
     try {
       const data = await registrationApi.getPendingRegistrations(statusFilter)
       setRegistrations(data)
     } catch (error) {
-      console.error("Failed to fetch registrations:", error)
+      console.error('Failed to fetch registrations:', error)
     }
-  }
-
-  const handleGenerateQR = async (e) => {
-    e.preventDefault()
-    setIsGenerating(true)
-    setGenerateError(null)
-    try {
-      const data = await registrationApi.generateToken(tokenType, tokenExpiry)
-      setGeneratedToken(data)
-      fetchTokens()
-    } catch (error) {
-      console.error('Failed to generate token:', error)
-      setGenerateError(error.response?.data?.error || 'Failed to generate QR. Please try again.')
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  const handleCopyLink = () => {
-    if (!generatedToken) return
-    const link = `${window.location.origin}/register?token=${generatedToken.token}`
-    navigator.clipboard.writeText(link)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const handleCopyTokenLink = (token) => {
-    const link = `${window.location.origin}/register?token=${token}`
-    navigator.clipboard.writeText(link)
-    showResult("Link copied to clipboard!", "success")
-  }
-
-  const handleToggleToken = async (id) => {
-    try {
-      await registrationApi.toggleToken(id)
-      fetchTokens()
-    } catch (error) {
-      console.error("Failed to toggle token:", error)
-    }
-  }
-
-  const handleDeleteToken = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this token?")) return
-    try {
-      await registrationApi.deleteToken(id)
-      fetchTokens()
-    } catch (error) {
-      console.error("Failed to delete token:", error)
-    }
-  }
-
-  const handleViewTokenQR = (token) => {
-    const link = `${window.location.origin}/register?token=${token}`
-    openQRModal({ type: 'token', token, link }, 'Registration Invite QR Code', `${window.location.origin}/register?token=${token.substring(0, 8)}...`)
   }
 
   const handleViewVehicleQR = () => {
     if (!selectedReg) return
     const qrData = `VEHICLE:${selectedReg.plate_number}|ID:${selectedReg.id}`
-    openQRModal(
-      { type: 'vehicle', payload: qrData, plateNumber: selectedReg.plate_number, ownerName: selectedReg.full_name },
-      'Vehicle Access QR Code',
-      `${selectedReg.full_name} - ${selectedReg.plate_number}`,
-    )
+    setQrDisplayData({
+      type: 'vehicle',
+      payload: qrData,
+      title: 'Vehicle Access QR Code',
+      subtitle: `${selectedReg.full_name} — ${selectedReg.plate_number}`,
+    })
+    setIsQRModalOpen(true)
   }
 
   const handleCopyQRData = async () => {
     if (!qrDisplayData) return
     try {
-      await navigator.clipboard.writeText(qrDisplayData.type === 'token' ? qrDisplayData.link : qrDisplayData.payload)
+      await navigator.clipboard.writeText(qrDisplayData.payload)
       setQrViewerCopied(true)
       setTimeout(() => setQrViewerCopied(false), 2000)
-    } catch (err) {
+    } catch {
       showResult('Failed to copy to clipboard.', 'error')
     }
   }
 
-  const handleClearTokens = async () => {
-    if (!window.confirm("Are you sure you want to clear all expired and used tokens?")) return
-    try {
-      await registrationApi.clearTokens()
-      fetchTokens()
-    } catch (error) {
-      console.error("Failed to clear tokens:", error)
-    }
-  }
-
-  const handleAcceptClick = (id) => {
-    setConfirmAcceptModal(id)
+  // ── Accept flow ──
+  const openAcceptModal = (reg) => {
+    setAcceptModal(reg)
+    setOrNumber('')
+    setScheduleOverride(reg.schedule || '')
   }
 
   const confirmAccept = async () => {
-    if (!confirmAcceptModal) return
+    if (!acceptModal) return
+    if (!orNumber.trim()) {
+      showResult('Please enter the Official Receipt (OR) number before accepting.', 'error')
+      return
+    }
     setSubmitting(true)
     try {
-      const result = await registrationApi.acceptRegistration(confirmAcceptModal)
+      const result = await registrationApi.acceptRegistration(
+        acceptModal.id,
+        orNumber.trim(),
+        scheduleOverride || undefined,
+      )
       setIsViewModalOpen(false)
-      setConfirmAcceptModal(null)
+      setAcceptModal(null)
       fetchRegistrations()
-      // Show account details modal
       if (result?.account) {
         setAccountModal(result.account)
         setEmailFailed(result.email_status === 'failed')
@@ -170,7 +103,7 @@ export default function VehicleRegistration() {
       }
     } catch (error) {
       console.error('Failed to accept registration:', error)
-      setConfirmAcceptModal(null)
+      setAcceptModal(null)
       showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
     } finally {
       setSubmitting(false)
@@ -187,42 +120,17 @@ export default function VehicleRegistration() {
       setIsViewModalOpen(false)
       setRejectReason('')
       fetchRegistrations()
-      showResult("Registration rejected successfully.", "success")
+      showResult('Registration rejected successfully.', 'success')
     } catch (error) {
-      console.error("Failed to reject registration:", error)
-      showResult(error.response?.data?.error || "Failed to reject registration.", "error")
+      showResult(error.response?.data?.error || 'Failed to reject registration.', 'error')
     } finally {
       setSubmitting(false)
     }
   }
 
-  const showResult = (message, type = 'success') => {
-    setResultModal({ message, type })
-  }
-
-  const openViewModal = (reg) => {
-    setSelectedReg(reg)
-    setIsViewModalOpen(true)
-  }
-
-  const openRejectModal = () => {
-    setIsRejectModalOpen(true)
-  }
-
-  const openQRModal = (qrData, title, subtitle) => {
-    setQrDisplayData({ ...qrData, title, subtitle })
-    setIsQRModalOpen(true)
-  }
-
-  // Helper to get current datetime formatted for datetime-local input (YYYY-MM-DDThh:mm)
-  const getMinDateTime = () => {
-    const now = new Date()
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-    return now.toISOString().slice(0, 16)
-  }
-
-  const paginatedTokens = tokens.slice((tokenPage - 1) * itemsPerPage, tokenPage * itemsPerPage)
-  const totalTokenPages = Math.ceil(tokens.length / itemsPerPage)
+  const showResult = (message, type = 'success') => setResultModal({ message, type })
+  const openViewModal = (reg) => { setSelectedReg(reg); setIsViewModalOpen(true) }
+  const openRejectModal = () => setIsRejectModalOpen(true)
 
   const paginatedRegistrations = registrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
   const totalRegPages = Math.ceil(registrations.length / itemsPerPage)
@@ -232,148 +140,17 @@ export default function VehicleRegistration() {
       <div className="vehicle-registration-page">
         <div className="page-header">
           <h1 className="page-title">Vehicle Registration Management</h1>
-          <p className="page-subtitle">Manage QR invites and review pending registrations.</p>
+          <p className="page-subtitle">Review and process vehicle pass applications.</p>
         </div>
 
-        {/* SECTION 1: Token Management */}
+        {/* SECTION: Registrations */}
         <div className="section-container">
           <div className="section-header">
-            <h2 className="section-title">Registration QR Codes</h2>
-            <div className="header-buttons">
-              <button 
-                className="btn-clear"
-                onClick={handleClearTokens}
-                title="Clear Expired & Used"
-              >
-                <Eraser size={16} />
-                Clear Expired
-              </button>
-              <button 
-                className="btn-primary"
-                onClick={() => {
-                  setGeneratedToken(null)
-                  setTokenType('student')
-                  setTokenExpiry('')
-                  setGenerateError(null)
-                  setIsTokenModalOpen(true)
-                }}
-              >
-                <QrCode size={18} />
-                Generate New QR
-              </button>
-            </div>
-          </div>
-
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Expires At</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedTokens.map(t => (
-                  <tr key={t.id}>
-                    <td className="capitalize">{t.registrant_type}</td>
-                    <td>{format(new Date(t.expires_at), 'PPp')}</td>
-                    <td>
-                      <span className={`status-badge status-${t.is_valid ? 'active' : (t.is_used ? 'disabled' : (t.is_active ? 'expired' : 'disabled'))}`}>
-                        {t.is_valid ? 'Active' : (t.is_used ? 'Used' : (t.is_active ? 'Expired' : 'Disabled'))}
-                      </span>
-                    </td>
-                    <td className="action-cell">
-                      <button 
-                        className="action-menu-trigger"
-                        onClick={() => setOpenActionId(openActionId === t.id ? null : t.id)}
-                        onBlur={() => setTimeout(() => setOpenActionId(null), 200)}
-                      >
-                        <MoreVertical size={18} />
-                      </button>
-                      
-                      {openActionId === t.id && (
-                        <div className="action-dropdown">
-                           <button
-                             className="action-dropdown-item"
-                             onClick={() => {
-                               handleViewTokenQR(t.token)
-                               setOpenActionId(null)
-                             }}
-                           >
-                             <Eye size={16} />
-                             View QR
-                           </button>
-                           <button
-                             className={`action-dropdown-item ${t.is_active ? 'toggle-disable' : 'toggle-enable'}`}
-                             onClick={() => {
-                               handleToggleToken(t.id)
-                               setOpenActionId(null)
-                             }}
-                           >
-                             {t.is_active ? <PowerOff size={16} /> : <Power size={16} />}
-                             {t.is_active ? 'Disable' : 'Enable'}
-                           </button>
-                           <button
-                             className="action-dropdown-item delete"
-                             onClick={() => {
-                               handleDeleteToken(t.id)
-                               setOpenActionId(null)
-                             }}
-                           >
-                             <Trash2 size={16} />
-                             Delete
-                           </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {tokens.length === 0 && (
-                  <tr className="empty-row">
-                    <td colSpan="4">No tokens generated yet.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          
-          {/* Token Pagination */}
-          {totalTokenPages > 1 && (
-            <div className="pagination-bar">
-              <span className="pagination-info">Page {tokenPage} of {totalTokenPages}</span>
-              <div className="pagination-buttons">
-                <button 
-                  className="pagination-btn"
-                  disabled={tokenPage === 1}
-                  onClick={() => setTokenPage(p => Math.max(1, p - 1))}
-                >
-                  Previous
-                </button>
-                <button 
-                  className="pagination-btn"
-                  disabled={tokenPage === totalTokenPages}
-                  onClick={() => setTokenPage(p => Math.min(totalTokenPages, p + 1))}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* SECTION 2: Registrations */}
-        <div className="section-container">
-          <div className="section-header">
-            <h2 className="section-title">Registrations</h2>
-            <select 
+            <h2 className="section-title">Applications</h2>
+            <select
               className="filter-select"
               value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value)
-                setRegPage(1)
-              }}
+              onChange={(e) => { setStatusFilter(e.target.value); setRegPage(1) }}
             >
               <option value="pending">Pending Review</option>
               <option value="accepted">Accepted</option>
@@ -388,6 +165,7 @@ export default function VehicleRegistration() {
                   <th>Name</th>
                   <th>Type</th>
                   <th>Plate Number</th>
+                  <th>Schedule</th>
                   <th>Submitted</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -399,6 +177,7 @@ export default function VehicleRegistration() {
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
                     <td className="token-link">{r.plate_number}</td>
+                    <td>{r.schedule ? (SCHEDULE_LABELS[r.schedule] || r.schedule) : '—'}</td>
                     <td>{format(new Date(r.created_at), 'PP')}</td>
                     <td>
                       <span className={`status-badge status-${r.status}`}>
@@ -406,11 +185,7 @@ export default function VehicleRegistration() {
                       </span>
                     </td>
                     <td>
-                      <button 
-                        className="view-btn"
-                        onClick={() => openViewModal(r)}
-                        title="View Details"
-                      >
+                      <button className="view-btn" onClick={() => openViewModal(r)} title="View Details">
                         <Eye size={18} />
                       </button>
                     </td>
@@ -418,119 +193,24 @@ export default function VehicleRegistration() {
                 ))}
                 {registrations.length === 0 && (
                   <tr className="empty-row">
-                    <td colSpan="6">No {statusFilter} registrations found.</td>
+                    <td colSpan="7">No {statusFilter} registrations found.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          
-          {/* Registrations Pagination */}
+
           {totalRegPages > 1 && (
             <div className="pagination-bar">
               <span className="pagination-info">Page {regPage} of {totalRegPages}</span>
               <div className="pagination-buttons">
-                <button 
-                  className="pagination-btn"
-                  disabled={regPage === 1}
-                  onClick={() => setRegPage(p => Math.max(1, p - 1))}
-                >
-                  Previous
-                </button>
-                <button 
-                  className="pagination-btn"
-                  disabled={regPage === totalRegPages}
-                  onClick={() => setRegPage(p => Math.min(totalRegPages, p + 1))}
-                >
-                  Next
-                </button>
+                <button className="pagination-btn" disabled={regPage === 1} onClick={() => setRegPage(p => Math.max(1, p - 1))}>Previous</button>
+                <button className="pagination-btn" disabled={regPage === totalRegPages} onClick={() => setRegPage(p => Math.min(totalRegPages, p + 1))}>Next</button>
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* MODAL: Generate QR */}
-      {isTokenModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <h2 className="modal-title">Generate Registration QR</h2>
-            
-              {!generatedToken ? (
-              <form onSubmit={handleGenerateQR}>
-                <div className="form-group">
-                  <label className="form-label">Registrant Type</label>
-                  <select 
-                    className="form-select"
-                    value={tokenType}
-                    onChange={(e) => setTokenType(e.target.value)}
-                    disabled={isGenerating}
-                  >
-                    <option value="student">Student</option>
-                    <option value="employee">Employee</option>
-                  </select>
-                </div>
-                
-                <div className="form-group">
-                  <label className="form-label">Expiration Date &amp; Time</label>
-                  <input 
-                    type="datetime-local" 
-                    className="form-input"
-                    value={tokenExpiry}
-                    min={getMinDateTime()}
-                    onChange={(e) => setTokenExpiry(e.target.value)}
-                    disabled={isGenerating}
-                    required
-                  />
-                </div>
-
-                {generateError && (
-                  <div className="generate-error-banner">
-                    <X size={14} />
-                    {generateError}
-                  </div>
-                )}
-
-                <div className="modal-actions">
-                  <button type="button" className="btn-outline" onClick={() => setIsTokenModalOpen(false)} disabled={isGenerating}>Cancel</button>
-                  <button type="submit" className="btn-primary" disabled={isGenerating}>
-                    {isGenerating ? (
-                      <><span className="btn-spinner" />Generating...</>
-                    ) : (
-                      <><QrCode size={16} />Generate</>
-                    )}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div>
-                <div className="qr-container">
-                  <QRCodeSVG 
-                    value={`${window.location.origin}/register?token=${generatedToken.token}`} 
-                    size={200}
-                    level="H"
-                    includeMargin={true}
-                  />
-                  <div className="qr-link-box">
-                    <input 
-                      type="text" 
-                      readOnly 
-                      className="qr-link-input"
-                      value={`${window.location.origin}/register?token=${generatedToken.token}`}
-                    />
-                    <button className="btn-outline" onClick={handleCopyLink} title="Copy Link" style={{ padding: '8px 12px' }}>
-                      {copied ? <Check size={16} style={{ color: '#059669' }} /> : <Copy size={16} />}
-                    </button>
-                  </div>
-                </div>
-                <div className="modal-actions">
-                  <button type="button" className="btn-primary" onClick={() => setIsTokenModalOpen(false)} style={{ width: '100%', justifyContent: 'center' }}>Close</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* MODAL: View Registration Details */}
       {isViewModalOpen && selectedReg && (
@@ -538,11 +218,9 @@ export default function VehicleRegistration() {
           <div className="modal-content modal-lg">
             <div className="modal-header">
               <h2 className="modal-title">Registration Details</h2>
-              <button className="modal-close-btn" onClick={() => setIsViewModalOpen(false)}>
-                <X size={24} />
-              </button>
+              <button className="modal-close-btn" onClick={() => setIsViewModalOpen(false)}><X size={24} /></button>
             </div>
-            
+
             <div className="details-grid detail-divider">
               <div className="detail-item">
                 <div className="detail-label">Full Name</div>
@@ -556,7 +234,11 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Type</div>
                 <div className="detail-value capitalize">{selectedReg.registrant_type}</div>
               </div>
-              
+              <div className="detail-item">
+                <div className="detail-label">Schedule</div>
+                <div className="detail-value">{selectedReg.schedule ? (SCHEDULE_LABELS[selectedReg.schedule] || selectedReg.schedule) : '—'}</div>
+              </div>
+
               {selectedReg.registrant_type === 'student' ? (
                 <>
                   <div className="detail-item">
@@ -568,7 +250,7 @@ export default function VehicleRegistration() {
                     <div className="detail-value">{selectedReg.program_year}</div>
                   </div>
                 </>
-              ) : (
+              ) : selectedReg.registrant_type === 'employee' ? (
                 <>
                   <div className="detail-item">
                     <div className="detail-label">Employee ID</div>
@@ -579,8 +261,8 @@ export default function VehicleRegistration() {
                     <div className="detail-value">{selectedReg.department}</div>
                   </div>
                 </>
-              )}
-              
+              ) : null}
+
               <div className="detail-item">
                 <div className="detail-label">Address</div>
                 <div className="detail-value">{selectedReg.address || 'N/A'}</div>
@@ -595,25 +277,24 @@ export default function VehicleRegistration() {
               </div>
               <div className="detail-item">
                 <div className="detail-label">Driver's License</div>
-                <div className="detail-value">{selectedReg.drivers_license}</div>
+                <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
 
-              {selectedReg.registrant_type === 'student' && selectedReg.campus_days?.length > 0 && (
+              {selectedReg.campus_days?.length > 0 && (
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <div className="detail-label">Campus Days</div>
                   <div className="detail-value" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
                     {selectedReg.campus_days.map(day => (
-                      <span key={day} style={{
-                        display: 'inline-block',
-                        padding: '3px 12px',
-                        borderRadius: '50px',
-                        background: '#2A2B61',
-                        color: '#fff',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                      }}>{day}</span>
+                      <span key={day} style={{ display: 'inline-block', padding: '3px 12px', borderRadius: '50px', background: '#2A2B61', color: '#fff', fontSize: '12px', fontWeight: 600 }}>{day}</span>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {selectedReg.or_number && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">Official Receipt (OR) No.</div>
+                  <div className="detail-value token-link" style={{ fontWeight: 700, color: '#059669' }}>{selectedReg.or_number}</div>
                 </div>
               )}
 
@@ -651,16 +332,10 @@ export default function VehicleRegistration() {
 
             {selectedReg.status === 'pending' && (
               <div className="detail-actions">
-                <button
-                  className="btn-success"
-                  onClick={() => handleAcceptClick(selectedReg.id)}
-                >
-                  <Check size={18} /> Accept &amp; Generate ID
+                <button className="btn-success" onClick={() => openAcceptModal(selectedReg)}>
+                  <Check size={18} /> Accept Registration
                 </button>
-                <button
-                  className="btn-danger"
-                  onClick={openRejectModal}
-                >
+                <button className="btn-danger" onClick={openRejectModal}>
                   <X size={18} /> Reject
                 </button>
               </div>
@@ -677,20 +352,78 @@ export default function VehicleRegistration() {
         </div>
       )}
 
+      {/* MODAL: Accept — OR Number input + Schedule confirmation */}
+      {acceptModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2 className="modal-title">Accept Registration</h2>
+              <button className="modal-close-btn" onClick={() => setAcceptModal(null)} disabled={submitting}><X size={20} /></button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#7C80A3', marginBottom: '20px', lineHeight: 1.6 }}>
+              Before accepting, confirm that <strong>{acceptModal.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
+            </p>
+
+            <div className="form-group">
+              <label className="form-label">
+                <Receipt size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                Official Receipt (OR) Number <span className="required">*</span>
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                value={orNumber}
+                onChange={(e) => setOrNumber(e.target.value)}
+                placeholder="e.g. OR-2026-000123"
+                disabled={submitting}
+                autoFocus
+              />
+              <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
+            </div>
+
+            {acceptModal.registrant_type === 'student' && (
+              <div className="form-group">
+                <label className="form-label">
+                  <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  Campus Schedule
+                </label>
+                <select
+                  className="form-select"
+                  value={scheduleOverride}
+                  onChange={(e) => setScheduleOverride(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="">Keep applicant's choice ({acceptModal.schedule || 'none'})</option>
+                  <option value="MWF">MWF — Monday · Wednesday · Friday</option>
+                  <option value="TTHS">TTHS — Tuesday · Thursday · Saturday</option>
+                </select>
+                <p className="form-hint">Override if the chosen schedule is full or requires adjustment.</p>
+              </div>
+            )}
+
+            <div className="confirm-actions" style={{ marginTop: '8px' }}>
+              <button className="btn-outline" onClick={() => setAcceptModal(null)} disabled={submitting}>Cancel</button>
+              <button className="btn-success" onClick={confirmAccept} disabled={submitting || !orNumber.trim()}>
+                {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: Reject Reason */}
       {isRejectModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
               <h2 className="modal-title danger">Reject Registration</h2>
-              <button className="modal-close-btn" onClick={() => setIsRejectModalOpen(false)}>
-                <X size={20} />
-              </button>
+              <button className="modal-close-btn" onClick={() => setIsRejectModalOpen(false)}><X size={20} /></button>
             </div>
             <form onSubmit={handleReject}>
               <div className="form-group">
                 <label className="form-label">Reason for Rejection <span className="required">*</span></label>
-                <textarea 
+                <textarea
                   className="form-textarea"
                   rows={4}
                   value={rejectReason}
@@ -710,83 +443,23 @@ export default function VehicleRegistration() {
         </div>
       )}
 
-      {/* MODAL: Confirm Accept */}
-      {confirmAcceptModal && (
-        <div className="modal-overlay">
-          <div className="modal-content confirm-modal">
-            <div className="modal-header">
-              <h2 className="modal-title">Confirm Action</h2>
-              <button className="modal-close-btn" onClick={() => setConfirmAcceptModal(null)} disabled={submitting}>
-                <X size={20} />
-              </button>
-            </div>
-            <div className="confirm-icon success">
-              <Check size={24} />
-            </div>
-            <p className="confirm-message">This will automatically provision a user account and generate a QR token for the vehicle owner. Are you sure you want to proceed?</p>
-            <div className="confirm-actions">
-              <button 
-                className="btn-outline" 
-                onClick={() => setConfirmAcceptModal(null)}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
-              <button 
-                className="btn-success" 
-                onClick={confirmAccept}
-                disabled={submitting}
-              >
-                {submitting ? 'Processing...' : 'Confirm Accept'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* MODAL: QR Viewer */}
       {isQRModalOpen && qrDisplayData && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setIsQRModalOpen(false)}>
           <div className="modal-content qr-viewer-modal">
             <div className="modal-header">
               <h2 className="modal-title">{qrDisplayData.title}</h2>
-              <button className="modal-close-btn" onClick={() => setIsQRModalOpen(false)}>
-                <X size={24} />
-              </button>
+              <button className="modal-close-btn" onClick={() => setIsQRModalOpen(false)}><X size={24} /></button>
             </div>
-            
             <p className="qr-viewer-subtitle">{qrDisplayData.subtitle}</p>
-            
             <div className="qr-display-wrapper">
-              {qrDisplayData.type === 'token' ? (
-                <QRCodeSVG
-                  value={qrDisplayData.link}
-                  size={220}
-                  level="H"
-                  includeMargin={true}
-                />
-              ) : (
-                <QRCodeSVG
-                  value={qrDisplayData.payload}
-                  size={220}
-                  level="H"
-                  includeMargin={true}
-                />
-              )}
+              <QRCodeSVG value={qrDisplayData.payload} size={220} level="H" includeMargin={true} />
             </div>
-
             <div className="qr-data-box">
               <p className="qr-label">Encoded Data</p>
-              <code className="qr-code-data">
-                {qrDisplayData.type === 'token' ? qrDisplayData.link : qrDisplayData.payload}
-              </code>
+              <code className="qr-code-data">{qrDisplayData.payload}</code>
             </div>
-
-            <button
-              className="btn-primary"
-              onClick={handleCopyQRData}
-              style={{ width: '100%', justifyContent: 'center' }}
-            >
+            <button className="btn-primary" onClick={handleCopyQRData} style={{ width: '100%', justifyContent: 'center' }}>
               {qrViewerCopied ? <><Check size={16} />Copied!</> : <><Copy size={16} /> Copy Data</>}
             </button>
           </div>
@@ -803,39 +476,25 @@ export default function VehicleRegistration() {
             <h2 className="confirm-title">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
             <p className="confirm-message">{resultModal.message}</p>
             <div className="confirm-actions">
-              <button 
-                className="btn-primary" 
-                onClick={() => setResultModal(null)}
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                Close
-              </button>
+              <button className="btn-primary" onClick={() => setResultModal(null)} style={{ width: '100%', justifyContent: 'center' }}>Close</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL: Account Created — shown after successful registration acceptance */}
+      {/* MODAL: Account Created */}
       {accountModal && (
         <div className="modal-overlay">
           <div className="modal-content modal-account">
-            {/* Header */}
             <div className="account-modal-header">
-              <div className="account-success-badge">
-                <ShieldCheck size={28} />
-              </div>
+              <div className="account-success-badge"><ShieldCheck size={28} /></div>
               <div>
                 <h2 className="modal-title" style={{ marginBottom: 4 }}>Account Created Successfully</h2>
-                <p className="account-modal-subtitle">
-                  The vehicle owner account has been provisioned and credentials sent via email.
-                </p>
+                <p className="account-modal-subtitle">The vehicle owner account has been provisioned and credentials sent via email.</p>
               </div>
-              <button className="modal-close-btn" onClick={() => setAccountModal(null)}>
-                <X size={22} />
-              </button>
+              <button className="modal-close-btn" onClick={() => setAccountModal(null)}><X size={22} /></button>
             </div>
 
-            {/* System ID Banner */}
             <div className="account-id-banner">
               <div className="account-id-item">
                 <span className="account-id-label">Portal Account ID</span>
@@ -848,7 +507,6 @@ export default function VehicleRegistration() {
               </div>
             </div>
 
-            {/* Credentials Box */}
             <div className="account-credentials-box">
               <div className="account-cred-header">
                 <KeyRound size={16} />
@@ -865,12 +523,11 @@ export default function VehicleRegistration() {
                 <span className="account-cred-field">Password</span>
                 <span className="account-cred-val" style={{ color: '#7C80A3', fontStyle: 'italic' }}>Sent securely to owner's email</span>
               </div>
-              {emailFailed && (
+              {emailFailed ? (
                 <p className="account-cred-warning" style={{ color: '#DC2626' }}>
-                  ⚠ Email failed to send. Please check your SMTP settings in the .env file and share credentials manually.
+                  ⚠ Email failed to send. Please check SMTP settings and share credentials manually.
                 </p>
-              )}
-              {!emailFailed && (
+              ) : (
                 <p className="account-cred-warning" style={{ color: '#059669' }}>
                   ✓ Credentials have been emailed to the vehicle owner.
                 </p>
@@ -878,12 +535,8 @@ export default function VehicleRegistration() {
             </div>
 
             <div className="account-sections">
-              {/* Personal Info */}
               <div className="account-info-section">
-                <div className="account-section-head">
-                  <User size={14} />
-                  Personal Information
-                </div>
+                <div className="account-section-head"><User size={14} /> Personal Information</div>
                 <div className="account-info-grid">
                   <div className="account-info-item">
                     <span className="account-info-label">Full Name</span>
@@ -893,60 +546,18 @@ export default function VehicleRegistration() {
                     <span className="account-info-label">Type</span>
                     <span className="account-info-val" style={{ textTransform: 'capitalize' }}>{accountModal.registrant_type}</span>
                   </div>
-                  {accountModal.registrant_type === 'student' ? (
-                    <>
-                      <div className="account-info-item">
-                        <span className="account-info-label">Student ID</span>
-                        <span className="account-info-val">{accountModal.student_id || '—'}</span>
-                      </div>
-                      <div className="account-info-item">
-                        <span className="account-info-label">Program & Year</span>
-                        <span className="account-info-val">{accountModal.program_year || '—'}</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="account-info-item">
-                        <span className="account-info-label">Employee ID</span>
-                        <span className="account-info-val">{accountModal.employee_id || '—'}</span>
-                      </div>
-                      <div className="account-info-item">
-                        <span className="account-info-label">Department</span>
-                        <span className="account-info-val">{accountModal.department || '—'}</span>
-                      </div>
-                    </>
-                  )}
                   <div className="account-info-item">
                     <span className="account-info-label">Contact</span>
                     <span className="account-info-val">{accountModal.contact_number || '—'}</span>
                   </div>
                   <div className="account-info-item">
-                    <span className="account-info-label">Driver's License</span>
-                    <span className="account-info-val">{accountModal.drivers_license || '—'}</span>
-                  </div>
-                  {accountModal.registrant_type === 'student' && accountModal.campus_days?.length > 0 && (
-                    <div className="account-info-item" style={{ gridColumn: 'span 2' }}>
-                      <span className="account-info-label">Campus Days</span>
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
-                        {accountModal.campus_days.map(day => (
-                          <span key={day} className="account-day-badge">{day}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="account-info-item" style={{ gridColumn: 'span 2' }}>
-                    <span className="account-info-label">Address</span>
-                    <span className="account-info-val">{accountModal.address || '—'}</span>
+                    <span className="account-info-label">Schedule</span>
+                    <span className="account-info-val">{accountModal.schedule ? (SCHEDULE_LABELS[accountModal.schedule] || accountModal.schedule) : '—'}</span>
                   </div>
                 </div>
               </div>
-
-              {/* Vehicle Info */}
               <div className="account-info-section">
-                <div className="account-section-head">
-                  <Car size={14} />
-                  Vehicle Information
-                </div>
+                <div className="account-section-head"><Car size={14} /> Vehicle Information</div>
                 <div className="account-info-grid">
                   <div className="account-info-item">
                     <span className="account-info-label">Plate Number</span>
@@ -954,26 +565,14 @@ export default function VehicleRegistration() {
                   </div>
                   <div className="account-info-item">
                     <span className="account-info-label">Vehicle Type</span>
-                    <span className="account-info-val" style={{ textTransform: 'capitalize' }}>{accountModal.vehicle_type}</span>
-                  </div>
-                  <div className="account-info-item">
-                    <span className="account-info-label">Color</span>
-                    <span className="account-info-val">{accountModal.vehicle_color || '—'}</span>
-                  </div>
-                  <div className="account-info-item">
-                    <span className="account-info-label">Conduction No.</span>
-                    <span className="account-info-val">{accountModal.conduction_number || '—'}</span>
+                    <span className="account-info-val">{accountModal.vehicle_type}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="modal-actions" style={{ marginTop: 8 }}>
-              <button
-                className="btn-primary"
-                onClick={() => setAccountModal(null)}
-                style={{ flex: 1, justifyContent: 'center' }}
-              >
+              <button className="btn-primary" onClick={() => setAccountModal(null)} style={{ flex: 1, justifyContent: 'center' }}>
                 <Check size={16} /> Done
               </button>
             </div>

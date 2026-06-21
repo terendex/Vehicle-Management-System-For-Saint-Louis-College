@@ -1,11 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, X, Banknote } from 'lucide-react'
 import { registrationApi } from '../../api/registration'
+import ComboBox from '../../components/ComboBox'
 import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+const CAMPUS_DAYS = [
+  { key: 'Monday',    short: 'M',  group: 'MWF' },
+  { key: 'Tuesday',   short: 'T',  group: 'TTHS' },
+  { key: 'Wednesday', short: 'W',  group: 'MWF' },
+  { key: 'Thursday',  short: 'TH', group: 'TTHS' },
+  { key: 'Friday',    short: 'F',  group: 'MWF' },
+  { key: 'Saturday',  short: 'S',  group: 'TTHS' },
+]
+
 
 const SLC_HEADER = (
   <header className="register-header">
@@ -24,13 +33,21 @@ const SLC_HEADER = (
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
+  const directType = searchParams.get('type') // 'student' | 'student_ebike' | 'employee' | 'fetcher'
   const navigate = useNavigate()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [registrantType, setRegistrantType] = useState(null)
+  const [isEbike, setIsEbike] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [showPaymentPopup, setShowPaymentPopup] = useState(false)
+
+  // Schedule slots & reference lists
+  const [scheduleSlots, setScheduleSlots] = useState(null)
+  const [departments,   setDepartments]   = useState([])
+  const [programs,      setPrograms]      = useState([])
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -52,16 +69,55 @@ export default function RegisterPage() {
     privacy_consent: false,
   })
 
+  const fetchScheduleSlots = useCallback(async () => {
+    try {
+      const slots = await registrationApi.getScheduleSlots()
+      setScheduleSlots(slots)
+    } catch {
+      // non-critical
+    }
+  }, [])
+
+  const fetchRefLists = useCallback(async () => {
+    try {
+      const [deps, progs] = await Promise.all([
+        registrationApi.getDepartments(),
+        registrationApi.getPrograms(),
+      ])
+      setDepartments(deps)
+      setPrograms(progs)
+    } catch {
+      // non-critical — ComboBox still works with empty options
+    }
+  }, [])
+
   const validateToken = useCallback(async () => {
+    if (directType) {
+      // Direct registration from login page — no token needed
+      const baseType = directType === 'student_ebike' ? 'student' : directType
+      setRegistrantType(baseType)
+      setIsEbike(directType === 'student_ebike')
+      if (directType === 'student_ebike') {
+        setFormData(prev => ({ ...prev, vehicle_type: 'E-Bike', drivers_license: 'N/A' }))
+      }
+      setLoading(false)
+      fetchScheduleSlots()
+      fetchRefLists()
+      return
+    }
+
     if (!token) {
       setError('Invalid registration link. Token is missing.')
       setLoading(false)
       return
     }
+
     try {
       const data = await registrationApi.validateToken(token)
       setRegistrantType(data.registrant_type)
       setLoading(false)
+      fetchScheduleSlots()
+      fetchRefLists()
     } catch (err) {
       setError(
         err.response?.data?.error ||
@@ -69,7 +125,7 @@ export default function RegisterPage() {
       )
       setLoading(false)
     }
-  }, [token])
+  }, [token, directType, fetchScheduleSlots, fetchRefLists])
 
   useEffect(() => {
     validateToken()
@@ -77,23 +133,20 @@ export default function RegisterPage() {
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
-    if (type === 'checkbox' && name !== 'privacy_consent') {
-      // handled by day toggle
-    } else if (type === 'checkbox') {
+    if (type === 'checkbox') {
       setFormData((prev) => ({ ...prev, [name]: checked }))
     } else {
       setFormData((prev) => ({ ...prev, [name]: value }))
     }
   }
 
-  const toggleDay = (day) => {
-    setFormData((prev) => {
-      const days = prev.campus_days
-      if (days.includes(day)) {
-        return { ...prev, campus_days: days.filter((d) => d !== day) }
+  const toggleDay = (dayKey) => {
+    setFormData(prev => {
+      if (prev.campus_days.includes(dayKey)) {
+        return { ...prev, campus_days: prev.campus_days.filter(d => d !== dayKey) }
       }
-      if (days.length >= 3) return prev
-      return { ...prev, campus_days: [...days, day] }
+      if (prev.campus_days.length >= 3) return prev // max 3 days
+      return { ...prev, campus_days: [...prev.campus_days, dayKey] }
     })
   }
 
@@ -103,17 +156,38 @@ export default function RegisterPage() {
       alert('You must agree to the Data Privacy Consent.')
       return
     }
-    if (registrantType === 'student' && formData.campus_days.length !== 3) {
-      alert('Please select exactly 3 campus days.')
+    if (registrantType === 'student' && formData.campus_days.length === 0) {
+      alert('Please select at least one campus day.')
       return
     }
+
+    if (registrantType === 'student' && scheduleSlots) {
+      const picksMWF  = formData.campus_days.some(d => ['Monday','Wednesday','Friday'].includes(d))
+      const picksTTHS = formData.campus_days.some(d => ['Tuesday','Thursday','Saturday'].includes(d))
+      if (picksMWF  && scheduleSlots.MWF?.available === 0) {
+        alert('The MWF group is full. Please deselect Monday/Wednesday/Friday days or try again later.')
+        return
+      }
+      if (picksTTHS && scheduleSlots.TTHS?.available === 0) {
+        alert('The TTHS group is full. Please deselect Tuesday/Thursday/Saturday days or try again later.')
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
-      await registrationApi.submitRegistration(token, {
-        ...formData,
-        registrant_type: registrantType,
-      })
-      setSubmitted(true)
+      const payload = { ...formData, registrant_type: registrantType }
+
+      if (directType) {
+        // Direct open registration
+        await registrationApi.submitOpenRegistration(payload)
+      } else {
+        // Token-based registration
+        await registrationApi.submitRegistration(token, payload)
+      }
+
+      // Show payment instructions popup before success screen
+      setShowPaymentPopup(true)
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to submit registration. Please try again.')
       console.error(err)
@@ -149,8 +223,58 @@ export default function RegisterPage() {
             <h2 className="card-title">Registration Unavailable</h2>
             <p className="card-message">{error}</p>
             <p className="card-help">
-              Please contact the administration office for a new registration link.
+              Please contact the administration office for assistance.
             </p>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  /* ─── Payment popup modal (shown after successful submit, before success screen) ─── */
+  if (showPaymentPopup) {
+    return (
+      <div className="register-page">
+        {SLC_HEADER}
+        <main className="register-main">
+          <div className="register-card payment-popup-card">
+            <div className="card-icon payment-popup-icon">
+              <Banknote size={48} />
+            </div>
+            <h2 className="card-title" style={{ color: '#D97706' }}>Action Required</h2>
+            <div className="payment-popup-body">
+              <p className="payment-popup-intro">
+                Your application has been submitted and is now <strong>pending review</strong>.
+                Before your registration can be processed, you must complete the following steps:
+              </p>
+              <div className="payment-steps">
+                <div className="payment-step">
+                  <div className="payment-step-num">1</div>
+                  <div className="payment-step-text">
+                    <strong>Pay ₱300.00</strong> at the <strong>Accounting Office</strong> for your <em>Vehicle Pass</em>.
+                  </div>
+                </div>
+                <div className="payment-step">
+                  <div className="payment-step-num">2</div>
+                  <div className="payment-step-text">
+                    Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO (Community Development & Student Office)</strong> for processing.
+                  </div>
+                </div>
+                <div className="payment-step">
+                  <div className="payment-step-num">3</div>
+                  <div className="payment-step-text">
+                    Wait for your email notification once your registration has been reviewed and approved.
+                  </div>
+                </div>
+              </div>
+              <div className="payment-popup-note">
+                <Info size={14} />
+                The CDSO office will verify your Official Receipt number before approving your registration.
+              </div>
+            </div>
+            <button className="card-btn payment-popup-btn" onClick={() => setSubmitted(true)}>
+              I Understand — Proceed
+            </button>
           </div>
         </main>
       </div>
@@ -169,14 +293,14 @@ export default function RegisterPage() {
             </div>
             <h2 className="card-title">Registration Submitted!</h2>
             <p className="card-message">
-              Your vehicle registration application has been submitted successfully and is pending
-              review.
+              Your vehicle registration application has been submitted and is pending review.
             </p>
             <p className="card-help">
+              Remember to pay ₱300.00 at the Accounting Office and present your OR at the CDSO Office.
               You will receive an email notification once your application has been processed.
             </p>
             <button className="card-btn" onClick={() => navigate('/login')}>
-              Proceed to Login
+              Back to Login
             </button>
           </div>
         </main>
@@ -184,7 +308,9 @@ export default function RegisterPage() {
     )
   }
 
-  const isStudent = registrantType === 'student'
+  const isStudent  = registrantType === 'student'
+  const isFetcher  = registrantType === 'fetcher'
+  const isEmployee = registrantType === 'employee'
 
   /* ─── Form ─── */
   return (
@@ -193,15 +319,21 @@ export default function RegisterPage() {
 
       <main className="register-main">
         <div className="register-card">
-          {/* Official form title */}
           <div className="slc-form-title-block">
             <h1 className="slc-form-title">APPLICATION FORM FOR A VEHICLE PASS</h1>
             <p className="slc-form-subtitle">
-              {isStudent ? "STUDENT'S PERSONAL INFORMATION" : "EMPLOYEE'S PERSONAL INFORMATION"}
+              {isStudent
+                ? (isEbike ? "STUDENT'S PERSONAL INFORMATION (E-BIKE)" : "STUDENT'S PERSONAL INFORMATION")
+                : isEmployee
+                  ? "EMPLOYEE'S PERSONAL INFORMATION"
+                  : "FETCHER / DROP & GO PERSONAL INFORMATION"}
             </p>
             <p className="slc-form-note">Please write legibly in CAPITAL LETTERS.</p>
             <span className="registrant-badge">
-              {isStudent ? 'Student Registration' : 'Employee Registration'}
+              {isStudent
+                ? (isEbike ? 'Student — E-Bike Registration' : 'Student — Vehicle Registration')
+                : isEmployee ? 'Employee Registration'
+                : 'Fetcher / Drop & Go Registration'}
             </span>
           </div>
 
@@ -210,11 +342,8 @@ export default function RegisterPage() {
             <h3 className="section-heading">Personal Information</h3>
             <div className="form-grid">
 
-              {/* Full Name — always first */}
               <div className="form-group col-span-2">
-                <label>
-                  Full Name <span className="required">*</span>
-                </label>
+                <label>Full Name <span className="required">*</span></label>
                 <input
                   type="text"
                   name="full_name"
@@ -225,11 +354,8 @@ export default function RegisterPage() {
                 />
               </div>
 
-              {/* Email — needed for account creation */}
               <div className="form-group col-span-2">
-                <label>
-                  Email Address <span className="required">*</span>
-                </label>
+                <label>Email Address <span className="required">*</span></label>
                 <input
                   type="email"
                   name="email"
@@ -240,58 +366,41 @@ export default function RegisterPage() {
               </div>
 
               {/* Student-specific */}
-              {isStudent ? (
+              {isStudent && (
                 <>
                   <div className="form-group">
-                    <label>
-                      Student ID Number <span className="required">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="student_id"
-                      value={formData.student_id}
-                      onChange={handleInputChange}
-                      required
-                    />
+                    <label>Student ID Number <span className="required">*</span></label>
+                    <input type="text" name="student_id" value={formData.student_id} onChange={handleInputChange} required />
                   </div>
                   <div className="form-group">
-                    <label>
-                      Program &amp; Year Level <span className="required">*</span>
-                    </label>
-                    <input
-                      type="text"
+                    <label>Program &amp; Year Level <span className="required">*</span></label>
+                    <ComboBox
                       name="program_year"
                       value={formData.program_year}
                       onChange={handleInputChange}
-                      required
+                      options={programs}
                       placeholder="e.g. BSIT - 3"
+                      required
                     />
                   </div>
                 </>
-              ) : (
-                /* Employee-specific */
+              )}
+
+              {/* Employee-specific */}
+              {isEmployee && (
                 <>
                   <div className="form-group">
-                    <label>
-                      Employee ID <span className="required">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="employee_id"
-                      value={formData.employee_id}
-                      onChange={handleInputChange}
-                      required
-                    />
+                    <label>Employee ID <span className="required">*</span></label>
+                    <input type="text" name="employee_id" value={formData.employee_id} onChange={handleInputChange} required />
                   </div>
                   <div className="form-group">
-                    <label>
-                      Department <span className="required">*</span>
-                    </label>
-                    <input
-                      type="text"
+                    <label>Department <span className="required">*</span></label>
+                    <ComboBox
                       name="department"
                       value={formData.department}
                       onChange={handleInputChange}
+                      options={departments}
+                      placeholder="Type or select department"
                       required
                     />
                   </div>
@@ -300,86 +409,106 @@ export default function RegisterPage() {
 
               {/* Common fields */}
               <div className="form-group col-span-2">
-                <label>
-                  Address <span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="address"
-                  value={formData.address}
-                  onChange={handleInputChange}
-                  required
-                />
+                <label>Address <span className="required">*</span></label>
+                <input type="text" name="address" value={formData.address} onChange={handleInputChange} required />
               </div>
 
               <div className="form-group">
-                <label>
-                  Contact Number/s <span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="contact_number"
-                  value={formData.contact_number}
-                  onChange={handleInputChange}
-                  required
-                />
+                <label>Contact Number/s <span className="required">*</span></label>
+                <input type="text" name="contact_number" value={formData.contact_number} onChange={handleInputChange} required />
               </div>
 
               <div className="form-group">
                 <label>Age</label>
-                <input
-                  type="number"
-                  name="age"
-                  min="15"
-                  max="99"
-                  value={formData.age}
-                  onChange={handleInputChange}
-                />
+                <input type="number" name="age" min="15" max="99" value={formData.age} onChange={handleInputChange} />
               </div>
 
-              <div className="form-group col-span-2">
-                <label>
-                  Driver's License Number <span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="drivers_license"
-                  value={formData.drivers_license}
-                  onChange={handleInputChange}
-                  required
-                />
-              </div>
+              {!isEbike && (
+                <div className="form-group col-span-2">
+                  <label>Driver's License Number <span className="required">*</span></label>
+                  <input type="text" name="drivers_license" value={formData.drivers_license} onChange={handleInputChange} required={!isEbike} />
+                </div>
+              )}
 
-              {/* Campus Days — Students only */}
-              {isStudent && (
+              {/* Campus day selector — shown for all types */}
+              {(isStudent || isEmployee || isFetcher) && (
                 <div className="form-group col-span-2">
                   <label className="days-label">
-                    Please identify the days for your vehicle's entry to the campus.
+                    Campus Days {isStudent && <span className="required">*</span>}
                   </label>
-                  <p className="days-instruction">
-                    Please encircle three (3) days only.{' '}
-                    <span className="days-count">
-                      {formData.campus_days.length}/3 selected
-                    </span>
-                  </p>
-                  <div className="day-picker">
-                    {DAYS.map((day) => {
-                      const selected = formData.campus_days.includes(day)
-                      const maxed = !selected && formData.campus_days.length >= 3
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          className={`day-pill${selected ? ' day-pill--selected' : ''}${maxed ? ' day-pill--disabled' : ''}`}
-                          onClick={() => toggleDay(day)}
-                          disabled={maxed}
-                          aria-pressed={selected}
-                        >
-                          {day}
-                        </button>
-                      )
-                    })}
-                  </div>
+
+                  {isStudent ? (
+                    <>
+                      <div className="schedule-note">
+                        <Info size={13} />
+                        Schedules are <strong>first come, first serve</strong> and are{' '}
+                        <strong>subject to change</strong>. Each group of days has a maximum of{' '}
+                        <strong>100 slots</strong> (tentative).
+                      </div>
+                      {scheduleSlots && (
+                        <div className="campus-day-groups-info">
+                          <span className={`campus-day-group-badge mwf${scheduleSlots.MWF?.available === 0 ? ' full' : ''}`}>
+                            MWF — {scheduleSlots.MWF?.available === 0 ? 'FULL' : `${scheduleSlots.MWF?.available} slots left`}
+                          </span>
+                          <span className={`campus-day-group-badge tths${scheduleSlots.TTHS?.available === 0 ? ' full' : ''}`}>
+                            TTHS — {scheduleSlots.TTHS?.available === 0 ? 'FULL' : `${scheduleSlots.TTHS?.available} slots left`}
+                          </span>
+                        </div>
+                      )}
+                      <div className="campus-day-picker">
+                        {CAMPUS_DAYS.map(day => {
+                          const isGroupFull  = scheduleSlots?.[day.group]?.available === 0
+                          const isSelected   = formData.campus_days.includes(day.key)
+                          const limitReached = formData.campus_days.length >= 3 && !isSelected
+                          const isDisabled   = isGroupFull || limitReached
+                          return (
+                            <button
+                              key={day.key}
+                              type="button"
+                              className={[
+                                'campus-day-btn',
+                                `campus-day-btn--${day.group.toLowerCase()}`,
+                                isSelected  ? 'campus-day-btn--selected' : '',
+                                isGroupFull ? 'campus-day-btn--full'     : '',
+                                limitReached && !isGroupFull ? 'campus-day-btn--limit' : '',
+                              ].filter(Boolean).join(' ')}
+                              onClick={() => !isDisabled && toggleDay(day.key)}
+                              disabled={isDisabled}
+                              aria-pressed={isSelected}
+                              title={isGroupFull ? `${day.group} group is full` : limitReached ? 'Maximum 3 days selected' : day.key}
+                            >
+                              <span className="campus-day-short">{day.short}</span>
+                              <span className="campus-day-name">{day.key.slice(0, 3)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <p className="campus-day-counter">
+                        {formData.campus_days.length}/3 days selected
+                        {formData.campus_days.length === 3 && ' — maximum reached'}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="campus-day-anyday">
+                      <div className="campus-day-picker campus-day-picker--greyed">
+                        {CAMPUS_DAYS.map(day => (
+                          <div
+                            key={day.key}
+                            className={`campus-day-btn campus-day-btn--${day.group.toLowerCase()} campus-day-btn--greyed`}
+                          >
+                            <span className="campus-day-short">{day.short}</span>
+                            <span className="campus-day-name">{day.key.slice(0, 3)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="campus-day-anyday-note">
+                        <Info size={13} />
+                        {isFetcher
+                          ? 'Fetchers / Drop & Go may enter on any day during drop-off and pick-up hours.'
+                          : 'Employees are permitted to enter and park on any day of the week.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -391,7 +520,8 @@ export default function RegisterPage() {
             <div className="form-grid">
               <div className="form-group">
                 <label>
-                  Plate Number <span className="required">*</span>
+                  {isEbike ? 'Student ID Number' : 'Plate Number'}
+                  {' '}<span className="required">*</span>
                 </label>
                 <input
                   type="text"
@@ -399,70 +529,49 @@ export default function RegisterPage() {
                   value={formData.plate_number}
                   onChange={handleInputChange}
                   required
+                  placeholder={isEbike ? 'Used as your e-bike identifier' : ''}
                 />
               </div>
 
+              {!isEbike && (
+                <div className="form-group">
+                  <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
+                  <input type="text" name="conduction_number" value={formData.conduction_number} onChange={handleInputChange} />
+                </div>
+              )}
+
               <div className="form-group">
-                <label>
-                  Conduction Number{' '}
-                  <span className="field-note">(for newly purchased vehicles)</span>
-                </label>
-                <input
-                  type="text"
-                  name="conduction_number"
-                  value={formData.conduction_number}
-                  onChange={handleInputChange}
-                />
+                <label>Vehicle Type <span className="required">*</span></label>
+                {isEbike ? (
+                  <input type="text" value="E-Bike" readOnly className="input-readonly" />
+                ) : (
+                  <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
+                    <option value="">Select Type</option>
+                    <option value="Sedan">Sedan</option>
+                    <option value="SUV">SUV</option>
+                    <option value="Motorcycle">Motorcycle</option>
+                    <option value="Tricycle">Tricycle</option>
+                    <option value="Van">Van</option>
+                    <option value="Truck">Truck</option>
+                    <option value="Other">Other</option>
+                  </select>
+                )}
               </div>
 
               <div className="form-group">
-                <label>
-                  Vehicle Type <span className="required">*</span>
-                </label>
-                <select
-                  name="vehicle_type"
-                  value={formData.vehicle_type}
-                  onChange={handleInputChange}
-                  required
-                >
-                  <option value="">Select Type</option>
-                  <option value="Sedan">Sedan</option>
-                  <option value="SUV">SUV</option>
-                  <option value="Motorcycle">Motorcycle</option>
-                  <option value="Tricycle">Tricycle</option>
-                  <option value="Van">Van</option>
-                  <option value="Truck">Truck</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Vehicle Color <span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="vehicle_color"
-                  value={formData.vehicle_color}
-                  onChange={handleInputChange}
-                  required
-                />
+                <label>Vehicle Color <span className="required">*</span></label>
+                <input type="text" name="vehicle_color" value={formData.vehicle_color} onChange={handleInputChange} required />
               </div>
 
               <div className="form-group col-span-2">
-                <label>
-                  Body Number{' '}
-                  <span className="field-note">(for tricycle only)</span>
-                </label>
+                <label>Body Number <span className="field-note">(for tricycle only)</span></label>
                 <input
                   type="text"
                   name="body_number"
                   value={formData.body_number}
                   onChange={handleInputChange}
                   disabled={formData.vehicle_type !== 'Tricycle'}
-                  placeholder={
-                    formData.vehicle_type !== 'Tricycle' ? 'Only applicable for Tricycle' : ''
-                  }
+                  placeholder={formData.vehicle_type !== 'Tricycle' ? 'Only applicable for Tricycle' : ''}
                 />
               </div>
             </div>
@@ -474,80 +583,39 @@ export default function RegisterPage() {
               <h3 className="terms-heading">Terms &amp; Conditions</h3>
               <div className="terms-box">
                 <p className="terms-bold">
-                  I agree and promise to abide by the terms and conditions anent my application for
-                  a vehicle pass.
+                  I agree and promise to abide by the terms and conditions anent my application for a vehicle pass.
                 </p>
                 <ul className="terms-list">
                   <li>
-                    I understand that the vehicle pass is intended <strong>ONLY TO ALLOW THE ENTRY
-                      OF MY VEHICLE IN THE CAMPUS</strong>. The College does not guarantee the availability
-                    of parking spaces;
+                    I understand that the vehicle pass is intended <strong>ONLY TO ALLOW THE ENTRY OF MY VEHICLE IN THE CAMPUS</strong>. The College does not guarantee the availability of parking spaces;
                   </li>
-                  <li>
-                    The application for a vehicle pass is subject to the approval or disapproval of
-                    the Student Affairs Office;
-                  </li>
-                  <li>To pay the Vehicle Pass fee of ₱350.00 at the Accounting Office.</li>
+                  <li>The application for a vehicle pass is subject to the approval or disapproval of the Student Affairs Office;</li>
+                  <li>To pay the Vehicle Pass fee of <strong>₱300.00</strong> at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
                 <ol className="terms-alpha-list" type="a">
                   <li>deactivate vehicle alarm while it is parked within the school premises;</li>
-                  <li>
-                    see to it that my vehicle pass is placed on the dashboard, driver side, upon
-                    entry and during the entire stay inside the campus;
-                  </li>
-                  <li>
-                    <strong>
-                      recognize the right of the school to decline the entry of my vehicle if the
-                      parking area is full;
-                    </strong>
-                  </li>
-                  <li>
-                    be courteous to the school security and personnel and fellow parking space users;
-                  </li>
-                  <li>
-                    allow the school security team to inspect my vehicle, as the need arises, before
-                    entry and when inside the campus;
-                  </li>
+                  <li>see to it that my vehicle pass is placed on the dashboard, driver side, upon entry and during the entire stay inside the campus;</li>
+                  <li><strong>recognize the right of the school to decline the entry of my vehicle if the parking area is full;</strong></li>
+                  <li>be courteous to the school security and personnel and fellow parking space users;</li>
+                  <li>allow the school security team to inspect my vehicle, as the need arises, before entry and when inside the campus;</li>
                   <li>strictly observe the speed limit of 10 kph within the campus;</li>
-                  <li>
-                    park my vehicle at the designated parking area only so as not to obstruct the
-                    flow of traffic inside the campus. <strong>"NO DOUBLE PARKING"</strong>;
-                  </li>
-                  <li>
-                    not stay inside my vehicle while the engine is on and parked for safety and
-                    environmental reasons;
-                  </li>
-                  <li>
-                    observe the <strong>"No blowing of horn inside the campus"</strong> policy;
-                  </li>
-                  <li>
-                    avoid playing loud music or making unnecessary sounds using my vehicle upon
-                    entry;
-                  </li>
-                  <li>
-                    strictly observe the <strong>"No Smoking"</strong> policy of the Institution.{' '}
-                    <strong>Using e-cigarettes and/or vapes is not allowed</strong>;
-                  </li>
-                  <li>
-                    properly lock and secure my vehicle while inside the campus as the College
-                    Administration is <strong>NOT LIABLE</strong> for anything that may happen to the
-                    vehicle while it is parked inside the campus;
-                  </li>
+                  <li>park my vehicle at the designated parking area only so as not to obstruct the flow of traffic inside the campus. <strong>"NO DOUBLE PARKING"</strong>;</li>
+                  <li>not stay inside my vehicle while the engine is on and parked for safety and environmental reasons;</li>
+                  <li>observe the <strong>"No blowing of horn inside the campus"</strong> policy;</li>
+                  <li>avoid playing loud music or making unnecessary sounds using my vehicle upon entry;</li>
+                  <li>strictly observe the <strong>"No Smoking"</strong> policy of the Institution. <strong>Using e-cigarettes and/or vapes is not allowed</strong>;</li>
+                  <li>properly lock and secure my vehicle while inside the campus as the College Administration is <strong>NOT LIABLE</strong> for anything that may happen to the vehicle while it is parked inside the campus;</li>
                   <li>strictly observe traffic and/or coding scheme imposed;</li>
                   <li>
-                    follow the above terms and conditions and any violation committed thereto would
-                    subject me to the following sanctions:
+                    follow the above terms and conditions and any violation committed thereto would subject me to the following sanctions:
                     <div className="sanctions-grid">
                       <span className="sanction-label">First Offense:</span>
                       <span>Restriction of vehicle pass for one (1) week.</span>
                       <span className="sanction-label">Second Offense:</span>
                       <span>Restriction of vehicle pass for two (2) weeks.</span>
                       <span className="sanction-label">Third Offense:</span>
-                      <span>
-                        Restriction of vehicle pass. Prohibition in securing a vehicle pass for
-                        the next school year.
-                      </span>
+                      <span>Restriction of vehicle pass. Prohibition in securing a vehicle pass for the next school year.</span>
                     </div>
                   </li>
                 </ol>
@@ -564,11 +632,7 @@ export default function RegisterPage() {
                     className="consent-checkbox"
                   />
                   <span>
-                    <strong>DATA PRIVACY CONSENT:</strong> By filling-out this form, I give my
-                    consent to SLC's collection, processing, storage and retention, and disposal of
-                    the provided information pursuant to the provisions of Republic Act No. 10173 or
-                    the Data Privacy Act of 2012. I also hereby certify that all information given
-                    are true and correct.
+                    <strong>DATA PRIVACY CONSENT:</strong> By filling-out this form, I give my consent to SLC's collection, processing, storage and retention, and disposal of the provided information pursuant to the provisions of Republic Act No. 10173 or the Data Privacy Act of 2012. I also hereby certify that all information given are true and correct.
                   </span>
                 </label>
               </div>
