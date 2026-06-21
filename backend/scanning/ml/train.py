@@ -223,7 +223,7 @@ def train(
     # Focus on blur, lighting, and mild colour shifts.
     augment_kwargs = {
         # Motion blur — simulates moving vehicles
-        "mixup":           0.0,      # disabled, confuses class identity
+        "mixup":           0.1,      # mild mixup helps minority class generalization
         # Colour/exposure variations — lighting changes throughout day
         "hsv_h":           0.015,    # hue shift ±1.5 %
         "hsv_s":           0.4,      # saturation ±40 %
@@ -236,8 +236,8 @@ def train(
         "perspective":     0.0,      # no perspective warp (fixed mount)
         "flipud":          0.0,      # no vertical flip (cameras don't invert)
         "fliplr":          0.5,      # horizontal flip (vehicles go both ways)
-        "mosaic":          0.5,      # mosaic augmentation — reduced to ease GPU memory pressure
-        "copy_paste":      0.0,      # disabled
+        "mosaic":          1.0,      # full mosaic mixes rare class instances more often
+        "copy_paste":      0.2,      # copies minority class instances into other images
     }
 
     train_kwargs = dict(
