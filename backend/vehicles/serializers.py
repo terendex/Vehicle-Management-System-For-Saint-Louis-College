@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration, RuleConstraint, VehicleTypeAccess
+from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration, RuleConstraint, VehicleTypeAccess, ParkingSpace, ParkingZone
 
 class OwnerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -43,3 +43,26 @@ class VehicleTypeAccessSerializer(serializers.ModelSerializer):
         if obj.is_all_hours:
             return 'All hours'
         return f"{obj.hours_start}–{obj.hours_end}"
+
+
+class ParkingSpaceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ParkingSpace
+        fields = '__all__'
+
+
+class ParkingZoneSerializer(serializers.ModelSerializer):
+    spaces              = ParkingSpaceSerializer(many=True, read_only=True)
+    reference_image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = ParkingZone
+        fields = ['id', 'name', 'vehicle_category', 'reference_image', 'reference_image_url', 'created_at', 'spaces']
+
+    def get_reference_image_url(self, obj):
+        if not obj.reference_image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.reference_image.url)
+        return obj.reference_image.url

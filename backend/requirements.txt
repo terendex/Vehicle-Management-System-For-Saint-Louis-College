@@ -73,3 +73,6 @@ daphne~=4.1
 twisted~=24.11
 autobahn~=24.4
 django-redis~=5.4
+dj-database-url==2.3.0
+django-storages[s3]==1.14.4
+boto3==1.38.28

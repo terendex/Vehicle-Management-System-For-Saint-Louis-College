@@ -1,9 +1,37 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react'
+import { Eye, EyeOff, LogIn, AlertCircle, Car, User, Bike, Users, X, ChevronRight, Info } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import { registrationApi } from '../../api/registration'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
+
+const REGISTRATION_TYPES = [
+  {
+    id: 'student',
+    icon: <User size={22} />,
+    label: 'Student — Vehicle',
+    description: 'Registered SLC student with a car or motorcycle',
+  },
+  {
+    id: 'student_ebike',
+    icon: <Bike size={22} />,
+    label: 'Student — E-Bike',
+    description: 'Registered SLC student with an electric bicycle',
+  },
+  {
+    id: 'employee',
+    icon: <Car size={22} />,
+    label: 'Employee',
+    description: 'SLC faculty or staff member',
+  },
+  {
+    id: 'fetcher',
+    icon: <Users size={22} />,
+    label: 'Fetcher / Drop & Go',
+    description: 'Parent or guardian fetching a student',
+  },
+]
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -14,9 +42,13 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showErrorModal, setShowErrorModal] = useState(false)
 
+  // Registration modal state
+  const [showRegModal, setShowRegModal] = useState(false)
+  const [regStatus, setRegStatus] = useState(null)  // { is_open, open_date, close_date }
+  const [regStatusLoading, setRegStatusLoading] = useState(false)
+
   const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
 
-  // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.role === 'admin') navigate('/admin')
@@ -24,6 +56,7 @@ export default function LoginPage() {
       else if (user.role === 'vehicle_owner') navigate('/owner')
     }
   }, [isAuthenticated, user, navigate])
+
   useEffect(() => {
     if (rememberMe) {
       localStorage.setItem('rememberedEmail', email)
@@ -33,31 +66,20 @@ export default function LoginPage() {
   }, [rememberMe, email])
 
   useEffect(() => {
-    if (error) {
-      setShowErrorModal(true)
-    }
+    if (error) setShowErrorModal(true)
   }, [error])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
     setShowErrorModal(false)
-
     try {
-      const user = await login(email, password)
-      
-      if (user.role === 'admin') {
-        navigate('/admin')
-      } else if (user.role === 'security') {
-        navigate('/security')
-      } else if (user.role === 'vehicle_owner') {
-        navigate('/owner')
-      } else {
-        navigate('/')
-      }
-      
-      console.log('Logged in as:', user)
-    } catch (err) {
+      const u = await login(email, password)
+      if (u.role === 'admin') navigate('/admin')
+      else if (u.role === 'security') navigate('/security')
+      else if (u.role === 'vehicle_owner') navigate('/owner')
+      else navigate('/')
+    } catch {
       setShowErrorModal(true)
     }
   }
@@ -67,9 +89,28 @@ export default function LoginPage() {
     clearError()
   }
 
+  const handleOpenRegModal = async () => {
+    setShowRegModal(true)
+    if (!regStatus) {
+      setRegStatusLoading(true)
+      try {
+        const status = await registrationApi.getRegistrationStatus()
+        setRegStatus(status)
+      } catch {
+        setRegStatus({ is_open: false, open_date: 'June 1 (tentative)', close_date: 'October 31 (tentative)' })
+      } finally {
+        setRegStatusLoading(false)
+      }
+    }
+  }
+
+  const handleSelectType = (typeId) => {
+    setShowRegModal(false)
+    navigate(`/register?type=${typeId}`)
+  }
+
   return (
     <div className="login-page">
-      {/* Top Navigation Bar */}
       <header className="login-header" id="login-header">
         <div className="header-content">
           <div className="header-logo-group">
@@ -82,16 +123,13 @@ export default function LoginPage() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="login-main">
         <div className="login-card" id="login-card">
-          {/* Card Header */}
           <div className="card-header">
             <h1 className="card-title">Account Login</h1>
             <p className="card-subtitle">Sign in to access the vehicle management system</p>
           </div>
 
-          {/* Error Alert */}
           {error && !showErrorModal && (
             <div className="error-alert" id="login-error" role="alert">
               <AlertCircle size={16} />
@@ -100,8 +138,6 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} className="login-form" id="login-form">
-
-            {/* Email */}
             <div className="form-group">
               <label className="form-label" htmlFor="login-email">
                 Email <span className="required">*</span>
@@ -118,7 +154,6 @@ export default function LoginPage() {
               />
             </div>
 
-            {/* Password */}
             <div className="form-group">
               <label className="form-label" htmlFor="login-password">
                 Password <span className="required">*</span>
@@ -139,14 +174,12 @@ export default function LoginPage() {
                   className="toggle-password"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  id="toggle-password"
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
 
-            {/* Remember Me & Forgot Password */}
             <div className="form-row">
               <label className="checkbox-label" id="remember-me-label">
                 <div className="checkbox-wrapper">
@@ -165,18 +198,10 @@ export default function LoginPage() {
                 </div>
                 <span className="checkbox-text">Remember Me</span>
               </label>
-              <a href="#" className="forgot-link" id="forgot-password-link">
-                Forgot Password
-              </a>
+              <a href="#" className="forgot-link">Forgot Password</a>
             </div>
 
-            {/* Login Button */}
-            <button
-              type="submit"
-              className="login-button"
-              disabled={isLoading}
-              id="login-submit"
-            >
+            <button type="submit" className="login-button" disabled={isLoading} id="login-submit">
               {isLoading ? (
                 <div className="button-loading">
                   <div className="spinner" />
@@ -190,8 +215,20 @@ export default function LoginPage() {
               )}
             </button>
 
+            <div className="register-divider">
+              <span>Don't have an account yet?</span>
+            </div>
 
-            {/* Policy */}
+            <button
+              type="button"
+              className="register-cta-btn"
+              onClick={handleOpenRegModal}
+            >
+              <Car size={18} />
+              Apply for a Vehicle Pass
+              <ChevronRight size={16} className="register-cta-arrow" />
+            </button>
+
             <div className="terms-row">
               <a href="#" className="terms-link">Policy</a>
             </div>
@@ -209,6 +246,65 @@ export default function LoginPage() {
             <h2 className="modal-title">Login Failed</h2>
             <p className="modal-message">{error}</p>
             <button className="modal-btn" onClick={closeErrorModal}>Try Again</button>
+          </div>
+        </div>
+      )}
+
+      {/* Registration Type Selection Modal */}
+      {showRegModal && (
+        <div className="modal-overlay" onClick={() => setShowRegModal(false)}>
+          <div className="reg-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="reg-modal-header">
+              <div>
+                <h2 className="reg-modal-title">Vehicle Pass Application</h2>
+                <p className="reg-modal-subtitle">Select your registrant type to begin</p>
+              </div>
+              <button className="reg-modal-close" onClick={() => setShowRegModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Registration window notice */}
+            {regStatusLoading ? (
+              <div className="reg-status-loading">Checking registration status…</div>
+            ) : regStatus ? (
+              <div className={`reg-window-notice ${regStatus.is_open ? 'open' : 'closed'}`}>
+                <Info size={14} />
+                {regStatus.is_open ? (
+                  <span>
+                    <strong>Registration is currently open.</strong> Window: {regStatus.open_date} – {regStatus.close_date}
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Registration is currently closed.</strong> The next window opens approximately on {regStatus.open_date}.
+                    You may still fill out the form but submission will not be accepted outside the registration period.
+                  </span>
+                )}
+              </div>
+            ) : null}
+
+            <div className="reg-type-list">
+              {REGISTRATION_TYPES.map(t => (
+                <button
+                  key={t.id}
+                  className="reg-type-item"
+                  onClick={() => handleSelectType(t.id)}
+                  disabled={regStatus && !regStatus.is_open}
+                >
+                  <div className="reg-type-icon">{t.icon}</div>
+                  <div className="reg-type-text">
+                    <span className="reg-type-label">{t.label}</span>
+                    <span className="reg-type-desc">{t.description}</span>
+                  </div>
+                  <ChevronRight size={16} className="reg-type-arrow" />
+                </button>
+              ))}
+            </div>
+
+            <p className="reg-modal-note">
+              Registration opens 2 months before the school year and closes during the first semester.
+              Dates are tentative and subject to change.
+            </p>
           </div>
         </div>
       )}
