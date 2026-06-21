@@ -29,7 +29,7 @@ try:
 except ImportError:
     _HAS_TQDM = False
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".MP4", ".MOV", ".avi", ".AVI"}
+VIDEO_EXTENSIONS = {".mp4", ".MP4"}
 
 
 # ── Frame extraction ──────────────────────────────────────────────────────────
