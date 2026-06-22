@@ -42,7 +42,6 @@ def _should_trigger_retrain() -> bool:
     cutoff   = timezone.now() - timedelta(minutes=30)
     new_count = MLTrainingSample.objects.filter(
         created_at__gte=cutoff,
-        confidence__gte=settings.ML_CONFIDENCE_THRESHOLD,
         used_in_training=False,
     ).count()
     return new_count >= settings.ML_SAMPLE_BATCH_SIZE
@@ -82,8 +81,7 @@ def record_scan(raw_bytes: bytes) -> dict | None:
                     bboxes.append(det["bbox"])
 
             if plate_texts:
-                best_conf = max(confidences)
-                status = "auto_labeled" if best_conf >= settings.ML_CONFIDENCE_THRESHOLD else "auto_labeled"
+                status = "auto_labeled"
 
     except Exception as exc:
         log.error("ML collector error: %s", exc)

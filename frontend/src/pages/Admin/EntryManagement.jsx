@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
-import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
+import { getRuleConstraints } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import './EntryManagement.css'
 
@@ -216,8 +216,6 @@ export default function EntryManagement() {
   const [offices, setOffices] = useState([])
   const [rules, setRules] = useState([])
   const [loadingRules, setLoadingRules] = useState(true)
-  const [vehicleTypes, setVehicleTypes] = useState([])
-  const [loadingVehicles, setLoadingVehicles] = useState(true)
 
   const [cameras, setCameras] = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId] = useState(1)
@@ -377,11 +375,6 @@ export default function EntryManagement() {
       setRules(data.filter(rule => rule.enabled))
       setLoadingRules(false)
     }).catch(() => setLoadingRules(false))
-    getVehicleTypeAccess().then((r) => {
-      const data = (r.data?.results ?? r.data ?? [])
-      setVehicleTypes(data.filter(v => v.enabled))
-      setLoadingVehicles(false)
-    }).catch(() => setLoadingVehicles(false))
   }, [])
 
 
@@ -639,26 +632,6 @@ export default function EntryManagement() {
                   })
                 )}
 
-                <div style={{ marginTop: '16px', marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #f59e0b' }}>Vehicle Access Privileges</div>
-                {loadingVehicles ? (
-                  <p className="em-log-empty">Loading vehicle types…</p>
-                ) : vehicleTypes.length === 0 ? (
-                  <p className="em-log-empty">No vehicle types configured.</p>
-                ) : (
-                  vehicleTypes.map((v) => {
-                    const dotColor = v.status === 'allowed' ? 'green' : 'orange'
-                    const hoursDisplay = v.hours_display || (v.is_all_hours ? 'All hours' : `${v.hours_start || ''}–${v.hours_end || ''}`)
-                    return (
-                      <div key={`vt-${v.id}`} className="em-rule-row">
-                        <span className={`em-rule-dot ${dotColor}`} />
-                        <span className="em-rule-text" title={v.sub}>
-                          <strong>{v.label}</strong>
-                          {' — '}{v.gate}, {hoursDisplay}
-                        </span>
-                      </div>
-                    )
-                  })
-                )}
               </div>
             </div>
 

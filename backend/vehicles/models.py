@@ -146,9 +146,10 @@ class VehicleRegistration(models.Model):
 
 class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
-        EMPLOYEE = 'employee', 'Employee'
-        STUDENT  = 'student',  'Student'
-        VISITOR  = 'visitor',  'Visitor'
+        STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
+        STUDENT_EBIKE   = 'student_ebike',   'Student — E-Bike'
+        EMPLOYEE        = 'employee',         'Employee'
+        FETCHER         = 'fetcher',          'Fetcher / Drop & Go'
 
     name        = models.CharField(max_length=120)
     constraint_type = models.CharField(max_length=20, choices=ConstraintType.choices)

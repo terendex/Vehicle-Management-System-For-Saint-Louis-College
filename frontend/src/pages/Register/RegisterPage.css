@@ -763,47 +763,24 @@
   margin-bottom: 12px;
 }
 
-/* Group slot badges */
-.campus-day-groups-info {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+.schedule-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
-.campus-day-group-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 4px 12px;
-  border-radius: 20px;
-  letter-spacing: 0.3px;
+.schedule-note span {
+  flex: 1;
 }
 
-.campus-day-group-badge.mwf {
-  background: #EEEEFF;
-  color: #2A2B61;
-  border: 1px solid #C7C9E8;
-}
-
-.campus-day-group-badge.tths {
-  background: #ECFDF5;
-  color: #065F46;
-  border: 1px solid #A7F3D0;
-}
-
-.campus-day-group-badge.full {
-  background: #FEF2F2 !important;
-  color: #DC2626 !important;
-  border-color: #FECACA !important;
-}
-
-/* Day button row */
+/* Per-day slot button row */
 .campus-day-picker {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.campus-day-picker--per-day {
+  gap: 10px;
 }
 
 .campus-day-btn {
@@ -811,49 +788,40 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 58px;
-  height: 68px;
-  border: 2px solid transparent;
+  width: 64px;
+  height: 72px;
+  border: 2px solid #C7C9E8;
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.15s ease;
   background: #FAFBFD;
-  gap: 3px;
+  color: #2A2B61;
+  gap: 4px;
   padding: 0;
 }
 
-/* MWF group — blue/indigo */
-.campus-day-btn--mwf {
-  border-color: #C7C9E8;
-  color: #2A2B61;
+.campus-day-btn--per-day {
+  width: 76px;
+  height: 84px;
+  gap: 5px;
 }
 
-.campus-day-btn--mwf:hover:not(:disabled):not(.campus-day-btn--greyed) {
+.campus-day-btn--per-day:hover:not(:disabled):not(.campus-day-btn--greyed) {
   border-color: #2A2B61;
-  background: #F0F2FF;
+  background: #EEF0F9;
 }
 
-.campus-day-btn--mwf.campus-day-btn--selected {
+.campus-day-btn--selected {
   border-color: #2A2B61 !important;
   background: #2A2B61 !important;
   color: #fff !important;
 }
 
-/* TTHS group — green/teal */
-.campus-day-btn--tths {
-  border-color: #A7F3D0;
-  color: #065F46;
-}
-
-.campus-day-btn--tths:hover:not(:disabled):not(.campus-day-btn--greyed) {
-  border-color: #059669;
-  background: #ECFDF5;
-}
-
-.campus-day-btn--tths.campus-day-btn--selected {
-  border-color: #059669 !important;
-  background: #059669 !important;
-  color: #fff !important;
+.campus-day-btn--selected .campus-day-slots {
+  color: rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 /* Full / disabled */
@@ -863,7 +831,7 @@
   cursor: not-allowed;
 }
 
-/* Limit reached — unselected days dim but differently from "slot full" */
+/* Limit reached (3-day max) */
 .campus-day-btn--limit {
   opacity: 0.3;
   cursor: not-allowed;
@@ -881,26 +849,66 @@
 }
 
 .campus-day-short {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.5px;
   line-height: 1;
 }
 
-.campus-day-name {
-  font-size: 9px;
-  font-weight: 600;
-  opacity: 0.7;
-  letter-spacing: 0.3px;
+.campus-day-slots {
+  font-size: 10px;
+  font-weight: 700;
+  color: #4B5563;
+  letter-spacing: 0.2px;
   text-transform: uppercase;
+  background: #E8EAFF;
+  border: 1px solid #C7C9E8;
+  border-radius: 5px;
+  padding: 2px 6px;
+  line-height: 1.4;
+  min-width: 42px;
+  text-align: center;
 }
 
-/* Day counter */
+/* Day counter + summary */
+.campus-day-summary {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .campus-day-counter {
   font-size: 11.5px;
   color: #7C80A3;
   font-weight: 600;
-  margin: 8px 0 0;
+  margin: 0;
+}
+
+.campus-day-selected-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.campus-day-selected-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #EEF0F9;
+  border: 1px solid #C7C9E8;
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2A2B61;
+}
+
+.campus-day-selected-chip em {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 11px;
+  color: #6B7280;
 }
 
 /* Employee / Fetcher "any day" */
@@ -912,12 +920,26 @@
 
 .campus-day-anyday-note {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 12px;
   color: #059669;
   font-weight: 500;
   margin: 0;
+  line-height: 1.6;
+}
+
+.campus-day-anyday-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.fetcher-note {
+  background: #FFFBEB;
+  border: 1px solid #FCD34D;
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: #92400E;
 }
 
 /* ── readonly input ── */

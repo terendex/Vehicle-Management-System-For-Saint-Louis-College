@@ -7,12 +7,12 @@ import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
 
 const CAMPUS_DAYS = [
-  { key: 'Monday',    short: 'M',  group: 'MWF' },
-  { key: 'Tuesday',   short: 'T',  group: 'TTHS' },
-  { key: 'Wednesday', short: 'W',  group: 'MWF' },
-  { key: 'Thursday',  short: 'TH', group: 'TTHS' },
-  { key: 'Friday',    short: 'F',  group: 'MWF' },
-  { key: 'Saturday',  short: 'S',  group: 'TTHS' },
+  { key: 'Monday',    short: 'Mon' },
+  { key: 'Tuesday',   short: 'Tue' },
+  { key: 'Wednesday', short: 'Wed' },
+  { key: 'Thursday',  short: 'Thu' },
+  { key: 'Friday',    short: 'Fri' },
+  { key: 'Saturday',  short: 'Sat' },
 ]
 
 
@@ -45,9 +45,10 @@ export default function RegisterPage() {
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
 
   // Schedule slots & reference lists
-  const [scheduleSlots, setScheduleSlots] = useState(null)
-  const [departments,   setDepartments]   = useState([])
-  const [programs,      setPrograms]      = useState([])
+  const [scheduleSlots,    setScheduleSlots]    = useState(null)
+  const [loadingSlots,     setLoadingSlots]     = useState(false)
+  const [departments,      setDepartments]      = useState([])
+  const [programs,         setPrograms]         = useState([])
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -70,11 +71,14 @@ export default function RegisterPage() {
   })
 
   const fetchScheduleSlots = useCallback(async () => {
+    setLoadingSlots(true)
     try {
       const slots = await registrationApi.getScheduleSlots()
       setScheduleSlots(slots)
     } catch {
-      // non-critical
+      // non-critical — buttons still usable without slot counts
+    } finally {
+      setLoadingSlots(false)
     }
   }, [])
 
@@ -142,10 +146,9 @@ export default function RegisterPage() {
 
   const toggleDay = (dayKey) => {
     setFormData(prev => {
-      if (prev.campus_days.includes(dayKey)) {
+      if (prev.campus_days.includes(dayKey))
         return { ...prev, campus_days: prev.campus_days.filter(d => d !== dayKey) }
-      }
-      if (prev.campus_days.length >= 3) return prev // max 3 days
+      if (prev.campus_days.length >= 3) return prev
       return { ...prev, campus_days: [...prev.campus_days, dayKey] }
     })
   }
@@ -160,16 +163,15 @@ export default function RegisterPage() {
       alert('Please select at least one campus day.')
       return
     }
+    if (registrantType === 'student' && formData.campus_days.length > 3) {
+      alert('You may only select up to 3 campus days.')
+      return
+    }
 
     if (registrantType === 'student' && scheduleSlots) {
-      const picksMWF  = formData.campus_days.some(d => ['Monday','Wednesday','Friday'].includes(d))
-      const picksTTHS = formData.campus_days.some(d => ['Tuesday','Thursday','Saturday'].includes(d))
-      if (picksMWF  && scheduleSlots.MWF?.available === 0) {
-        alert('The MWF group is full. Please deselect Monday/Wednesday/Friday days or try again later.')
-        return
-      }
-      if (picksTTHS && scheduleSlots.TTHS?.available === 0) {
-        alert('The TTHS group is full. Please deselect Tuesday/Thursday/Saturday days or try again later.')
+      const fullDays = formData.campus_days.filter(d => scheduleSlots[d]?.available === 0)
+      if (fullDays.length > 0) {
+        alert(`The following day(s) are full: ${fullDays.join(', ')}. Please deselect them and try again.`)
         return
       }
     }
@@ -338,6 +340,70 @@ export default function RegisterPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="register-form">
+
+            {/* ── Vehicle Identification ── */}
+            <h3 className="section-heading">Vehicle Identification</h3>
+            <div className="form-grid">
+              <div className="form-group">
+                <label>
+                  {isEbike ? 'Student ID Number' : 'Plate Number'}
+                  {' '}<span className="required">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="plate_number"
+                  value={formData.plate_number}
+                  onChange={handleInputChange}
+                  required
+                  placeholder={isEbike ? 'Used as your e-bike identifier' : ''}
+                />
+              </div>
+
+              {!isEbike && (
+                <div className="form-group">
+                  <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
+                  <input type="text" name="conduction_number" value={formData.conduction_number} onChange={handleInputChange} />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Vehicle Type <span className="required">*</span></label>
+                {isEbike ? (
+                  <input type="text" value="E-Bike" readOnly className="input-readonly" />
+                ) : (
+                  <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
+                    <option value="">Select Type</option>
+                    <option value="Sedan">Sedan</option>
+                    <option value="SUV">SUV</option>
+                    <option value="Motorcycle">Motorcycle</option>
+                    <option value="Tricycle">Tricycle</option>
+                    <option value="Van">Van</option>
+                    <option value="Truck">Truck</option>
+                    <option value="Other">Other</option>
+                  </select>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label>Vehicle Color <span className="required">*</span></label>
+                <input type="text" name="vehicle_color" value={formData.vehicle_color} onChange={handleInputChange} required />
+              </div>
+
+              <div className="form-group col-span-2">
+                <label>Body Number <span className="field-note">(for tricycle only)</span></label>
+                <input
+                  type="text"
+                  name="body_number"
+                  value={formData.body_number}
+                  onChange={handleInputChange}
+                  disabled={formData.vehicle_type !== 'Tricycle'}
+                  placeholder={formData.vehicle_type !== 'Tricycle' ? 'Only applicable for Tricycle' : ''}
+                />
+              </div>
+            </div>
+
+            <hr className="divider" />
+
             {/* ── Personal Information ── */}
             <h3 className="section-heading">Personal Information</h3>
             <div className="form-grid">
@@ -430,150 +496,97 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              {/* Campus day selector — shown for all types */}
-              {(isStudent || isEmployee || isFetcher) && (
+              {/* Campus day selector — students only */}
+              {isStudent && (
                 <div className="form-group col-span-2">
                   <label className="days-label">
-                    Campus Days {isStudent && <span className="required">*</span>}
+                    Campus Days <span className="required">*</span>
                   </label>
-
-                  {isStudent ? (
-                    <>
-                      <div className="schedule-note">
-                        <Info size={13} />
-                        Schedules are <strong>first come, first serve</strong> and are{' '}
-                        <strong>subject to change</strong>. Each group of days has a maximum of{' '}
-                        <strong>100 slots</strong> (tentative).
-                      </div>
-                      {scheduleSlots && (
-                        <div className="campus-day-groups-info">
-                          <span className={`campus-day-group-badge mwf${scheduleSlots.MWF?.available === 0 ? ' full' : ''}`}>
-                            MWF — {scheduleSlots.MWF?.available === 0 ? 'FULL' : `${scheduleSlots.MWF?.available} slots left`}
+                  <div className="schedule-note">
+                    <Info size={13} />
+                    <span>
+                      Schedules are <strong>first come, first serve</strong>. Each day has a limited number of slots.
+                      Select up to <strong>3 days</strong>. Days that are <strong>full</strong> cannot be selected.
+                    </span>
+                  </div>
+                  <div className="campus-day-picker campus-day-picker--per-day">
+                    {CAMPUS_DAYS.map(day => {
+                      const slot         = scheduleSlots?.[day.key]
+                      const isFull       = slot?.available === 0
+                      const isSelected   = formData.campus_days.includes(day.key)
+                      const limitReached = formData.campus_days.length >= 3 && !isSelected
+                      const isDisabled   = isFull || limitReached
+                      return (
+                        <button
+                          key={day.key}
+                          type="button"
+                          className={[
+                            'campus-day-btn campus-day-btn--per-day',
+                            isSelected   ? 'campus-day-btn--selected' : '',
+                            isFull       ? 'campus-day-btn--full'     : '',
+                            limitReached && !isFull ? 'campus-day-btn--limit' : '',
+                          ].filter(Boolean).join(' ')}
+                          onClick={() => !isDisabled && toggleDay(day.key)}
+                          disabled={isDisabled}
+                          aria-pressed={isSelected}
+                          title={isFull ? `${day.key} is full` : limitReached ? 'Maximum 3 days selected' : day.key}
+                        >
+                          <span className="campus-day-short">{day.short}</span>
+                          <span className="campus-day-slots">
+                            {loadingSlots
+                              ? '···'
+                              : slot
+                                ? (isFull ? 'FULL' : `${slot.available} left`)
+                                : '—'}
                           </span>
-                          <span className={`campus-day-group-badge tths${scheduleSlots.TTHS?.available === 0 ? ' full' : ''}`}>
-                            TTHS — {scheduleSlots.TTHS?.available === 0 ? 'FULL' : `${scheduleSlots.TTHS?.available} slots left`}
-                          </span>
-                        </div>
-                      )}
-                      <div className="campus-day-picker">
-                        {CAMPUS_DAYS.map(day => {
-                          const isGroupFull  = scheduleSlots?.[day.group]?.available === 0
-                          const isSelected   = formData.campus_days.includes(day.key)
-                          const limitReached = formData.campus_days.length >= 3 && !isSelected
-                          const isDisabled   = isGroupFull || limitReached
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="campus-day-summary">
+                    <span className="campus-day-counter">
+                      {formData.campus_days.length}/3 days selected
+                      {formData.campus_days.length === 3 && ' — maximum reached'}
+                    </span>
+                    {formData.campus_days.length > 0 && scheduleSlots && (
+                      <div className="campus-day-selected-list">
+                        {formData.campus_days.map(d => {
+                          const slot = scheduleSlots[d]
                           return (
-                            <button
-                              key={day.key}
-                              type="button"
-                              className={[
-                                'campus-day-btn',
-                                `campus-day-btn--${day.group.toLowerCase()}`,
-                                isSelected  ? 'campus-day-btn--selected' : '',
-                                isGroupFull ? 'campus-day-btn--full'     : '',
-                                limitReached && !isGroupFull ? 'campus-day-btn--limit' : '',
-                              ].filter(Boolean).join(' ')}
-                              onClick={() => !isDisabled && toggleDay(day.key)}
-                              disabled={isDisabled}
-                              aria-pressed={isSelected}
-                              title={isGroupFull ? `${day.group} group is full` : limitReached ? 'Maximum 3 days selected' : day.key}
-                            >
-                              <span className="campus-day-short">{day.short}</span>
-                              <span className="campus-day-name">{day.key.slice(0, 3)}</span>
-                            </button>
+                            <span key={d} className="campus-day-selected-chip">
+                              {d.slice(0, 3)}
+                              {slot && (
+                                <em>{slot.available} slot{slot.available !== 1 ? 's' : ''} left</em>
+                              )}
+                            </span>
                           )
                         })}
                       </div>
-                      <p className="campus-day-counter">
-                        {formData.campus_days.length}/3 days selected
-                        {formData.campus_days.length === 3 && ' — maximum reached'}
-                      </p>
-                    </>
-                  ) : (
-                    <div className="campus-day-anyday">
-                      <div className="campus-day-picker campus-day-picker--greyed">
-                        {CAMPUS_DAYS.map(day => (
-                          <div
-                            key={day.key}
-                            className={`campus-day-btn campus-day-btn--${day.group.toLowerCase()} campus-day-btn--greyed`}
-                          >
-                            <span className="campus-day-short">{day.short}</span>
-                            <span className="campus-day-name">{day.key.slice(0, 3)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="campus-day-anyday-note">
-                        <Info size={13} />
-                        {isFetcher
-                          ? 'Fetchers / Drop & Go may enter on any day during drop-off and pick-up hours.'
-                          : 'Employees are permitted to enter and park on any day of the week.'}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <hr className="divider" />
-
-            {/* ── Vehicle Identification ── */}
-            <h3 className="section-heading">Vehicle Identification</h3>
-            <div className="form-grid">
-              <div className="form-group">
-                <label>
-                  {isEbike ? 'Student ID Number' : 'Plate Number'}
-                  {' '}<span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="plate_number"
-                  value={formData.plate_number}
-                  onChange={handleInputChange}
-                  required
-                  placeholder={isEbike ? 'Used as your e-bike identifier' : ''}
-                />
-              </div>
-
-              {!isEbike && (
-                <div className="form-group">
-                  <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
-                  <input type="text" name="conduction_number" value={formData.conduction_number} onChange={handleInputChange} />
+                    )}
+                  </div>
                 </div>
               )}
 
-              <div className="form-group">
-                <label>Vehicle Type <span className="required">*</span></label>
-                {isEbike ? (
-                  <input type="text" value="E-Bike" readOnly className="input-readonly" />
-                ) : (
-                  <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
-                    <option value="">Select Type</option>
-                    <option value="Sedan">Sedan</option>
-                    <option value="SUV">SUV</option>
-                    <option value="Motorcycle">Motorcycle</option>
-                    <option value="Tricycle">Tricycle</option>
-                    <option value="Van">Van</option>
-                    <option value="Truck">Truck</option>
-                    <option value="Other">Other</option>
-                  </select>
-                )}
-              </div>
+              {/* Employee — all days, no picker */}
+              {isEmployee && (
+                <div className="form-group col-span-2">
+                  <p className="campus-day-anyday-note">
+                    <Info size={13} />
+                    Employees are permitted to enter and park on any day of the week.
+                  </p>
+                </div>
+              )}
 
-              <div className="form-group">
-                <label>Vehicle Color <span className="required">*</span></label>
-                <input type="text" name="vehicle_color" value={formData.vehicle_color} onChange={handleInputChange} required />
-              </div>
-
-              <div className="form-group col-span-2">
-                <label>Body Number <span className="field-note">(for tricycle only)</span></label>
-                <input
-                  type="text"
-                  name="body_number"
-                  value={formData.body_number}
-                  onChange={handleInputChange}
-                  disabled={formData.vehicle_type !== 'Tricycle'}
-                  placeholder={formData.vehicle_type !== 'Tricycle' ? 'Only applicable for Tricycle' : ''}
-                />
-              </div>
+              {/* Fetcher — all days but time-limited */}
+              {isFetcher && (
+                <div className="form-group col-span-2">
+                  <p className="campus-day-anyday-note fetcher-note">
+                    <Info size={13} />
+                    Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only.
+                    Entry outside these hours will be restricted.
+                  </p>
+                </div>
+              )}
             </div>
 
             <hr className="divider" />
