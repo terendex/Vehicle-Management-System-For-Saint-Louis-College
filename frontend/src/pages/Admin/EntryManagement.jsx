@@ -233,7 +233,7 @@ export default function EntryManagement() {
     return ''
   }, [])
 
-  const { scanning: wsScanning, connected: wsConnected, results: wsResults, flash: flashState, videoRef } = useScanStream(
+  const { scanning: wsScanning, connected: wsConnected, results: wsResults, flash: flashState, videoRef, canvasRef, activeTracks } = useScanStream(
     getToken(),
     cameraOn && mode === 'camera',
   )
@@ -426,7 +426,7 @@ export default function EntryManagement() {
                     {/* Primary Camera */}
                     <div className="em-primary-cam">
                       {cameras.map(cam => (
-                        <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
+                        <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%', position: 'relative' }}>
                           <Webcam
                             ref={(el) => {
                               webcamRefs.current[cam.id] = el
@@ -440,32 +440,36 @@ export default function EntryManagement() {
                           />
                         </div>
                       ))}
+
+                      {/* Canvas overlay — 60fps smooth bounding boxes with labels */}
+                      <canvas
+                        ref={canvasRef}
+                        style={{
+                          position: 'absolute', top: 0, left: 0,
+                          width: '100%', height: '100%',
+                          pointerEvents: 'none', zIndex: 10,
+                        }}
+                      />
+
+                      {/* CSS fallback bounding boxes from live WebSocket tracks */}
+                      {activeTracks.map((track) => (
+                        <div
+                          key={`track-${track.track_id}`}
+                          className="em-bounding-box"
+                          style={{
+                            left:   `${track.bbox[0] * 100}%`,
+                            top:    `${track.bbox[1] * 100}%`,
+                            width:  `${(track.bbox[2] - track.bbox[0]) * 100}%`,
+                            height: `${(track.bbox[3] - track.bbox[1]) * 100}%`,
+                          }}
+                        />
+                      ))}
+
                       <div className="em-scan-frame">
                           <div className="em-scan-inner" />
                           {!wsScanning && <div className="em-scan-line" />}
                       </div>
                       {flashState && <div className="em-flash" />}
-
-                      {/* Bounding Box overlays */}
-                      {bbox && bbox.length > 0 && bbox.map((b, i) => {
-                        const isAbsolute = b.x > 1 || b.y > 1;
-                        const x = isAbsolute ? b.x / 640 : b.x;
-                        const y = isAbsolute ? b.y / 480 : b.y;
-                        const w = isAbsolute ? b.width / 640 : b.width;
-                        const h = isAbsolute ? b.height / 480 : b.height;
-                        return (
-                          <div
-                            key={`bbox-cam-${i}`}
-                            className="em-bounding-box"
-                            style={{
-                              left: `${x * 100}%`,
-                              top: `${y * 100}%`,
-                              width: `${w * 100}%`,
-                              height: `${h * 100}%`,
-                            }}
-                          />
-                        );
-                      })}
 
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {cameras.find(c => c.id === activeCamId)?.name}

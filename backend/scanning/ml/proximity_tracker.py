@@ -79,10 +79,6 @@ class ProximityTracker:
                 det["plate_text"] = ""
                 det["ocr_done"] = False
 
-        for tid in list(self.tracks.keys()):
-            if tid not in matched_track_ids:
-                self.tracks[tid].last_seen = now
-
         expired = [
             tid for tid, t in self.tracks.items()
             if now - t.last_seen >= self.EXPIRY_SECONDS

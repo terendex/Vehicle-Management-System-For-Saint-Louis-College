@@ -6,17 +6,20 @@ const WS_BASE =
 
 // ── Bounding box colours ───────────────────────────────────────────────────────
 const TRACK_COLORS = {
-  license_plate: "#00ff88",   // green  — plate detections
-  vehicle:       "#00ff88",   // green  — car/jeep/bus body
-  motor:         "#3b82f6",   // blue   — motorcycle/tricycle
-  ebike:         "#8b5cf6",   // purple
-  escooter:      "#10b981",   // emerald
-  _default:      "#facc15",   // yellow — unknown / future classes
+  license_plate:    "#00ff88",  // green   — plate detections
+  vehicle:          "#00ff88",  // green   — car/jeep/bus body
+  motorcycle:       "#3b82f6",  // blue    — motorcycle
+  bicycle:          "#6366f1",  // indigo  — bicycle
+  e_bike:           "#8b5cf6",  // purple  — e-bike
+  electric_scooter: "#10b981",  // emerald — electric scooter
+  _default:         "#facc15",  // yellow  — unknown / future classes
 };
 
 const VEHICLE_TYPE_LABELS = {
-  ebike:    "E-Bike",
-  escooter: "E-Scooter",
+  motorcycle:       "Motorcycle",
+  bicycle:          "Bicycle",
+  e_bike:           "E-Bike",
+  electric_scooter: "Electric Scooter",
 };
 
 function getTrackColor(track) {
@@ -277,14 +280,14 @@ export function useScanStream(token, cameraOn) {
       try {
         let base64 = null;
         if (typeof webcam.getScreenshot === "function") {
-          base64 = webcam.getScreenshot({ width: 1280, height: 720 });
+          base64 = webcam.getScreenshot({ width: 640, height: 480 });
         }
         if (!base64 && webcam.video) {
           const c = document.createElement("canvas");
-          c.width  = 1280;
-          c.height = 720;
-          c.getContext("2d").drawImage(webcam.video, 0, 0, 1280, 720);
-          base64 = c.toDataURL("image/jpeg", 0.75);
+          c.width  = 640;
+          c.height = 480;
+          c.getContext("2d").drawImage(webcam.video, 0, 0, 640, 480);
+          base64 = c.toDataURL("image/jpeg", 0.80);
         }
         if (base64) {
           const jpegBase64 = base64.split(",")[1];
