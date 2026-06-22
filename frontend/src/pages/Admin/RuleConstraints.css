@@ -1004,3 +1004,108 @@
     flex-direction: column;
   }
 }
+
+/* ── Entry Type Cards ─────────────────────────────────────────── */
+
+.rc-entry-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.rc-entry-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #E2E6EE;
+  background: #fff;
+  transition: background 0.15s;
+  cursor: default;
+}
+
+.rc-entry-card:last-child {
+  border-bottom: none;
+  border-radius: 0 0 12px 12px;
+}
+
+.rc-entry-card:first-child {
+  border-radius: 12px 12px 0 0;
+}
+
+.rc-entry-card:only-child {
+  border-radius: 12px;
+}
+
+.rc-entry-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #F0F2F7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2A2B61;
+  flex-shrink: 0;
+}
+
+.rc-entry-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rc-entry-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0 0 2px;
+}
+
+.rc-entry-desc {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 0 0 6px;
+}
+
+.rc-entry-schedule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rc-entry-days {
+  font-size: 11px;
+  font-weight: 600;
+  color: #2A2B61;
+  background: #EEF0F9;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.rc-entry-time {
+  font-size: 11px;
+  color: #5A5F72;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rc-entry-chevron {
+  background: none;
+  border: 1px solid #E2E6EE;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9CA3AF;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.rc-entry-chevron:hover {
+  background: #F0F2F7;
+  color: #2A2B61;
+}

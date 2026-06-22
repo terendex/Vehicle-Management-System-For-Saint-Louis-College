@@ -358,7 +358,7 @@ REGISTRATION_OPEN_MONTH  = 6   # June  (tentative — 2 months before school yea
 REGISTRATION_OPEN_DAY    = 1
 REGISTRATION_CLOSE_MONTH = 10  # October (tentative — end of first semester enrollment window)
 REGISTRATION_CLOSE_DAY   = 31
-SCHEDULE_SLOT_LIMIT      = 100  # per schedule (MWF / TTHS)
+SCHEDULE_SLOT_LIMIT      = 100  # per day
 
 
 def _registration_window():
@@ -384,31 +384,25 @@ class RegistrationStatusView(APIView):
         return Response(_registration_window())
 
 
+ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+
 class ScheduleSlotsView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        from django.db.models import Q
         active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-        base = VehicleRegistration.objects.filter(status__in=active)
-        # Count registrations that include at least one day from each group
-        mwf_q = (
-            Q(campus_days__contains=['Monday']) |
-            Q(campus_days__contains=['Wednesday']) |
-            Q(campus_days__contains=['Friday'])
-        )
-        tths_q = (
-            Q(campus_days__contains=['Tuesday']) |
-            Q(campus_days__contains=['Thursday']) |
-            Q(campus_days__contains=['Saturday'])
-        )
-        mwf_count  = base.filter(mwf_q).count()
-        tths_count = base.filter(tths_q).count()
+        base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
         limit = SCHEDULE_SLOT_LIMIT
-        return Response({
-            "MWF":  {"used": mwf_count,  "limit": limit, "available": max(0, limit - mwf_count)},
-            "TTHS": {"used": tths_count, "limit": limit, "available": max(0, limit - tths_count)},
-        })
+        result = {}
+        for day in ALL_DAYS:
+            used = base.filter(campus_days__contains=[day]).count()
+            result[day] = {
+                "used": used,
+                "limit": limit,
+                "available": max(0, limit - used),
+            }
+        return Response(result)
 
 
 class PublicOpenRegistrationView(APIView):
@@ -432,10 +426,25 @@ class PublicOpenRegistrationView(APIView):
             data['schedule'] = 'ANY'
             data['campus_days'] = []
         else:
-            # Derive schedule group from selected campus_days
+            # Validate per-day slot limits for students
             campus_days = data.get('campus_days', [])
             if not campus_days:
                 return Response({"error": "Students must select at least one campus day."}, status=status.HTTP_400_BAD_REQUEST)
+
+            active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+            base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
+            full_days = []
+            for day in campus_days:
+                used = base.filter(campus_days__contains=[day]).count()
+                if used >= SCHEDULE_SLOT_LIMIT:
+                    full_days.append(day)
+            if full_days:
+                return Response(
+                    {"error": f"The following day(s) are full: {', '.join(full_days)}. Please choose other days."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Derive schedule group from majority of selected days
             mwf_days  = {'Monday', 'Wednesday', 'Friday'}
             tths_days = {'Tuesday', 'Thursday', 'Saturday'}
             days_set  = set(campus_days)

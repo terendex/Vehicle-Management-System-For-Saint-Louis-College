@@ -206,5 +206,4 @@ CELERY_WORKER_POOL = os.getenv('CELERY_WORKER_POOL', 'solo')
 
 # ML Feedback Loop Configuration
 ML_SAMPLE_BATCH_SIZE = int(os.getenv('ML_SAMPLE_BATCH_SIZE', 50))
-ML_CONFIDENCE_THRESHOLD = float(os.getenv('ML_CONFIDENCE_THRESHOLD', 0.6))
 ML_AUTO_RETRAIN_ENABLED = os.getenv('ML_AUTO_RETRAIN_ENABLED', 'true').lower() == 'true'

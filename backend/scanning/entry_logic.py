@@ -83,49 +83,38 @@ def check_entry(vehicle) -> dict:
                     rule.name)
         return _result('authorized', True, f'Employee — {owner.full_name}. Entry granted.', rule.name if rule else None)
 
-    # ── STUDENT or FETCHER ────────────────────────────────────────────
-    if owner_type in [Owner.OwnerType.STUDENT, Owner.OwnerType.FETCHER]:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT)
-        if rule:
-            if not _is_within_days(rule, today_weekday):
-                day_name = timezone.localdate().strftime('%A')
-                return _result('wrong_day', False,
-                    f'{owner_type.capitalize()} access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.',
-                    rule.name)
-            if not _is_within_window(rule, now):
-                return _result('denied', False,
-                    f'{owner_type.capitalize()} access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}) per rule: {rule.name}.',
-                    rule.name)
-            return _result('authorized', True, f'{owner_type.capitalize()} — {owner.full_name}. Entry granted.', rule.name)
-
-        # Fall back to owner schedule
+    # ── STUDENT ───────────────────────────────────────────────────────
+    if owner_type == Owner.OwnerType.STUDENT:
+        rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
         allowed_days = SCHEDULE_DAYS.get(owner.schedule, [])
         if today_weekday not in allowed_days:
             day_name = timezone.localdate().strftime('%A')
-            return _result(
-                'wrong_day', False,
-                f'{owner_type.capitalize()} is on {owner.schedule} schedule. Today is {day_name}.',
-                None)
-        return _result('authorized', True, f'{owner_type.capitalize()} — {owner.full_name}. Entry granted.', None)
+            return _result('wrong_day', False,
+                f'Student is on {owner.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                rule.name if rule else None)
+        if rule and not _is_within_window(rule, now):
+            return _result('denied', False,
+                f'Student access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
+                rule.name)
+        return _result('authorized', True, f'Student — {owner.full_name}. Entry granted.', rule.name if rule else None)
 
-    # ── VISITOR ───────────────────────────────────────────────────────
-    if owner_type == Owner.OwnerType.VISITOR:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.VISITOR)
-        if not rule:
-            return _result('disabled', False,
-                'Visitor access is currently disabled. Please register at the gate.', None)
-
-        if not _is_within_days(rule, today_weekday):
+    # ── FETCHER ───────────────────────────────────────────────────────
+    if owner_type == Owner.OwnerType.FETCHER:
+        rule = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
+        allowed_days = SCHEDULE_DAYS.get(owner.schedule, [])
+        if today_weekday not in allowed_days:
             day_name = timezone.localdate().strftime('%A')
             return _result('wrong_day', False,
-                f'Visitor access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.',
-                rule.name)
-
-        if not _is_within_window(rule, now):
+                f'Fetcher is on {owner.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                rule.name if rule else None)
+        if rule and not _is_within_window(rule, now):
             return _result('denied', False,
-                f'Visitor access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}) per rule: {rule.name}.',
+                f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name)
+        return _result('authorized', True, f'Fetcher — {owner.full_name}. Entry granted.', rule.name if rule else None)
 
+    # ── VISITOR (pass-based, no RuleConstraint needed) ────────────────
+    if owner_type == Owner.OwnerType.VISITOR:
         today = timezone.localdate()
         pass_ = VisitorPass.objects.filter(
             vehicle=vehicle,
@@ -134,28 +123,18 @@ def check_entry(vehicle) -> dict:
 
         if not pass_:
             return _result('denied', False,
-                'No visitor pass found for today. Please register at the gate.',
-                rule.name)
-
+                'No visitor pass found for today. Please register at the gate.', None)
         if pass_.status == VisitorPass.Status.PENDING:
             return _result('pending', False,
-                f'Visitor pass pending confirmation from {pass_.office.name}.',
-                rule.name)
-
+                f'Visitor pass pending confirmation from {pass_.office.name}.', None)
         if pass_.status == VisitorPass.Status.REJECTED:
             return _result('denied', False,
-                f'Visitor pass was rejected by {pass_.office.name}.',
-                rule.name)
-
+                f'Visitor pass was rejected by {pass_.office.name}.', None)
         if pass_.status == VisitorPass.Status.EXPIRED:
-            return _result('denied', False,
-                'Visitor pass has expired.',
-                rule.name)
-
+            return _result('denied', False, 'Visitor pass has expired.', None)
         if pass_.status == VisitorPass.Status.CONFIRMED:
             return _result('authorized', True,
-                f'Visitor confirmed by {pass_.office.name}. Entry granted.',
-                rule.name)
+                f'Visitor confirmed by {pass_.office.name}. Entry granted.', None)
 
     return _result('denied', False, 'Unknown owner type.', None)
 
@@ -207,51 +186,40 @@ def check_owner_entry(owner, vehicle_type: str = None) -> dict:
                     rule.name)
         return _result('authorized', True, f'Employee — {owner.full_name}. Entry granted.', rule.name if rule else None)
 
-    # ── STUDENT or FETCHER ────────────────────────────────────────────
-    if owner_type in [Owner.OwnerType.STUDENT, Owner.OwnerType.FETCHER]:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT)
-        if rule:
-            if not _is_within_days(rule, today_weekday):
-                day_name = timezone.localdate().strftime('%A')
-                return _result('wrong_day', False,
-                    f'{owner_type.capitalize()} access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.',
-                    rule.name)
-            if not _is_within_window(rule, now):
-                return _result('denied', False,
-                    f'{owner_type.capitalize()} access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}) per rule: {rule.name}.',
-                    rule.name)
-            return _result('authorized', True, f'{owner_type.capitalize()} — {owner.full_name}. Entry granted.', rule.name)
-
-        # Fall back to owner schedule
+    # ── STUDENT ───────────────────────────────────────────────────────
+    if owner_type == Owner.OwnerType.STUDENT:
+        is_ebike = vehicle_type and vehicle_type in ('e_bike', 'ebike', 'electric_bicycle', 'bicycle')
+        ct = RuleConstraint.ConstraintType.STUDENT_EBIKE if is_ebike else RuleConstraint.ConstraintType.STUDENT_VEHICLE
+        rule = _get_active_rule(ct)
         allowed_days = SCHEDULE_DAYS.get(owner.schedule, [])
         if today_weekday not in allowed_days:
             day_name = timezone.localdate().strftime('%A')
-            return _result(
-                'wrong_day', False,
-                f'{owner_type.capitalize()} is on {owner.schedule} schedule. Today is {day_name}.',
-                None)
-        return _result('authorized', True, f'{owner_type.capitalize()} — {owner.full_name}. Entry granted.', None)
+            return _result('wrong_day', False,
+                f'Student is on {owner.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                rule.name if rule else None)
+        if rule and not _is_within_window(rule, now):
+            return _result('denied', False,
+                f'Student access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
+                rule.name)
+        return _result('authorized', True, f'Student — {owner.full_name}. Entry granted.', rule.name if rule else None)
+
+    # ── FETCHER ───────────────────────────────────────────────────────
+    if owner_type == Owner.OwnerType.FETCHER:
+        rule = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
+        allowed_days = SCHEDULE_DAYS.get(owner.schedule, [])
+        if today_weekday not in allowed_days:
+            day_name = timezone.localdate().strftime('%A')
+            return _result('wrong_day', False,
+                f'Fetcher is on {owner.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                rule.name if rule else None)
+        if rule and not _is_within_window(rule, now):
+            return _result('denied', False,
+                f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
+                rule.name)
+        return _result('authorized', True, f'Fetcher — {owner.full_name}. Entry granted.', rule.name if rule else None)
 
     # ── VISITOR ───────────────────────────────────────────────────────
     if owner_type == Owner.OwnerType.VISITOR:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.VISITOR)
-        if not rule:
-            return _result('disabled', False,
-                'Visitor access is currently disabled. Please register at the gate.', None)
-
-        if not _is_within_days(rule, today_weekday):
-            day_name = timezone.localdate().strftime('%A')
-            return _result('wrong_day', False,
-                f'Visitor access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.',
-                rule.name)
-
-        if not _is_within_window(rule, now):
-            return _result('denied', False,
-                f'Visitor access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}) per rule: {rule.name}.',
-                rule.name)
-
-        return _result('authorized', True,
-            f'Visitor — {owner.full_name}. Entry granted.',
-            rule.name)
+        return _result('authorized', True, f'Visitor — {owner.full_name}. Entry granted.', None)
 
     return _result('denied', False, 'Unknown owner type.', None)
