@@ -399,6 +399,16 @@
   border-top: 1px solid #F0F2F7;
 }
 
+/* RTSP hint code snippets */
+.pm-modal-body code {
+  background: #F0F2F7;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  color: #2A2B61;
+}
+
 /* Category toggle */
 .pm-cat-toggle { display: flex; gap: 8px; }
 
@@ -424,3 +434,323 @@
   border-color: #2A2B61 !important;
   color: #fff !important;
 }
+
+/* ══ Camera Feeds Panel ════════════════════════════════════════ */
+.pm-cam-panel {
+  background: #10131e;
+  border: 1px solid #1e2235;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+}
+
+.pm-cam-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #1e2235;
+  background: #0d1117;
+}
+
+.pm-cam-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #c9d1e0;
+}
+
+.pm-cam-live-badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(34,197,94,0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34,197,94,0.3);
+  border-radius: 20px;
+  padding: 2px 9px;
+  margin-left: 4px;
+}
+
+/* Add-camera form row */
+.pm-cam-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid #1e2235;
+  background: #0d1117;
+}
+
+.pm-cam-add-row .pm-modal-input {
+  background: #1a1f2e;
+  border-color: #2a3040;
+  color: #c9d1e0;
+}
+.pm-cam-add-row .pm-modal-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.pm-cam-add-row .pm-modal-input::placeholder { color: #4a5070; }
+
+/* Camera grid */
+.pm-cam-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.pm-cam-card {
+  background: #0d1117;
+  border: 1.5px solid #1e2235;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pm-cam-card:hover { border-color: #3b82f6; }
+.pm-cam-card--active {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+
+.pm-cam-canvas-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #060810;
+  overflow: hidden;
+}
+
+.pm-cam-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.pm-cam-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.65);
+  pointer-events: none;
+}
+
+.pm-cam-overlay span {
+  color: #93c5fd;
+  font-size: 12px;
+}
+
+/* Small spinner for camera overlay */
+.pm-spin-sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(96,165,250,0.15);
+  border-top-color: #60a5fa;
+  animation: pm-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.pm-cam-status-dot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0,0,0,0.4);
+  flex-shrink: 0;
+}
+
+.pm-cam-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid #1e2235;
+  gap: 8px;
+}
+
+.pm-cam-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9ba3bf;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.pm-cam-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(220,38,38,0.12);
+  color: #f87171;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.pm-cam-remove:hover { background: rgba(220,38,38,0.25); }
+
+/* Empty state */
+.pm-cam-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 20px;
+  color: #4a5070;
+  font-size: 13px;
+  text-align: center;
+}
+.pm-cam-empty p { margin: 0; line-height: 1.6; }
+
+/* ══ Side-by-side layout: map + camera sidebar ═══════════════════ */
+.pm-content-row {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+/* ── Camera Sidebar ──────────────────────────────────────────────── */
+.pm-cam-sidebar {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+  border: 1px solid #1e2235;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  min-height: 0;
+}
+
+.pm-cam-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1e2235;
+  background: #080b12;
+  flex-shrink: 0;
+}
+
+/* ── Main camera canvas area ──────────────────────────────────────── */
+.pm-cam-main-wrap {
+  position: relative;
+  width: 100%;
+  background: #040608;
+  flex-shrink: 0;
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.pm-cam-main-wrap canvas {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  background: #040608;
+}
+
+/* Active camera name / status overlay at bottom-left */
+.pm-cam-main-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0,0,0,0.65);
+  color: #c9d1e0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 20px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+/* ── Thumbnail strip (horizontal, 2+ cameras) ─────────────────────── */
+.pm-cam-thumb-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  max-height: 140px;
+  border-top: 1px solid #1e2235;
+  flex-shrink: 0;
+}
+
+.pm-cam-strip-thumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #12151f;
+  color: #7a839e;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+.pm-cam-strip-thumb:hover { background: #131824; color: #c9d1e0; }
+.pm-cam-strip-thumb.active {
+  background: #1a2236;
+  color: #93c5fd;
+  border-left: 2px solid #3b82f6;
+}
+
+.pm-cam-strip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.3);
+}
+
+.pm-cam-strip-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Add camera form (column layout inside sidebar) ───────────────── */
+.pm-cam-add-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #1e2235;
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+.pm-cam-add-col .pm-modal-input {
+  background: #131824;
+  border-color: #232a3a;
+  color: #c9d1e0;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.pm-cam-add-col .pm-modal-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.pm-cam-add-col .pm-modal-input::placeholder { color: #3a4460; }

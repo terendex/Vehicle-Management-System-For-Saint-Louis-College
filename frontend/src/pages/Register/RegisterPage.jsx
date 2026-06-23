@@ -7,12 +7,12 @@ import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
 
 const CAMPUS_DAYS = [
-  { key: 'Monday',    short: 'Mon' },
-  { key: 'Tuesday',   short: 'Tue' },
+  { key: 'Monday', short: 'Mon' },
+  { key: 'Tuesday', short: 'Tue' },
   { key: 'Wednesday', short: 'Wed' },
-  { key: 'Thursday',  short: 'Thu' },
-  { key: 'Friday',    short: 'Fri' },
-  { key: 'Saturday',  short: 'Sat' },
+  { key: 'Thursday', short: 'Thu' },
+  { key: 'Friday', short: 'Fri' },
+  { key: 'Saturday', short: 'Sat' },
 ]
 
 
@@ -45,10 +45,10 @@ export default function RegisterPage() {
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
 
   // Schedule slots & reference lists
-  const [scheduleSlots,    setScheduleSlots]    = useState(null)
-  const [loadingSlots,     setLoadingSlots]     = useState(false)
-  const [departments,      setDepartments]      = useState([])
-  const [programs,         setPrograms]         = useState([])
+  const [scheduleSlots, setScheduleSlots] = useState(null)
+  const [loadingSlots, setLoadingSlots] = useState(false)
+  const [departments, setDepartments] = useState([])
+  const [programs, setPrograms] = useState([])
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -259,7 +259,7 @@ export default function RegisterPage() {
                 <div className="payment-step">
                   <div className="payment-step-num">2</div>
                   <div className="payment-step-text">
-                    Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO (Community Development & Student Office)</strong> for processing.
+                    Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO (Campus Development & Sustainability Office)</strong> for processing.
                   </div>
                 </div>
                 <div className="payment-step">
@@ -310,8 +310,8 @@ export default function RegisterPage() {
     )
   }
 
-  const isStudent  = registrantType === 'student'
-  const isFetcher  = registrantType === 'fetcher'
+  const isStudent = registrantType === 'student'
+  const isFetcher = registrantType === 'fetcher'
   const isEmployee = registrantType === 'employee'
 
   /* ─── Form ─── */
@@ -335,7 +335,7 @@ export default function RegisterPage() {
               {isStudent
                 ? (isEbike ? 'Student — E-Bike Registration' : 'Student — Vehicle Registration')
                 : isEmployee ? 'Employee Registration'
-                : 'Fetcher / Drop & Go Registration'}
+                  : 'Fetcher / Drop & Go Registration'}
             </span>
           </div>
 
@@ -511,19 +511,19 @@ export default function RegisterPage() {
                   </div>
                   <div className="campus-day-picker campus-day-picker--per-day">
                     {CAMPUS_DAYS.map(day => {
-                      const slot         = scheduleSlots?.[day.key]
-                      const isFull       = slot?.available === 0
-                      const isSelected   = formData.campus_days.includes(day.key)
+                      const slot = scheduleSlots?.[day.key]
+                      const isFull = slot?.available === 0
+                      const isSelected = formData.campus_days.includes(day.key)
                       const limitReached = formData.campus_days.length >= 3 && !isSelected
-                      const isDisabled   = isFull || limitReached
+                      const isDisabled = isFull || limitReached
                       return (
                         <button
                           key={day.key}
                           type="button"
                           className={[
                             'campus-day-btn campus-day-btn--per-day',
-                            isSelected   ? 'campus-day-btn--selected' : '',
-                            isFull       ? 'campus-day-btn--full'     : '',
+                            isSelected ? 'campus-day-btn--selected' : '',
+                            isFull ? 'campus-day-btn--full' : '',
                             limitReached && !isFull ? 'campus-day-btn--limit' : '',
                           ].filter(Boolean).join(' ')}
                           onClick={() => !isDisabled && toggleDay(day.key)}

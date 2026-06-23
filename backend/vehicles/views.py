@@ -1,11 +1,17 @@
 import secrets
 import string
+import time as _time
 import uuid
+
+import cv2
+from django.http import StreamingHttpResponse, HttpResponse
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
 from .models import Owner, Vehicle, RuleConstraint, VehicleTypeAccess, ParkingSpace, ParkingZone, Department, Program
 from .serializers import OwnerSerializer, VehicleSerializer, RuleConstraintSerializer, VehicleTypeAccessSerializer, ParkingSpaceSerializer, ParkingZoneSerializer
+from . import parking_camera
 
 class OwnerViewSet(viewsets.ModelViewSet):
     queryset           = Owner.objects.all()
@@ -87,6 +93,98 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
             result.append(space)
 
         return Response(ParkingSpaceSerializer(result, many=True).data)
+
+    # ── IP Camera ──────────────────────────────────────────────────────────────
+
+    @action(detail=True, methods=['post'], url_path='start-camera')
+    def start_camera(self, request, pk=None):
+        zone = self.get_object()
+        if not zone.rtsp_url:
+            return Response({'error': 'No RTSP URL configured for this zone.'}, status=400)
+        parking_camera.start(zone.id, zone.rtsp_url)
+        return Response({'status': 'started'})
+
+    @action(detail=True, methods=['post'], url_path='stop-camera')
+    def stop_camera(self, request, pk=None):
+        zone = self.get_object()
+        parking_camera.stop(zone.id)
+        return Response({'status': 'stopped'})
+
+    @action(detail=False, methods=['get'], url_path='camera-status')
+    def camera_status(self, request):
+        """Returns {zone_id: is_running} for all zones."""
+        return Response(parking_camera.status_dict())
+
+
+def _make_placeholder_jpeg(text: str) -> bytes:
+    """Generate a dark grey JPEG with centred status text — sent when no live frame is available."""
+    import numpy as np
+    blank = np.full((480, 640, 3), 30, dtype=np.uint8)
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+    x = max(0, (640 - tw) // 2)
+    cv2.putText(blank, text, (x, 248), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (160, 160, 160), 2)
+    _, buf = cv2.imencode('.jpg', blank, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    return buf.tobytes()
+
+
+def _mjpeg_frame(jpeg_bytes: bytes) -> bytes:
+    return b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n'
+
+
+import asyncio
+
+async def parking_stream_view(request, pk):
+    """
+    Async MJPEG stream for a parking zone camera.
+    Auth via ?token=<JWT> because <img> tags cannot send Authorization headers.
+    """
+    from rest_framework_simplejwt.authentication import JWTAuthentication
+    from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+
+    token_str = request.GET.get('token', '')
+    if not token_str:
+        return HttpResponse(status=401)
+    try:
+        JWTAuthentication().get_validated_token(token_str)
+    except (TokenError, InvalidToken):
+        return HttpResponse(status=401)
+
+    zone_id = int(pk)
+
+    _connecting = _make_placeholder_jpeg('Connecting to camera...')
+    _no_camera  = _make_placeholder_jpeg('Camera not running')
+
+    async def _generate():
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                thread = parking_camera.get_thread(zone_id)
+                if not thread:
+                    yield _mjpeg_frame(_no_camera)
+                    await asyncio.sleep(0.5)
+                    continue
+
+                frame = thread.get_frame()
+                if frame is None:
+                    yield _mjpeg_frame(_connecting)
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # encode in thread-pool so we don't block the event loop
+                fr = frame  # local capture
+                jpeg_bytes = await loop.run_in_executor(
+                    None,
+                    lambda: cv2.imencode('.jpg', fr, [cv2.IMWRITE_JPEG_QUALITY, 75])[1].tobytes()
+                )
+                yield _mjpeg_frame(jpeg_bytes)
+                await asyncio.sleep(1 / 20)  # cap at 20 fps
+        except (asyncio.CancelledError, GeneratorExit):
+            return
+
+    return StreamingHttpResponse(
+        _generate(),
+        content_type='multipart/x-mixed-replace; boundary=frame',
+    )
 
 
 from rest_framework.views import APIView
@@ -237,8 +335,9 @@ class AcceptRegistrationView(APIView):
         if not or_number:
             return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Admin may override the schedule (e.g. if original choice is full)
-        schedule_override = request.data.get('schedule', '').strip()
+        # Admin may override campus_days (free day picker) and/or schedule group
+        campus_days_override = request.data.get('campus_days', None)  # list or None
+        schedule_override    = request.data.get('schedule', '').strip()
 
         if User.objects.filter(email=registration.email).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
@@ -281,7 +380,25 @@ class AcceptRegistrationView(APIView):
 
         registration.or_number = or_number
         registration.user = user  # direct FK — eliminates email-string lookups
-        if schedule_override:
+
+        # Apply campus_days / schedule overrides
+        if campus_days_override is not None and isinstance(campus_days_override, list):
+            valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
+            cleaned = [d for d in campus_days_override if d in valid_days]
+            registration.campus_days = cleaned
+            # Re-derive schedule group from the new days
+            mwf_days  = {'Monday', 'Wednesday', 'Friday'}
+            tths_days = {'Tuesday', 'Thursday', 'Saturday'}
+            days_set  = set(cleaned)
+            mwf_n  = len(days_set & mwf_days)
+            tths_n = len(days_set & tths_days)
+            if mwf_n > 0 and tths_n == 0:
+                registration.schedule = 'MWF'
+            elif tths_n > 0 and mwf_n == 0:
+                registration.schedule = 'TTHS'
+            elif mwf_n > 0 and tths_n > 0:
+                registration.schedule = 'MIXED'
+        elif schedule_override:
             registration.schedule = schedule_override
         registration.status = VehicleRegistration.Status.ACCEPTED
         registration.reviewed_at = timezone.now()

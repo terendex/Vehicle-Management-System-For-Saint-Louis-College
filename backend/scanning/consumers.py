@@ -463,3 +463,369 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             return user
         except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError, User.DoesNotExist):
             return None
+
+
+class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
+    """
+    WebSocket consumer: reads an RTSP IP-camera stream server-side (OpenCV + FFmpeg),
+    pushes JPEG frames + plate-scan results back to the browser.
+
+    Client → Server:
+        {"type": "start",  "rtsp_url": "rtsp://..."}
+        {"type": "stop"}
+
+    Server → Client:
+        {"type": "connected",  "message": "..."}
+        {"type": "status",     "connected": bool, "message": "..."}
+        {"type": "frame",      "image_b64": "<base64 JPEG>"}
+        {"type": "tracks",     "tracks": [...], "frame_id": int}
+        {"type": "ocr_update", "track_id": int,  "plate_text": "..."}
+        {"type": "id_required","track_id": int,  "vehicle_type": "..."}
+        {"type": "result",     "results": [...]}
+        {"type": "error",      "message": "..."}
+    """
+
+    FRAME_RATE  = 20    # fps to send to the frontend (20 = 50ms per frame)
+    MAX_RETRIES = 3     # reconnect attempts before giving up
+    RETRY_DELAY = 2.0   # seconds between reconnect attempts
+
+    # ── lifecycle ──────────────────────────────────────────────────────────────
+
+    async def connect(self):
+        token_key = (
+            self.scope["query_string"].decode().split("token=")[-1].split("&")[0]
+            if "token=" in self.scope["query_string"].decode()
+            else None
+        )
+        if not token_key:
+            await self.close(code=4001, reason="Authentication required")
+            return
+        self._user = await ScanLiveConsumer._get_user_from_token(token_key)
+        if self._user is None:
+            await self.close(code=4001, reason="Invalid token")
+            return
+
+        # Shared scan state (mirrors ScanLiveConsumer.__init__ block)
+        self._tracker               = ProximityTracker()
+        self._frame_counter         = 0
+        self._pending_ocr: dict     = {}
+        self._ocr_state: dict       = {}
+        self._plate_cache: dict     = {}
+        self._detection_in_progress = False
+        self._last_img_w            = 1280
+        self._last_img_h            = 720
+        self._stream_task           = None
+
+        await self.accept()
+        logger.info("[RTSP] Connected: user=%s", self._user)
+        await self.send_json({"type": "connected", "message": "RTSP consumer ready."})
+
+    async def disconnect(self, code):
+        logger.info("[RTSP] Disconnect code=%s", code)
+        await self._cancel_stream()
+
+    # ── receive ────────────────────────────────────────────────────────────────
+
+    async def receive_json(self, content: dict):
+        msg_type = content.get("type", "")
+
+        if msg_type == "start":
+            rtsp_url = content.get("rtsp_url", "").strip()
+            if not rtsp_url or not rtsp_url.lower().startswith("rtsp://"):
+                await self.send_json({"type": "error", "message": "Invalid or missing RTSP URL."})
+                return
+            await self._cancel_stream()
+            # Reset tracker state for fresh stream
+            self._tracker       = ProximityTracker()
+            self._ocr_state     = {}
+            self._pending_ocr   = {}
+            self._plate_cache   = {}
+            self._frame_counter = 0
+            self._stream_task   = asyncio.create_task(self._capture_loop(rtsp_url))
+
+        elif msg_type == "stop":
+            await self._cancel_stream()
+            await self.send_json({"type": "status", "connected": False, "message": "Stream stopped."})
+
+    # ── stream management ──────────────────────────────────────────────────────
+
+    async def _cancel_stream(self):
+        if self._stream_task and not self._stream_task.done():
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except asyncio.CancelledError:
+                pass
+        self._stream_task = None
+
+    async def _capture_loop(self, rtsp_url: str):
+        import cv2
+        import threading
+        loop     = asyncio.get_running_loop()
+        retry    = 0
+        interval = 1.0 / self.FRAME_RATE
+
+        while True:
+            # ── open RTSP capture ─────────────────────────────────────────────
+            await self.send_json({
+                "type": "status", "connected": False,
+                "message": f"Connecting… (attempt {retry + 1}/{self.MAX_RETRIES + 1})",
+            })
+
+            cap = await loop.run_in_executor(None, self._open_cap, rtsp_url)
+            if cap is None or not cap.isOpened():
+                if cap is not None:
+                    await loop.run_in_executor(None, cap.release)
+                retry += 1
+                if retry > self.MAX_RETRIES:
+                    await self.send_json({
+                        "type": "error",
+                        "message": "Cannot connect to RTSP stream. Check the URL and ensure the backend has network access to the camera.",
+                    })
+                    return
+                await asyncio.sleep(self.RETRY_DELAY)
+                continue
+
+            retry = 0
+            logger.info("[RTSP] Stream opened: %s", rtsp_url)
+            await self.send_json({"type": "status", "connected": True, "message": "Stream connected."})
+
+            # ── start background drain thread ─────────────────────────────────
+            # A dedicated thread continuously calls cap.grab() (decode-free read)
+            # so the internal buffer never fills with stale frames. The main loop
+            # calls cap.retrieve() only when it needs to actually display a frame.
+            latest_frame     = {"data": None, "ok": False}
+            drain_running     = threading.Event()
+            drain_running.set()
+
+            def _drain():
+                """Continuously drain the RTSP buffer; keep only the latest frame."""
+                while drain_running.is_set():
+                    ret = cap.grab()  # fast — no decode
+                    if not ret:
+                        latest_frame["ok"] = False
+                        break
+                    # Only decode every N grabs so we always have a recent frame ready
+                    ret2, frm = cap.retrieve()
+                    if ret2 and frm is not None:
+                        latest_frame["data"] = frm
+                        latest_frame["ok"]   = True
+
+            drain_thread = threading.Thread(target=_drain, daemon=True)
+            drain_thread.start()
+
+            # ── wait for first frame (up to 8 s) ───────────────────────────────
+            # The drain thread starts with ok=False. Without this wait the send
+            # loop below would immediately see a "failed" state and reconnect.
+            for _ in range(160):   # 160 × 0.05 s = 8 s
+                if latest_frame["ok"] or not drain_running.is_set():
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                # Timed out — no frames in 8 s
+                logger.warning("[RTSP] No frames in 8 s — reconnecting")
+                await self.send_json({"type": "status", "connected": False,
+                                      "message": "Stream timed out (no frames received)."})
+                drain_running.clear()
+                drain_thread.join(timeout=2)
+                await loop.run_in_executor(None, cap.release)
+                retry += 1
+                if retry > self.MAX_RETRIES:
+                    await self.send_json({"type": "error",
+                                          "message": "Stream error — too many retries."})
+                    await self.close()
+                    return
+                continue
+
+            # ── frame send loop ───────────────────────────────────────────────
+            try:
+                while True:
+                    t0 = loop.time()
+
+                    # Get the frame the drain thread prepared (always the latest)
+                    frame = latest_frame["data"]
+                    if not latest_frame["ok"] or frame is None:
+                        # Drain thread lost the stream
+                        logger.warning("[RTSP] Stream read failed — reconnecting")
+                        await self.send_json({
+                            "type": "status", "connected": False,
+                            "message": "Stream dropped. Reconnecting…",
+                        })
+                        break  # exit inner loop → retry connect
+
+                    jpeg_bytes = await loop.run_in_executor(None, self._encode_frame, frame)
+                    if jpeg_bytes:
+                        await self.send_json({
+                            "type":      "frame",
+                            "image_b64": base64.b64encode(jpeg_bytes).decode("utf-8"),
+                        })
+                        if not self._detection_in_progress:
+                            self._detection_in_progress = True
+                            asyncio.create_task(self._detect_and_scan(jpeg_bytes))
+
+                    # Pace ourselves to FRAME_RATE; sleep the remainder
+                    elapsed = loop.time() - t0
+                    wait    = max(0.0, interval - elapsed)
+                    if wait > 0.001:
+                        await asyncio.sleep(wait)
+
+            except asyncio.CancelledError:
+                logger.info("[RTSP] Capture task cancelled.")
+                raise
+            except Exception as exc:
+                logger.error("[RTSP] Capture error: %s", exc)
+                retry += 1
+                if retry > self.MAX_RETRIES:
+                    await self.send_json({"type": "error", "message": "Stream error — too many retries."})
+                    await self.close()   # tell the frontend the WS is done
+                    return
+                await asyncio.sleep(self.RETRY_DELAY)
+            finally:
+                drain_running.clear()          # signal drain thread to stop
+                drain_thread.join(timeout=2)   # wait for it to exit
+                await loop.run_in_executor(None, cap.release)
+
+    # ── detection + scan pipeline ──────────────────────────────────────────────
+
+    async def _detect_and_scan(self, jpeg_bytes: bytes):
+        loop = asyncio.get_running_loop()
+        try:
+            detections = await loop.run_in_executor(None, self._run_detection, jpeg_bytes)
+        except Exception as exc:
+            logger.error("[RTSP] Detection error: %s", exc)
+            detections = []
+        finally:
+            self._detection_in_progress = False
+
+        now            = timezone.now()
+        tracker_output = self._tracker.update(detections)
+        det_by_idx     = {i: d for i, d in enumerate(detections)}
+
+        active_tracks      = []
+        tracks_needing_ocr = []
+        tracks_needing_id  = []
+
+        for t_out in tracker_output:
+            track_id      = t_out["track_id"]
+            bbox          = t_out["bbox"]
+            x, y, bw, bh  = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+
+            d_idx         = t_out.get("detection_index")
+            det           = det_by_idx.get(d_idx) if d_idx is not None else None
+            class_name    = det.get("class_name", "") if det else ""
+            vehicle_type  = det.get("vehicle_type") if det else None
+            plate_text    = t_out.get("plate_text", "")
+            ocr_done      = t_out.get("ocr_done", False)
+
+            if requires_digital_id(class_name) and vehicle_type:
+                tracks_needing_id.append(
+                    (track_id, vehicle_type, det["confidence"] if det else 0.0)
+                )
+                ocr_done = True
+            elif not ocr_done and det and det.get("crop") is not None:
+                tracks_needing_ocr.append(
+                    (track_id, det["crop"], det.get("aspect_ratio", 1.0))
+                )
+
+            w_img = self._last_img_w
+            h_img = self._last_img_h
+            active_tracks.append({
+                "track_id":       track_id,
+                "plate_text":     plate_text,
+                "vehicle_type":   vehicle_type,
+                "class_name":     class_name,
+                "bbox":           [
+                    x  / max(w_img, 1), y  / max(h_img, 1),
+                    (x + bw) / max(w_img, 1), (y + bh) / max(h_img, 1),
+                ],
+                "detection_conf": det.get("confidence", 0.0) if det else 0.0,
+            })
+
+        await self.send_json({
+            "type":     "tracks",
+            "tracks":   active_tracks,
+            "frame_id": self._frame_counter,
+        })
+
+        if tracks_needing_ocr:
+            asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+
+        for track_id, vehicle_type, conf in tracks_needing_id:
+            await self.send_json({
+                "type":         "id_required",
+                "track_id":     track_id,
+                "vehicle_type": vehicle_type,
+                "message":      f"Please show digital ID for {vehicle_type.replace('_', ' ')} entry",
+            })
+
+        if any(t.get("plate_text") for t in active_tracks):
+            await self._process_scan_results(active_tracks, now)
+
+    # ── sync helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _open_cap(rtsp_url: str):
+        """Open OpenCV VideoCapture with low-latency FFmpeg RTSP options."""
+        import cv2
+        import os
+        # Force TCP transport — more reliable, avoids UDP reordering jitter.
+        # Must be set before VideoCapture() opens the stream.
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|buffer_size;0|max_delay;0|stimeout;3000000"
+        )
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)             # hint: minimal buffer
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)   # 8 s open timeout
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5 s read timeout
+        return cap
+
+    @staticmethod
+    def _encode_frame(frame) -> "bytes | None":
+        import cv2
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return buf.tobytes() if ok else None
+
+    def _run_detection(self, jpeg_bytes: bytes) -> list:
+        import cv2
+        import numpy as np
+        nparr = np.frombuffer(jpeg_bytes, np.uint8)
+        img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            return []
+
+        self._frame_counter += 1
+        detections = detect_plates(img)
+        h, w = img.shape[:2]
+        self._last_img_w = w
+        self._last_img_h = h
+
+        out = []
+        for i, det in enumerate(detections):
+            bb = det["bbox"]
+            out.append({
+                "bbox": {
+                    "x":      int(bb["x"]      * w),
+                    "y":      int(bb["y"]      * h),
+                    "width":  int(bb["width"]  * w),
+                    "height": int(bb["height"] * h),
+                },
+                "crop":            det.get("crop"),
+                "confidence":      det["score"],
+                "aspect_ratio":    det.get("aspect_ratio", 1.0),
+                "class_name":      det.get("class_name", ""),
+                "vehicle_type":    det.get("vehicle_type"),
+                "detection_index": i,
+            })
+        return out
+
+    # Reuse async/sync helpers from ScanLiveConsumer (method assignment works in Python 3
+    # because unbound functions become properly-bound methods when accessed on an instance)
+    _run_ocr_for_tracks   = ScanLiveConsumer._run_ocr_for_tracks
+    _finalize_plate       = ScanLiveConsumer._finalize_plate
+    _process_scan_results = ScanLiveConsumer._process_scan_results
+    _evict_cache          = ScanLiveConsumer._evict_cache
+    _save_snapshot        = ScanLiveConsumer._save_snapshot
+    _save_to_db           = ScanLiveConsumer._save_to_db
+    _check_vehicle        = ScanLiveConsumer._check_vehicle
+    _record_ml_sample     = ScanLiveConsumer._record_ml_sample

@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-import easyocr
+
+if TYPE_CHECKING:
+    import easyocr
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
 from .detection import detect_plates, VEHICLE_TYPE_CLASSES, is_gpu_available
@@ -137,7 +140,7 @@ def _correct_plate_chars(text: str) -> str:
 
 # ── Lazy singletons ─────────────────────────────────────────────────
 
-_ocr_reader: easyocr.Reader | None = None
+_ocr_reader = None  # easyocr.Reader, lazy-loaded
 _ocr_load_failures = 0
 _OCR_MAX_RETRIES = 3
 
@@ -167,6 +170,7 @@ def _get_ocr():
         )
         return None
     try:
+        import easyocr
         _use_gpu = is_gpu_available()
         _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
         log.info("[OCR] EasyOCR loaded OK (gpu=%s)", _use_gpu)
