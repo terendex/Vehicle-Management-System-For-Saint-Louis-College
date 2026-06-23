@@ -223,6 +223,8 @@ class ParkingZone(models.Model):
     name             = models.CharField(max_length=100)
     vehicle_category = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image  = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
+    rtsp_url         = models.CharField(max_length=500, blank=True,
+                                        help_text='RTSP stream URL, e.g. rtsp://192.168.1.100:554/stream')
     created_at       = models.DateTimeField(auto_now_add=True)
 
     class Meta:

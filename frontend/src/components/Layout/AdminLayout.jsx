@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { 
+import {
   LayoutDashboard,
   Car,
   Users,
@@ -28,21 +28,21 @@ export default function AdminLayout({ children }) {
     { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} /> },
     { name: 'User Management', path: '/admin/users', icon: <Users size={18} /> },
     { name: 'Entry Management', path: '/admin/entries', icon: <ShieldCheck size={18} /> },
+    { name: 'Parking', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
     { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
     { name: 'Audit Log', path: '/admin/audit', icon: <ClipboardList size={18} /> },
-    { name: 'Parking', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
   ]
 
   return (
     <div className="admin-layout">
-      
+
       {/* Sidebar */}
       <aside className="admin-sidebar">
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
           <span className="brand-text">SLC Admin</span>
         </div>
-        
+
         <nav className="sidebar-nav">
           {navItems.map((item) => (
             <NavLink

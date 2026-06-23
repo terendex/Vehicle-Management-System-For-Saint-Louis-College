@@ -32,6 +32,9 @@ urlpatterns = [
     # Parking availability (authenticated)
     path('parking-availability/', views.ParkingAvailabilityView.as_view(), name='parking-availability'),
 
+    # Parking zone MJPEG stream (JWT via ?token= query param)
+    path('parking-zones/<int:pk>/stream/', views.parking_stream_view, name='parking-stream'),
+
     # Registration management (Admin)
     path('registrations/pending/',              views.PendingRegistrationsListView.as_view(), name='list-pending-registrations'),
     path('registrations/<int:pk>/accept/',      views.AcceptRegistrationView.as_view(),       name='accept-registration'),

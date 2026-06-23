@@ -6,7 +6,9 @@ import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays } from 'lucide-react'
 import './VehicleRegistration.css'
 
-const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day' }
+const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
+const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const DAY_SHORT = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' }
 
 export default function VehicleRegistration() {
   // Registrations State
@@ -23,10 +25,10 @@ export default function VehicleRegistration() {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
 
-  // Accept flow — OR number + schedule
+  // Accept flow — OR number + free day-picker
   const [acceptModal, setAcceptModal] = useState(null)  // holds registration object
   const [orNumber, setOrNumber] = useState('')
-  const [scheduleOverride, setScheduleOverride] = useState('')
+  const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
 
   const [resultModal, setResultModal] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -76,7 +78,8 @@ export default function VehicleRegistration() {
   const openAcceptModal = (reg) => {
     setAcceptModal(reg)
     setOrNumber('')
-    setScheduleOverride(reg.schedule || '')
+    // Pre-fill with the applicant's original days so the admin can adjust
+    setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
   }
 
   const confirmAccept = async () => {
@@ -90,7 +93,7 @@ export default function VehicleRegistration() {
       const result = await registrationApi.acceptRegistration(
         acceptModal.id,
         orNumber.trim(),
-        scheduleOverride || undefined,
+        daysOverride.length > 0 ? daysOverride : undefined,
       )
       setIsViewModalOpen(false)
       setAcceptModal(null)
@@ -388,17 +391,56 @@ export default function VehicleRegistration() {
                   <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
                   Campus Schedule
                 </label>
-                <select
-                  className="form-select"
-                  value={scheduleOverride}
-                  onChange={(e) => setScheduleOverride(e.target.value)}
-                  disabled={submitting}
-                >
-                  <option value="">Keep applicant's choice ({acceptModal.schedule || 'none'})</option>
-                  <option value="MWF">MWF — Monday · Wednesday · Friday</option>
-                  <option value="TTHS">TTHS — Tuesday · Thursday · Saturday</option>
-                </select>
-                <p className="form-hint">Override if the chosen schedule is full or requires adjustment.</p>
+
+                {/* Show applicant's original days as reference */}
+                {acceptModal.campus_days?.length > 0 && (
+                  <p className="form-hint" style={{ marginBottom: 8 }}>
+                    Applicant chose:{' '}
+                    {acceptModal.campus_days.map(d => (
+                      <span key={d} style={{ display: 'inline-block', padding: '1px 8px', margin: '0 3px', borderRadius: 20, background: '#e0e7ff', color: '#3730a3', fontSize: 11, fontWeight: 600 }}>{d}</span>
+                    ))}
+                  </p>
+                )}
+
+                {/* Free day-picker — admin can choose any combination */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                  {ALL_DAYS.map(day => {
+                    const selected = daysOverride.includes(day)
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => setDaysOverride(prev =>
+                          prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                        )}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 20,
+                          border: selected ? '2px solid #2A2B61' : '2px solid #d1d5db',
+                          background: selected ? '#2A2B61' : '#f9fafb',
+                          color: selected ? '#fff' : '#374151',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: submitting ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        {DAY_SHORT[day]}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {daysOverride.length > 0 ? (
+                  <p className="form-hint">
+                    Assigned: <strong>{daysOverride.join(', ')}</strong>
+                  </p>
+                ) : (
+                  <p className="form-hint" style={{ color: '#dc2626' }}>
+                    No days selected — applicant’s original choice will be kept.
+                  </p>
+                )}
               </div>
             )}
 
