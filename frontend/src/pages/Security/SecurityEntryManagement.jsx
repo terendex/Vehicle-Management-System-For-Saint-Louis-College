@@ -4,7 +4,7 @@ import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, ShieldCheck, Zap, Video, Plus,
-  QrCode, Type, Bike, Shield
+  QrCode, Type, Bike, Shield, Wifi, Link2
 } from 'lucide-react'
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
@@ -12,6 +12,7 @@ import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate, verifyDigitalId } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
+import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
 
 const STATUS_META = {
@@ -328,8 +329,12 @@ export default function SecurityEntryManagement() {
   const [loadingVehicles, setLoadingVehicles] = useState(true)
   const [idModalState, setIdModalState] = useState({ open: false, trackId: null, vehicleType: null })
 
-  const [cameras, setCameras]         = useState([{ id: 1, name: 'Main Gate - Front' }])
-  const [activeCamId, setActiveCamId] = useState(1)
+  const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
+  const [activeCamId, setActiveCamId]   = useState(1)
+  const [rtspAddName, setRtspAddName]   = useState('')
+  const [rtspAddUrl,  setRtspAddUrl]    = useState('')
+
+  const RTSP_LS_KEY = 'rtsp_cams_security_entry'
 
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
@@ -346,6 +351,19 @@ export default function SecurityEntryManagement() {
     canvasRef,
     dismissIdRequired,
   } = useScanStream(token, cameraOn)
+
+  const {
+    cameras:         rtspCameras,
+    activeCamId:     rtspActiveCamId,
+    setActiveCamId:  setRtspActiveCam,
+    activeCam:       rtspActiveCam,
+    addCamera:       addRtspCamera,
+    removeCamera:    removeRtspCamera,
+    disconnectAll:   disconnectAllRtsp,
+    results:         rtspResults,
+    flash:           rtspFlash,
+    registerCanvas:  registerRtspCanvas,
+  } = useMultiRtspStream(token)
 
   // ── Data fetching ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -378,7 +396,24 @@ export default function SecurityEntryManagement() {
     })
   }, [wsResults])
 
-  // ── id_required events → open modal (once per track) ───────────────────────
+  // ── RTSP results (any camera) → display + log ──────────────────────────────
+  useEffect(() => {
+    if (!rtspResults?.length) return
+    setDisplayResult(rtspResults)
+    setCooldown(true)
+    setTimeout(() => setCooldown(false), 5000)
+    setLogs((prev) => {
+      const newLogs = rtspResults.map(r => ({
+        id: Date.now() + Math.random(),
+        plate_number: r.plate_number,
+        status: r.status,
+        scanned_at: new Date().toISOString(),
+      }))
+      return [...newLogs, ...prev].slice(0, 20)
+    })
+  }, [rtspResults])
+
+  // ── Webcam id_required events → open modal (once per track) ────────────────
   useEffect(() => {
     const entries = Object.entries(idRequiredTracks)
     if (!entries.length) return
@@ -392,7 +427,13 @@ export default function SecurityEntryManagement() {
     }
   }, [idRequiredTracks])
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
+  // ── Load saved RTSP cameras on mount ─────────────────────────────────────────
+  useEffect(() => {
+    const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
+    saved.forEach(c => addRtspCamera(c.name, c.url))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handlers ───────────────────────────────────────────────────────────────────
   const handleIdVerify = (trackId, result) => {
     const vMeta = VEHICLE_TYPE_META[result.vehicle_type]
     const displayLabel = vMeta ? vMeta.label : (result.vehicle_type || 'Unplated')
@@ -411,14 +452,42 @@ export default function SecurityEntryManagement() {
     setIdModalState({ open: false, trackId: null, vehicleType: null })
   }
 
-  const addCamera = () => {
-    if (cameras.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
-    const id = Date.now()
-    setCameras(prev => [...prev, { id, name: `Angle ${prev.length + 1}` }])
+  const handleRtspAdd = () => {
+    if (!rtspAddUrl.trim()) return
+    const name = rtspAddName.trim()
+    const url  = rtspAddUrl.trim()
+    addRtspCamera(name, url)
+    const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
+    saved.push({ name: name || `Camera ${saved.length + 1}`, url })
+    localStorage.setItem(RTSP_LS_KEY, JSON.stringify(saved))
+    setRtspAddUrl('')
+    setRtspAddName('')
   }
 
-  const removeCamera = (id) => {
-    setCameras(prev => {
+  const handleRtspDisconnectAll = () => {
+    disconnectAllRtsp()
+    localStorage.removeItem(RTSP_LS_KEY)
+    setCooldown(false)
+    setDisplayResult(null)
+  }
+
+  const handleRemoveRtspCam = (camId) => {
+    const cam = rtspCameras.find(c => c.id === camId)
+    removeRtspCamera(camId)
+    if (cam) {
+      const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
+      localStorage.setItem(RTSP_LS_KEY, JSON.stringify(saved.filter(s => s.url !== cam.url)))
+    }
+  }
+
+  const addWebcam = () => {
+    if (webcams.length >= 4) { toast.error('Maximum of 4 cameras allowed.'); return }
+    const id = Date.now()
+    setWebcams(prev => [...prev, { id, name: `Angle ${prev.length + 1}` }])
+  }
+
+  const removeWebcam = (id) => {
+    setWebcams(prev => {
       const next = prev.filter(c => c.id !== id)
       if (activeCamId === id && next.length > 0) setActiveCamId(next[0].id)
       return next
@@ -429,6 +498,12 @@ export default function SecurityEntryManagement() {
     setCameraOn(false)
     setCooldown(false)
     setDisplayResult(null)
+  }
+
+  const stopAllAndSwitchMode = (nextMode) => {
+    if (nextMode !== 'camera') { setCameraOn(false); setCooldown(false) }
+    if (nextMode !== 'rtsp') { disconnectAllRtsp(); setDisplayResult(null) }
+    if (nextMode !== 'upload') { /* nothing */ }
   }
 
   const handleFileChange = (file) => {
@@ -512,28 +587,32 @@ export default function SecurityEntryManagement() {
             <div className="em-card-head">
               <span className="em-card-label">
                 <Camera size={15} />
-                {mode === 'camera' ? 'Live Camera Feed' : 'Upload Plate Image'}
+                {mode === 'camera' ? `Live Camera Feed` : mode === 'rtsp' ? `IP Cameras (${rtspCameras.length})` : 'Upload Plate Image'}
               </span>
               <div className="em-mode-toggle">
                 <button
                   className={`em-mode-btn ${mode === 'camera' ? 'active' : ''}`}
-                  onClick={() => { setMode('camera'); setCooldown(false); setDisplayResult(null) }}
+                  onClick={() => { stopAllAndSwitchMode('camera'); setMode('camera') }}
                 >Camera</button>
                 <button
+                  className={`em-mode-btn ${mode === 'rtsp' ? 'active' : ''}`}
+                  onClick={() => { stopAllAndSwitchMode('rtsp'); setMode('rtsp') }}
+                ><Wifi size={12} style={{ marginRight: 4 }} />RTSP</button>
+                <button
                   className={`em-mode-btn ${mode === 'upload' ? 'active' : ''}`}
-                  onClick={() => { setMode('upload'); stopCamera(); resetUpload() }}
+                  onClick={() => { stopAllAndSwitchMode('upload'); resetUpload(); setMode('upload') }}
                 >Upload</button>
               </div>
             </div>
 
             {/* Viewport */}
             {mode === 'camera' ? (
-              <div className="em-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0 }}>
+              <div className="em-viewport" style={{ background: cameraOn ? '#1A1D2E' : '#08090F', padding: cameraOn ? '10px 1.25rem' : 0, minHeight: cameraOn ? 340 : undefined }}>
                 {cameraOn ? (
                   <div className="em-multi-cam-container">
                     <div className="em-primary-cam">
-                      {cameras.map(cam => (
-                        <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', height: '100%' }}>
+                      {webcams.map(cam => (
+                        <div key={`primary-${cam.id}`} style={{ display: activeCamId === cam.id ? 'flex' : 'none', width: '100%', height: '100%', flex: 1 }}>
                           <Webcam
                             ref={(el) => {
                               webcamRefs.current[cam.id] = el
@@ -543,7 +622,9 @@ export default function SecurityEntryManagement() {
                             screenshotFormat="image/jpeg"
                             screenshotQuality={0.95}
                             className="em-video"
-                            videoConstraints={{ facingMode: 'environment' }}
+                            videoConstraints={{ facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }}
+                            onUserMediaError={(err) => toast.error(`Camera error: ${err?.message || err?.name || 'Could not access camera'}`)}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                           />
                         </div>
                       ))}
@@ -563,12 +644,12 @@ export default function SecurityEntryManagement() {
                         />
                       )}
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
-                        {cameras.find(c => c.id === activeCamId)?.name}
+                        {webcams.find(c => c.id === activeCamId)?.name}
                       </div>
                     </div>
 
                     <div className="em-cam-thumbnails">
-                      {cameras.map(cam => (
+                      {webcams.map(cam => (
                         <div
                           key={`thumb-${cam.id}`}
                           className={`em-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`}
@@ -578,20 +659,20 @@ export default function SecurityEntryManagement() {
                             <Video size={24} />
                           </div>
                           <div className="em-cam-thumb-label">{cam.name}</div>
-                          {cameras.length > 1 && (
+                          {webcams.length > 1 && (
                             <div className="em-cam-thumb-actions">
-                              <button className="em-cam-delete" onClick={(e) => { e.stopPropagation(); removeCamera(cam.id) }} title="Remove angle">
+                              <button className="em-cam-delete" onClick={(e) => { e.stopPropagation(); removeWebcam(cam.id) }} title="Remove angle">
                                 <X size={12} />
                               </button>
                             </div>
                           )}
                         </div>
                       ))}
-                      {cameras.length < 4 && (
+                      {webcams.length < 4 && (
                         <div
                           className="em-cam-thumb"
                           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#2A304D', border: '1px dashed #4A5070', cursor: 'pointer' }}
-                          onClick={addCamera}
+                          onClick={addWebcam}
                           title="Add another angle"
                         >
                           <Plus size={20} color="#9BA3BF" />
@@ -606,6 +687,79 @@ export default function SecurityEntryManagement() {
                   </div>
                 )}
               </div>
+            ) : mode === 'rtsp' ? (
+              <>
+                {/* Main canvas area */}
+                <div className="em-viewport" style={{ background: '#0d1117', minHeight: 340, position: 'relative' }}>
+                  {rtspCameras.length > 0 ? (
+                    <div style={{ position: 'relative', width: '100%', minHeight: 300 }}>
+                      {/* Stacked canvases — only the active camera is visible */}
+                      {rtspCameras.map((cam, idx) => (
+                        <div
+                          key={cam.id}
+                          style={{ display: rtspActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
+                        >
+                          <canvas
+                            ref={el => registerRtspCanvas(cam.id, el)}
+                            style={{ width: '100%', display: 'block', background: '#000', minHeight: 300 }}
+                          />
+                        </div>
+                      ))}
+                      {/* Flash effect */}
+                      {rtspFlash && <div className="em-flash" style={{ position: 'absolute', inset: 0 }} />}
+                      {/* Connecting overlay */}
+                      {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
+                          <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.15)' }} />
+                          <p style={{ color: '#93c5fd', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
+                        </div>
+                      )}
+                      {/* Camera name badge */}
+                      <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none' }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
+                        {rtspActiveCam?.name || 'IP Camera'}
+                      </div>
+                      {/* Camera count badge */}
+                      {rtspCameras.length > 1 && (
+                        <div style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.65)', color: '#60a5fa', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, pointerEvents: 'none' }}>
+                          {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} live
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="em-cam-off">
+                      <Wifi size={52} style={{ color: '#374151' }} />
+                      <p>Add RTSP cameras below to begin monitoring</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Camera thumbnail strip (when 2+ cameras) */}
+                {rtspCameras.length > 0 && (
+                  <div className="em-cam-thumbnails" style={{ marginTop: 0, borderTop: '1px solid #1e2235' }}>
+                    {rtspCameras.map(cam => (
+                      <div
+                        key={`rthumb-${cam.id}`}
+                        className={`em-cam-thumb ${rtspActiveCamId === cam.id ? 'active' : ''}`}
+                        onClick={() => setRtspActiveCam(cam.id)}
+                        style={{ position: 'relative' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
+                          <Wifi size={20} />
+                        </div>
+                        <div className="em-cam-thumb-label">{cam.name}</div>
+                        {/* Status dot */}
+                        <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280', display: 'inline-block' }} />
+                        <div className="em-cam-thumb-actions">
+                          <button className="em-cam-delete" onClick={e => { e.stopPropagation(); handleRemoveRtspCam(cam.id) }} title="Disconnect">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
               uploadFile ? (
                 <div className="em-upload-preview">
@@ -656,6 +810,48 @@ export default function SecurityEntryManagement() {
                     <Camera size={17} /> Start Camera
                   </button>
                 )
+              ) : mode === 'rtsp' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', alignItems: 'stretch' }}>
+                  {/* Add camera row */}
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      className="em-input"
+                      style={{ width: 120, flexShrink: 0, fontSize: 12, padding: '7px 10px' }}
+                      placeholder="Name (optional)"
+                      value={rtspAddName}
+                      onChange={e => setRtspAddName(e.target.value)}
+                    />
+                    <input
+                      className="em-input"
+                      style={{ flex: 1, fontFamily: 'monospace', fontSize: 12, padding: '7px 10px' }}
+                      placeholder="rtsp://user:pass@192.168.x.x:554/stream1"
+                      value={rtspAddUrl}
+                      onChange={e => setRtspAddUrl(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRtspAdd() }}
+                    />
+                    <button
+                      className="em-btn em-btn-primary"
+                      onClick={handleRtspAdd}
+                      disabled={!rtspAddUrl.trim()}
+                      title="Add and connect camera"
+                    >
+                      <Wifi size={14} /> Add
+                    </button>
+                  </div>
+                  {/* Status + disconnect all (when cameras exist) */}
+                  {rtspCameras.length > 0 && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div className={`em-autoscan-status ${rtspCameras.some(c => c.streamConnected) ? '' : 'cooldown'}`} style={{ flex: 1 }}>
+                        {rtspCameras.some(c => c.streamConnected)
+                          ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
+                          : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>}
+                      </div>
+                      <button className="em-btn em-btn-danger" onClick={handleRtspDisconnectAll}>
+                        <Link2 size={14} /> Disconnect All
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 uploadFile ? (
                   <>

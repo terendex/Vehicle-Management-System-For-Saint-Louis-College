@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const WS_BASE =
-  (import.meta.env.VITE_API_URL || "http://localhost:8000").replace("http", "ws");
+  (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace("http", "ws");
 
 // ── Bounding box colours ───────────────────────────────────────────────────────
 const TRACK_COLORS = {

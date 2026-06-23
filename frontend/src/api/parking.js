@@ -39,6 +39,10 @@ export const zoneApi = {
     const { data } = await api.post('/vehicles/parking-zones/', { name, vehicle_category })
     return data
   },
+  update: async (id, fields) => {
+    const { data } = await api.patch(`/vehicles/parking-zones/${id}/`, fields)
+    return data
+  },
   remove: async (id) => {
     await api.delete(`/vehicles/parking-zones/${id}/`)
   },
@@ -67,5 +71,19 @@ export const zoneApi = {
       occupied_by: '',
     })
     return data
+  },
+
+  // ── IP Camera ────────────────────────────────────────────────────
+  startCamera: async (id) => {
+    const { data } = await api.post(`/vehicles/parking-zones/${id}/start-camera/`)
+    return data
+  },
+  stopCamera: async (id) => {
+    const { data } = await api.post(`/vehicles/parking-zones/${id}/stop-camera/`)
+    return data
+  },
+  getCameraStatus: async () => {
+    const { data } = await api.get('/vehicles/parking-zones/camera-status/')
+    return data  // { zone_id: bool }
   },
 }

@@ -57,7 +57,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = ParkingZone
-        fields = ['id', 'name', 'vehicle_category', 'reference_image', 'reference_image_url', 'created_at', 'spaces']
+        fields = ['id', 'name', 'vehicle_category', 'rtsp_url', 'reference_image',
+                  'reference_image_url', 'created_at', 'spaces']
 
     def get_reference_image_url(self, obj):
         if not obj.reference_image:

@@ -12,8 +12,15 @@
 }
 
 @keyframes odFadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ===== Welcome Banner ===== */
@@ -39,7 +46,7 @@
   top: -40px;
   width: 200px;
   height: 200px;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 50%;
 }
 
@@ -47,8 +54,8 @@
   width: 56px;
   height: 56px;
   flex-shrink: 0;
-  background: rgba(255,255,255,0.15);
-  border: 2.5px solid rgba(255,255,255,0.3);
+  background: rgba(255, 255, 255, 0.15);
+  border: 2.5px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -68,7 +75,7 @@
 
 .od-welcome-text p {
   font-size: 13px;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255, 255, 255, 0.7);
   margin: 0;
 }
 
@@ -78,8 +85,8 @@
   align-items: center;
   gap: 7px;
   padding: 9px 16px;
-  background: rgba(255,255,255,0.12);
-  border: 1.5px solid rgba(255,255,255,0.25);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
   border-radius: 10px;
   color: #fff;
   font-size: 13px;
@@ -91,8 +98,8 @@
 }
 
 .od-change-pw-btn:hover {
-  background: rgba(255,255,255,0.22);
-  border-color: rgba(255,255,255,0.45);
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 /* ===== ID Cards ===== */
@@ -179,7 +186,11 @@
   animation: odSpin 0.7s linear infinite;
 }
 
-@keyframes odSpin { to { transform: rotate(360deg); } }
+@keyframes odSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .od-error-card {
   display: flex;
@@ -223,12 +234,12 @@
   border-radius: 16px;
   padding: 0;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(42,43,97,0.05);
+  box-shadow: 0 2px 8px rgba(42, 43, 97, 0.05);
   transition: box-shadow 0.2s;
 }
 
 .od-card:hover {
-  box-shadow: 0 4px 16px rgba(42,43,97,0.09);
+  box-shadow: 0 4px 16px rgba(42, 43, 97, 0.09);
 }
 
 .od-card-head {
@@ -284,7 +295,9 @@
   color: #1A1D2E;
 }
 
-.od-capitalize { text-transform: capitalize; }
+.od-capitalize {
+  text-transform: capitalize;
+}
 
 .od-plate {
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
@@ -390,7 +403,9 @@
 
 /* ===== Status Card ===== */
 
-.od-status-card { text-align: left; }
+.od-status-card {
+  text-align: left;
+}
 
 .od-status-badge {
   display: inline-flex;
@@ -439,14 +454,21 @@
   max-width: 460px;
   max-height: 90vh;
   overflow-y: auto;
-  box-shadow: 0 24px 48px rgba(0,0,0,0.18);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.18);
   animation: odModalUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   text-align: center;
 }
 
 @keyframes odModalUp {
-  from { opacity: 0; transform: translateY(24px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .od-modal-icon {
@@ -515,7 +537,7 @@
 
 .od-pw-wrap input:focus {
   border-color: #2A2B61;
-  box-shadow: 0 0 0 3px rgba(42,43,97,0.08);
+  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
   background: #fff;
 }
 
@@ -533,7 +555,9 @@
   align-items: center;
 }
 
-.od-pw-eye:hover { color: #2A2B61; }
+.od-pw-eye:hover {
+  color: #2A2B61;
+}
 
 .od-field-error {
   font-size: 11px;
@@ -560,21 +584,51 @@
   border-radius: 4px;
   transition: width 0.3s ease, background 0.3s ease;
 }
-.od-strength-bar.weak      { background: #DC2626; }
-.od-strength-bar.fair      { background: #F97316; }
-.od-strength-bar.good      { background: #EAB308; }
-.od-strength-bar.strong    { background: #22C55E; }
-.od-strength-bar.excellent { background: #059669; }
+
+.od-strength-bar.weak {
+  background: #DC2626;
+}
+
+.od-strength-bar.fair {
+  background: #F97316;
+}
+
+.od-strength-bar.good {
+  background: #EAB308;
+}
+
+.od-strength-bar.strong {
+  background: #22C55E;
+}
+
+.od-strength-bar.excellent {
+  background: #059669;
+}
 
 .od-strength-label {
   font-size: 11px;
   font-weight: 700;
 }
-.od-strength-label.weak      { color: #DC2626; }
-.od-strength-label.fair      { color: #F97316; }
-.od-strength-label.good      { color: #EAB308; }
-.od-strength-label.strong    { color: #22C55E; }
-.od-strength-label.excellent { color: #059669; }
+
+.od-strength-label.weak {
+  color: #DC2626;
+}
+
+.od-strength-label.fair {
+  color: #F97316;
+}
+
+.od-strength-label.good {
+  color: #EAB308;
+}
+
+.od-strength-label.strong {
+  color: #22C55E;
+}
+
+.od-strength-label.excellent {
+  color: #059669;
+}
 
 .od-pw-rules {
   display: flex;
@@ -637,7 +691,7 @@
 
 .od-btn-primary:hover:not(:disabled) {
   background: #1e1f48;
-  box-shadow: 0 4px 14px rgba(42,43,97,0.25);
+  box-shadow: 0 4px 14px rgba(42, 43, 97, 0.25);
 }
 
 .od-btn-primary:disabled {
@@ -706,7 +760,7 @@
   align-items: center;
   justify-content: center;
   color: #059669;
-  box-shadow: 0 4px 16px rgba(5,150,105,0.2);
+  box-shadow: 0 4px 16px rgba(5, 150, 105, 0.2);
 }
 
 .od-pw-success h3 {
@@ -755,7 +809,11 @@
   align-items: center;
   transition: all 0.2s;
 }
-.od-refresh-btn:hover { background: #F0F2F7; color: #2A2B61; }
+
+.od-refresh-btn:hover {
+  background: #F0F2F7;
+  color: #2A2B61;
+}
 
 /* ===== Inner loading / error ===== */
 
@@ -795,8 +853,6 @@
 
 /* ===== Violations card ===== */
 
-.od-violations-card {}
-
 .od-clean-record {
   display: flex;
   flex-direction: column;
@@ -815,7 +871,7 @@
   align-items: center;
   justify-content: center;
   color: #059669;
-  box-shadow: 0 4px 14px rgba(5,150,105,0.15);
+  box-shadow: 0 4px 14px rgba(5, 150, 105, 0.15);
 }
 
 .od-clean-text {
@@ -866,12 +922,24 @@
   border-bottom: none;
 }
 
-.od-viol-resolved td { opacity: 0.6; }
+.od-viol-resolved td {
+  opacity: 0.6;
+}
 
-.od-viol-type { font-weight: 700; color: #DC2626; }
-.od-viol-resolved .od-viol-type { color: #7C80A3; }
+.od-viol-type {
+  font-weight: 700;
+  color: #DC2626;
+}
 
-.od-viol-date { font-family: 'SF Mono', monospace; font-size: 12px; white-space: nowrap; }
+.od-viol-resolved .od-viol-type {
+  color: #7C80A3;
+}
+
+.od-viol-date {
+  font-family: 'SF Mono', monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .od-viol-badge {
   display: inline-block;
@@ -880,12 +948,20 @@
   font-size: 11px;
   font-weight: 700;
 }
-.od-viol-badge.active   { background: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; }
-.od-viol-badge.resolved { background: #D1FAE5; color: #059669; border: 1px solid #A7F3D0; }
+
+.od-viol-badge.active {
+  background: #FEE2E2;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+}
+
+.od-viol-badge.resolved {
+  background: #D1FAE5;
+  color: #059669;
+  border: 1px solid #A7F3D0;
+}
 
 /* ===== Parking card ===== */
-
-.od-parking-card {}
 
 .od-parking-summary {
   display: flex;
@@ -905,7 +981,9 @@
   border-right: 1px solid #E2E6EE;
 }
 
-.od-parking-stat:last-child { border-right: none; }
+.od-parking-stat:last-child {
+  border-right: none;
+}
 
 .od-parking-stat-num {
   font-size: 32px;
@@ -921,17 +999,41 @@
   margin-top: 4px;
 }
 
-.od-parking-stat.available .od-parking-stat-num { color: #059669; }
-.od-parking-stat.available .od-parking-stat-label { color: #059669; }
-.od-parking-stat.available { background: #F0FDF4; }
+.od-parking-stat.available .od-parking-stat-num {
+  color: #059669;
+}
 
-.od-parking-stat.occupied .od-parking-stat-num { color: #DC2626; }
-.od-parking-stat.occupied .od-parking-stat-label { color: #DC2626; }
-.od-parking-stat.occupied { background: #FEF2F2; }
+.od-parking-stat.available .od-parking-stat-label {
+  color: #059669;
+}
 
-.od-parking-stat.total .od-parking-stat-num { color: #2A2B61; }
-.od-parking-stat.total .od-parking-stat-label { color: #7C80A3; }
-.od-parking-stat.total { background: #F8FAFC; }
+.od-parking-stat.available {
+  background: #F0FDF4;
+}
+
+.od-parking-stat.occupied .od-parking-stat-num {
+  color: #DC2626;
+}
+
+.od-parking-stat.occupied .od-parking-stat-label {
+  color: #DC2626;
+}
+
+.od-parking-stat.occupied {
+  background: #FEF2F2;
+}
+
+.od-parking-stat.total .od-parking-stat-num {
+  color: #2A2B61;
+}
+
+.od-parking-stat.total .od-parking-stat-label {
+  color: #7C80A3;
+}
+
+.od-parking-stat.total {
+  background: #F8FAFC;
+}
 
 .od-parking-grid {
   display: grid;
@@ -969,8 +1071,13 @@
   color: inherit;
 }
 
-.od-parking-space.free .od-space-num { color: #059669; }
-.od-parking-space.occupied .od-space-num { color: #DC2626; }
+.od-parking-space.free .od-space-num {
+  color: #059669;
+}
+
+.od-parking-space.occupied .od-space-num {
+  color: #DC2626;
+}
 
 .od-space-plate {
   font-size: 9px;
@@ -1003,8 +1110,14 @@
   height: 10px;
   border-radius: 50%;
 }
-.od-legend-dot.free     { background: #059669; }
-.od-legend-dot.occupied { background: #DC2626; }
+
+.od-legend-dot.free {
+  background: #059669;
+}
+
+.od-legend-dot.occupied {
+  background: #DC2626;
+}
 
 .od-parking-empty {
   display: flex;
@@ -1044,11 +1157,14 @@
   .od-grid {
     grid-template-columns: 1fr;
   }
+
   .od-qr-col {
     flex-direction: row;
     flex-wrap: wrap;
   }
-  .od-qr-card, .od-status-card {
+
+  .od-qr-card,
+  .od-status-card {
     flex: 1;
     min-width: 280px;
   }
@@ -1058,16 +1174,20 @@
   .od-id-cards {
     grid-template-columns: 1fr;
   }
+
   .od-welcome-banner {
     flex-wrap: wrap;
   }
+
   .od-change-pw-btn {
     width: 100%;
     justify-content: center;
   }
+
   .od-details-grid {
     grid-template-columns: 1fr;
   }
+
   .od-qr-col {
     flex-direction: column;
   }
