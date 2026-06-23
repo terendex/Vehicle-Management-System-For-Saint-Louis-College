@@ -63,10 +63,10 @@ export const registrationApi = {
     const { data } = await api.get(`/vehicles/registrations/pending/?status=${status}`)
     return data
   },
-  // orNumber and scheduleOverride are now required/optional for acceptance
-  acceptRegistration: async (id, orNumber, scheduleOverride) => {
+  // orNumber required; campusDaysOverride is an optional string[] the admin freely picks
+  acceptRegistration: async (id, orNumber, campusDaysOverride) => {
     const payload = { or_number: orNumber }
-    if (scheduleOverride) payload.schedule = scheduleOverride
+    if (campusDaysOverride && campusDaysOverride.length > 0) payload.campus_days = campusDaysOverride
     const { data } = await api.post(`/vehicles/registrations/${id}/accept/`, payload)
     return data
   },

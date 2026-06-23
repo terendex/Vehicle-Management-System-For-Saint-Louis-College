@@ -22,9 +22,9 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
-        
+
         {/* Role-specific dashboards */}
-        
+
         {/* Admin Routes */}
         <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
           <Route path="/admin" element={<AdminDashboard />} />
@@ -35,14 +35,14 @@ export default function App() {
           <Route path="/admin/audit" element={<AuditLog />} />
           <Route path="/admin/parking" element={<ParkingManagement />} />
         </Route>
-        
+
         {/* Security Routes */}
         <Route element={<ProtectedRoute allowedRoles={['security']} />}>
           <Route path="/security" element={<SecurityDashboard />} />
           <Route path="/security/entries" element={<SecurityEntryManagement />} />
           <Route path="/security/audit" element={<SecurityAuditLog />} />
         </Route>
-        
+
         {/* Owner Routes */}
         <Route element={<ProtectedRoute allowedRoles={['vehicle_owner']} />}>
           <Route path="/owner" element={<OwnerDashboard />} />
