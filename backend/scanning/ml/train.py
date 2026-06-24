@@ -279,6 +279,15 @@ def train(
     print(f"   View results in: {results.save_dir}")
     _print_class_eval(results)
 
+    # Auto-push new weights to R2 so teammates get them on next docker compose up
+    if os.getenv("R2_ACCESS_KEY_ID") and os.getenv("R2_BUCKET_NAME"):
+        try:
+            from django.core.management import call_command
+            print("\n☁️  Pushing weights to R2...")
+            call_command("sync_ml_weights", push=True, force=True)
+        except Exception as exc:
+            print(f"⚠️  Could not push weights to R2: {exc}")
+
 
 def _print_class_eval(results) -> None:
     """Print per-class mAP@0.5 from the final validation run."""
