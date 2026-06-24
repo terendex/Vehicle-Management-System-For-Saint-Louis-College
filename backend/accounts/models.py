@@ -28,12 +28,26 @@ class User(AbstractUser):
         ADMIN          = 'admin',          'Admin'
         SECURITY       = 'security',       'Security Personnel'
         VEHICLE_OWNER  = 'vehicle_owner',  'Registered Vehicle Owner'
+        CDSO           = 'cdso',           'CDSO Staff'
+
+    class OwnerType(models.TextChoices):
+        STUDENT  = 'student',  'Student'
+        FETCHER  = 'fetcher',  'Fetcher/Dropper'
+        EMPLOYEE = 'employee', 'Employee'
+        VISITOR  = 'visitor',  'Visitor'
+
+    class Schedule(models.TextChoices):
+        MWF  = 'MWF',  'Monday-Wednesday-Friday'
+        TTHS = 'TTHS', 'Tuesday-Thursday-Saturday'
+        ANY  = 'ANY',  'Any Day'
+        ALL  = 'ALL',  'All Days'
 
     # Role-prefixed human-readable ID, e.g. SLC-ADM-000001
     _ROLE_PREFIX = {
         'admin':         'ADM',
         'security':      'SEC',
         'vehicle_owner': 'OWN',
+        'cdso':          'CDS',
     }
 
     full_name = models.CharField(max_length=150)
@@ -41,6 +55,13 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
     user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
     must_change_password = models.BooleanField(default=False)  # True for auto-provisioned accounts
+
+    # Owner profile fields — only populated for vehicle_owner role
+    owner_type = models.CharField(max_length=20, choices=OwnerType.choices, null=True, blank=True)
+    schedule   = models.CharField(max_length=10, choices=Schedule.choices, null=True, blank=True)
+    contact    = models.CharField(max_length=50, null=True, blank=True)
+    address    = models.TextField(null=True, blank=True)
+    photo      = models.ImageField(upload_to='owners/', null=True, blank=True)
 
     # Override username to be nullable/blank, email is used for login
     username = models.CharField(max_length=150, blank=True, null=True)

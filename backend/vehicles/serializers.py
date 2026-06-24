@@ -1,54 +1,59 @@
 from rest_framework import serializers
-from .models import Owner, Vehicle, RegistrationToken, VehicleRegistration, RuleConstraint, VehicleTypeAccess, ParkingSpace, ParkingZone
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem
+from accounts.models import User
 
-class OwnerSerializer(serializers.ModelSerializer):
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Exposes owner-profile fields from User — used as embedded object in VehicleSerializer."""
     class Meta:
-        model  = Owner
-        fields = '__all__'
+        model  = User
+        fields = ['id', 'full_name', 'email', 'user_code', 'owner_type', 'schedule', 'contact', 'address', 'photo']
+
 
 class VehicleSerializer(serializers.ModelSerializer):
-    owner = OwnerSerializer(read_only=True)
-    owner_id = serializers.PrimaryKeyRelatedField(
-        queryset=Owner.objects.all(), source='owner', write_only=True
+    user    = UserProfileSerializer(read_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), source='user', write_only=True, required=False, allow_null=True
     )
 
     class Meta:
         model  = Vehicle
         fields = '__all__'
 
-class RegistrationTokenSerializer(serializers.ModelSerializer):
-    is_valid = serializers.ReadOnlyField()
-    class Meta:
-        model = RegistrationToken
-        fields = '__all__'
 
 class VehicleRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['department_name'] = instance.department.name if instance.department else ''
+        return data
+
+
 class RuleConstraintSerializer(serializers.ModelSerializer):
     class Meta:
         model = RuleConstraint
         fields = '__all__'
 
-class VehicleTypeAccessSerializer(serializers.ModelSerializer):
-    hours_display = serializers.SerializerMethodField()
 
+class ReferenceItemSerializer(serializers.ModelSerializer):
     class Meta:
-        model = VehicleTypeAccess
+        model  = ReferenceItem
         fields = '__all__'
-
-    def get_hours_display(self, obj):
-        if obj.is_all_hours:
-            return 'All hours'
-        return f"{obj.hours_start}–{obj.hours_end}"
 
 
 class ParkingSpaceSerializer(serializers.ModelSerializer):
+    vehicle_category = serializers.SerializerMethodField()
+
     class Meta:
         model  = ParkingSpace
-        fields = '__all__'
+        fields = ['id', 'zone', 'space_number', 'vehicle_category',
+                  'x1', 'y1', 'x2', 'y2', 'is_occupied', 'occupied_by', 'updated_at']
+
+    def get_vehicle_category(self, obj):
+        return obj.zone.vehicle_category if obj.zone else None
 
 
 class ParkingZoneSerializer(serializers.ModelSerializer):

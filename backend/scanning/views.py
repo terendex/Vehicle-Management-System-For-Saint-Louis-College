@@ -5,8 +5,9 @@ from rest_framework import permissions
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
-from vehicles.models import Vehicle, Owner
+from vehicles.models import Vehicle
 from violations.models import Violation
+from accounts.models import User
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample
 from .entry_logic import check_entry, check_owner_entry
 from .ml.reader import read_plate
@@ -44,7 +45,7 @@ class ScanView(APIView):
             plate = plate_info["plate_text"]
             bbox = plate_info["bbox"]
 
-            vehicle = Vehicle.objects.select_related('owner').filter(plate_number=plate).first()
+            vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate).first()
 
             if not vehicle:
                 AccessLog.objects.create(plate_number=plate, status='unknown', scanned_by=request.user)
@@ -98,30 +99,23 @@ class DigitalIDVerifyView(APIView):
     """
     Verify digital ID for unplated vehicle entry (bicycle, e_bike, electric_scooter).
 
-    The digital_id payload can be:
-      • A SLC user code, e.g. "SLC-OWN-000001"   (primary — QR or typed)
-      • A system student/employee ID, e.g. "SLC-STU-000001" / "SLC-EMP-000001"
-      • A VehicleRegistration system_student_id or system_employee_id
-      • Owner full_name or contact (fallback — guard-typed)
-
     Lookup order:
-      1. accounts.User.user_code (exact) → Owner via full_name match on User.full_name
-      2. VehicleRegistration.system_student_id / system_employee_id (exact)
-         → find matching Owner by full_name
-      3. Owner.full_name (case-insensitive contains) or Owner.contact (contains)
+      1. User.user_code (exact)
+      2. VehicleRegistration.system_student_id / system_employee_id → User via email
+      3. User.full_name or User.contact (fallback for guard-typed input)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        digital_id = (request.data.get('digital_id') or '').strip()
+        digital_id   = (request.data.get('digital_id') or '').strip()
         vehicle_type = request.data.get('vehicle_type', 'bicycle')
 
         if not digital_id:
             return Response({'error': 'digital_id is required'}, status=400)
 
-        owner = self._lookup_owner(digital_id)
+        user = self._lookup_user(digital_id)
 
-        if not owner:
+        if not user:
             AccessLog.objects.create(
                 plate_number='',
                 vehicle_type=vehicle_type,
@@ -135,12 +129,10 @@ class DigitalIDVerifyView(APIView):
                 'vehicle_type': vehicle_type,
             })
 
-        entry = check_owner_entry(owner, vehicle_type)
+        entry = check_owner_entry(user, vehicle_type)
 
-        # Violations are linked to Vehicle, not directly to Owner.
-        # Check if any vehicle owned by this owner has unresolved violations.
         has_violations = Violation.objects.filter(
-            vehicle__owner=owner, is_resolved=False
+            vehicle__user=user, is_resolved=False
         ).exists()
 
         AccessLog.objects.create(
@@ -157,7 +149,7 @@ class DigitalIDVerifyView(APIView):
             action=AuditLog.Action.SCAN,
             details=(
                 f"Digital ID: {digital_id}, Vehicle: {vehicle_type}, "
-                f"Owner: {owner.full_name}, Status: {entry['status']}"
+                f"Owner: {user.full_name}, Status: {entry['status']}"
             ),
         )
 
@@ -167,56 +159,37 @@ class DigitalIDVerifyView(APIView):
             'message':    entry['message'],
             'constraint': entry.get('constraint'),
             'owner': {
-                'full_name':  owner.full_name,
-                'owner_type': owner.owner_type,
-                'schedule':   owner.schedule,
+                'full_name':  user.full_name,
+                'owner_type': user.owner_type,
+                'schedule':   user.schedule,
             },
             'vehicle_type':   vehicle_type,
             'has_violations': has_violations,
         })
 
-    def _lookup_owner(self, digital_id: str):
-        """
-        Multi-tier owner lookup by digital ID.
+    def _lookup_user(self, digital_id: str):
+        from vehicles.models import VehicleRegistration
 
-        Returns the matching Owner instance, or None if not found.
-        """
-        from accounts.models import User
-        from vehicles.models import Owner, VehicleRegistration
+        # Tier 1: User.user_code exact match
+        user = User.objects.filter(user_code__iexact=digital_id).first()
+        if user:
+            return user
 
-        # Tier 1: accounts.User.user_code (e.g. "SLC-OWN-000001")
-        try:
-            user = User.objects.get(user_code__iexact=digital_id)
-            owner = Owner.objects.filter(full_name__iexact=user.full_name).first()
-            if owner:
-                if not owner.user_code:
-                    owner.user_code = user.user_code
-                    owner.save(update_fields=['user_code'])
-                return owner
-        except User.DoesNotExist:
-            pass
-
-        # Tier 2: VehicleRegistration system IDs (system_student_id / system_employee_id)
+        # Tier 2: VehicleRegistration system IDs → find User by email
         reg = VehicleRegistration.objects.filter(
             Q(system_student_id__iexact=digital_id) |
             Q(system_employee_id__iexact=digital_id)
         ).first()
         if reg:
-            owner = Owner.objects.filter(full_name__iexact=reg.full_name).first()
-            if owner:
-                if not owner.user_code:
-                    user = User.objects.filter(full_name__iexact=reg.full_name).first()
-                    if user:
-                        owner.user_code = user.user_code
-                        owner.save(update_fields=['user_code'])
-                return owner
+            user = User.objects.filter(email__iexact=reg.email).first()
+            if user:
+                return user
 
-        # Tier 3: Owner.full_name or Owner.contact (fallback for guard-typed input)
-        owner = Owner.objects.filter(
+        # Tier 3: full_name or contact fallback
+        return User.objects.filter(
             Q(full_name__icontains=digital_id) |
             Q(contact__icontains=digital_id)
         ).first()
-        return owner
 
     def get_client_ip(self, request):
         x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -227,48 +200,76 @@ class DigitalIDVerifyView(APIView):
 
 
 class VisitorPassView(APIView):
-    """Guard creates a visitor pass at the gate."""
+    """Guard issues a visitor pass at the gate."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = VisitorPassSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
+        """
+        Create a visitor pass and return its data for thermal printing.
+        Accepts plate_number directly; finds or creates the Vehicle record.
+        """
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+
+        vehicle, _ = Vehicle.objects.get_or_create(
+            plate_number=plate_number,
+            defaults={'vehicle_type': 'car', 'is_authorized': False},
+        )
+
+        office_id = request.data.get('office')
+        office = None
+        if office_id:
+            from .models import Office as OfficeModel
+            office = OfficeModel.objects.filter(pk=office_id).first()
+
+        pass_ = VisitorPass.objects.create(
+            vehicle=vehicle,
+            plate_number=plate_number,
+            office=office,
+            purpose=request.data.get('purpose', ''),
+            issued_by=request.user,
+            valid_date=timezone.localdate(),
+        )
+        return Response(VisitorPassSerializer(pass_).data, status=201)
 
     def get(self, request):
         """List today's visitor passes."""
-        from django.utils import timezone
         passes = VisitorPass.objects.filter(
             valid_date=timezone.localdate()
-        ).select_related('vehicle', 'office')
+        ).select_related('vehicle', 'office', 'issued_by')
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
-class ConfirmVisitorView(APIView):
-    """Office staff confirms or rejects a visitor."""
+class ExitScanView(APIView):
+    """
+    Guard scans the QR code on the returned thermal pass to record exit.
+    The QR encodes the visitor pass ID.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
-    def patch(self, request, pk):
-        try:
-            pass_ = VisitorPass.objects.get(pk=pk)
-        except VisitorPass.DoesNotExist:
-            return Response({'error': 'Pass not found'}, status=404)
+    def post(self, request, pk):
+        pass_ = get_object_or_404(VisitorPass, pk=pk)
 
-        action       = request.data.get('action')          # 'confirm' or 'reject'
-        confirmed_by = request.data.get('confirmed_by', '')
+        if pass_.status != VisitorPass.Status.ACTIVE:
+            return Response(
+                {'error': f'Pass is already marked as {pass_.status}.'},
+                status=400,
+            )
 
-        if action == 'confirm':
-            pass_.status       = VisitorPass.Status.CONFIRMED
-            pass_.confirmed_by = confirmed_by
-        elif action == 'reject':
-            pass_.status       = VisitorPass.Status.REJECTED
-            pass_.confirmed_by = confirmed_by
-        else:
-            return Response({'error': 'action must be confirm or reject'}, status=400)
-
+        now = timezone.now()
+        pass_.status    = VisitorPass.Status.EXITED
+        pass_.exited_at = now
         pass_.save()
+
+        AccessLog.objects.create(
+            vehicle=pass_.vehicle,
+            plate_number=pass_.plate_number,
+            status=AccessLog.Status.EXITED,
+            gate_id=request.data.get('gate_id', 'main'),
+            scanned_by=request.user,
+        )
+
         return Response(VisitorPassSerializer(pass_).data)
 
 

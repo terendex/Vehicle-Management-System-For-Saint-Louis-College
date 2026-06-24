@@ -9,17 +9,12 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Owner, Vehicle, RuleConstraint, VehicleTypeAccess, ParkingSpace, ParkingZone, Department, Program
-from .serializers import OwnerSerializer, VehicleSerializer, RuleConstraintSerializer, VehicleTypeAccessSerializer, ParkingSpaceSerializer, ParkingZoneSerializer
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem
+from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer
 from . import parking_camera
 
-class OwnerViewSet(viewsets.ModelViewSet):
-    queryset           = Owner.objects.all()
-    serializer_class   = OwnerSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
 class VehicleViewSet(viewsets.ModelViewSet):
-    queryset           = Vehicle.objects.select_related('owner').all()
+    queryset           = Vehicle.objects.select_related('user').all()
     serializer_class   = VehicleSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -35,10 +30,17 @@ class RuleConstraintViewSet(viewsets.ModelViewSet):
     serializer_class   = RuleConstraintSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-class VehicleTypeAccessViewSet(viewsets.ModelViewSet):
-    queryset           = VehicleTypeAccess.objects.all()
-    serializer_class   = VehicleTypeAccessSerializer
+class ReferenceItemViewSet(viewsets.ModelViewSet):
+    queryset           = ReferenceItem.objects.all()
+    serializer_class   = ReferenceItemSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+        return qs
 
 class ParkingSpaceViewSet(viewsets.ModelViewSet):
     queryset           = ParkingSpace.objects.all()
@@ -83,7 +85,6 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
                 zone=zone,
                 space_number=s['space_number'],
                 defaults={
-                    'vehicle_category': zone.vehicle_category,
                     'x1': s.get('x1'),
                     'y1': s.get('y1'),
                     'x2': s.get('x2'),
@@ -191,9 +192,8 @@ from rest_framework.views import APIView
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
-from .models import RegistrationToken, VehicleRegistration
-from .serializers import RegistrationTokenSerializer, VehicleRegistrationSerializer
+from .models import VehicleRegistration
+from .serializers import VehicleRegistrationSerializer
 from accounts.models import User
 from .email_utils import send_acceptance_email, send_rejection_email
 
@@ -203,105 +203,13 @@ class IsAdminRole(permissions.BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'admin')
 
 
-class GenerateRegistrationTokenView(APIView):
-    permission_classes = [IsAdminRole]
-
-    def post(self, request):
-        registrant_type = request.data.get('registrant_type')
-        expires_at_str = request.data.get('expires_at')
-        if not registrant_type or not expires_at_str:
-            return Response({"error": "registrant_type and expires_at are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse the datetime-local string (e.g. "2026-06-30T10:00") and make it
-        # timezone-aware so it can be safely compared with timezone.now() later.
-        expires_at = parse_datetime(expires_at_str)
-        if expires_at is None:
-            return Response({"error": "Invalid expires_at format. Use YYYY-MM-DDTHH:MM."}, status=status.HTTP_400_BAD_REQUEST)
-        if timezone.is_naive(expires_at):
-            expires_at = timezone.make_aware(expires_at)
-
-        token = RegistrationToken.objects.create(
-            registrant_type=registrant_type,
-            expires_at=expires_at
-        )
-        return Response(RegistrationTokenSerializer(token).data, status=status.HTTP_201_CREATED)
-
-
-class ListRegistrationTokensView(APIView):
-    permission_classes = [IsAdminRole]
-
-    def get(self, request):
-        tokens = RegistrationToken.objects.all().order_by('-created_at')
-        return Response(RegistrationTokenSerializer(tokens, many=True).data)
-
-
-class ToggleTokenView(APIView):
-    permission_classes = [IsAdminRole]
-
-    def post(self, request, pk):
-        token = get_object_or_404(RegistrationToken, pk=pk)
-        token.is_active = not token.is_active
-        token.save()
-        return Response(RegistrationTokenSerializer(token).data)
-
-
-class DeleteTokenView(APIView):
-    permission_classes = [IsAdminRole]
-
-    def delete(self, request, pk):
-        token = get_object_or_404(RegistrationToken, pk=pk)
-        token.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class ClearTokensView(APIView):
-    permission_classes = [IsAdminRole]
-
-    def delete(self, request):
-        RegistrationToken.objects.filter(is_used=True).delete()
-        RegistrationToken.objects.filter(expires_at__lt=timezone.now()).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class ValidateTokenView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, token):
-        try:
-            token_obj = RegistrationToken.objects.get(token=token)
-            if not token_obj.is_valid:
-                return Response({"error": "Token is invalid, used, expired, or disabled."}, status=status.HTTP_400_BAD_REQUEST)
-            return Response({"registrant_type": token_obj.registrant_type})
-        except RegistrationToken.DoesNotExist:
-            return Response({"error": "Token not found"}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError:
-            return Response({"error": "Invalid token format"}, status=status.HTTP_400_BAD_REQUEST)
-
-
-class PublicRegisterVehicleView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        token_str = request.data.get('token')
-        try:
-            token_obj = RegistrationToken.objects.get(token=token_str)
-        except (RegistrationToken.DoesNotExist, ValueError):
-            return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not token_obj.is_valid:
-            return Response({"error": "Token is invalid, used, expired, or disabled."}, status=status.HTTP_400_BAD_REQUEST)
-
-        serializer = VehicleRegistrationSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(registrant_type=token_obj.registrant_type)
-            token_obj.is_used = True
-            token_obj.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class IsAdminOrCdso(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role in ('admin', 'cdso'))
 
 
 class PendingRegistrationsListView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminOrCdso]
 
     def get(self, request):
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
@@ -324,7 +232,7 @@ def _generate_temp_password():
 
 
 class AcceptRegistrationView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminOrCdso]
 
     def post(self, request, pk):
         registration = get_object_or_404(VehicleRegistration, pk=pk)
@@ -344,31 +252,27 @@ class AcceptRegistrationView(APIView):
 
         # Create user with a secure temporary password
         temp_password = _generate_temp_password()
+        owner_type = User.OwnerType.STUDENT if registration.registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        schedule   = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
         user = User.objects.create_user(
             email=registration.email,
             full_name=registration.full_name,
             password=temp_password,
             role='vehicle_owner',
-            must_change_password=True,  # force password change on first login
-        )
-
-        # Create Owner
-        owner_type = Owner.OwnerType.STUDENT if registration.registrant_type == 'student' else Owner.OwnerType.EMPLOYEE
-        owner = Owner.objects.create(
-            full_name=registration.full_name,
+            must_change_password=True,
+            owner_type=owner_type,
+            schedule=schedule,
             contact=registration.contact_number,
             address=registration.address,
-            owner_type=owner_type,
-            user_code=user.user_code,
         )
 
-        # Create Vehicle
+        # Create Vehicle linked directly to User
         Vehicle.objects.create(
             plate_number=registration.plate_number,
             vehicle_type=registration.vehicle_type,
             color=registration.vehicle_color,
             is_authorized=True,
-            owner=owner
+            user=user,
         )
 
         # Auto-generate unique system ID
@@ -436,7 +340,7 @@ class AcceptRegistrationView(APIView):
                 "student_id": registration.student_id,
                 "program_year": registration.program_year,
                 "employee_id": registration.employee_id,
-                "department": registration.department,
+                "department": registration.department.name if registration.department else '',
                 "campus_days": registration.campus_days,
                 "drivers_license": registration.drivers_license,
                 "conduction_number": registration.conduction_number,
@@ -445,7 +349,7 @@ class AcceptRegistrationView(APIView):
 
 
 class RejectRegistrationView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminOrCdso]
 
     def post(self, request, pk):
         registration = get_object_or_404(VehicleRegistration, pk=pk)
@@ -465,6 +369,101 @@ class RejectRegistrationView(APIView):
         send_rejection_email(registration, reason)
 
         return Response({"message": "Registration rejected."})
+
+
+# ──────────────────────────────────────────────
+# CDSO Walk-in Direct Registration (auto-accepts)
+# ──────────────────────────────────────────────
+
+class CdsoDirectRegisterView(APIView):
+    """
+    CDSO registers a walk-in applicant directly.
+    No pending step — user account + vehicle are created immediately.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def post(self, request):
+        registrant_type = request.data.get('registrant_type', '')
+        if registrant_type not in ('student', 'employee', 'fetcher'):
+            return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        or_number = request.data.get('or_number', '').strip()
+        if not or_number:
+            return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        email = request.data.get('email', '').strip()
+        if User.objects.filter(email=email).exists():
+            return Response({"error": "A user with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = VehicleRegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        registration = serializer.save(
+            registrant_type=registrant_type,
+            source=VehicleRegistration.Source.DIRECT,
+            status=VehicleRegistration.Status.ACCEPTED,
+            or_number=or_number,
+            reviewed_at=timezone.now(),
+        )
+
+        # Build user profile fields
+        temp_password = _generate_temp_password()
+        owner_type = User.OwnerType.STUDENT if registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        schedule   = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
+
+        user = User.objects.create_user(
+            email=registration.email,
+            full_name=registration.full_name,
+            password=temp_password,
+            role='vehicle_owner',
+            must_change_password=True,
+            owner_type=owner_type,
+            schedule=schedule,
+            contact=registration.contact_number,
+            address=registration.address,
+        )
+
+        Vehicle.objects.create(
+            plate_number=registration.plate_number,
+            vehicle_type=registration.vehicle_type,
+            color=registration.vehicle_color,
+            is_authorized=True,
+            user=user,
+        )
+
+        padded_id = str(registration.pk).zfill(6)
+        if registrant_type == 'student':
+            registration.system_student_id = f"SLC-STU-{padded_id}"
+        else:
+            registration.system_employee_id = f"SLC-EMP-{padded_id}"
+        registration.user = user
+        registration.save()
+
+        user.refresh_from_db()
+        system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
+
+        try:
+            send_acceptance_email(registration, temp_password, user.user_code)
+            email_status = 'sent'
+        except Exception as e:
+            import traceback
+            print(f"[EMAIL ERROR] {e}")
+            traceback.print_exc()
+            email_status = 'failed'
+
+        return Response({
+            "message": "Walk-in registered and account created.",
+            "email_status": email_status,
+            "account": {
+                "user_code":       user.user_code,
+                "system_id":       system_id,
+                "email":           registration.email,
+                "full_name":       registration.full_name,
+                "registrant_type": registrant_type,
+                "plate_number":    registration.plate_number,
+            }
+        }, status=status.HTTP_201_CREATED)
 
 
 # ──────────────────────────────────────────────
@@ -572,12 +571,13 @@ class PublicOpenRegistrationView(APIView):
             elif tths_n > 0:
                 data['schedule'] = 'TTHS'
 
-        data['token'] = str(uuid.uuid4())  # internal uniqueness token
-
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
-            serializer.save(registrant_type=registrant_type)
-            return Response({"message": "Registration submitted successfully."}, status=status.HTTP_201_CREATED)
+            serializer.save(
+                registrant_type=registrant_type,
+                source=VehicleRegistration.Source.PUBLIC,
+            )
+            return Response({"message": "Registration submitted successfully. Please wait for CDSO review."}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -589,7 +589,7 @@ class DepartmentListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        names = list(Department.objects.filter(is_active=True).values_list('name', flat=True))
+        names = list(ReferenceItem.objects.filter(category='department', is_active=True).values_list('name', flat=True))
         return Response(names)
 
 
@@ -597,7 +597,7 @@ class ProgramListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        names = list(Program.objects.filter(is_active=True).values_list('name', flat=True))
+        names = list(ReferenceItem.objects.filter(category='program', is_active=True).values_list('name', flat=True))
         return Response(names)
 
 
@@ -615,9 +615,9 @@ class ParkingAvailabilityView(APIView):
 
     def get(self, request):
         category = request.query_params.get('category', '')
-        qs = ParkingSpace.objects.all()
+        qs = ParkingSpace.objects.select_related('zone').all()
         if category in ['motorcycle', 'car']:
-            qs = qs.filter(vehicle_category=category)
+            qs = qs.filter(zone__vehicle_category=category)
         spaces = ParkingSpaceSerializer(qs, many=True).data
         summary = {}
         for s in spaces:
