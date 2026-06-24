@@ -50,10 +50,9 @@ api.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${data.access}`
         return api(originalRequest)
       } catch (refreshError) {
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
+        // Let authStore.logout handle cleanup and redirect so the timer is also cleared
+        const { default: useAuthStore } = await import('../stores/authStore')
+        useAuthStore.getState().logout()
         return Promise.reject(refreshError)
       }
     }

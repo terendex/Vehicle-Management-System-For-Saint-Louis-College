@@ -250,14 +250,18 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
     return dets
 
 
-def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
+def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
+                  try_rotation: bool = True) -> list[dict]:
     """
     Detect vehicles and license plates in an image using custom-trained YOLOv8.
 
     Handles all conditions via:
     - Adaptive preprocessing  (dark/night/glare/dim)
-    - Multi-rotation fallback (tilted cameras / angled plates)
+    - Multi-rotation fallback (tilted cameras / angled plates) — skip with try_rotation=False
     - GPU tiled pass          (high-res frames, GPU only)
+
+    Pass try_rotation=False when the scene already has locked plate tracks to
+    avoid up to 6 redundant YOLO passes on frames where no new plate is needed.
     """
     model = _get_yolo()
     if model is None:
@@ -291,8 +295,9 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
 
     # Rotation fallback — fires when no plate found at 0°.
     # Handles cameras mounted at an angle and tilted plates (up to ±60°).
-    # Each pass takes ~0.17 s on CPU; breaks as soon as a plate is locked.
-    if not any(d["class_name"] == "license_plate" for d in all_dets):
+    # Each pass takes ~0.17 s on CPU; skipped entirely when try_rotation=False
+    # (caller sets this once all active tracks have a locked plate).
+    if try_rotation and not any(d["class_name"] == "license_plate" for d in all_dets):
         center = (w // 2, h // 2)
         for angle in [20, -20, 40, -40, 60, -60]:
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
