@@ -10,6 +10,7 @@ An AI-powered vehicle entry management system using license plate recognition, b
 - [Features](#features)
 - [Entry Rules](#entry-rules)
 - [Tech Stack](#tech-stack)
+- [ML Pipeline](#ml-pipeline)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
@@ -29,8 +30,10 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 
 ## Features
 
-- **Camera-based plate scanning** — automatic detection at entry gates
+- **Camera-based plate scanning** — automatic detection at entry gates via webcam or IP cameras (RTSP)
 - **ML plate recognition** — YOLOv8 detection + EasyOCR text extraction
+- **Real-time bounding boxes** — 60fps canvas overlay with smooth LERP interpolation between 2fps backend detections
+- **Multi-camera support** — monitor multiple RTSP IP cameras simultaneously
 - **Philippine plate validation** — supports all standard PH plate formats
 - **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
 - **Employee open access** — employees allowed entry any day
@@ -116,6 +119,71 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 
 ---
 
+## ML Pipeline
+
+### How detection works
+
+Every camera frame goes through the following stages:
+
+```
+Camera JPEG (webcam or RTSP)
+    │
+    ▼
+YOLOv8 (detection.py)
+    │  Adaptive preprocessing — CLAHE + gamma for dark/glare/dim frames
+    │  Rotation fallback — retries at ±20°, ±40°, ±60° when no plate found
+    │  Per-class NMS — removes duplicate overlapping boxes
+    │
+    ├── bicycle / e_bike / electric_scooter  →  DROPPED (ignored, not processed)
+    ├── vehicle / motorcycle                 →  Tracked, shown on screen
+    └── license_plate                        →  Tracked + sent to EasyOCR
+            │
+            ▼
+    ProximityTracker (proximity_tracker.py)
+        Assigns stable track IDs across frames using centroid distance matching.
+        Persists last-known box position for up to 1.5s during detection gaps.
+            │
+            ├── Non-plate tracks  →  {"type":"tracks"} sent to frontend
+            └── Plate tracks      →  EasyOCR queue
+                    │
+                    ▼
+            EasyOCR (reader.py)
+                Runs on plate crops only. Tries binary/inverted/CLAHE variants
+                + left/middle/right region splits. Corrects common PH plate
+                misreads (O↔0, I↔1, etc.). Returns when confidence ≥ 0.60.
+                    │
+                    ▼
+            {"type":"ocr_update"} + DB lookup → {"type":"result"}
+```
+
+### Detected classes
+
+| Class | Processed? | Notes |
+|---|---|---|
+| `license_plate` | Yes | Cropped and sent to EasyOCR |
+| `vehicle` | Yes | Tracked, shown with green box |
+| `motorcycle` | Yes | Tracked, shown with blue box |
+| `bicycle` | No | Detected by model but discarded in software |
+| `e_bike` | No | Detected by model but discarded in software |
+| `electric_scooter` | No | Detected by model but discarded in software |
+
+To re-enable any ignored class, remove it from `_IGNORED_CLASSES` in `backend/scanning/ml/detection.py`.
+
+### Tracking
+
+`ProximityTracker` matches each new YOLO detection to an existing track by finding the closest track center within **100 pixels**. Unmatched tracks are re-emitted at their last known position until they expire (1.5 seconds of no match). This keeps bounding boxes stable on screen even at low ML frame rates.
+
+### Performance
+
+| Environment | YOLO inference | ML frame rate |
+|---|---|---|
+| CPU (no GPU) | ~200–500ms/frame | ~2–5 fps |
+| GPU (CUDA) | ~10–30ms/frame | ~30–100 fps |
+
+The frontend always renders at **60fps** using LERP interpolation between backend positions, so the UI is smooth regardless of backend speed. GPU mode is detected automatically — no config change needed.
+
+---
+
 ## Project Structure
 
 ```
@@ -138,7 +206,9 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │       ├── SecurityLayout.jsx
 │   │   │       └── OwnerLayout.jsx
 │   │   ├── hooks/
-│   │   │   └── useScanStream.js
+│   │   │   ├── useScanStream.js       # Webcam → WS → 60fps canvas (live scan)
+│   │   │   ├── useRtspStream.js       # Single RTSP camera → WS → 60fps canvas
+│   │   │   └── useMultiRtspStream.js  # Multiple RTSP cameras, one WS per camera
 │   │   ├── pages/
 │   │   │   ├── Login/
 │   │   │   │   └── LoginPage.jsx
@@ -169,12 +239,16 @@ Vehicle-Management-System-For-Saint-Louis-College/
 ├── backend/                         # Django
 │   ├── config/                      # Project settings
 │   │   ├── settings.py
+│   │   ├── asgi.py                  # ASGI entry point (required for WebSockets)
 │   │   └── urls.py
 │   ├── accounts/                    # Users and roles
 │   ├── vehicles/                    # Vehicles and owners
 │   ├── scanning/                    # Plate scanning, access logs, visitor passes
+│   │   ├── consumers.py             # WebSocket consumers (ScanLiveConsumer, RtspStreamConsumer)
 │   │   ├── ml/
-│   │   │   ├── reader.py            # YOLO + EasyOCR inference pipeline
+│   │   │   ├── detection.py         # YOLOv8 inference, adaptive preprocessing, NMS
+│   │   │   ├── proximity_tracker.py # Frame-to-frame vehicle tracking by centroid distance
+│   │   │   ├── reader.py            # EasyOCR pipeline for license plate text extraction
 │   │   │   ├── train.py             # YOLOv8 training (offline + incremental)
 │   │   │   ├── validator.py         # Philippine plate regex validation
 │   │   │   ├── collector.py         # Auto-collect scan data for retraining
@@ -344,13 +418,12 @@ Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the sp
 ```bash
 cd backend
 venv\Scripts\activate
-daphne -b 127.0.0.1 -p 8000 config.asgi:application
+python -m daphne config.asgi:application --port 8000 --bind 127.0.0.1
 ```
 
-> For development without WebSocket features:
-> ```bash
-> python manage.py runserver
-> ```
+> **Daphne is required** — `python manage.py runserver` uses WSGI and does not support WebSockets. Camera scanning will not work without Daphne.
+>
+> On first connection after starting Daphne, the YOLO model and EasyOCR load into memory (takes ~10–25s on CPU). Subsequent connections are instant.
 
 | URL | Description |
 |---|---|
@@ -441,6 +514,25 @@ python -m celery -A config worker -l info --pool=solo
 | `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | Yes |
 | `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | Yes |
 | `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | Yes |
+
+### WebSocket Endpoints (Daphne required)
+
+| Endpoint | Description |
+|---|---|
+| `ws://localhost:8000/ws/scan/live/?token=<JWT>` | Live webcam scanning — client sends JPEG frames, server returns detection tracks |
+| `ws://localhost:8000/ws/scan/rtsp/?token=<JWT>` | RTSP IP camera streaming — client sends `{type:"start", rtsp_url:"rtsp://..."}`, server streams frames and tracks back |
+
+**WS message types (server → client):**
+
+| Type | Payload | Description |
+|---|---|---|
+| `connected` | `{message, gpu}` | Sent once on open — confirms ASGI mode and GPU status |
+| `tracks` | `{tracks: [{track_id, bbox, class_name, plate_text, ocr_done}]}` | Sent every processed frame |
+| `ocr_update` | `{track_id, plate_text}` | Plate text confirmed by EasyOCR |
+| `result` | `{results: [...]}` | Plate matched against vehicle database |
+| `frame` | `{image_b64}` | RTSP only — JPEG frame from IP camera |
+| `status` | `{connected, message}` | RTSP only — stream connection status |
+| `error` | `{message}` | Processing or connection error |
 
 ### ML Training & Feedback
 | Method | Endpoint | Description | Auth |
