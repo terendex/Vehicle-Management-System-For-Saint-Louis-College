@@ -6,20 +6,14 @@ const WS_BASE =
 
 // ── Bounding box colours ───────────────────────────────────────────────────────
 const TRACK_COLORS = {
-  license_plate:    "#00ff88",  // green   — plate detections
-  vehicle:          "#00ff88",  // green   — car/jeep/bus body
-  motorcycle:       "#3b82f6",  // blue    — motorcycle
-  bicycle:          "#6366f1",  // indigo  — bicycle
-  e_bike:           "#8b5cf6",  // purple  — e-bike
-  electric_scooter: "#10b981",  // emerald — electric scooter
-  _default:         "#facc15",  // yellow  — unknown / future classes
+  license_plate: "#00ff88",  // green — plate detections
+  vehicle:       "#00ff88",  // green — car/jeep/bus body
+  motorcycle:    "#3b82f6",  // blue  — motorcycle
+  _default:      "#facc15",  // yellow — unknown / future classes
 };
 
 const VEHICLE_TYPE_LABELS = {
-  motorcycle:       "Motorcycle",
-  bicycle:          "Bicycle",
-  e_bike:           "E-Bike",
-  electric_scooter: "Electric Scooter",
+  motorcycle: "Motorcycle",
 };
 
 function getTrackColor(track) {
@@ -146,16 +140,6 @@ export function useScanStream(token, cameraOn) {
             ctx.fillStyle = "#ffffff";
             ctx.fillText(labelText, px + PAD + 2, py - TH + 4);
 
-            // ── "⚠ ID Required" badge ────────────────────────────────────────
-            if (track.vehicle_type) {
-              const badge  = "⚠ ID Required";
-              const badgeW = ctx.measureText(badge).width + PAD * 2;
-              const badgeY = py + ph + 2;
-              ctx.fillStyle = "rgba(239,68,68,0.85)";
-              ctx.fillRect(px, badgeY, badgeW, TH);
-              ctx.fillStyle = "#ffffff";
-              ctx.fillText(badge, px + PAD, badgeY + 4);
-            }
           }
         }
       }

@@ -637,12 +637,10 @@ export default function SecurityEntryManagement() {
                       </div>
                       {flash && <div className="em-flash" />}
 
-                      {activeTracks.length > 0 && (
-                        <canvas
-                          ref={canvasRef}
-                          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-                        />
-                      )}
+                      <canvas
+                        ref={canvasRef}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+                      />
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {webcams.find(c => c.id === activeCamId)?.name}
                       </div>

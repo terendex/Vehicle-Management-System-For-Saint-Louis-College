@@ -3,7 +3,7 @@ detection.py — YOLOv8 vehicle detection for Philippine vehicles.
 
 Detects:
 - License plates
-- Bicycles, e-bikes, electric scooters (unplated — require digital ID)
+- Vehicles and motorcycles
 
 Uses the model's own class names at runtime so a retrained model with a
 different class list never silently misclassifies.  If weights are missing
@@ -27,8 +27,11 @@ WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 # Used only for validation — actual inference uses model.names at runtime.
 CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
 
-# Classes that require a digital ID instead of a license plate
-VEHICLE_TYPE_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
+# Classes that require a digital ID instead of a license plate (none currently)
+VEHICLE_TYPE_CLASSES: set[str] = set()
+
+# Classes detected by the model but intentionally ignored in processing
+_IGNORED_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
 
 _model = None
 _load_attempted = False  # only try once; avoids re-loading on every frame after failure
@@ -120,7 +123,7 @@ def _get_yolo():
 
 # Per-class confidence minimums — plates need higher recall than vehicles
 _CONF_PLATE   = 0.10   # low threshold; aspect ratio + size filters catch false positives
-_CONF_VEHICLE = 0.25   # standard threshold for vehicle/motor/ebike/escooter
+_CONF_VEHICLE = 0.25   # standard threshold for vehicle/motorcycle
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -190,6 +193,10 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             # Shift tile-relative coords back to full-image coords
             x1, y1, x2, y2 = (int(x1) + offset_x, int(y1) + offset_y,
                                int(x2) + offset_x, int(y2) + offset_y)
+
+            if class_name in _IGNORED_CLASSES:
+                continue
+
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
 
