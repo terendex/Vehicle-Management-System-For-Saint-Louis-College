@@ -39,7 +39,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         id_label  = 'Employee ID'
         id_value  = registration.employee_id or '\u2014'
         id2_label = 'Department'
-        id2_value = registration.department or '\u2014'
+        id2_value = registration.department.name if registration.department else '\u2014'
 
     identity_rows = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'

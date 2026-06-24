@@ -7,8 +7,9 @@ class OfficeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class VisitorPassSerializer(serializers.ModelSerializer):
-    office_name  = serializers.CharField(source='office.name', read_only=True)
-    plate_number = serializers.CharField(source='vehicle.plate_number', read_only=True)
+    office_name    = serializers.CharField(source='office.name',         read_only=True, default=None)
+    issued_by_name = serializers.CharField(source='issued_by.full_name', read_only=True, default=None)
+
     class Meta:
         model  = VisitorPass
         fields = '__all__'
