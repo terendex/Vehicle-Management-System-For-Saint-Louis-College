@@ -8,12 +8,12 @@ const WS_BASE = import.meta.env.VITE_API_URL
 const TRACK_COLORS = {
   license_plate: "#00ff88",
   vehicle:       "#00ff88",
-  motor:         "#3b82f6",
-  ebike:         "#8b5cf6",
-  escooter:      "#10b981",
+  motorcycle:    "#3b82f6",
   _default:      "#facc15",
 };
-const VEHICLE_TYPE_LABELS = { ebike: "E-Bike", escooter: "E-Scooter" };
+const VEHICLE_TYPE_LABELS = {
+  motorcycle: "Motorcycle",
+};
 const LERP = 0.25;
 
 function trackColor(t) {

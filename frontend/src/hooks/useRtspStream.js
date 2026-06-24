@@ -6,19 +6,16 @@ const WS_BASE =
   (import.meta.env.VITE_API_URL || "http://localhost:5173").replace("http", "ws");
 
 
-// ── Bounding-box colours (mirrors useScanStream.js) ──────────────────────────
+// ── Bounding-box colours (must match backend CLASS_NAMES) ────────────────────
 const TRACK_COLORS = {
   license_plate: "#00ff88",
   vehicle:       "#00ff88",
-  motor:         "#3b82f6",
-  ebike:         "#8b5cf6",
-  escooter:      "#10b981",
+  motorcycle:    "#3b82f6",
   _default:      "#facc15",
 };
 
 const VEHICLE_TYPE_LABELS = {
-  ebike:    "E-Bike",
-  escooter: "E-Scooter",
+  motorcycle: "Motorcycle",
 };
 
 function getTrackColor(track) {
@@ -144,15 +141,6 @@ export function useRtspStream(token) {
           ctx.fillStyle = "#ffffff";
           ctx.fillText(labelText, px + PAD + 2, py - TH + 4);
 
-          if (track.vehicle_type) {
-            const badge  = "⚠ ID Required";
-            const badgeW = ctx.measureText(badge).width + PAD * 2;
-            const badgeY = py + ph + 2;
-            ctx.fillStyle = "rgba(239,68,68,0.85)";
-            ctx.fillRect(px, badgeY, badgeW, TH);
-            ctx.fillStyle = "#ffffff";
-            ctx.fillText(badge, px + PAD, badgeY + 4);
-          }
         }
       }
 
