@@ -1,0 +1,60 @@
+services:
+
+  # ── Message broker (shared by backend + celery) ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # ── Django / Daphne (ASGI) ────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    # CMD from Dockerfile: daphne -b 0.0.0.0 -p 8000 config.asgi:application
+    volumes:
+      - ./backend:/app                                      # live code reload
+      - ./backend/scanning/ml/weights:/app/scanning/ml/weights   # ML weights
+      - ./backend/scanning/ml/dataset:/app/scanning/ml/dataset   # training dataset
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override local Redis URL so containers talk to the redis service
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # 'backend' is the Docker service hostname the Vite proxy sends as Host header
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend
+    depends_on:
+      - redis
+
+  # ── Celery worker ─────────────────────────────────────────────────────────
+  celery:
+    build: ./backend
+    command: celery -A config worker --loglevel=info --pool=solo
+    volumes:
+      - ./backend:/app
+      - ./backend/scanning/ml/weights:/app/scanning/ml/weights
+      - ./backend/scanning/ml/dataset:/app/scanning/ml/dataset
+    env_file:
+      - ./backend/.env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  # ── React / Vite dev server ───────────────────────────────────────────────
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules        # anonymous volume so container node_modules
+                                 # are not overwritten by the host mount
+    ports:
+      - "5173:5173"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
