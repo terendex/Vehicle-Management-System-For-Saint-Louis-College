@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import useAuthStore from './stores/authStore'
 import LoginPage from './pages/Login/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
@@ -16,6 +18,12 @@ import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
 import RegisterPage from './pages/Register/RegisterPage'
 
 export default function App() {
+  const initAutoLogout = useAuthStore((s) => s.initAutoLogout)
+
+  useEffect(() => {
+    initAutoLogout()
+  }, [])
+
   return (
     <BrowserRouter>
       <Routes>

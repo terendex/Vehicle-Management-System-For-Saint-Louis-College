@@ -116,8 +116,15 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             self._detection_in_progress = False
 
         now = timezone.now()
-        tracker_output = self._tracker.update(detections)
+        tracker_output = self._tracker.update(detections, img_w=getattr(self, "_last_img_w", 640))
         det_by_idx = {i: d for i, d in enumerate(detections)}
+
+        # Evict OCR state for tracks the tracker has expired — prevents unbounded growth
+        active_ids = set(self._tracker.tracks.keys())
+        for stale_id in list(self._ocr_state.keys()):
+            if stale_id not in active_ids:
+                self._ocr_state.pop(stale_id, None)
+                self._pending_ocr.pop(stale_id, None)
 
         active_tracks = []
         tracks_needing_ocr = []
@@ -196,10 +203,17 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         if img is None:
             return []
 
-        detections = detect_plates(img)
         h, w = img.shape[:2]
         self._last_img_w = w
         self._last_img_h = h
+
+        # Skip rotation passes once every active track already has a locked plate —
+        # saves up to 6 extra YOLO passes per frame on CPU.
+        all_plates_locked = bool(self._tracker.tracks) and all(
+            t.ocr_done for t in self._tracker.tracks.values()
+            if t.class_name == "license_plate"
+        )
+        detections = detect_plates(img, try_rotation=not all_plates_locked)
 
         result = []
         for i, det in enumerate(detections):
@@ -461,14 +475,16 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
     @staticmethod
     async def _get_user_from_token(token_key):
         from django.contrib.auth import get_user_model
-        import jwt as _jwt
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
         User = get_user_model()
         try:
-            decoded = _jwt.decode(token_key, options={"verify_signature": False})
-            user = await sync_to_async(User.objects.get)(pk=decoded["user_id"])
-            return user
-        except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError, User.DoesNotExist):
+            # Validates signature, expiry, and token type using simplejwt + SECRET_KEY
+            validated = await sync_to_async(JWTAuthentication().get_validated_token)(token_key)
+            user_id = validated["user_id"]
+            return await sync_to_async(User.objects.get)(pk=user_id)
+        except (TokenError, InvalidToken, User.DoesNotExist, Exception):
             return None
 
 
@@ -606,17 +622,25 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             drain_running.set()
 
             def _drain():
-                """Continuously drain the RTSP buffer; keep only the latest frame."""
+                """Continuously drain the RTSP buffer; keep only the latest frame.
+
+                cap.grab() is a fast, decode-free read that advances the internal
+                buffer pointer. cap.retrieve() does the actual JPEG decode and is
+                only called every 3rd grab so the thread stays cheap while always
+                having a recent frame ready for the send loop.
+                """
+                _grab_count = 0
                 while drain_running.is_set():
-                    ret = cap.grab()  # fast — no decode
+                    ret = cap.grab()
                     if not ret:
                         latest_frame["ok"] = False
                         break
-                    # Only decode every N grabs so we always have a recent frame ready
-                    ret2, frm = cap.retrieve()
-                    if ret2 and frm is not None:
-                        latest_frame["data"] = frm
-                        latest_frame["ok"]   = True
+                    _grab_count += 1
+                    if _grab_count % 3 == 0:
+                        ret2, frm = cap.retrieve()
+                        if ret2 and frm is not None:
+                            latest_frame["data"] = frm
+                            latest_frame["ok"]   = True
 
             drain_thread = threading.Thread(target=_drain, daemon=True)
             drain_thread.start()
@@ -705,8 +729,15 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             self._detection_in_progress = False
 
         now            = timezone.now()
-        tracker_output = self._tracker.update(detections)
+        tracker_output = self._tracker.update(detections, img_w=self._last_img_w)
         det_by_idx     = {i: d for i, d in enumerate(detections)}
+
+        # Evict OCR state for tracks the tracker has expired — prevents unbounded growth
+        active_ids = set(self._tracker.tracks.keys())
+        for stale_id in list(self._ocr_state.keys()):
+            if stale_id not in active_ids:
+                self._ocr_state.pop(stale_id, None)
+                self._pending_ocr.pop(stale_id, None)
 
         active_tracks      = []
         tracks_needing_ocr = []
@@ -809,10 +840,15 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             return []
 
         self._frame_counter += 1
-        detections = detect_plates(img)
         h, w = img.shape[:2]
         self._last_img_w = w
         self._last_img_h = h
+
+        all_plates_locked = bool(self._tracker.tracks) and all(
+            t.ocr_done for t in self._tracker.tracks.values()
+            if t.class_name == "license_plate"
+        )
+        detections = detect_plates(img, try_rotation=not all_plates_locked)
 
         out = []
         for i, det in enumerate(detections):

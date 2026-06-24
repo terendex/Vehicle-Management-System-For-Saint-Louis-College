@@ -23,8 +23,15 @@ class PlateTrack:
 
 
 class ProximityTracker:
-    MATCH_RADIUS = 100
-    EXPIRY_SECONDS = 1.5
+    # Match radius as a fraction of image width; minimum 60px floor.
+    # 15% of 640px = 96px, 15% of 1280px = 192px — scales with resolution.
+    MATCH_RADIUS_FRACTION = 0.15
+    MATCH_RADIUS_MIN      = 60
+
+    # Increased from 1.5s: at CPU speeds (~300ms/frame) 1.5s only allows
+    # ~5 frames, so a single YOLO miss could drop a track and restart OCR.
+    EXPIRY_SECONDS = 3.0
+
     next_id: int = 1
 
     def __init__(self):
@@ -39,9 +46,10 @@ class ProximityTracker:
         cx2, cy2 = self._center(b2)
         return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
-    def update(self, detections: list[dict]) -> list[dict]:
+    def update(self, detections: list[dict], img_w: int = 640) -> list[dict]:
         now = time.time()
         matched_track_ids = set()
+        match_radius = max(self.MATCH_RADIUS_MIN, int(img_w * self.MATCH_RADIUS_FRACTION))
 
         for det in detections:
             bbox = det["bbox"]
@@ -56,7 +64,7 @@ class ProximityTracker:
             for tid, track in self.tracks.items():
                 if (now - track.last_seen) < self.EXPIRY_SECONDS:
                     dist = self._distance(abs_bbox, track.bbox)
-                    if dist < best_dist and dist < self.MATCH_RADIUS:
+                    if dist < best_dist and dist < match_radius:
                         best_dist = dist
                         best_track_id = tid
 
