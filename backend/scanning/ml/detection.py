@@ -25,10 +25,10 @@ WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
 # Expected class names in the order the model was trained.
 # Used only for validation — actual inference uses model.names at runtime.
-CLASS_NAMES = ["license_plate", "vehicle", "motor", "ebike", "escooter"]
+CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
 
 # Classes that require a digital ID instead of a license plate
-VEHICLE_TYPE_CLASSES = {"ebike", "escooter"}
+VEHICLE_TYPE_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
 
 _model = None
 _load_attempted = False  # only try once; avoids re-loading on every frame after failure
@@ -77,21 +77,39 @@ def _get_yolo():
         return None
 
     try:
+        import torch
         from ultralytics import YOLO
         candidate = YOLO(str(WEIGHTS_PATH))
         if not _validate_model_classes(candidate):
             return None
         _model = candidate
         if is_gpu_available():
-            import torch
             _model.to("cuda")
-            # Ampere (RTX 30xx) and later: allow TF32 for matmuls — free ~10% speedup
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
-            log.info("[DETECT] YOLO on GPU (CUDA) — TF32+cuDNN benchmark enabled: %s", WEIGHTS_PATH)
+            log.info("[DETECT] YOLO on GPU (CUDA): %s", WEIGHTS_PATH)
         else:
-            log.info("[DETECT] YOLO on CPU — no CUDA GPU found: %s", WEIGHTS_PATH)
+            # Use all available CPU threads
+            torch.set_num_threads(min(8, torch.get_num_threads()))
+            log.info("[DETECT] YOLO on CPU (%d threads): %s",
+                     torch.get_num_threads(), WEIGHTS_PATH)
+
+        # Warm-up: run a dummy inference so the first real frame is fast
+        log.info("[DETECT] Warming up model (compiling JIT graph)…")
+        dummy = np.zeros((480, 640, 3), np.uint8)
+        _model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.10, verbose=False)
+        log.info("[DETECT] Warm-up complete — model ready.")
+
+        # Pre-load EasyOCR now so the first real plate read is instant
+        try:
+            from .reader import _get_ocr
+            log.info("[DETECT] Pre-loading EasyOCR…")
+            _get_ocr()
+            log.info("[DETECT] EasyOCR pre-loaded.")
+        except Exception as _ocr_exc:
+            log.warning("[DETECT] EasyOCR pre-load skipped: %s", _ocr_exc)
+
     except ImportError:
         log.error("[DETECT] ultralytics is not installed — cannot load YOLO model")
     except Exception as exc:
@@ -105,12 +123,28 @@ _CONF_PLATE   = 0.10   # low threshold; aspect ratio + size filters catch false 
 _CONF_VEHICLE = 0.25   # standard threshold for vehicle/motor/ebike/escooter
 
 
-def _apply_clahe(img: np.ndarray) -> np.ndarray:
-    """Boost local contrast — helps dim, distant, or shadowed plates."""
+def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
+    inv = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv) * 255 for i in range(256)], dtype=np.uint8)
+    return cv2.LUT(img, table)
+
+
+def _preprocess_adaptive(img: np.ndarray) -> np.ndarray:
+    """CLAHE with gamma correction tuned to frame brightness."""
+    brightness = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean())
+    if brightness < 50:       # very dark / night
+        img = _apply_gamma(img, 2.2)
+        clip = 4.0
+    elif brightness < 90:     # dim / indoor / dusk
+        img = _apply_gamma(img, 1.5)
+        clip = 3.5
+    elif brightness > 200:    # glare / overexposed
+        clip = 2.0
+    else:
+        clip = 3.0
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
+    l = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8)).apply(l)
     return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
 
@@ -213,13 +247,10 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
     """
     Detect vehicles and license plates in an image using custom-trained YOLOv8.
 
-    Improvements over a bare model.predict call:
-      - CLAHE preprocessing improves recall on dim/shadowed plates
-      - imgsz=960 prevents plates from being shrunk to <30px on HD frames
-      - Per-class confidence: plates at 0.10, vehicles at 0.25
-      - Tiled pass on large frames catches distant plates missed by the full pass
-
-    Returns list of dicts: crop, bbox, score, aspect_ratio, class_name, vehicle_type
+    Handles all conditions via:
+    - Adaptive preprocessing  (dark/night/glare/dim)
+    - Multi-rotation fallback (tilted cameras / angled plates)
+    - GPU tiled pass          (high-res frames, GPU only)
     """
     model = _get_yolo()
     if model is None:
@@ -227,15 +258,16 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
 
     h, w = img.shape[:2]
     gpu = is_gpu_available()
-    img_proc = _apply_clahe(img)
+    imgsz = 960 if gpu else 640
 
-    # Full-frame pass at imgsz=960 — better than 640 for HD cameras
+    # Pass 0 — normal orientation
+    img_proc = _preprocess_adaptive(img)
     results = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
-                            half=gpu, imgsz=960)
+                            half=gpu, imgsz=imgsz)
     all_dets = _parse_boxes(results, img, w, h, model)
 
-    # Tiled pass for large frames (1080p+) to catch small/distant plates
-    if w > 1280 or h > 960:
+    # GPU: tiled pass for high-res frames
+    if gpu and (w > 1280 or h > 960):
         tile, overlap = 640, 0.2
         stride = int(tile * (1 - overlap))
         for y0 in range(0, h, stride):
@@ -246,13 +278,52 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE) -> list[dict]:
                 if pw < 64 or ph < 64:
                     continue
                 tile_res = model.predict(patch, conf=conf, verbose=False,
-                                         max_det=50, half=gpu, imgsz=640)
+                                         max_det=50, half=True, imgsz=640)
                 all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
                                              offset_x=x0, offset_y=y0))
 
-        all_dets = _nms(all_dets)
+    # Rotation fallback — fires when no plate found at 0°.
+    # Handles cameras mounted at an angle and tilted plates (up to ±60°).
+    # Each pass takes ~0.17 s on CPU; breaks as soon as a plate is locked.
+    if not any(d["class_name"] == "license_plate" for d in all_dets):
+        center = (w // 2, h // 2)
+        for angle in [20, -20, 40, -40, 60, -60]:
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            img_rot = cv2.warpAffine(img, M, (w, h),
+                                     flags=cv2.INTER_LINEAR,
+                                     borderMode=cv2.BORDER_REFLECT_101)
+            rot_res = model.predict(_preprocess_adaptive(img_rot), conf=conf,
+                                    verbose=False, max_det=100,
+                                    half=gpu, imgsz=imgsz)
+            rot_dets = _parse_boxes(rot_res, img_rot, w, h, model)
 
-    # Strip the internal NMS key before returning
+            if rot_dets:
+                # Map bboxes back to original (unrotated) coordinate space
+                M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
+                for d in rot_dets:
+                    bx = d["_xyxy"]
+                    corners = np.array([
+                        [bx[0], bx[1], 1], [bx[2], bx[1], 1],
+                        [bx[2], bx[3], 1], [bx[0], bx[3], 1],
+                    ], dtype=np.float32)
+                    t = (M_inv @ corners.T).T
+                    nx1 = max(0, int(t[:, 0].min()))
+                    ny1 = max(0, int(t[:, 1].min()))
+                    nx2 = min(w, int(t[:, 0].max()))
+                    ny2 = min(h, int(t[:, 1].max()))
+                    d["bbox"] = {
+                        "x": nx1 / w, "y": ny1 / h,
+                        "width": (nx2 - nx1) / w,
+                        "height": (ny2 - ny1) / h,
+                    }
+                    d["_xyxy"] = (nx1, ny1, nx2, ny2)
+
+                all_dets.extend(rot_dets)
+                if any(d["class_name"] == "license_plate" for d in rot_dets):
+                    break
+
+    all_dets = _nms(all_dets)
+
     for d in all_dets:
         d.pop("_xyxy", None)
 

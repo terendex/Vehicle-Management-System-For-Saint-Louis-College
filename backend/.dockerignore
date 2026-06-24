@@ -1,0 +1,27 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+media/
+
+# ML assets — mounted as volumes at runtime, not baked into the image
+scanning/ml/weights/
+scanning/ml/dataset/
+scanning/ml/runs/
+scanning/ml/raw_frames/
+scanning/ml/labeled/
+scanning/ml/used/
+scanning/ml/visualizations/
+scanning/ml/_rf_downloads/
+scanning/ml/motorcycle_ds/
+scanning/ml/unplated_dataset/
+unplated_ds/
+dl_temp/
+runs/
+
+*.pt
+*.pth
+*.onnx
+*.zip
+db.sqlite3
