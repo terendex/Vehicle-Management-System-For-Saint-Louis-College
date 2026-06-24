@@ -128,19 +128,26 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             bbox        = t_out["bbox"]
             x, y, bw, bh = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
 
-            d_idx       = t_out.get("detection_index")
-            det         = det_by_idx.get(d_idx) if d_idx is not None else None
-            class_name  = det.get("class_name", "") if det else ""
-            vehicle_type = det.get("vehicle_type") if det else None
-            plate_text  = t_out.get("plate_text", "")
-            ocr_done    = t_out.get("ocr_done", False)
+            # class_name/vehicle_type live in t_out for both matched detections
+            # and synthetic persisted-track entries from the tracker.
+            class_name   = t_out.get("class_name", "")
+            vehicle_type = t_out.get("vehicle_type")
+            plate_text   = t_out.get("plate_text", "")
+            ocr_done     = t_out.get("ocr_done", False)
+
+            # Original detection dict (needed for crop/confidence); None for
+            # persisted tracks that had no matching detection this frame.
+            d_idx = t_out.get("detection_index")
+            det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
             if requires_digital_id(class_name) and vehicle_type:
                 tracks_needing_id.append(
                     (track_id, vehicle_type, det["confidence"] if det else 0.0)
                 )
                 ocr_done = True
-            elif not ocr_done and det and det.get("crop") is not None:
+            elif (not ocr_done and det
+                  and det.get("class_name") == "license_plate"
+                  and det.get("crop") is not None):
                 tracks_needing_ocr.append(
                     (track_id, det["crop"], det.get("aspect_ratio", 1.0))
                 )
@@ -710,19 +717,26 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             bbox          = t_out["bbox"]
             x, y, bw, bh  = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
 
-            d_idx         = t_out.get("detection_index")
-            det           = det_by_idx.get(d_idx) if d_idx is not None else None
-            class_name    = det.get("class_name", "") if det else ""
-            vehicle_type  = det.get("vehicle_type") if det else None
-            plate_text    = t_out.get("plate_text", "")
-            ocr_done      = t_out.get("ocr_done", False)
+            # class_name/vehicle_type live in t_out for both matched detections
+            # and synthetic persisted-track entries from the tracker.
+            class_name   = t_out.get("class_name", "")
+            vehicle_type = t_out.get("vehicle_type")
+            plate_text   = t_out.get("plate_text", "")
+            ocr_done     = t_out.get("ocr_done", False)
+
+            # Original detection dict (needed for crop/confidence); None for
+            # persisted tracks that had no matching detection this frame.
+            d_idx = t_out.get("detection_index")
+            det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
             if requires_digital_id(class_name) and vehicle_type:
                 tracks_needing_id.append(
                     (track_id, vehicle_type, det["confidence"] if det else 0.0)
                 )
                 ocr_done = True
-            elif not ocr_done and det and det.get("crop") is not None:
+            elif (not ocr_done and det
+                  and det.get("class_name") == "license_plate"
+                  and det.get("crop") is not None):
                 tracks_needing_ocr.append(
                     (track_id, det["crop"], det.get("aspect_ratio", 1.0))
                 )

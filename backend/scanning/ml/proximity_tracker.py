@@ -18,6 +18,8 @@ class PlateTrack:
     plate_text: str = ""
     last_seen: float = 0.0
     ocr_done: bool = False
+    class_name: str = ""
+    vehicle_type: Optional[str] = None
 
 
 class ProximityTracker:
@@ -45,6 +47,8 @@ class ProximityTracker:
             bbox = det["bbox"]
             x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
             abs_bbox = [x, y, x + w, y + h]
+            class_name = det.get("class_name", "")
+            vehicle_type = det.get("vehicle_type")
 
             best_track_id = None
             best_dist = float("inf")
@@ -60,6 +64,8 @@ class ProximityTracker:
                 track = self.tracks[best_track_id]
                 track.bbox = abs_bbox
                 track.last_seen = now
+                track.class_name = class_name
+                track.vehicle_type = vehicle_type
                 matched_track_ids.add(best_track_id)
                 det["track_id"] = best_track_id
                 det["plate_text"] = track.plate_text
@@ -72,6 +78,8 @@ class ProximityTracker:
                     bbox=abs_bbox,
                     last_seen=now,
                     ocr_done=False,
+                    class_name=class_name,
+                    vehicle_type=vehicle_type,
                 )
                 self.tracks[track_id] = track
                 matched_track_ids.add(track_id)
@@ -79,6 +87,7 @@ class ProximityTracker:
                 det["plate_text"] = ""
                 det["ocr_done"] = False
 
+        # Expire old tracks
         expired = [
             tid for tid, t in self.tracks.items()
             if now - t.last_seen >= self.EXPIRY_SECONDS
@@ -86,7 +95,22 @@ class ProximityTracker:
         for tid in expired:
             del self.tracks[tid]
 
-        return detections
+        # Include active tracks not seen this frame so the frontend keeps
+        # showing their bboxes through momentary detection gaps.
+        result = list(detections)
+        for tid, track in self.tracks.items():
+            if tid not in matched_track_ids:
+                x1, y1, x2, y2 = track.bbox
+                result.append({
+                    "track_id":    tid,
+                    "bbox":        {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1},
+                    "plate_text":  track.plate_text,
+                    "ocr_done":    track.ocr_done,
+                    "class_name":  track.class_name,
+                    "vehicle_type": track.vehicle_type,
+                })
+
+        return result
 
     def set_plate_text(self, track_id: int, plate_text: str):
         if track_id in self.tracks:
