@@ -1,0 +1,11 @@
+Mitzh-cctv
+ip: 192.168.137.86
+ID:110384665
+PW:7PC9C8sM
+rtsp://110384665:7PC9C8sM@192.168.137.86:554/stream1
+
+uswa-CCTV
+ ip: 192.168.137.83
+ ID:101693936 | admin
+ PW: password123
+ rtsp://101693936:password123@192.168.137.83:554/stream
