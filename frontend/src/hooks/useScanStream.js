@@ -33,7 +33,6 @@ export function useScanStream(token, cameraOn) {
   const [results, setResults]                 = useState([]);
   const [flash, setFlash]                     = useState(false);
   const [activeTracks, setActiveTracks]       = useState([]);
-  const [idRequiredTracks, setIdRequiredTracks] = useState({});
 
   const wsRef           = useRef(null);
   const videoRef        = useRef(null);
@@ -41,7 +40,6 @@ export function useScanStream(token, cameraOn) {
   const sendLoopRef     = useRef(null);   // rAF handle for the frame-sender
   const renderLoopRef   = useRef(null);   // rAF handle for the canvas renderer
   const frameCounterRef = useRef(0);
-  const promptedTrackIds = useRef(new Set());
 
   // Mutable maps shared between the WS handler and the render loop.
   // Using refs (not state) so reads/writes are synchronous — no stale closures.
@@ -168,7 +166,6 @@ export function useScanStream(token, cameraOn) {
     let isCancelled = false;
     setScanning(true);
     setResults([]);
-    promptedTrackIds.current = new Set();
     startRenderLoop();
 
     const socket = new WebSocket(`${WS_BASE}/ws/scan/live/?token=${token}`);
@@ -206,16 +203,6 @@ export function useScanStream(token, cameraOn) {
               t.track_id === msg.track_id ? { ...t, plate_text: msg.plate_text } : t
             )
           );
-        }
-
-        if (msg.type === "id_required") {
-          const trackId = msg.track_id;
-          if (promptedTrackIds.current.has(trackId)) return;
-          promptedTrackIds.current.add(trackId);
-          setIdRequiredTracks((prev) => ({
-            ...prev,
-            [trackId]: { vehicle_type: msg.vehicle_type, message: msg.message },
-          }));
         }
 
         if (msg.type === "result" && msg.results && !isCancelled) {
@@ -300,23 +287,13 @@ export function useScanStream(token, cameraOn) {
     };
   }, [cameraOn, token, startRenderLoop, stopRenderLoop]);
 
-  const dismissIdRequired = useCallback((trackId) => {
-    setIdRequiredTracks((prev) => {
-      const next = { ...prev };
-      delete next[trackId];
-      return next;
-    });
-  }, []);
-
   return {
     scanning,
     connected,
     results,
     flash,
     activeTracks,
-    idRequiredTracks,
     videoRef,
     canvasRef,
-    dismissIdRequired,
   };
 }

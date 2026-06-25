@@ -12,8 +12,11 @@ import ParkingManagement from './pages/Admin/ParkingManagement'
 import SecurityDashboard from './pages/Security/SecurityDashboard'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityAuditLog from './pages/Security/SecurityAuditLog'
+import SecurityParkingView from './pages/Security/SecurityParkingView'
 import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
 import RegisterPage from './pages/Register/RegisterPage'
+import ForgotPasswordPage from './pages/ForgotPassword/ForgotPasswordPage'
+import ResetPasswordPage from './pages/ResetPassword/ResetPasswordPage'
 
 export default function App() {
   return (
@@ -22,6 +25,8 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* Role-specific dashboards */}
 
@@ -41,6 +46,7 @@ export default function App() {
           <Route path="/security" element={<SecurityDashboard />} />
           <Route path="/security/entries" element={<SecurityEntryManagement />} />
           <Route path="/security/audit" element={<SecurityAuditLog />} />
+          <Route path="/security/parking" element={<SecurityParkingView />} />
         </Route>
 
         {/* Owner Routes */}

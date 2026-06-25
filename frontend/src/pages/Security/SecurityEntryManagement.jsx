@@ -3,13 +3,13 @@ import Webcam from 'react-webcam'
 import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, ShieldCheck, Zap, Video, Plus,
-  QrCode, Type, Bike, Shield, Wifi, Link2
+  ClipboardList, UserPlus, X, ShieldCheck, Video, Plus,
+  Shield, Wifi, Link2
 } from 'lucide-react'
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
-import { getAccessLogs, getOffices, createVisitorPass, scanPlate, verifyDigitalId } from '../../api/scanning'
+import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
 import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
@@ -25,12 +25,6 @@ const STATUS_META = {
   disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   cooldown:   { label: 'Recently Scanned',       Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
-}
-
-const VEHICLE_TYPE_META = {
-  bicycle:          { label: 'Bicycle',         Icon: Bike, color: '#3b82f6' },
-  e_bike:           { label: 'E-Bike',          Icon: Bike, color: '#8b5cf6' },
-  electric_scooter: { label: 'Electric Scooter', Icon: Zap,  color: '#10b981' },
 }
 
 function getMeta(status) {
@@ -107,89 +101,6 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   )
 }
 
-// ─── DigitalIDModal ───────────────────────────────────────────────────────────
-function DigitalIDModal({ trackId, vehicleType, onVerify, onClose }) {
-  const [digitalId, setDigitalId] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [scanMode, setScanMode] = useState('manual')
-
-  const handleSubmit = async (e) => {
-    e?.preventDefault()
-    if (!digitalId.trim()) { toast.error('Please enter a digital ID.'); return }
-    setLoading(true)
-    try {
-      const result = await verifyDigitalId({ digital_id: digitalId.trim(), vehicle_type: vehicleType })
-      onVerify(trackId, result.data ?? result)
-      onClose()
-    } catch (err) {
-      toast.error(err?.response?.data?.message || 'Digital ID verification failed.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const meta = VEHICLE_TYPE_META[vehicleType] || { label: vehicleType, Icon: Type, color: '#6b7280' }
-  const Icon = meta.Icon
-
-  return (
-    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="em-modal">
-        <div className="em-modal-head">
-          <span className="em-modal-title"><Icon size={17} /> Verify {meta.label} Entry</span>
-          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
-        </div>
-        <div className="em-modal-body">
-          <div className="em-tabs">
-            <button className={`em-tab ${scanMode === 'manual' ? 'active' : ''}`} onClick={() => setScanMode('manual')}>
-              Manual Entry
-            </button>
-            <button className={`em-tab ${scanMode === 'scan' ? 'active' : ''}`} onClick={() => setScanMode('scan')}>
-              Scan QR Code
-            </button>
-          </div>
-
-          {scanMode === 'scan' ? (
-            <div className="em-qr-scan-area">
-              <QrCode size={64} color="#6b7280" />
-              <p>Align QR code within the frame</p>
-              <button className="em-btn em-btn-secondary" onClick={() => toast.info('QR scanning coming soon.')}>
-                Capture QR Code
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit}>
-              <div className="em-field">
-                <label className="em-label">Digital ID Number</label>
-                <input
-                  className="em-input"
-                  placeholder="e.g., SLC-OWN-001234"
-                  value={digitalId}
-                  onChange={(e) => setDigitalId(e.target.value)}
-                  autoFocus
-                />
-              </div>
-              <p className="em-help-text">Enter the ID number from the rider's phone or ID card</p>
-            </form>
-          )}
-        </div>
-        <div className="em-modal-foot">
-          <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
-          {scanMode === 'manual' && (
-            <button
-              type="button"
-              className="em-btn em-btn-primary"
-              disabled={loading || !digitalId.trim()}
-              onClick={handleSubmit}
-            >
-              {loading ? <><div className="em-spinner" /> Verifying…</> : 'Verify ID'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── ResultCard ───────────────────────────────────────────────────────────────
 function ResultCard({ result, offices, onPassCreated }) {
   const [showModal, setShowModal] = useState(false)
@@ -204,7 +115,7 @@ function ResultCard({ result, offices, onPassCreated }) {
             <p className="em-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
           </div>
         </div>
-        <p className="em-idle-hint">Point the camera at a license plate or unplated vehicle to start live scanning.</p>
+        <p className="em-idle-hint">Point the camera at a license plate to start live scanning.</p>
       </div>
     )
   }
@@ -212,8 +123,6 @@ function ResultCard({ result, offices, onPassCreated }) {
   const { Icon, label, cls } = getMeta(result.status)
   const owner = result.owner ?? result.vehicle?.owner
   const isVisitor = result.status === 'unknown' || result.status === 'no_pass'
-  const vehicleType = result.vehicle_type
-  const vMeta = vehicleType ? (VEHICLE_TYPE_META[vehicleType] || { label: vehicleType, Icon: Type, color: '#6b7280' }) : null
 
   return (
     <>
@@ -222,11 +131,7 @@ function ResultCard({ result, offices, onPassCreated }) {
           <div className="em-result-icon"><Icon size={20} /></div>
           <div className="em-result-text">
             <p className="em-result-status">{label}</p>
-            {vMeta ? (
-              <p className="em-result-plate"><vMeta.Icon size={14} /> {vMeta.label}</p>
-            ) : (
-              <p className="em-result-plate">{result.plate_number || '—'}</p>
-            )}
+            <p className="em-result-plate">{result.plate_number || '—'}</p>
           </div>
         </div>
         <div className="em-result-body">
@@ -269,7 +174,7 @@ function ResultCard({ result, offices, onPassCreated }) {
               )}
             </div>
           )}
-          {isVisitor && !vehicleType && (
+          {isVisitor && (
             <button className="em-btn em-btn-secondary" style={{ width: '100%', marginTop: 4 }} onClick={() => setShowModal(true)}>
               <UserPlus size={14} /> Create Visitor Pass
             </button>
@@ -293,8 +198,6 @@ function ResultCard({ result, offices, onPassCreated }) {
 const BBOX_LEGEND = [
   { color: '#00ff88', label: 'Plate / Vehicle' },
   { color: '#3b82f6', label: 'Motor'           },
-  { color: '#8b5cf6', label: 'E-Bike'          },
-  { color: '#10b981', label: 'E-Scooter'       },
 ]
 
 function BBoxLegend() {
@@ -327,8 +230,6 @@ export default function SecurityEntryManagement() {
   const [loadingRules, setLoadingRules] = useState(true)
   const [vehicleTypes, setVehicleTypes] = useState([])
   const [loadingVehicles, setLoadingVehicles] = useState(true)
-  const [idModalState, setIdModalState] = useState({ open: false, trackId: null, vehicleType: null })
-
   const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId]   = useState(1)
   const [rtspAddName, setRtspAddName]   = useState('')
@@ -338,7 +239,6 @@ export default function SecurityEntryManagement() {
 
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
-  const openedModalIds = useRef(new Set())
 
   const {
     scanning,
@@ -346,10 +246,8 @@ export default function SecurityEntryManagement() {
     results: wsResults,
     flash,
     activeTracks,
-    idRequiredTracks,
     videoRef,
     canvasRef,
-    dismissIdRequired,
   } = useScanStream(token, cameraOn)
 
   const {
@@ -413,20 +311,6 @@ export default function SecurityEntryManagement() {
     })
   }, [rtspResults])
 
-  // ── Webcam id_required events → open modal (once per track) ────────────────
-  useEffect(() => {
-    const entries = Object.entries(idRequiredTracks)
-    if (!entries.length) return
-    for (const [trackId, info] of entries) {
-      const tid = parseInt(trackId)
-      if (!openedModalIds.current.has(tid)) {
-        openedModalIds.current.add(tid)
-        setIdModalState({ open: true, trackId: tid, vehicleType: info.vehicle_type })
-        break
-      }
-    }
-  }, [idRequiredTracks])
-
   // ── Load saved RTSP cameras on mount ─────────────────────────────────────────
   useEffect(() => {
     const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
@@ -434,24 +318,6 @@ export default function SecurityEntryManagement() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handlers ───────────────────────────────────────────────────────────────────
-  const handleIdVerify = (trackId, result) => {
-    const vMeta = VEHICLE_TYPE_META[result.vehicle_type]
-    const displayLabel = vMeta ? vMeta.label : (result.vehicle_type || 'Unplated')
-    const ownerSuffix = result.owner?.full_name ? ` — ${result.owner.full_name}` : ''
-    setLogs((prev) => ([{
-      id: Date.now() + Math.random(),
-      plate_number: `${displayLabel}${ownerSuffix}`,
-      status: result.status,
-      scanned_at: new Date().toISOString(),
-    }, ...prev]).slice(0, 20))
-    toast.success(result.message || 'ID verified')
-  }
-
-  const handleModalClose = () => {
-    dismissIdRequired(idModalState.trackId)
-    setIdModalState({ open: false, trackId: null, vehicleType: null })
-  }
-
   const handleRtspAdd = () => {
     if (!rtspAddUrl.trim()) return
     const name = rtspAddName.trim()
@@ -564,7 +430,7 @@ export default function SecurityEntryManagement() {
           <div>
             <h1 className="em-title">Vehicle Entry Management</h1>
             <p className="em-subtitle">
-              Scan license plates or unplated vehicles — entry is decided automatically based on registration and schedule.
+              Scan license plates — entry is decided automatically based on registration and schedule.
             </p>
           </div>
           {cameraOn ? (
@@ -629,12 +495,7 @@ export default function SecurityEntryManagement() {
                         </div>
                       ))}
                       {cameraOn && <BBoxLegend />}
-                      <div className="em-scan-frame">
-                        <div className="em-scan-bracket">
-                          <div className="em-scan-inner" />
-                          {!cooldown && <div className="em-scan-line" />}
-                        </div>
-                      </div>
+
                       {flash && <div className="em-flash" />}
 
                       <canvas
@@ -964,15 +825,6 @@ export default function SecurityEntryManagement() {
         </div>
       </div>
 
-      {/* Digital ID modal */}
-      {idModalState.open && (
-        <DigitalIDModal
-          trackId={idModalState.trackId}
-          vehicleType={idModalState.vehicleType}
-          onVerify={handleIdVerify}
-          onClose={handleModalClose}
-        />
-      )}
     </SecurityLayout>
   )
 }
