@@ -20,22 +20,28 @@ class Office(models.Model):
 
 class VisitorPass(models.Model):
     class Status(models.TextChoices):
-        PENDING   = 'pending',   'Pending'
-        CONFIRMED = 'confirmed', 'Confirmed'
-        REJECTED  = 'rejected',  'Rejected'
-        EXPIRED   = 'expired',   'Expired'
+        ACTIVE  = 'active',  'Active'   # pass issued, visitor is inside
+        EXITED  = 'exited',  'Exited'   # guard scanned exit, visitor has left
+        EXPIRED = 'expired', 'Expired'  # valid_date passed without exit scan
 
-    vehicle      = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='visitor_passes')
-    office       = models.ForeignKey(Office, on_delete=models.CASCADE)
-    purpose      = models.TextField()
-    status       = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    confirmed_by = models.CharField(max_length=100, blank=True)   # office staff name
-    valid_date   = models.DateField(default=timezone.now)          # pass is only for this day
-    created_at   = models.DateTimeField(auto_now_add=True)
-    updated_at   = models.DateTimeField(auto_now=True)
+    vehicle    = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='visitor_passes')
+    plate_number = models.CharField(max_length=20, blank=True)      # denormalised for quick display
+    office     = models.ForeignKey(
+        Office, on_delete=models.SET_NULL, null=True, blank=True,   # office being visited (optional)
+    )
+    purpose    = models.TextField(blank=True)
+    status     = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    issued_by  = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='issued_passes',
+    )
+    valid_date = models.DateField(default=timezone.now)
+    entered_at = models.DateTimeField(auto_now_add=True)
+    exited_at  = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.vehicle.plate_number} → {self.office.name} ({self.status})"
+        office_name = self.office.name if self.office else 'No office'
+        return f"{self.plate_number} → {office_name} ({self.status})"
 
 
 class AccessLog(models.Model):
@@ -43,9 +49,9 @@ class AccessLog(models.Model):
         AUTHORIZED   = 'authorized',    'Authorized'
         DENIED       = 'denied',        'Denied'
         WRONG_DAY    = 'wrong_day',     'Wrong Day'
-        PENDING      = 'pending',       'Visitor Pending'
         UNKNOWN      = 'unknown',       'Unknown Plate'
         UNREADABLE   = 'unreadable',    'Unreadable'
+        EXITED       = 'exited',        'Exited'
 
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
     plate_number   = models.CharField(max_length=20, blank=True)
