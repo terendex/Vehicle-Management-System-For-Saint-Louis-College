@@ -34,6 +34,7 @@ def ml_retrain_task(self):
         "--batch", "16",
         "--model-size", "n",
         "--resume",
+        "--incremental",  # export accumulated MLTrainingSample records into the dataset
     ]
 
     try:

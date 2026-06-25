@@ -23,7 +23,7 @@ from django.core.files.base import ContentFile
 from django.utils import timezone
 
 from ..models import MLTrainingSample
-from .reader import _detect_plates, _get_yolo, _ocr_crop, _decode
+from .reader import _detect_plates, _ocr_crop, _decode
 
 log = logging.getLogger(__name__)
 
