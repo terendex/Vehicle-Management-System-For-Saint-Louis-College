@@ -9,7 +9,7 @@ from vehicles.models import Vehicle
 from violations.models import Violation
 from accounts.models import User
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample
-from .entry_logic import check_entry, check_owner_entry
+from .entry_logic import check_entry
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
@@ -93,109 +93,6 @@ class ScanView(APIView):
             results.append(resp)
 
         return Response({'results': results})
-
-
-class DigitalIDVerifyView(APIView):
-    """
-    Verify digital ID for unplated vehicle entry (bicycle, e_bike, electric_scooter).
-
-    Lookup order:
-      1. User.user_code (exact)
-      2. VehicleRegistration.system_student_id / system_employee_id → User via email
-      3. User.full_name or User.contact (fallback for guard-typed input)
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        digital_id   = (request.data.get('digital_id') or '').strip()
-        vehicle_type = request.data.get('vehicle_type', 'bicycle')
-
-        if not digital_id:
-            return Response({'error': 'digital_id is required'}, status=400)
-
-        user = self._lookup_user(digital_id)
-
-        if not user:
-            AccessLog.objects.create(
-                plate_number='',
-                vehicle_type=vehicle_type,
-                digital_id_used=digital_id,
-                status='unknown',
-                scanned_by=request.user,
-            )
-            return Response({
-                'status': 'unknown',
-                'message': 'Digital ID not recognized.',
-                'vehicle_type': vehicle_type,
-            })
-
-        entry = check_owner_entry(user, vehicle_type)
-
-        has_violations = Violation.objects.filter(
-            vehicle__user=user, is_resolved=False
-        ).exists()
-
-        AccessLog.objects.create(
-            plate_number='',
-            vehicle_type=vehicle_type,
-            digital_id_used=digital_id,
-            status=entry['status'],
-            denied_reason='' if entry['allowed'] else entry['message'],
-            scanned_by=request.user,
-        )
-
-        AuditLog.objects.create(
-            actor=request.user,
-            action=AuditLog.Action.SCAN,
-            details=(
-                f"Digital ID: {digital_id}, Vehicle: {vehicle_type}, "
-                f"Owner: {user.full_name}, Status: {entry['status']}"
-            ),
-        )
-
-        return Response({
-            'status':     entry['status'],
-            'allowed':    entry['allowed'],
-            'message':    entry['message'],
-            'constraint': entry.get('constraint'),
-            'owner': {
-                'full_name':  user.full_name,
-                'owner_type': user.owner_type,
-                'schedule':   user.schedule,
-            },
-            'vehicle_type':   vehicle_type,
-            'has_violations': has_violations,
-        })
-
-    def _lookup_user(self, digital_id: str):
-        from vehicles.models import VehicleRegistration
-
-        # Tier 1: User.user_code exact match
-        user = User.objects.filter(user_code__iexact=digital_id).first()
-        if user:
-            return user
-
-        # Tier 2: VehicleRegistration system IDs → find User by email
-        reg = VehicleRegistration.objects.filter(
-            Q(system_student_id__iexact=digital_id) |
-            Q(system_employee_id__iexact=digital_id)
-        ).first()
-        if reg:
-            user = User.objects.filter(email__iexact=reg.email).first()
-            if user:
-                return user
-
-        # Tier 3: full_name or contact fallback
-        return User.objects.filter(
-            Q(full_name__icontains=digital_id) |
-            Q(contact__icontains=digital_id)
-        ).first()
-
-    def get_client_ip(self, request):
-        x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded:
-            return x_forwarded.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
 
 
 

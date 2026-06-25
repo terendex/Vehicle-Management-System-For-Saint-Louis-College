@@ -9,10 +9,10 @@ from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from .ml.detection import detect_plates, is_gpu_available, VEHICLE_TYPE_CLASSES
+from .ml.detection import detect_plates, is_gpu_available
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
-from .ml.reader import _ocr_crop, requires_digital_id
+from .ml.reader import _ocr_crop
 
 logger = logging.getLogger(__name__)
 
@@ -121,31 +121,21 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         active_tracks = []
         tracks_needing_ocr = []
-        tracks_needing_id = []
 
         for t_out in tracker_output:
             track_id    = t_out["track_id"]
             bbox        = t_out["bbox"]
             x, y, bw, bh = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
 
-            # class_name/vehicle_type live in t_out for both matched detections
-            # and synthetic persisted-track entries from the tracker.
             class_name   = t_out.get("class_name", "")
             vehicle_type = t_out.get("vehicle_type")
             plate_text   = t_out.get("plate_text", "")
             ocr_done     = t_out.get("ocr_done", False)
 
-            # Original detection dict (needed for crop/confidence); None for
-            # persisted tracks that had no matching detection this frame.
             d_idx = t_out.get("detection_index")
             det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
-            if requires_digital_id(class_name) and vehicle_type:
-                tracks_needing_id.append(
-                    (track_id, vehicle_type, det["confidence"] if det else 0.0)
-                )
-                ocr_done = True
-            elif (not ocr_done and det
+            if (not ocr_done and det
                   and det.get("class_name") == "license_plate"
                   and det.get("crop") is not None):
                 tracks_needing_ocr.append(
@@ -173,14 +163,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
-
-        for track_id, vehicle_type, conf in tracks_needing_id:
-            await self.send_json({
-                "type":         "id_required",
-                "track_id":     track_id,
-                "vehicle_type": vehicle_type,
-                "message":      f"Please show digital ID for {vehicle_type.replace('_', ' ')} entry",
-            })
 
         # Re-broadcast cached results for tracks whose plates are already known
         if any(t.get("plate_text") for t in active_tracks):
@@ -487,7 +469,6 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         {"type": "frame",      "image_b64": "<base64 JPEG>"}
         {"type": "tracks",     "tracks": [...], "frame_id": int}
         {"type": "ocr_update", "track_id": int,  "plate_text": "..."}
-        {"type": "id_required","track_id": int,  "vehicle_type": "..."}
         {"type": "result",     "results": [...]}
         {"type": "error",      "message": "..."}
     """
@@ -710,31 +691,21 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
         active_tracks      = []
         tracks_needing_ocr = []
-        tracks_needing_id  = []
 
         for t_out in tracker_output:
             track_id      = t_out["track_id"]
             bbox          = t_out["bbox"]
             x, y, bw, bh  = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
 
-            # class_name/vehicle_type live in t_out for both matched detections
-            # and synthetic persisted-track entries from the tracker.
             class_name   = t_out.get("class_name", "")
             vehicle_type = t_out.get("vehicle_type")
             plate_text   = t_out.get("plate_text", "")
             ocr_done     = t_out.get("ocr_done", False)
 
-            # Original detection dict (needed for crop/confidence); None for
-            # persisted tracks that had no matching detection this frame.
             d_idx = t_out.get("detection_index")
             det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
-            if requires_digital_id(class_name) and vehicle_type:
-                tracks_needing_id.append(
-                    (track_id, vehicle_type, det["confidence"] if det else 0.0)
-                )
-                ocr_done = True
-            elif (not ocr_done and det
+            if (not ocr_done and det
                   and det.get("class_name") == "license_plate"
                   and det.get("crop") is not None):
                 tracks_needing_ocr.append(
@@ -763,14 +734,6 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
-
-        for track_id, vehicle_type, conf in tracks_needing_id:
-            await self.send_json({
-                "type":         "id_required",
-                "track_id":     track_id,
-                "vehicle_type": vehicle_type,
-                "message":      f"Please show digital ID for {vehicle_type.replace('_', ' ')} entry",
-            })
 
         if any(t.get("plate_text") for t in active_tracks):
             await self._process_scan_results(active_tracks, now)

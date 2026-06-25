@@ -3,7 +3,6 @@ from . import views
 
 urlpatterns = [
     path('',                        views.ScanView.as_view(),          name='scan'),
-    path('digital-id/',           views.DigitalIDVerifyView.as_view(), name='digital-id'),
     path('visitor-pass/',           views.VisitorPassView.as_view(),  name='visitor-pass'),
     path('visitor-pass/<int:pk>/exit/', views.ExitScanView.as_view(), name='visitor-exit'),
     path('offices/',                views.OfficeListView.as_view(),     name='offices'),

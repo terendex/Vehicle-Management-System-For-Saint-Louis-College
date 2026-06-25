@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     import easyocr
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
-from .detection import detect_plates, VEHICLE_TYPE_CLASSES, is_gpu_available
+from .detection import detect_plates, is_gpu_available
 
 log = logging.getLogger(__name__)
 
@@ -152,9 +152,6 @@ WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 # Confidence above which we skip the expensive L/M/R tiled passes
 _OCR_EARLY_EXIT_CONF = 0.60
 
-
-def requires_digital_id(class_name: str) -> bool:
-    return class_name in VEHICLE_TYPE_CLASSES
 
 
 def _get_ocr():
@@ -493,16 +490,14 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
 
 def read_plate(image_bytes: bytes) -> list[dict]:
     """
-    Main entry point — detect + read Philippine license plates or unplated vehicles.
+    Main entry point — detect + read Philippine license plates.
 
     Returns a list of dicts, each with:
-        plate_text — the recognized plate number (None for unplated vehicles)
-        vehicle_type — bicycle/e_bike/electric_scooter for unplated vehicles
+        plate_text — the recognized plate number
         bbox       — relative bounding box {"x", "y", "width", "height"} (0–1)
         confidence — detection confidence
-        requires_digital_id — True for unplated vehicles
 
-    Returns an empty list when no vehicles are found.
+    Returns an empty list when no plates are found.
     """
     img = _decode(image_bytes)
     if img is None:
@@ -516,27 +511,12 @@ def read_plate(image_bytes: bytes) -> list[dict]:
     detections = _detect_plates(img)
 
     for det in detections:
-        class_name = det.get("class_name", "")
-        vehicle_type = det.get("vehicle_type")
-        
-        if requires_digital_id(class_name) and vehicle_type:
-            results.append({
-                "vehicle_type": vehicle_type,
-                "bbox": det["bbox"],
-                "confidence": det["score"],
-                "plate_text": None,
-                "requires_digital_id": True,
-            })
-            continue
-        
         plate_text, conf = _ocr_crop(det["crop"], det.get("aspect_ratio", 1.0))
         if plate_text:
             results.append({
                 "plate_text": plate_text,
                 "bbox": det["bbox"],
                 "confidence": conf,
-                "vehicle_type": None,
-                "requires_digital_id": False,
             })
 
     if results:

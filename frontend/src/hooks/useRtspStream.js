@@ -36,7 +36,6 @@ const LERP = 0.25; // smoothing factor for bbox interpolation
  *   - {type:"result", results}  → plate scan results
  *   - {type:"status", connected, message}
  *   - {type:"error",  message}
- *   - {type:"id_required", ...}
  *
  * Usage:
  *   const { connected, results, canvasRef, startStream, stopStream, ... } = useRtspStream(token)
@@ -49,7 +48,6 @@ export function useRtspStream(token) {
   const [results,         setResults]         = useState([]);
   const [flash,           setFlash]           = useState(false);
   const [activeTracks,    setActiveTracks]    = useState([]);
-  const [idRequiredTracks, setIdRequiredTracks] = useState({});
   const [statusMsg,       setStatusMsg]       = useState("");
 
   const wsRef             = useRef(null);
@@ -58,7 +56,6 @@ export function useRtspStream(token) {
   const targetTracksRef   = useRef(new Map());
   const smoothBoxRef      = useRef(new Map());
   const latestFrameRef    = useRef(null);  // latest decoded HTMLImageElement
-  const promptedTrackIds  = useRef(new Set());
 
   // ── 60-fps render loop ───────────────────────────────────────────────────
   const startRenderLoop = useCallback(() => {
@@ -183,7 +180,6 @@ export function useRtspStream(token) {
     setActiveTracks([]);
     setStreamConnected(false);
     setStatusMsg("Connecting…");
-    promptedTrackIds.current = new Set();
 
     const ws = new WebSocket(`${WS_BASE}/ws/scan/rtsp/?token=${token}`);
     wsRef.current = ws;
@@ -236,17 +232,6 @@ export function useRtspStream(token) {
           return;
         }
 
-        if (msg.type === "id_required") {
-          const trackId = msg.track_id;
-          if (promptedTrackIds.current.has(trackId)) return;
-          promptedTrackIds.current.add(trackId);
-          setIdRequiredTracks((prev) => ({
-            ...prev,
-            [trackId]: { vehicle_type: msg.vehicle_type, message: msg.message },
-          }));
-          return;
-        }
-
         if (msg.type === "result" && msg.results) {
           setFlash(true);
           setTimeout(() => setFlash(false), 450);
@@ -279,21 +264,12 @@ export function useRtspStream(token) {
     setStreamConnected(false);
     setResults([]);
     setActiveTracks([]);
-    setIdRequiredTracks({});
     setStatusMsg("");
     stopRenderLoop();
   }, [stopRenderLoop]);
 
   // Cleanup on unmount
   useEffect(() => () => stopStream(), [stopStream]);
-
-  const dismissIdRequired = useCallback((trackId) => {
-    setIdRequiredTracks((prev) => {
-      const next = { ...prev };
-      delete next[trackId];
-      return next;
-    });
-  }, []);
 
   return {
     /** WebSocket is open */
@@ -305,12 +281,10 @@ export function useRtspStream(token) {
     results,
     flash,
     activeTracks,
-    idRequiredTracks,
     statusMsg,
     /** Attach to the <canvas> element you want frames drawn into */
     canvasRef,
     startStream,
     stopStream,
-    dismissIdRequired,
   };
 }
