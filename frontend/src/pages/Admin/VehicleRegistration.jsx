@@ -25,10 +25,11 @@ export default function VehicleRegistration() {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
 
-  // Accept flow — OR number + free day-picker
-  const [acceptModal, setAcceptModal] = useState(null)  // holds registration object
+  // Accept flow — OR number + free day-picker (inline in details modal)
   const [orNumber, setOrNumber] = useState('')
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
+
+  const orValid = orNumber.trim().length >= 6
 
   const [resultModal, setResultModal] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -75,28 +76,16 @@ export default function VehicleRegistration() {
   }
 
   // ── Accept flow ──
-  const openAcceptModal = (reg) => {
-    setAcceptModal(reg)
-    setOrNumber('')
-    // Pre-fill with the applicant's original days so the admin can adjust
-    setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
-  }
-
   const confirmAccept = async () => {
-    if (!acceptModal) return
-    if (!orNumber.trim()) {
-      showResult('Please enter the Official Receipt (OR) number before accepting.', 'error')
-      return
-    }
+    if (!selectedReg) return
     setSubmitting(true)
     try {
       const result = await registrationApi.acceptRegistration(
-        acceptModal.id,
+        selectedReg.id,
         orNumber.trim(),
         daysOverride.length > 0 ? daysOverride : undefined,
       )
       setIsViewModalOpen(false)
-      setAcceptModal(null)
       fetchRegistrations()
       if (result?.account) {
         setAccountModal(result.account)
@@ -106,7 +95,6 @@ export default function VehicleRegistration() {
       }
     } catch (error) {
       console.error('Failed to accept registration:', error)
-      setAcceptModal(null)
       showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
     } finally {
       setSubmitting(false)
@@ -132,7 +120,13 @@ export default function VehicleRegistration() {
   }
 
   const showResult = (message, type = 'success') => setResultModal({ message, type })
-  const openViewModal = (reg) => { setSelectedReg(reg); setIsViewModalOpen(true) }
+  const openViewModal = (reg) => {
+    setSelectedReg(reg)
+    setIsViewModalOpen(true)
+    // Pre-fill OR and days for the inline accept form
+    setOrNumber('')
+    setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
+  }
   const openRejectModal = () => setIsRejectModalOpen(true)
 
   const paginatedRegistrations = registrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
@@ -334,13 +328,82 @@ export default function VehicleRegistration() {
             </div>
 
             {selectedReg.status === 'pending' && (
-              <div className="detail-actions">
-                <button className="btn-success" onClick={() => openAcceptModal(selectedReg)}>
-                  <Check size={18} /> Accept Registration
-                </button>
-                <button className="btn-danger" onClick={openRejectModal}>
-                  <X size={18} /> Reject
-                </button>
+              <div className="accept-inline-section">
+                <h3 className="accept-inline-title">
+                  <Receipt size={15} /> Accept Registration
+                </h3>
+                <p className="accept-inline-desc">
+                  Confirm that <strong>{selectedReg.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
+                </p>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    Official Receipt (OR) Number <span className="required">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    className={`form-input${orValid ? ' input-valid' : ''}`}
+                    value={orNumber}
+                    onChange={(e) => setOrNumber(e.target.value)}
+                    placeholder="e.g. OR-2026-000123"
+                    disabled={submitting}
+                  />
+                  <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
+                </div>
+
+                {selectedReg.registrant_type === 'student' && (
+                  <div className="form-group">
+                    <label className="form-label">
+                      <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                      Campus Schedule
+                    </label>
+                    {selectedReg.campus_days?.length > 0 && (
+                      <p className="form-hint" style={{ marginBottom: 8 }}>
+                        Applicant chose:{' '}
+                        {selectedReg.campus_days.map(d => (
+                          <span key={d} className="day-chip">{d}</span>
+                        ))}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                      {ALL_DAYS.map(day => {
+                        const selected = daysOverride.includes(day)
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            disabled={submitting}
+                            onClick={() => setDaysOverride(prev =>
+                              prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                            )}
+                            className={`day-override-btn${selected ? ' selected' : ''}`}
+                          >
+                            {DAY_SHORT[day]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {daysOverride.length > 0 ? (
+                      <p className="form-hint">Assigned: <strong>{daysOverride.join(', ')}</strong></p>
+                    ) : (
+                      <p className="form-hint" style={{ color: '#dc2626' }}>No days selected — original choice will be kept.</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="detail-actions">
+                  <button className="btn-danger" onClick={openRejectModal} disabled={submitting}>
+                    <X size={18} /> Reject
+                  </button>
+                  <button
+                    className="btn-success"
+                    onClick={confirmAccept}
+                    disabled={submitting || !orValid}
+                    title={!orValid ? 'Enter a valid OR number to enable' : ''}
+                  >
+                    {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -351,105 +414,6 @@ export default function VehicleRegistration() {
                 </button>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Accept — OR Number input + Schedule confirmation */}
-      {acceptModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2 className="modal-title">Accept Registration</h2>
-              <button className="modal-close-btn" onClick={() => setAcceptModal(null)} disabled={submitting}><X size={20} /></button>
-            </div>
-
-            <p style={{ fontSize: '13px', color: '#7C80A3', marginBottom: '20px', lineHeight: 1.6 }}>
-              Before accepting, confirm that <strong>{acceptModal.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
-            </p>
-
-            <div className="form-group">
-              <label className="form-label">
-                <Receipt size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                Official Receipt (OR) Number <span className="required">*</span>
-              </label>
-              <input
-                type="text"
-                className="form-input"
-                value={orNumber}
-                onChange={(e) => setOrNumber(e.target.value)}
-                placeholder="e.g. OR-2026-000123"
-                disabled={submitting}
-                autoFocus
-              />
-              <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
-            </div>
-
-            {acceptModal.registrant_type === 'student' && (
-              <div className="form-group">
-                <label className="form-label">
-                  <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                  Campus Schedule
-                </label>
-
-                {/* Show applicant's original days as reference */}
-                {acceptModal.campus_days?.length > 0 && (
-                  <p className="form-hint" style={{ marginBottom: 8 }}>
-                    Applicant chose:{' '}
-                    {acceptModal.campus_days.map(d => (
-                      <span key={d} style={{ display: 'inline-block', padding: '1px 8px', margin: '0 3px', borderRadius: 20, background: '#e0e7ff', color: '#3730a3', fontSize: 11, fontWeight: 600 }}>{d}</span>
-                    ))}
-                  </p>
-                )}
-
-                {/* Free day-picker — admin can choose any combination */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-                  {ALL_DAYS.map(day => {
-                    const selected = daysOverride.includes(day)
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => setDaysOverride(prev =>
-                          prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-                        )}
-                        style={{
-                          padding: '6px 14px',
-                          borderRadius: 20,
-                          border: selected ? '2px solid #2A2B61' : '2px solid #d1d5db',
-                          background: selected ? '#2A2B61' : '#f9fafb',
-                          color: selected ? '#fff' : '#374151',
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: submitting ? 'not-allowed' : 'pointer',
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        {DAY_SHORT[day]}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {daysOverride.length > 0 ? (
-                  <p className="form-hint">
-                    Assigned: <strong>{daysOverride.join(', ')}</strong>
-                  </p>
-                ) : (
-                  <p className="form-hint" style={{ color: '#dc2626' }}>
-                    No days selected — applicant’s original choice will be kept.
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className="confirm-actions" style={{ marginTop: '8px' }}>
-              <button className="btn-outline" onClick={() => setAcceptModal(null)} disabled={submitting}>Cancel</button>
-              <button className="btn-success" onClick={confirmAccept} disabled={submitting || !orNumber.trim()}>
-                {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
-              </button>
-            </div>
           </div>
         </div>
       )}
