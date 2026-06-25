@@ -301,7 +301,7 @@ def _print_class_eval(results) -> None:
         for i, cls in enumerate(CLASS_NAMES):
             val = maps[i] if i < len(maps) else float("nan")
             bar = "▓" * int(val * 20) + "░" * (20 - int(val * 20))
-        print(f"   {cls:<20} {bar}  {val:.3f}")
+            print(f"   {cls:<20} {bar}  {val:.3f}")
     except Exception:
         pass  # eval printing is best-effort
 
