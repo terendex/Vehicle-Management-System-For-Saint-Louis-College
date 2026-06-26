@@ -1,6 +1,6 @@
-# Vehicle Management System — Saint Louis College
+# Smart Parking and Vehicle Verification System — Saint Louis College
 
-An AI-powered vehicle entry management system using license plate recognition, built for Philippine plate formats. Manages entry rules for students, employees, fetchers/droppers, and visitors.
+An AI-powered smart parking and vehicle verification system using license plate recognition, built for Philippine plate formats. Manages entry rules for students, employees, fetchers/droppers, and visitors, and monitors parking space occupancy in real time.
 
 ---
 
@@ -24,7 +24,7 @@ An AI-powered vehicle entry management system using license plate recognition, b
 
 ## Overview
 
-This system automates vehicle entry at Saint Louis College by scanning and recognizing Philippine license plates via camera. It enforces entry rules based on owner type (student, employee, fetcher/dropper, or visitor), checks schedules, and provides a mobile-friendly web interface for guards to manually scan plates and retrieve vehicle owner information.
+This system automates vehicle entry and parking monitoring at Saint Louis College by scanning and recognizing Philippine license plates via camera. It enforces entry rules based on owner type (student, employee, fetcher/dropper, or visitor), checks schedules, tracks real-time parking space occupancy, and provides a web interface for administrators and guards to manage devices, monitor cameras, and retrieve vehicle owner information.
 
 ---
 
@@ -34,6 +34,8 @@ This system automates vehicle entry at Saint Louis College by scanning and recog
 - **ML plate recognition** — YOLOv8 detection + EasyOCR text extraction
 - **Real-time bounding boxes** — 60fps canvas overlay with smooth LERP interpolation between 2fps backend detections
 - **Multi-camera support** — monitor multiple RTSP IP cameras simultaneously
+- **Device Management** — centralized admin panel to add, edit, and remove IP cameras; auto-named Cam 1, Cam 2, … with gap-filling; cameras auto-connect when visiting Entry or Parking pages
+- **Smart parking occupancy** — AI detects vehicles inside parking space bounding boxes and marks spaces red/green in real time
 - **Philippine plate validation** — supports all standard PH plate formats
 - **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
 - **Employee open access** — employees allowed entry any day
@@ -197,6 +199,8 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │   ├── vehicles.js
 │   │   │   ├── scanning.js
 │   │   │   ├── registration.js
+│   │   │   ├── parking.js
+│   │   │   ├── cameras.js             # Device Management — camera CRUD
 │   │   │   └── users.js
 │   │   ├── components/
 │   │   │   ├── Auth/
@@ -219,6 +223,8 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │   │   ├── VehicleRegistration.jsx
 │   │   │   │   ├── UserManagement.jsx
 │   │   │   │   ├── EntryManagement.jsx
+│   │   │   │   ├── ParkingManagement.jsx
+│   │   │   │   ├── DeviceManagement.jsx   # Camera CRUD — add/edit/remove IP cameras
 │   │   │   │   ├── RuleConstraints.jsx
 │   │   │   │   └── AuditLog.jsx
 │   │   │   ├── Security/
@@ -541,6 +547,15 @@ python -m celery -A config worker -l info --pool=solo
 | `PATCH` | `/api/scan/ml/samples/{id}/` | Approve/reject/correct a sample label | Yes |
 | `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | Yes |
 | `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | Yes |
+
+### Device Management (IP Cameras)
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `GET` | `/api/vehicles/cameras/` | List all cameras (supports `?assignment=entry\|parking`) | Yes |
+| `POST` | `/api/vehicles/cameras/` | Add a camera — auto-assigns name (Cam 1, Cam 2, …) with gap-filling | Admin |
+| `PATCH` | `/api/vehicles/cameras/{id}/` | Edit camera IP, credentials, RTSP URL, or assignment | Admin |
+| `DELETE` | `/api/vehicles/cameras/{id}/` | Remove camera — slot name is reused for the next addition | Admin |
+| `GET` | `/api/vehicles/cameras/next-name/` | Preview next auto-assigned name before adding | Yes |
 
 ### Violations
 | Method | Endpoint | Description | Auth |

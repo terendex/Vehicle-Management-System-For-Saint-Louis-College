@@ -117,7 +117,7 @@ export default function LoginPage() {
             <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
-              <span className="header-subtitle">Vehicle Management System with entry authentication</span>
+              <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
             </div>
           </div>
         </div>
@@ -127,7 +127,7 @@ export default function LoginPage() {
         <div className="login-card" id="login-card">
           <div className="card-header">
             <h1 className="card-title">Account Login</h1>
-            <p className="card-subtitle">Sign in to access the vehicle management system</p>
+            <p className="card-subtitle">Sign in to access the smart parking and vehicle verification system</p>
           </div>
 
           {error && !showErrorModal && (
