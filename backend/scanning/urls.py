@@ -2,13 +2,14 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('',                        views.ScanView.as_view(),          name='scan'),
-    path('visitor-pass/',           views.VisitorPassView.as_view(),  name='visitor-pass'),
-    path('visitor-pass/<int:pk>/exit/', views.ExitScanView.as_view(), name='visitor-exit'),
-    path('offices/',                views.OfficeListView.as_view(),     name='offices'),
-    path('logs/',                   views.AccessLogListView.as_view(),  name='access-logs'),
+    path('',                        views.ScanView.as_view(),              name='scan'),
+    path('override/',               views.OverrideEntryView.as_view(),     name='scan-override'),
+    path('visitor-pass/',           views.VisitorPassView.as_view(),       name='visitor-pass'),
+    path('visitor-pass/<int:pk>/exit/', views.ExitScanView.as_view(),      name='visitor-exit'),
+    path('offices/',                views.OfficeListView.as_view(),        name='offices'),
+    path('logs/',                   views.AccessLogListView.as_view(),     name='access-logs'),
     path('ml/samples/',             views.MLTrainingSampleList.as_view(),  name='ml-samples'),
     path('ml/samples/<int:pk>/',    views.MLTrainingSampleReview.as_view(), name='ml-sample-review'),
-    path('ml/stats/',               views.MLStatsView.as_view(),        name='ml-stats'),
-    path('ml/retrain/',             views.TriggerRetrainView.as_view(), name='ml-retrain'),
+    path('ml/stats/',               views.MLStatsView.as_view(),           name='ml-stats'),
+    path('ml/retrain/',             views.TriggerRetrainView.as_view(),    name='ml-retrain'),
 ]

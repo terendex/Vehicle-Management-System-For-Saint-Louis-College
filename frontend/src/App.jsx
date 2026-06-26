@@ -9,6 +9,8 @@ import EntryManagement from './pages/Admin/EntryManagement'
 import RuleConstraints from './pages/Admin/RuleConstraints'
 import AuditLog from './pages/Admin/AuditLog'
 import ParkingManagement from './pages/Admin/ParkingManagement'
+import SystemSettings from './pages/Admin/SystemSettings'
+import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SecurityDashboard from './pages/Security/SecurityDashboard'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityAuditLog from './pages/Security/SecurityAuditLog'
@@ -35,10 +37,21 @@ export default function App() {
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/vehicles" element={<VehicleRegistration />} />
           <Route path="/admin/users" element={<UserManagement />} />
-          <Route path="/admin/entries" element={<EntryManagement />} />
           <Route path="/admin/rules" element={<RuleConstraints />} />
           <Route path="/admin/audit" element={<AuditLog />} />
-          <Route path="/admin/parking" element={<ParkingManagement />} />
+        </Route>
+
+        {/* Admin + CDSO shared routes */}
+        <Route element={<ProtectedRoute allowedRoles={['admin', 'cdso']} />}>
+          <Route path="/admin/settings"    element={<SystemSettings />} />
+          <Route path="/admin/entries"     element={<EntryManagement />} />
+          <Route path="/admin/parking"     element={<ParkingManagement />} />
+          <Route path="/admin/violations"  element={<ViolationsManagement />} />
+        </Route>
+
+        {/* CDSO Routes — landing redirects to settings */}
+        <Route element={<ProtectedRoute allowedRoles={['cdso']} />}>
+          <Route path="/cdso" element={<Navigate to="/admin/settings" replace />} />
         </Route>
 
         {/* Security Routes */}

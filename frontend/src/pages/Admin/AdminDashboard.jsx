@@ -4,9 +4,30 @@ import { usersApi } from '../../api/users'
 import {
   Users, Car, ShieldCheck, ClipboardList,
   Activity, Shield, RefreshCw, CheckCircle, XCircle,
-  AlertTriangle, Car as CarIcon, Inbox
+  AlertTriangle, Car as CarIcon, Inbox, BarChart2
 } from 'lucide-react'
 import './AdminDashboard.css'
+
+function DayDistributionChart({ data }) {
+  if (!data || data.length === 0) return null
+  const max = Math.max(...data.map(d => d.count), 1)
+  return (
+    <div className="ad-day-chart">
+      {data.map(({ day, count }) => {
+        const pct = Math.round((count / max) * 100)
+        return (
+          <div key={day} className="ad-day-bar-col">
+            <span className="ad-day-bar-count">{count}</span>
+            <div className="ad-day-bar-track">
+              <div className="ad-day-bar-fill" style={{ height: `${pct}%` }} />
+            </div>
+            <span className="ad-day-bar-label">{day}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
@@ -181,6 +202,23 @@ export default function AdminDashboard() {
                 color="#DC2626"
               />
             </div>
+
+            {stats?.day_distribution?.length > 0 && (
+              <>
+                <SectionLabel>Authorized Entries by Day of Week</SectionLabel>
+                <div className="ad-activity-section ad-day-dist-section">
+                  <div className="ad-section-head">
+                    <h2 className="ad-section-title">
+                      <BarChart2 size={16} />
+                      Vehicle Distribution — Mon to Sat
+                    </h2>
+                  </div>
+                  <div style={{ padding: '20px 24px' }}>
+                    <DayDistributionChart data={stats.day_distribution} />
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="ad-activity-section">
               <div className="ad-section-head">

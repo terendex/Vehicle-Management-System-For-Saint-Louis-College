@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_DIR = "snapshots"
 
 FRAME_RATE_LIMIT_MS = 100
-PLATE_DEDUP_SECONDS = 30
+_DEFAULT_DEDUP_SECONDS = 30  # fallback used if DB is unavailable at connect time
 
 # Per-track OCR accumulation settings
 _OCR_LOCK_CONF    = 0.70   # lock immediately if any single read reaches this
@@ -62,6 +62,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         self._fps_start: float | None = None
         self._last_process_time: float = 0.0
         self._detection_in_progress = False
+
+        try:
+            from vehicles.models import SystemSettings
+            cfg = await sync_to_async(SystemSettings.get)()
+            self._dedup_seconds = cfg.scan_dedup_seconds
+        except Exception:
+            self._dedup_seconds = _DEFAULT_DEDUP_SECONDS
 
         await self.accept()
         logger.info("[WS] Connection accepted for user: %s", self._user)
@@ -266,7 +273,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         """Write to DB and broadcast result once a plate is locked."""
         cached = self._plate_cache.get(plate_text)
         now_ts = time.time()
-        if cached and (now_ts - cached[0]) < PLATE_DEDUP_SECONDS:
+        if cached and (now_ts - cached[0]) < self._dedup_seconds:
             logger.info("[WS] Plate %s in dedup window — skipping DB write", plate_text)
             await self.send_json({"type": "result", "results": [cached[1]]})
             return
@@ -304,10 +311,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 continue
             processed_ids.add(track_id)
 
-            # Dedup: re-use cached result within PLATE_DEDUP_SECONDS
+            # Dedup: re-use cached result within self._dedup_seconds
             cached = self._plate_cache.get(plate_number)
             now_ts = time.time()
-            if cached and (now_ts - cached[0]) < PLATE_DEDUP_SECONDS:
+            if cached and (now_ts - cached[0]) < self._dedup_seconds:
                 results.append(cached[1])
                 continue
 
@@ -340,7 +347,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     def _evict_cache(self):
         """Remove entries older than 2× the dedup window to bound memory."""
-        cutoff = time.time() - PLATE_DEDUP_SECONDS * 2
+        cutoff = time.time() - self._dedup_seconds * 2
         stale = [k for k, (ts, _) in self._plate_cache.items() if ts < cutoff]
         for k in stale:
             del self._plate_cache[k]
@@ -416,6 +423,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             )
         except Exception:
             pass
+
+        if not entry["allowed"]:
+            try:
+                from .views import _auto_log_violation
+                _auto_log_violation(vehicle, entry["message"])
+            except Exception:
+                pass
 
         return {
             "status":         entry["status"],

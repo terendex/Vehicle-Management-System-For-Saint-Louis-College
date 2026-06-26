@@ -7,8 +7,10 @@ import {
   FileSliders,
   ClipboardList,
   ParkingCircle,
+  Settings2,
   HelpCircle,
-  LogOut
+  LogOut,
+  AlertTriangle
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -23,14 +25,25 @@ export default function AdminLayout({ children }) {
     navigate('/login')
   }
 
+  const isAdmin = user?.role === 'admin'
+  const isCdso  = user?.role === 'cdso'
+
   const navItems = [
-    { name: 'Dashboard', path: '/admin', icon: <LayoutDashboard size={18} /> },
-    { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} /> },
-    { name: 'User Management', path: '/admin/users', icon: <Users size={18} /> },
-    { name: 'Entry Management', path: '/admin/entries', icon: <ShieldCheck size={18} /> },
-    { name: 'Parking', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
-    { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
-    { name: 'Audit Log', path: '/admin/audit', icon: <ClipboardList size={18} /> },
+    ...(isAdmin ? [
+      { name: 'Dashboard',            path: '/admin',          icon: <LayoutDashboard size={18} /> },
+      { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} /> },
+      { name: 'User Management',      path: '/admin/users',    icon: <Users size={18} /> },
+    ] : []),
+    ...((isAdmin || isCdso) ? [
+      { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },
+      { name: 'Violations',       path: '/admin/violations',  icon: <AlertTriangle size={18} /> },
+      { name: 'Parking',          path: '/admin/parking',     icon: <ParkingCircle size={18} /> },
+    ] : []),
+    ...(isAdmin ? [
+      { name: 'Rule Constraints', path: '/admin/rules',    icon: <FileSliders size={18} /> },
+      { name: 'Audit Log',        path: '/admin/audit',    icon: <ClipboardList size={18} /> },
+    ] : []),
+    { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
   ]
 
   return (
@@ -63,7 +76,7 @@ export default function AdminLayout({ children }) {
             </div>
             <div className="user-info">
               <span className="user-name">{user?.full_name || 'System Admin'}</span>
-              <span className="user-role">Administrator</span>
+              <span className="user-role">{user?.role === 'cdso' ? 'CDSO Staff' : 'Administrator'}</span>
             </div>
           </div>
           <div className="footer-actions">

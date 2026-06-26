@@ -174,6 +174,48 @@ class ParkingZone(models.Model):
         return f"{self.name} ({self.get_vehicle_category_display()})"
 
 
+class SystemSettings(models.Model):
+    """Singleton row (pk=1) for CDSO/admin-configurable system-wide parameters."""
+    retention_years     = models.IntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+    )
+    scan_dedup_seconds  = models.IntegerField(
+        default=30,
+        validators=[MinValueValidator(5), MaxValueValidator(300)],
+    )
+
+    class Meta:
+        verbose_name        = "System Settings"
+        verbose_name_plural = "System Settings"
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return "System Settings"
+
+
+class ParkingNotice(models.Model):
+    """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
+    title      = models.CharField(max_length=200)
+    body       = models.TextField()
+    is_active  = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='parking_notices',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
 class ParkingSpace(models.Model):
     zone         = models.ForeignKey(
         ParkingZone, null=True, blank=True,

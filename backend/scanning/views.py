@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
@@ -7,14 +9,32 @@ from django.utils import timezone
 from django.db.models import Q
 from vehicles.models import Vehicle
 from violations.models import Violation
-from accounts.models import User
+from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample
 from .entry_logic import check_entry
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer
-from accounts.models import AuditLog
+
+AUTO_VIOLATION_DEDUP_SECONDS = 300   # one auto-violation per plate per 5 min
+
+
+def _auto_log_violation(vehicle, message: str):
+    """Create an unauthorized violation if none was logged in the last 5 minutes."""
+    cutoff = timezone.now() - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
+    already = Violation.objects.filter(
+        vehicle=vehicle,
+        violation_type=Violation.Type.UNAUTHORIZED,
+        issued_at__gte=cutoff,
+    ).exists()
+    if not already:
+        Violation.objects.create(
+            vehicle=vehicle,
+            violation_type=Violation.Type.UNAUTHORIZED,
+            notes=f'Auto-logged: {message}',
+            fine_amount=Violation.compute_fine(vehicle),
+        )
 
 
 class ScanView(APIView):
@@ -76,6 +96,9 @@ class ScanView(APIView):
                 details=f"Plate: {plate}, Status: {entry['status']}",
                 ip_address=self.get_client_ip(request),
             )
+
+            if not entry['allowed']:
+                _auto_log_violation(vehicle, entry['message'])
 
             resp = {
                 'plate_number':    plate,
@@ -253,3 +276,39 @@ class MLStatsView(APIView):
             'rejected':      rejected,
             'pending_train': pending_train,
         })
+
+
+class OverrideEntryView(APIView):
+    """Guard overrides a denial and grants entry with a logged reason."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        reason       = (request.data.get('reason') or '').strip()
+
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+        if not reason:
+            return Response({'error': 'reason is required.'}, status=400)
+
+        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+
+        AccessLog.objects.create(
+            plate_number    = plate_number,
+            vehicle         = vehicle,
+            status          = AccessLog.Status.AUTHORIZED,
+            is_override     = True,
+            override_reason = reason,
+            scanned_by      = request.user,
+        )
+
+        try:
+            AuditLog.objects.create(
+                actor   = request.user,
+                action  = AuditLog.Action.SCAN,
+                details = f"Override entry — Plate: {plate_number}, Reason: {reason}",
+            )
+        except Exception:
+            pass
+
+        return Response({'status': 'overridden', 'plate_number': plate_number})
