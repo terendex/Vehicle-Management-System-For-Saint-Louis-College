@@ -21,7 +21,7 @@ export default function OwnerLayout({ children }) {
           <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
-            <span className="header-subtitle">Vehicle Management System</span>
+            <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
           </div>
         </div>
 

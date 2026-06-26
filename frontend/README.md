@@ -1,11 +1,12 @@
-# Vehicle Management System — Frontend
+# Smart Parking and Vehicle Verification System — Frontend
 
-React + Vite frontend for the Saint Louis College Vehicle Management System.
+React + Vite frontend for the Saint Louis College Smart Parking and Vehicle Verification System.
 
 ## Features
 
 - **Multi-role dashboard** — Admin, Security, and Vehicle Owner views
 - **Mobile camera scanning** — Real-time license plate detection
+- **Device Management** — Add, edit, and remove IP cameras; auto-named with gap-filling; cameras auto-connect on Entry and Parking pages
 - **Visitor pass management** — Create and track visitor entries
 - **Vehicle registration** — Self-service registration with token validation
 - **Access logs** — View scan history and entry decisions
