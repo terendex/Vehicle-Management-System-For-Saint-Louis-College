@@ -8,7 +8,8 @@ import {
   ClipboardList,
   ParkingCircle,
   HelpCircle,
-  LogOut
+  LogOut,
+  Video,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -31,6 +32,7 @@ export default function AdminLayout({ children }) {
     { name: 'Parking', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
     { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
     { name: 'Audit Log', path: '/admin/audit', icon: <ClipboardList size={18} /> },
+    { name: 'Device Management', path: '/admin/devices', icon: <Video size={18} /> },
   ]
 
   return (

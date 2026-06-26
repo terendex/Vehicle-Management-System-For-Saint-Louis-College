@@ -197,3 +197,26 @@ class ParkingSpace(models.Model):
         status = f"({self.occupied_by})" if self.is_occupied else "(free)"
         cat = self.zone.get_vehicle_category_display() if self.zone else '?'
         return f"{cat} Space {self.space_number} {status}"
+
+
+class Camera(models.Model):
+    class Assignment(models.TextChoices):
+        ENTRY   = 'entry',   'Entry'
+        PARKING = 'parking', 'Parking'
+
+    cam_number = models.PositiveIntegerField(unique=True)
+    name       = models.CharField(max_length=50)
+    ip         = models.CharField(max_length=100)
+    device_id  = models.CharField(max_length=100)
+    password   = models.CharField(max_length=100)
+    rtsp_url   = models.CharField(max_length=500)
+    assignment = models.CharField(max_length=20, choices=Assignment.choices)
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['cam_number']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_assignment_display()})"

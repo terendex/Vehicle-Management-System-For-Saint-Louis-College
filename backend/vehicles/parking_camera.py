@@ -76,7 +76,7 @@ class ParkingCameraThread(threading.Thread):
     def running(self) -> bool:
         return self.is_alive() and not self._stop.is_set()
 
-    def get_frame(self) -> np.ndarray | None:
+    def get_frame(self):
         """Return a copy of the latest decoded frame (thread-safe)."""
         with self._lock:
             return None if self._latest is None else self._latest.copy()

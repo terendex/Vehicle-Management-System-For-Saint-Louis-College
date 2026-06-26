@@ -10,6 +10,7 @@ import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
 import { getRuleConstraints } from '../../api/vehicles'
+import { camerasApi } from '../../api/cameras'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './EntryManagement.css'
@@ -307,10 +308,21 @@ export default function EntryManagement() {
     if (rtspResults?.length > 0) handleScanSuccess(rtspResults)
   }, [rtspResults, handleScanSuccess])
 
-  // Load saved RTSP cameras on mount
+  // Load cameras on mount — API-managed cameras first, then localStorage fallback
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
-    saved.forEach(c => addRtspCamera(c.name, c.url))
+    const init = async () => {
+      const addedUrls = new Set()
+      try {
+        const cams = await camerasApi.list({ assignment: 'entry' })
+        cams.forEach(c => {
+          addRtspCamera(c.name, c.rtsp_url)
+          addedUrls.add(c.rtsp_url)
+        })
+      } catch { /* ignore — fall through to localStorage */ }
+      const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
+      saved.filter(s => !addedUrls.has(s.url)).forEach(c => addRtspCamera(c.name, c.url))
+    }
+    init()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-open WS if token ever changes

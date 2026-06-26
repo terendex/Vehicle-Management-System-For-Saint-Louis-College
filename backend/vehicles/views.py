@@ -9,8 +9,9 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem
-from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer
+from rest_framework import status as drf_status
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera
+from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer
 from . import parking_camera
 
 class VehicleViewSet(viewsets.ModelViewSet):
@@ -115,6 +116,38 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
     def camera_status(self, request):
         """Returns {zone_id: is_running} for all zones."""
         return Response(parking_camera.status_dict())
+
+
+class CameraViewSet(viewsets.ModelViewSet):
+    queryset           = Camera.objects.all()
+    serializer_class   = CameraSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _next_cam_number(self):
+        existing = set(Camera.objects.values_list('cam_number', flat=True))
+        n = 1
+        while n in existing:
+            n += 1
+        return n
+
+    def create(self, request, *args, **kwargs):
+        num        = self._next_cam_number()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(cam_number=num, name=f'Cam {num}')
+        return Response(serializer.data, status=drf_status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='next-name')
+    def next_name(self, request):
+        n = self._next_cam_number()
+        return Response({'cam_number': n, 'name': f'Cam {n}'})
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        assignment = self.request.query_params.get('assignment')
+        if assignment:
+            qs = qs.filter(assignment=assignment)
+        return qs
 
 
 def _make_placeholder_jpeg(text: str) -> bytes:
