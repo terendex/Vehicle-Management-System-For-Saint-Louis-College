@@ -288,6 +288,74 @@ def _deskew_plate(img: np.ndarray, aspect_ratio: float = 1.0) -> np.ndarray:
     return img
 
 
+# ── Plate localisation within a large vehicle crop ──────────────────
+
+def find_plate_in_crop(img: np.ndarray) -> np.ndarray:
+    """
+    Given a large vehicle-body crop, attempt to locate and return just the
+    license plate sub-region using white-area detection.
+
+    Philippine plates are white (high V, low S in HSV) rectangles that are
+    wider than they are tall.  If no confident candidate is found the full
+    crop is returned unchanged so OCR still gets a chance.
+    """
+    if img is None or img.size == 0:
+        return img
+
+    h, w = img.shape[:2]
+    if w < 40 or h < 20:
+        return img
+
+    try:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # White region: low saturation, high brightness
+        mask = cv2.inRange(hsv,
+                           np.array([0,   0, 170]),
+                           np.array([180, 80, 255]))
+
+        # Close small gaps so the plate area becomes one solid blob
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 6))
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL,
+                                        cv2.CHAIN_APPROX_SIMPLE)
+        candidates = []
+        for c in contours:
+            rx, ry, rw, rh = cv2.boundingRect(c)
+            if rw < 60 or rh < 25:
+                continue
+            ar = rw / max(rh, 1)
+            if 1.0 <= ar <= 6.0:               # plate-like aspect ratio
+                fill = cv2.contourArea(c) / (rw * rh)
+                if fill > 0.35:                 # mostly solid white, not noise
+                    candidates.append((rw * rh, rx, ry, rw, rh))
+
+        if not candidates:
+            return img
+
+        # Largest white rectangle wins
+        candidates.sort(reverse=True)
+        _, rx, ry, rw, rh = candidates[0]
+
+        pad = 8
+        x1 = max(0, rx - pad)
+        y1 = max(0, ry - pad)
+        x2 = min(w, rx + rw + pad)
+        y2 = min(h, ry + rh + pad)
+        plate_crop = img[y1:y2, x1:x2]
+
+        if plate_crop.size == 0:
+            return img
+
+        log.info("[PLATE-FIND] Extracted %dx%d plate region from %dx%d vehicle crop",
+                 x2 - x1, y2 - y1, w, h)
+        return plate_crop
+
+    except Exception as exc:
+        log.debug("[PLATE-FIND] Failed: %s", exc)
+        return img
+
+
 # ── YOLO detection ──────────────────────────────────────────────────
 
 def _detect_plates(img: np.ndarray, conf: float = 0.25):

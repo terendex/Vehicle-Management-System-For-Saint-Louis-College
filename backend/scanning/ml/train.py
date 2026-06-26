@@ -24,14 +24,26 @@ from pathlib import Path
 # Configure Django settings module environment variable
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
-BASE_DIR    = Path(__file__).resolve().parent
-UNPLATED_DIR = BASE_DIR.parent.parent / "unplated_ds"
-# Use the unified 5-class dataset as the primary training source
-DATA_YAML   = UNPLATED_DIR / "data.yaml"
-WEIGHTS_DIR = BASE_DIR / "weights"
+BASE_DIR     = Path(__file__).resolve().parent
+# Primary: motorcycle_ds has ~11k images covering license_plate + vehicle + motorcycle
+MOTO_DS_DIR  = BASE_DIR / "motorcycle_ds"
+# Extra plate-only dataset merged in before training
+PLATE_DS_DIR = BASE_DIR / "dataset"
+DATA_YAML    = MOTO_DS_DIR / "data.yaml"
+WEIGHTS_DIR  = BASE_DIR / "weights"
 
-# Fallback: original license_plate-only dataset for reference
-LEGACY_DATA_YAML = BASE_DIR / "dataset" / "data.yaml"
+# ── Label remap: old class IDs → new 3-class IDs ────────────────────────────
+# motorcycle_ds old schema: 0=license_plate 1=vehicle 2=bicycle 3=e_bike 4=electric_scooter 5=motorcycle
+# New 3-class schema:       0=license_plate 1=vehicle 2=motorcycle
+# None means "remove this label"
+_MOTO_DS_REMAP: dict[int, int | None] = {
+    0: 0,    # license_plate → license_plate
+    1: 1,    # vehicle       → vehicle
+    2: None, # bicycle       → removed
+    3: None, # e_bike        → removed
+    4: None, # electric_scooter → removed
+    5: 2,    # motorcycle    → motorcycle (class 2)
+}
 
 
 def _export_ml_samples(limit: int = 500) -> int:
@@ -138,6 +150,75 @@ def _validate_labels(dataset_dir: Path) -> None:
         print("✅ All label files validated — no invalid bounding boxes found")
 
 
+def _remap_labels(dataset_dir: Path, remap: dict[int, "int | None"]) -> None:
+    """
+    Rewrite YOLO label files in-place using `remap`:
+      - Old class ID → new class ID (or None = delete that label row)
+    Skips files that are already in the target schema (idempotent).
+    """
+    changed = 0
+    for split in ("train", "val"):
+        lbl_dir = dataset_dir / "labels" / split
+        if not lbl_dir.exists():
+            continue
+        for lbl_file in lbl_dir.glob("*.txt"):
+            lines = lbl_file.read_text().strip().splitlines()
+            new_lines = []
+            file_changed = False
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) != 5:
+                    continue
+                old_cls = int(parts[0])
+                new_cls = remap.get(old_cls, old_cls)  # keep unknown IDs unchanged
+                if new_cls is None:
+                    file_changed = True
+                    continue  # remove this label
+                if new_cls != old_cls:
+                    file_changed = True
+                new_lines.append(f"{new_cls} {' '.join(parts[1:])}")
+            if file_changed:
+                lbl_file.write_text("\n".join(new_lines))
+                changed += 1
+    print(f"🔁 Label remap: updated {changed} label files in {dataset_dir.name}")
+
+
+def _merge_plate_dataset(src: Path, dst: Path) -> int:
+    """
+    Copy images + labels from the plate-only `dataset/` folder into the
+    primary training dataset (motorcycle_ds).  Labels are already class 0
+    (license_plate) — no remapping needed.  Skips files already present so
+    this is safe to call on every training run.
+    Uses a short hash for the destination filename to avoid Windows MAX_PATH.
+    """
+    import hashlib
+    copied = 0
+    for split in ("train", "val"):
+        src_img = src / "images" / split
+        src_lbl = src / "labels" / split
+        dst_img = dst / "images" / split
+        dst_lbl = dst / "labels" / split
+        dst_img.mkdir(parents=True, exist_ok=True)
+        dst_lbl.mkdir(parents=True, exist_ok=True)
+
+        if not src_img.exists():
+            continue
+        for img_file in src_img.iterdir():
+            short = hashlib.md5(img_file.name.encode()).hexdigest()[:12]
+            suffix = img_file.suffix or ".jpg"
+            dest_img = dst_img / f"pd_{short}{suffix}"
+            if not dest_img.exists():
+                shutil.copy2(img_file, dest_img)
+                copied += 1
+            lbl_file = src_lbl / (img_file.stem + ".txt")
+            dest_lbl = dst_lbl / f"pd_{short}.txt"
+            if lbl_file.exists() and not dest_lbl.exists():
+                shutil.copy2(lbl_file, dest_lbl)
+
+    print(f"📂 Merged {copied} new plate images from dataset/ into motorcycle_ds/")
+    return copied
+
+
 def train(
     epochs:       int  = 100,
     batch:        int  = 8,
@@ -167,11 +248,22 @@ def train(
 
     from ultralytics import YOLO
 
-    # Resolve dataset
-    dataset_dir = data_yaml.parent if data_yaml else UNPLATED_DIR
+    # Resolve dataset — always use absolute paths so YOLO can find images
+    if data_yaml:
+        data_yaml = Path(data_yaml).resolve()
+    dataset_dir = data_yaml.parent if data_yaml else MOTO_DS_DIR
     global DATA_YAML
     if data_yaml:
-        DATA_YAML = Path(data_yaml)
+        DATA_YAML = data_yaml
+
+    # Remap labels to 3-class schema before training (idempotent — safe to re-run)
+    _remap_labels(dataset_dir, _MOTO_DS_REMAP)
+
+    # Merge plate-only dataset/ into primary dataset for better plate coverage
+    if PLATE_DS_DIR.exists():
+        _merge_plate_dataset(PLATE_DS_DIR, dataset_dir)
+    else:
+        print(f"⚠️  Plate dataset not found at {PLATE_DS_DIR} — skipping merge")
 
     # Validate dataset
     train_imgs = dataset_dir / "images" / "train"
@@ -179,15 +271,12 @@ def train(
     train_count = len(list(train_imgs.glob("*"))) if train_imgs.exists() else 0
     val_count   = len(list(val_imgs.glob("*")))   if val_imgs.exists()   else 0
 
-    _validate_labels(UNPLATED_DIR)
+    _validate_labels(dataset_dir)
 
     if train_count == 0:
         print("=" * 60)
         print("  ERROR: No training images found!")
         print(f"  Expected images in: {train_imgs}")
-        print()
-        print("  Run first:")
-        print("    python -m scanning.ml.train --download --api-key <KEY>")
         print("=" * 60)
         return
 
@@ -253,7 +342,7 @@ def train(
         save=True,
         plots=True,
         amp=True,
-        cache="ram",
+        cache=False,
         optimizer="Adam",        # Muon optimizer uses BF16 cuBLAS which fails on older GPUs
         **augment_kwargs,
     )
@@ -292,13 +381,12 @@ def train(
 def _print_class_eval(results) -> None:
     """Print per-class mAP@0.5 from the final validation run."""
     try:
-        from ultralytics.utils.metrics import ClassifyMetrics
+        from .detection import TARGET_CLASSES
         maps = getattr(results, "maps", None)
         if maps is None:
             return
-        from .detection import CLASS_NAMES
         print("\n📊 Per-class mAP@0.5 (final validation):")
-        for i, cls in enumerate(CLASS_NAMES):
+        for i, cls in enumerate(TARGET_CLASSES):
             val = maps[i] if i < len(maps) else float("nan")
             bar = "▓" * int(val * 20) + "░" * (20 - int(val * 20))
             print(f"   {cls:<20} {bar}  {val:.3f}")

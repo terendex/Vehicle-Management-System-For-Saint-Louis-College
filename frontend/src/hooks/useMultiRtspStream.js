@@ -66,6 +66,7 @@ export function useMultiRtspStream(token) {
   const trackMap  = useRef({}); // id → Map<trackId, trackObj>
   const smoothMap = useRef({}); // id → Map<trackId, {x1,y1,x2,y2}>
   const rafMap    = useRef({}); // id → animationFrame handle
+  const urlSet    = useRef(new Set()); // tracks added URLs to prevent duplicates
 
   // ── Canvas callback ref registration ────────────────────────────────────
   const registerCanvas = useCallback((camId, el) => {
@@ -238,6 +239,8 @@ export function useMultiRtspStream(token) {
   const addCamera = useCallback((name, url) => {
     const trimUrl = (url || "").trim();
     if (!trimUrl.startsWith("rtsp://")) { toast.error("URL must start with rtsp://"); return null; }
+    if (urlSet.current.has(trimUrl)) return null; // prevent StrictMode double-add
+    urlSet.current.add(trimUrl);
     const id  = genId();
     const cam = { id, name: (name || "").trim() || `Camera ${id}`, url: trimUrl, wsActive: false, streamConnected: false, statusMsg: "" };
     setCameras(p => [...p, cam]);
@@ -250,6 +253,8 @@ export function useMultiRtspStream(token) {
   const removeCamera = useCallback((camId) => {
     disconnectCamera(camId);
     setCameras(p => {
+      const cam = p.find(c => c.id === camId);
+      if (cam) urlSet.current.delete(cam.url);
       const next = p.filter(c => c.id !== camId);
       if (activeRef.current === camId) setActiveCamId(next[0]?.id ?? null);
       return next;
@@ -268,6 +273,7 @@ export function useMultiRtspStream(token) {
     frameMap.current  = {};
     trackMap.current  = {};
     smoothMap.current = {};
+    urlSet.current    = new Set();
     setCameras([]);
     setActiveCamId(null);
     setResults([]);

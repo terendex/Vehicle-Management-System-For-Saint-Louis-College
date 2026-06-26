@@ -12,7 +12,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from .ml.detection import detect_plates, is_gpu_available
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
-from .ml.reader import _ocr_crop
+from .ml.reader import _ocr_crop, find_plate_in_crop
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,9 @@ FRAME_RATE_LIMIT_MS = 100
 PLATE_DEDUP_SECONDS = 30
 
 # Per-track OCR accumulation settings
-_OCR_LOCK_CONF    = 0.70   # lock immediately if any single read reaches this
-_OCR_MIN_CONF     = 0.20   # ignore reads below this threshold
-_OCR_MAX_ATTEMPTS = 5      # force-lock after this many attempts (keeps best vote)
+_OCR_LOCK_CONF    = 0.60   # lock immediately if any single read reaches this
+_OCR_MIN_CONF     = 0.08   # minimum confidence to count a read — low to handle noisy vehicle crops
+_OCR_MAX_ATTEMPTS = 8      # more attempts before force-locking, helps accumulate votes
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
@@ -160,6 +160,29 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                                   (x + bw) / max(w_img, 1), (y + bh) / max(h_img, 1)],
                 "detection_conf": det.get("confidence", 0.0) if det else 0.0,
             })
+
+        # Fallback: for MOTORCYCLE tracks with no plate detected, crop the lower half
+        # of the motorcycle bounding box and run OCR directly on the plate area.
+        # Restricted to motorcycle only — trucks/cars produce garbage OCR on their body panels.
+        plate_class_ids = {t["track_id"] for t in active_tracks if t.get("class_name") == "license_plate"}
+        for t_out in tracker_output:
+            if t_out.get("vehicle_type") != "motorcycle":
+                continue
+            tid = t_out["track_id"]
+            if tid in plate_class_ids:
+                continue
+            ocr_st = self._ocr_state.get(tid, {})
+            if ocr_st.get("locked") or ocr_st.get("attempts", 0) >= _OCR_MAX_ATTEMPTS:
+                continue
+            d_idx = t_out.get("detection_index")
+            det = det_by_idx.get(d_idx) if d_idx is not None else None
+            if det and det.get("crop") is not None:
+                crop = det["crop"]
+                h = crop.shape[0]
+                plate_region = crop[int(h * 0.30):, :]
+                if plate_region.size > 0:
+                    plate_region = find_plate_in_crop(plate_region)
+                    tracks_needing_ocr.append((tid, plate_region, 2.0))
 
         await self.send_json({
             "type":     "tracks",
@@ -756,6 +779,28 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 ],
                 "detection_conf": det.get("confidence", 0.0) if det else 0.0,
             })
+
+        # Fallback: motorcycle detected but no plate class nearby → try OCR on lower crop.
+        # Restricted to motorcycle only — trucks/cars produce garbage OCR on their body panels.
+        plate_class_ids = {t["track_id"] for t in active_tracks if t.get("class_name") == "license_plate"}
+        for t_out in tracker_output:
+            if t_out.get("vehicle_type") != "motorcycle":
+                continue
+            tid = t_out["track_id"]
+            if tid in plate_class_ids:
+                continue
+            ocr_st = self._ocr_state.get(tid, {})
+            if ocr_st.get("locked") or ocr_st.get("attempts", 0) >= _OCR_MAX_ATTEMPTS:
+                continue
+            d_idx = t_out.get("detection_index")
+            det = det_by_idx.get(d_idx) if d_idx is not None else None
+            if det and det.get("crop") is not None:
+                crop = det["crop"]
+                h = crop.shape[0]
+                plate_region = crop[int(h * 0.30):, :]
+                if plate_region.size > 0:
+                    plate_region = find_plate_in_crop(plate_region)
+                    tracks_needing_ocr.append((tid, plate_region, 2.0))
 
         await self.send_json({
             "type":     "tracks",
