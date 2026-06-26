@@ -1,0 +1,5 @@
+# Ensure shell scripts always use LF so they execute correctly in Linux containers
+*.sh text eol=lf
+
+# Default: auto-normalize everything else
+* text=auto

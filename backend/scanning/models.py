@@ -55,14 +55,8 @@ class AccessLog(models.Model):
 
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
     plate_number   = models.CharField(max_length=20, blank=True)
-    vehicle_type   = models.CharField(
-        max_length=20, blank=True,
-        help_text="bicycle, e_bike, electric_scooter for unplated vehicles",
-    )
-    digital_id_used = models.CharField(
-        max_length=50, blank=True,
-        help_text="The digital ID (user_code / ID number) presented by an unplated vehicle rider",
-    )
+    vehicle_type   = models.CharField(max_length=20, blank=True)
+    digital_id_used = models.CharField(max_length=50, blank=True)
     status         = models.CharField(max_length=20, choices=Status.choices)
     gate_id        = models.CharField(max_length=50, default='main')
     denied_reason  = models.CharField(max_length=255, blank=True)

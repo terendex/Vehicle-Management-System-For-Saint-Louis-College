@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, X, Banknote, User, Bike, Users, ChevronRight } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, X, Banknote, User, Users, ChevronRight } from 'lucide-react'
 import { registrationApi } from '../../api/registration'
 
 const REGISTRATION_TYPES = [
@@ -9,12 +9,6 @@ const REGISTRATION_TYPES = [
     icon: <User size={22} />,
     label: 'Student — Vehicle',
     description: 'Registered SLC student with a car or motorcycle',
-  },
-  {
-    id: 'student_ebike',
-    icon: <Bike size={22} />,
-    label: 'Student — E-Bike',
-    description: 'Registered SLC student with an electric bicycle',
   },
   {
     id: 'employee',
@@ -60,13 +54,12 @@ const SLC_HEADER = (
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
-  const directType = searchParams.get('type') // 'student' | 'student_ebike' | 'employee' | 'fetcher'
+  const directType = searchParams.get('type') // 'student' | 'employee' | 'fetcher'
   const navigate = useNavigate()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [registrantType, setRegistrantType] = useState(null)
-  const [isEbike, setIsEbike] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
@@ -125,33 +118,31 @@ export default function RegisterPage() {
     }
   }, [])
 
+  const fetchRegStatus = useCallback(async () => {
+    setRegStatusLoading(true)
+    try {
+      const status = await registrationApi.getRegistrationStatus()
+      setRegStatus(status)
+    } catch {
+      setRegStatus({ is_open: false, open_date: 'TBA', close_date: 'TBA' })
+    } finally {
+      setRegStatusLoading(false)
+    }
+  }, [])
+
   const validateToken = useCallback(async () => {
+    fetchRefLists()
+
     if (directType) {
-      // Direct registration from login page — no token needed
-      const baseType = directType === 'student_ebike' ? 'student' : directType
-      setRegistrantType(baseType)
-      setIsEbike(directType === 'student_ebike')
-      if (directType === 'student_ebike') {
-        setFormData(prev => ({ ...prev, vehicle_type: 'E-Bike', drivers_license: 'N/A' }))
-      }
+      setRegistrantType(directType)
       setLoading(false)
-      fetchScheduleSlots()
-      fetchRefLists()
+      if (directType === 'student') fetchScheduleSlots()
       return
     }
 
     if (!token) {
-      // No token and no directType — show the type selector
+      fetchRegStatus()
       setLoading(false)
-      setRegStatusLoading(true)
-      try {
-        const status = await registrationApi.getRegistrationStatus()
-        setRegStatus(status)
-      } catch {
-        setRegStatus({ is_open: true, open_date: 'June 1 (tentative)', close_date: 'October 31 (tentative)' })
-      } finally {
-        setRegStatusLoading(false)
-      }
       return
     }
 
@@ -160,7 +151,6 @@ export default function RegisterPage() {
       setRegistrantType(data.registrant_type)
       setLoading(false)
       fetchScheduleSlots()
-      fetchRefLists()
     } catch (err) {
       setError(
         err.response?.data?.error ||
@@ -168,18 +158,14 @@ export default function RegisterPage() {
       )
       setLoading(false)
     }
-  }, [token, directType, fetchScheduleSlots, fetchRefLists])
+  }, [token, directType, fetchScheduleSlots, fetchRefLists, fetchRegStatus])
 
   useEffect(() => {
     validateToken()
   }, [validateToken])
 
   const FIELD_PATTERNS = {
-    plate_number: isEbike ? {
-      regex: /^\d{8}$/,
-      message: 'Invalid student ID. Must be 8 digits (e.g. 23100174)',
-      hint: 'e.g. 23100174',
-    } : {
+    plate_number: {
       regex: /^[A-Z]{2,3}[\s-]?\d{3,4}$/i,
       message: 'Invalid plate number. Use format: ABC 1234 or AB 1234',
       hint: 'e.g. ABC 1234 or AB 1234',
@@ -240,6 +226,15 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    if (!registrantType) {
+      alert('Please select your registrant type.')
+      return
+    }
+    if (regStatus && !regStatus.is_open) {
+      alert('Registration is currently closed. Please try again during the registration window.')
+      return
+    }
 
     // Run all format validations before submitting
     const fieldsToValidate = ['plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'student_id', 'employee_id']
@@ -473,6 +468,13 @@ export default function RegisterPage() {
   const isStudent = registrantType === 'student'
   const isFetcher = registrantType === 'fetcher'
   const isEmployee = registrantType === 'employee'
+  const regOpen = regStatus?.is_open ?? true
+
+  const TYPE_OPTIONS = [
+    { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'Registered SLC student' },
+    { id: 'employee', icon: <Car size={24} />,  label: 'Employee',          desc: 'SLC faculty or staff' },
+    { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go', desc: 'Parent or guardian' },
+  ]
 
   /* ─── Form ─── */
   return (
@@ -484,76 +486,112 @@ export default function RegisterPage() {
           <div className="slc-form-title-block">
             <h1 className="slc-form-title">APPLICATION FORM FOR A VEHICLE PASS</h1>
             <p className="slc-form-subtitle">
-              {isStudent
-                ? (isEbike ? "STUDENT'S PERSONAL INFORMATION (E-BIKE)" : "STUDENT'S PERSONAL INFORMATION")
-                : isEmployee
-                  ? "EMPLOYEE'S PERSONAL INFORMATION"
-                  : "FETCHER / DROP & GO PERSONAL INFORMATION"}
+              {!registrantType
+                ? 'VEHICLE PASS APPLICATION'
+                : isStudent
+                  ? "STUDENT'S PERSONAL INFORMATION"
+                  : isEmployee
+                    ? "EMPLOYEE'S PERSONAL INFORMATION"
+                    : "FETCHER / DROP & GO PERSONAL INFORMATION"}
             </p>
             <p className="slc-form-note">Please write legibly in CAPITAL LETTERS.</p>
-            <span className="registrant-badge">
-              {isStudent
-                ? (isEbike ? 'Student — E-Bike Registration' : 'Student — Vehicle Registration')
-                : isEmployee ? 'Employee Registration'
-                  : 'Fetcher / Drop & Go Registration'}
-            </span>
+            {registrantType && (
+              <span className="registrant-badge">
+                {isStudent ? 'Student — Vehicle Registration'
+                  : isEmployee ? 'Employee Registration'
+                    : 'Fetcher / Drop & Go Registration'}
+              </span>
+            )}
           </div>
 
+          {/* Registration window notice */}
+          {regStatusLoading ? (
+            <div className="reg-status-loading">Checking registration status…</div>
+          ) : regStatus ? (
+            <div className={`reg-window-notice ${regStatus.is_open ? 'open' : 'closed'}`}>
+              <Info size={14} />
+              {regStatus.is_open ? (
+                <span>
+                  <strong>Registration is currently open.</strong> Window: {regStatus.open_date} – {regStatus.close_date}
+                </span>
+              ) : (
+                <span>
+                  <strong>Registration is currently closed.</strong> The next window opens approximately on {regStatus.open_date}.
+                  You may not submit a new registration outside the registration period.
+                </span>
+              )}
+            </div>
+          ) : null}
+
           <form onSubmit={handleSubmit} className="register-form">
+
+            {/* ── Registrant Type ── */}
+            <h3 className="section-heading">Registrant Type</h3>
+            <div className="reg-type-inline">
+              {TYPE_OPTIONS.map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`reg-type-inline-btn${registrantType === t.id ? ' selected' : ''}`}
+                  onClick={() => {
+                    setRegistrantType(t.id)
+                    if (t.id === 'student') fetchScheduleSlots()
+                  }}
+                >
+                  <span className="reg-type-inline-icon">{t.icon}</span>
+                  <span className="reg-type-inline-label">{t.label}</span>
+                  <span className="reg-type-inline-desc">{t.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            {registrantType && <>
+            <hr className="divider" />
 
             {/* ── Vehicle Identification ── */}
             <h3 className="section-heading">Vehicle Identification</h3>
             <div className="form-grid">
               <div className="form-group">
-                <label>
-                  {isEbike ? 'Student ID Number' : 'Plate Number'}
-                  {' '}<span className="required">*</span>
-                </label>
+                <label>Plate Number <span className="required">*</span></label>
                 <input
                   type="text"
                   name="plate_number"
                   value={formData.plate_number}
                   onChange={handleInputChange}
                   required
-                  placeholder={isEbike ? 'Used as your e-bike identifier' : FIELD_PATTERNS.plate_number.hint}
+                  placeholder={FIELD_PATTERNS.plate_number.hint}
                   className={formErrors.plate_number ? 'input-error' : ''}
                 />
-                {!isEbike && <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>}
+                <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>
                 {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
               </div>
 
-              {!isEbike && (
-                <div className="form-group">
-                  <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
-                  <input
-                    type="text"
-                    name="conduction_number"
-                    value={formData.conduction_number}
-                    onChange={handleInputChange}
-                    placeholder={FIELD_PATTERNS.conduction_number.hint}
-                    className={formErrors.conduction_number ? 'input-error' : ''}
-                  />
-                  <span className="field-hint">{FIELD_PATTERNS.conduction_number.hint}</span>
-                  {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
-                </div>
-              )}
+              <div className="form-group">
+                <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
+                <input
+                  type="text"
+                  name="conduction_number"
+                  value={formData.conduction_number}
+                  onChange={handleInputChange}
+                  placeholder={FIELD_PATTERNS.conduction_number.hint}
+                  className={formErrors.conduction_number ? 'input-error' : ''}
+                />
+                <span className="field-hint">{FIELD_PATTERNS.conduction_number.hint}</span>
+                {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
+              </div>
 
               <div className="form-group">
                 <label>Vehicle Type <span className="required">*</span></label>
-                {isEbike ? (
-                  <input type="text" value="E-Bike" readOnly className="input-readonly" />
-                ) : (
-                  <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
-                    <option value="">Select Type</option>
-                    <option value="Sedan">Sedan</option>
-                    <option value="SUV">SUV</option>
-                    <option value="Motorcycle">Motorcycle</option>
-                    <option value="Tricycle">Tricycle</option>
-                    <option value="Van">Van</option>
-                    <option value="Truck">Truck</option>
-                    <option value="Other">Other</option>
-                  </select>
-                )}
+                <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
+                  <option value="">Select Type</option>
+                  <option value="Sedan">Sedan</option>
+                  <option value="SUV">SUV</option>
+                  <option value="Motorcycle">Motorcycle</option>
+                  <option value="Tricycle">Tricycle</option>
+                  <option value="Van">Van</option>
+                  <option value="Truck">Truck</option>
+                  <option value="Other">Other</option>
+                </select>
               </div>
 
               <div className="form-group">
@@ -691,22 +729,20 @@ export default function RegisterPage() {
                 <input type="number" name="age" min="15" max="99" value={formData.age} onChange={handleInputChange} />
               </div>
 
-              {!isEbike && (
-                <div className="form-group col-span-2">
-                  <label>Driver's License Number <span className="required">*</span></label>
-                  <input
-                    type="text"
-                    name="drivers_license"
-                    value={formData.drivers_license}
-                    onChange={handleInputChange}
-                    required={!isEbike}
-                    placeholder={FIELD_PATTERNS.drivers_license.hint}
-                    className={formErrors.drivers_license ? 'input-error' : ''}
-                  />
-                  <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
-                  {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
-                </div>
-              )}
+              <div className="form-group col-span-2">
+                <label>Driver's License Number <span className="required">*</span></label>
+                <input
+                  type="text"
+                  name="drivers_license"
+                  value={formData.drivers_license}
+                  onChange={handleInputChange}
+                  required
+                  placeholder={FIELD_PATTERNS.drivers_license.hint}
+                  className={formErrors.drivers_license ? 'input-error' : ''}
+                />
+                <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
+                {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
+              </div>
 
               {/* Campus day selector — students only */}
               {isStudent && (
@@ -863,8 +899,14 @@ export default function RegisterPage() {
               </div>
             </div>
 
+            </>}
+
             <div className="form-actions">
-              <button type="submit" className="btn-submit" disabled={submitting || loading}>
+              <button
+                type="submit"
+                className="btn-submit"
+                disabled={submitting || !registrantType || (regStatus && !regStatus.is_open)}
+              >
                 {submitting ? 'Submitting...' : 'Submit Registration'}
               </button>
             </div>

@@ -145,7 +145,14 @@ export default function LoginPage() {
                 </div>
                 <span className="checkbox-text">Remember Me</span>
               </label>
-              <a href="#" className="forgot-link">Forgot Password</a>
+              <button
+                type="button"
+                className="forgot-link"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                onClick={() => navigate('/forgot-password')}
+              >
+                Forgot Password
+              </button>
             </div>
 
             <button type="submit" className="login-button" disabled={isLoading} id="login-submit">

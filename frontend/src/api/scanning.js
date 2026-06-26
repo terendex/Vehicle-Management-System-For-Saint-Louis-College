@@ -9,9 +9,6 @@ export const scanPlate = (imageBlob) => {
   })
 }
 
-// Verify digital ID for unplated vehicle entry
-export const verifyDigitalId = (data) => api.post('/scan/digital-id/', data)
-
 // Get recent access logs
 export const getAccessLogs = (params) => api.get('/scan/logs/', { params })
 

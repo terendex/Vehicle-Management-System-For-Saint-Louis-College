@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   CalendarDays, Clock, Pencil, X, Settings2,
-  Loader2, User, Bike, Car, Users, ChevronRight,
+  Loader2, User, Car, Users, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -25,12 +25,6 @@ const ENTRY_TYPES = [
     title: 'Student — Vehicle',
     desc: 'Registered SLC student with a car or motorcycle',
     Icon: User,
-  },
-  {
-    key: 'student_ebike',
-    title: 'Student — E-Bike',
-    desc: 'Registered SLC student with an electric bicycle',
-    Icon: Bike,
   },
   {
     key: 'employee',

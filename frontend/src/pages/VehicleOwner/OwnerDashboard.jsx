@@ -40,7 +40,7 @@ const VIOLATION_TYPE_LABELS = {
   other: 'Other',
 }
 
-const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle', 'E-Bike', 'e-bike', 'ebike']
+const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle']
 const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().includes(m.toLowerCase()))
 
 export default function OwnerDashboard() {
@@ -516,7 +516,7 @@ export default function OwnerDashboard() {
                   </div>
                   <p className="od-parking-note">
                     Parking data is updated by security personnel and will be linked to CCTV camera zones.
-                    Only {parkingCategory === 'motorcycle' ? 'motorcycle/e-bike' : 'car/van/SUV'} spaces are shown for your vehicle type.
+                    Only {parkingCategory === 'motorcycle' ? 'motorcycle' : 'car/van/SUV'} spaces are shown for your vehicle type.
                   </p>
                 </>
               )}

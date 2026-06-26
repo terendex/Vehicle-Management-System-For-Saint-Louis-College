@@ -15,10 +15,9 @@ export default function OwnerLayout({ children }) {
 
   return (
     <div className="owner-layout">
-      {/* Header */}
       <header className="owner-header">
         <div className="header-logo-group">
-          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <img src={slcLogo} alt="SLC Logo" className="header-logo" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
@@ -26,10 +25,10 @@ export default function OwnerLayout({ children }) {
         </div>
 
         <div className="header-actions">
-          <div className="user-greeting">
-            Hello, {user?.full_name || 'Vehicle Owner'}
-          </div>
-          <button className="action-btn" title="Policy Help">
+          <span className="user-greeting">
+            {user?.full_name ? `Hi, ${user.full_name}` : 'Vehicle Owner'}
+          </span>
+          <button className="action-btn" title="Help">
             <HelpCircle size={18} />
           </button>
           <button className="logout-btn" onClick={handleLogout}>
@@ -39,7 +38,6 @@ export default function OwnerLayout({ children }) {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="owner-main">
         {children}
       </main>

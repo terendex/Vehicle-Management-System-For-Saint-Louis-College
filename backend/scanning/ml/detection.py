@@ -27,11 +27,8 @@ WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 # Used only for validation — actual inference uses model.names at runtime.
 CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
 
-# Classes that require a digital ID instead of a license plate (none currently)
-VEHICLE_TYPE_CLASSES: set[str] = set()
-
 # Classes detected by the model but intentionally ignored in processing
-_IGNORED_CLASSES = {"bicycle", "e_bike", "electric_scooter"}
+_IGNORED_CLASSES = {"bicycle", "e_bike", "electric_scooter", "ebike", "escooter"}
 
 _model = None
 _load_attempted = False  # only try once; avoids re-loading on every frame after failure
@@ -200,13 +197,12 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             box_w, box_h = x2 - x1, y2 - y1
             aspect_ratio = box_w / max(box_h, 1)
 
-            is_plate    = class_name == "license_plate"
-            is_unplated = class_name in VEHICLE_TYPE_CLASSES
-            min_conf    = _CONF_PLATE if is_plate else _CONF_VEHICLE
+            is_plate = class_name == "license_plate"
+            min_conf = _CONF_PLATE if is_plate else _CONF_VEHICLE
 
             if score < min_conf or box_w < 20 or box_h < 8:
                 continue
-            if not is_plate and not is_unplated:
+            if not is_plate:
                 if aspect_ratio < 0.3 or aspect_ratio > 8.0:
                     continue
 

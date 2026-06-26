@@ -1055,6 +1055,183 @@
   width: calc(100% - 64px) !important;
 }
 
+/* ─── Inline Registrant Type Picker (inside form) ─── */
+.reg-type-inline {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.reg-type-inline-btn {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 12px;
+  border: 2px solid #D1D4E0;
+  border-radius: 14px;
+  background: #FAFBFD;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.reg-type-inline-btn:hover {
+  border-color: #2A2B61;
+  background: #EEF0FF;
+}
+
+.reg-type-inline-btn.selected {
+  border-color: #2A2B61;
+  background: #2A2B61;
+  color: #fff;
+}
+
+.reg-type-inline-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reg-type-inline-label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.reg-type-inline-desc {
+  font-size: 11.5px;
+  color: #7C80A3;
+  line-height: 1.4;
+}
+
+.reg-type-inline-btn.selected .reg-type-inline-desc {
+  color: rgba(255,255,255,0.7);
+}
+
+/* ─── Registrant Type Selector (standalone page, kept for reference) ─── */
+.reg-type-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px;
+}
+
+.reg-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 14px;
+  background: #FAFBFD;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.reg-type-btn:hover {
+  border-color: #2A2B61;
+  background: #EEF0FF;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(42, 43, 97, 0.1);
+}
+
+.reg-type-btn-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2A2B61 0%, #3d3e7e 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.reg-type-btn-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.reg-type-btn-label {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.reg-type-btn-desc {
+  font-size: 13px;
+  color: #7C80A3;
+}
+
+.reg-type-btn-arrow {
+  color: #7C80A3;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.reg-type-btn:hover:not(:disabled) .reg-type-btn-arrow {
+  color: #2A2B61;
+  transform: translateX(3px);
+}
+
+.reg-type-btn--disabled,
+.reg-type-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+  background: #F1F3F9;
+}
+
+/* Registration window notice */
+.reg-status-loading {
+  margin: 16px 32px 0;
+  font-size: 13px;
+  color: #7C80A3;
+}
+
+.reg-window-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 20px 32px 0;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reg-window-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.reg-window-notice.open {
+  background: #ECFDF5;
+  border: 1px solid #A7F3D0;
+  color: #065F46;
+}
+
+.reg-window-notice.closed {
+  background: #FEF3C7;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+}
+
+.reg-type-note {
+  margin: 0 32px 24px;
+  font-size: 12px;
+  color: #9CA3AF;
+  line-height: 1.5;
+}
+
 /* --- Responsive --- */
 @media (max-width: 640px) {
   .register-header {
