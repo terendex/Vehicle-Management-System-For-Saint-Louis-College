@@ -5,16 +5,14 @@ Canonical classes:
   license_plate — the plate itself (triggers OCR)
   vehicle       — car, jeep, jeepney, bus, truck, van, SUV, pickup (4-wheel+)
   motor         — motorcycle, motorbike, tricycle (2–3 wheel motorized)
-  ebike         — electric bicycle (requires digital ID, no plate)
-  escooter      — electric scooter (requires digital ID, no plate)
 """
 from __future__ import annotations
 from typing import Optional
 
 LICENSE_PLATE_CLASS = "license_plate"
 
-# Classes that need a digital ID instead of a license plate
-VEHICLE_TYPE_CLASSES = ["ebike", "escooter"]
+# Classes that need a digital ID instead of a license plate (none supported)
+VEHICLE_TYPE_CLASSES: list[str] = []
 
 CLASS_MAPPING = {
     # ── License plate ────────────────────────────────────────────
@@ -53,32 +51,8 @@ CLASS_MAPPING = {
     "trike":            "motor",
     "bike":             "motor",
     "Bike":             "motor",
-    "bicycle":          "motor",   # existing bicycle labels map to motor
+    "bicycle":          "motor",
     "Bicycle":          "motor",
-
-    # ── E-bike ───────────────────────────────────────────────────
-    "ebike":            "ebike",
-    "e_bike":           "ebike",
-    "EBike":            "ebike",
-    "E-Bike":           "ebike",
-    "Electric Bike":    "ebike",
-    "electric_bike":    "ebike",
-    "electric bike":    "ebike",
-
-    # ── Electric scooter ─────────────────────────────────────────
-    "escooter":              "escooter",
-    "electric_scooter":      "escooter",
-    "E-Scooter":             "escooter",
-    "E-scooter":             "escooter",
-    "Electric Scooter":      "escooter",
-    "ElectricScooter":       "escooter",
-    "Electric scooter":      "escooter",
-    "scooter":               "escooter",
-    "Scooter":               "escooter",
-    "e-scooter":             "escooter",
-    "motorized_scooter":     "escooter",
-    "electricscooter":       "escooter",
-    "kickboard":             "escooter",
 }
 
 # Labels found in datasets that are deliberately excluded
@@ -91,6 +65,11 @@ EXCLUDED_LABELS = {
     "Skateboard",
     "skateboard",
     "object",
+    # Unplated vehicle types — not supported
+    "ebike", "e_bike", "EBike", "E-Bike", "Electric Bike", "electric_bike", "electric bike",
+    "escooter", "electric_scooter", "E-Scooter", "E-scooter", "Electric Scooter",
+    "ElectricScooter", "scooter", "Scooter", "e-scooter", "motorized_scooter",
+    "electricscooter", "kickboard",
 }
 
 # Reverse mapping: canonical name → all raw aliases (for reporting)
@@ -105,21 +84,13 @@ REVERSE_CLASS_MAPPING: dict[str, list[str]] = {
         "motor", "motorcycle", "Motorcycle", "motorbike", "Motorbike",
         "tricycle", "Tricycle", "trike", "bike", "Bike", "bicycle", "Bicycle",
     ],
-    "ebike": ["ebike", "e_bike", "EBike", "E-Bike", "Electric Bike", "electric_bike"],
-    "escooter": [
-        "escooter", "electric_scooter", "E-Scooter", "E-scooter",
-        "Electric Scooter", "ElectricScooter", "scooter", "Scooter",
-        "e-scooter", "motorized_scooter", "electricscooter", "kickboard",
-    ],
 }
 
 # Single source-of-truth for per-class pipeline behavior
 VEHICLE_TYPE_BEHAVIOR = {
-    "license_plate": {"requires_digital_id": False, "triggers_ocr": True},
-    "vehicle":       {"requires_digital_id": False, "triggers_ocr": True},
-    "motor":         {"requires_digital_id": False, "triggers_ocr": True},
-    "ebike":         {"requires_digital_id": True,  "triggers_ocr": False},
-    "escooter":      {"requires_digital_id": True,  "triggers_ocr": False},
+    "license_plate": {"triggers_ocr": True},
+    "vehicle":       {"triggers_ocr": True},
+    "motor":         {"triggers_ocr": True},
 }
 
 

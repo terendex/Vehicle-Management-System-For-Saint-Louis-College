@@ -27,7 +27,6 @@ class Vehicle(models.Model):
         TRUCK      = 'truck',      'Truck'
         VAN        = 'van',        'Van'
         BUS        = 'bus',        'Bus'
-        EBIKE      = 'ebike',      'E-Bike'
 
     plate_number  = models.CharField(max_length=20, unique=True, db_index=True)
     vehicle_type  = models.CharField(max_length=20, choices=Type.choices, default=Type.CAR)
@@ -138,7 +137,6 @@ class VehicleRegistration(models.Model):
 class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
-        STUDENT_EBIKE   = 'student_ebike',   'Student — E-Bike'
         EMPLOYEE        = 'employee',         'Employee'
         FETCHER         = 'fetcher',          'Fetcher / Drop & Go'
 

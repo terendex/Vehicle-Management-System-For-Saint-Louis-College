@@ -332,13 +332,19 @@ The frontend `.env` only needs `VITE_API_BASE_URL=http://localhost:8000` — no 
 
 ### 3. Set Up Redis
 
-Redis is still required locally for Celery background tasks. On Windows, install **Memurai** and ensure the service is running:
+Redis is still required locally for Celery background tasks.
 
+**Windows** — install **Memurai** and ensure the service is running:
 ```
 Services app → Memurai → Running
 ```
-
 If not running: right-click → Start.
+
+**Linux** — install Redis via your package manager and ensure the service is running:
+```bash
+sudo apt install redis-server      # Debian/Ubuntu
+sudo systemctl enable --now redis-server
+```
 
 ### 4. Set Up the Backend
 
@@ -346,10 +352,12 @@ If not running: right-click → Start.
 cd backend
 
 # Create virtual environment
-py -m venv venv
+py -m venv venv          # Windows
+python3 -m venv venv     # Linux
 
-# Activate (Windows)
-venv\Scripts\activate
+# Activate
+venv\Scripts\activate    # Windows
+source venv/bin/activate # Linux
 
 # Install dependencies
 pip install -r requirements.txt
@@ -415,7 +423,7 @@ npm install
 
 ## Running the Project
 
-> **Prerequisite:** Ensure Redis (Memurai) is running before starting the backend.
+> **Prerequisite:** Ensure Redis is running before starting the backend (Memurai on Windows, `redis-server` on Linux).
 
 Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
 
@@ -423,8 +431,9 @@ Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the sp
 
 ```bash
 cd backend
-venv\Scripts\activate
-python -m daphne config.asgi:application --port 8000 --bind 127.0.0.1
+venv\Scripts\activate    # Windows
+source venv/bin/activate # Linux
+daphne -b 127.0.0.1 -p 8000 config.asgi:application
 ```
 
 > **Daphne is required** — `python manage.py runserver` uses WSGI and does not support WebSockets. Camera scanning will not work without Daphne.
@@ -452,11 +461,16 @@ npm run dev
 
 ```bash
 cd backend
-venv\Scripts\activate
+venv\Scripts\activate    # Windows
+source venv/bin/activate # Linux
+
+# Windows
 python -m celery -A config worker -l info --pool=solo
+# Linux
+python -m celery -A config worker -l info
 ```
 
-> `--pool=solo` is required on Windows to avoid `billiard` semaphore errors.
+> `--pool=solo` is required on Windows to avoid `billiard` semaphore errors. On Linux, omit it — the default prefork pool works fine.
 
 ---
 

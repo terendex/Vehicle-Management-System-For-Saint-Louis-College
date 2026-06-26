@@ -414,4 +414,147 @@ class MyRegistrationView(APIView):
             )
             return Response(VehicleRegistrationSerializer(registration).data)
         except VehicleRegistration.DoesNotExist:
-            return Response({'error': 'No accepted registration found for this account.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No accepted registration found for this account.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+# ──────────────────────────────────────────────
+#  Password Reset (unauthenticated)
+# ──────────────────────────────────────────────
+
+class PasswordResetRequestView(APIView):
+    """Step 1: accept an email, generate a token, send a reset link."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+        from django.core.mail import send_mail
+        from django.conf import settings as django_settings
+
+        email = request.data.get('email', '').strip().lower()
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Always return the same message to avoid leaking which emails exist
+        SAFE_MSG = 'If an account with that email exists, a password reset link has been sent.'
+
+        try:
+            user = User.objects.get(email__iexact=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({'message': SAFE_MSG})
+
+        token = default_token_generator.make_token(user)
+        uid   = urlsafe_base64_encode(force_bytes(user.pk))
+        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:5173')
+        reset_link   = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+        html_message = f"""
+        <html>
+          <body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;margin:0;">
+            <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
+              <div style="padding:28px 32px 24px;">
+                <h2 style="color:#2A2B61;margin:0 0 8px;">Password Reset Request</h2>
+                <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
+                  We received a request to reset the password for your SLC Vehicle Management System account.
+                </p>
+                <p style="margin:0 0 8px;">Hello, <strong>{user.full_name or user.email}</strong>,</p>
+                <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
+                  Click the button below to set a new password. This link expires in <strong>1 hour</strong>.
+                </p>
+                <div style="text-align:center;margin:0 0 24px;">
+                  <a href="{reset_link}"
+                     style="display:inline-block;padding:13px 32px;background:#2A2B61;color:#fff;
+                            border-radius:10px;font-size:15px;font-weight:600;text-decoration:none;">
+                    Reset My Password
+                  </a>
+                </div>
+                <p style="color:#9CA3B0;font-size:12px;margin:0 0 8px;">
+                  If the button doesn't work, copy and paste this link into your browser:
+                </p>
+                <p style="word-break:break-all;font-size:12px;color:#2A2B61;margin:0 0 24px;">{reset_link}</p>
+                <p style="color:#9CA3B0;font-size:12px;margin:0;">
+                  If you did not request a password reset, you can safely ignore this email.
+                  Your password will not change.
+                </p>
+              </div>
+              <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:14px 32px;text-align:center;">
+                <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+
+        send_mail(
+            subject='SLC Vehicle Management — Password Reset',
+            message=(
+                f"Hello {user.full_name or user.email},\n\n"
+                f"Reset your password by visiting:\n{reset_link}\n\n"
+                f"This link expires in 1 hour.\n\n"
+                f"If you did not request this, ignore this email."
+            ),
+            from_email=django_settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=True,
+        )
+
+        return Response({'message': SAFE_MSG})
+
+
+class PasswordResetConfirmView(APIView):
+    """Step 2: validate the token and set the new password."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        import re
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+
+        uid             = request.data.get('uid', '').strip()
+        token           = request.data.get('token', '').strip()
+        new_password    = request.data.get('new_password', '').strip()
+        confirm_password = request.data.get('confirm_password', '').strip()
+
+        if not all([uid, token, new_password, confirm_password]):
+            return Response({'error': 'All fields are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({'error': 'Passwords do not match.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Decode UID and fetch user
+        try:
+            pk   = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=pk)
+        except (User.DoesNotExist, ValueError, TypeError, Exception):
+            return Response({'error': 'Invalid reset link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not default_token_generator.check_token(user, token):
+            return Response(
+                {'error': 'This reset link has expired or is invalid. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate password strength (same rules as ChangePasswordView)
+        errors = []
+        if len(new_password) < 8:
+            errors.append('Password must be at least 8 characters.')
+        if not re.search(r'[A-Z]', new_password):
+            errors.append('Password must contain at least one uppercase letter.')
+        if not re.search(r'[a-z]', new_password):
+            errors.append('Password must contain at least one lowercase letter.')
+        if not re.search(r'[0-9]', new_password):
+            errors.append('Password must contain at least one number.')
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\'\"\\|,.<>\/?]', new_password):
+            errors.append('Password must contain at least one special character.')
+        if errors:
+            return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save(update_fields=['password', 'must_change_password'])
+
+        return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
