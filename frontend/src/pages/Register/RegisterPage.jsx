@@ -1,7 +1,34 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, X, Banknote } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, X, Banknote, User, Bike, Users, ChevronRight } from 'lucide-react'
 import { registrationApi } from '../../api/registration'
+
+const REGISTRATION_TYPES = [
+  {
+    id: 'student',
+    icon: <User size={22} />,
+    label: 'Student — Vehicle',
+    description: 'Registered SLC student with a car or motorcycle',
+  },
+  {
+    id: 'student_ebike',
+    icon: <Bike size={22} />,
+    label: 'Student — E-Bike',
+    description: 'Registered SLC student with an electric bicycle',
+  },
+  {
+    id: 'employee',
+    icon: <Car size={22} />,
+    label: 'Employee',
+    description: 'SLC faculty or staff member',
+  },
+  {
+    id: 'fetcher',
+    icon: <Users size={22} />,
+    label: 'Fetcher / Drop & Go',
+    description: 'Parent or guardian fetching a student',
+  },
+]
 import ComboBox from '../../components/ComboBox'
 import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
@@ -43,6 +70,9 @@ export default function RegisterPage() {
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
+  const [regStatus, setRegStatus] = useState(null)
+  const [regStatusLoading, setRegStatusLoading] = useState(false)
+  const [formErrors, setFormErrors] = useState({})
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -111,8 +141,17 @@ export default function RegisterPage() {
     }
 
     if (!token) {
-      setError('Invalid registration link. Token is missing.')
+      // No token and no directType — show the type selector
       setLoading(false)
+      setRegStatusLoading(true)
+      try {
+        const status = await registrationApi.getRegistrationStatus()
+        setRegStatus(status)
+      } catch {
+        setRegStatus({ is_open: true, open_date: 'June 1 (tentative)', close_date: 'October 31 (tentative)' })
+      } finally {
+        setRegStatusLoading(false)
+      }
       return
     }
 
@@ -135,12 +174,58 @@ export default function RegisterPage() {
     validateToken()
   }, [validateToken])
 
+  const FIELD_PATTERNS = {
+    plate_number: isEbike ? {
+      regex: /^\d{8}$/,
+      message: 'Invalid student ID. Must be 8 digits (e.g. 23100174)',
+      hint: 'e.g. 23100174',
+    } : {
+      regex: /^[A-Z]{2,3}[\s-]?\d{3,4}$/i,
+      message: 'Invalid plate number. Use format: ABC 1234 or AB 1234',
+      hint: 'e.g. ABC 1234 or AB 1234',
+    },
+    conduction_number: {
+      regex: /^[A-Z0-9]{5,12}$/i,
+      message: 'Invalid conduction number. Use 5–12 alphanumeric characters.',
+      hint: 'e.g. CS12345A678',
+    },
+    contact_number: {
+      regex: /^\+639\d{9}$/,
+      message: 'Invalid number. Use +639XXXXXXXXX',
+      hint: 'e.g. +639XXXXXXXXX',
+    },
+    drivers_license: {
+      regex: /^[A-Z]\d{2}-\d{2}-\d{6}$/i,
+      message: 'Invalid format. Use: A12-34-567890',
+      hint: 'e.g. A12-34-567890',
+    },
+    student_id: {
+      regex: /^\d{8}$/,
+      message: 'Invalid student ID. Must be 8 digits (e.g. 23100174)',
+      hint: 'e.g. 23100174',
+    },
+    employee_id: {
+      regex: /^\d{8}$/,
+      message: 'Invalid employee ID. Must be 8 digits (e.g. 23100174)',
+      hint: 'e.g. 23100174',
+    },
+  }
+
+  const validateField = (name, value) => {
+    if (!value || !value.trim()) return null
+    const rule = FIELD_PATTERNS[name]
+    if (!rule) return null
+    return rule.regex.test(value.trim()) ? null : rule.message
+  }
+
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
     if (type === 'checkbox') {
       setFormData((prev) => ({ ...prev, [name]: checked }))
     } else {
       setFormData((prev) => ({ ...prev, [name]: value }))
+      const errorMsg = validateField(name, value)
+      setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
     }
   }
 
@@ -155,6 +240,20 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    // Run all format validations before submitting
+    const fieldsToValidate = ['plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'student_id', 'employee_id']
+    const newErrors = {}
+    fieldsToValidate.forEach(name => {
+      const err = validateField(name, formData[name])
+      if (err) newErrors[name] = err
+    })
+    if (Object.keys(newErrors).length > 0) {
+      setFormErrors(prev => ({ ...prev, ...newErrors }))
+      alert('Please fix the format errors highlighted in the form before submitting.')
+      return
+    }
+
     if (!formData.privacy_consent) {
       alert('You must agree to the Data Privacy Consent.')
       return
@@ -227,6 +326,67 @@ export default function RegisterPage() {
             <p className="card-help">
               Please contact the administration office for assistance.
             </p>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  /* ─── Type Selector (no token, no directType) ─── */
+  if (!registrantType) {
+    return (
+      <div className="register-page">
+        {SLC_HEADER}
+        <main className="register-main">
+          <div className="register-card reg-type-selector-card">
+            <div className="reg-type-selector-header">
+              <h2 className="reg-type-selector-title">Vehicle Pass Application</h2>
+              <p className="reg-type-selector-subtitle">Select your registrant type to begin</p>
+            </div>
+
+            {regStatusLoading ? (
+              <div className="reg-status-loading">Checking registration status…</div>
+            ) : regStatus ? (
+              <div className={`reg-window-notice ${regStatus.is_open ? 'open' : 'closed'}`}>
+                <Info size={14} />
+                {regStatus.is_open ? (
+                  <span>
+                    <strong>Registration is currently open.</strong> Window: {regStatus.open_date} – {regStatus.close_date}
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Registration is currently closed.</strong> The next window opens approximately on {regStatus.open_date}.
+                    You may still fill out the form but submission will not be accepted outside the registration period.
+                  </span>
+                )}
+              </div>
+            ) : null}
+
+            <div className="reg-type-list">
+              {REGISTRATION_TYPES.map(t => (
+                <button
+                  key={t.id}
+                  className="reg-type-item"
+                  onClick={() => navigate(`/register?type=${t.id}`)}
+                >
+                  <div className="reg-type-icon">{t.icon}</div>
+                  <div className="reg-type-text">
+                    <span className="reg-type-label">{t.label}</span>
+                    <span className="reg-type-desc">{t.description}</span>
+                  </div>
+                  <ChevronRight size={16} className="reg-type-arrow" />
+                </button>
+              ))}
+            </div>
+
+            <p className="reg-modal-note">
+              Registration opens 2 months before the school year and closes during the first semester.
+              Dates are tentative and subject to change.
+            </p>
+
+            <button className="reg-back-btn" onClick={() => navigate('/login')}>
+              Back to Login
+            </button>
           </div>
         </main>
       </div>
@@ -355,14 +515,26 @@ export default function RegisterPage() {
                   value={formData.plate_number}
                   onChange={handleInputChange}
                   required
-                  placeholder={isEbike ? 'Used as your e-bike identifier' : ''}
+                  placeholder={isEbike ? 'Used as your e-bike identifier' : FIELD_PATTERNS.plate_number.hint}
+                  className={formErrors.plate_number ? 'input-error' : ''}
                 />
+                {!isEbike && <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>}
+                {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
               </div>
 
               {!isEbike && (
                 <div className="form-group">
                   <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
-                  <input type="text" name="conduction_number" value={formData.conduction_number} onChange={handleInputChange} />
+                  <input
+                    type="text"
+                    name="conduction_number"
+                    value={formData.conduction_number}
+                    onChange={handleInputChange}
+                    placeholder={FIELD_PATTERNS.conduction_number.hint}
+                    className={formErrors.conduction_number ? 'input-error' : ''}
+                  />
+                  <span className="field-hint">{FIELD_PATTERNS.conduction_number.hint}</span>
+                  {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
                 </div>
               )}
 
@@ -436,7 +608,17 @@ export default function RegisterPage() {
                 <>
                   <div className="form-group">
                     <label>Student ID Number <span className="required">*</span></label>
-                    <input type="text" name="student_id" value={formData.student_id} onChange={handleInputChange} required />
+                    <input
+                      type="text"
+                      name="student_id"
+                      value={formData.student_id}
+                      onChange={handleInputChange}
+                      required
+                      placeholder={FIELD_PATTERNS.student_id.hint}
+                      className={formErrors.student_id ? 'input-error' : ''}
+                    />
+                    <span className="field-hint">{FIELD_PATTERNS.student_id.hint}</span>
+                    {formErrors.student_id && <span className="field-error-msg">{formErrors.student_id}</span>}
                   </div>
                   <div className="form-group">
                     <label>Program &amp; Year Level <span className="required">*</span></label>
@@ -457,7 +639,17 @@ export default function RegisterPage() {
                 <>
                   <div className="form-group">
                     <label>Employee ID <span className="required">*</span></label>
-                    <input type="text" name="employee_id" value={formData.employee_id} onChange={handleInputChange} required />
+                    <input
+                      type="text"
+                      name="employee_id"
+                      value={formData.employee_id}
+                      onChange={handleInputChange}
+                      required
+                      placeholder={FIELD_PATTERNS.employee_id.hint}
+                      className={formErrors.employee_id ? 'input-error' : ''}
+                    />
+                    <span className="field-hint">{FIELD_PATTERNS.employee_id.hint}</span>
+                    {formErrors.employee_id && <span className="field-error-msg">{formErrors.employee_id}</span>}
                   </div>
                   <div className="form-group">
                     <label>Department <span className="required">*</span></label>
@@ -481,7 +673,17 @@ export default function RegisterPage() {
 
               <div className="form-group">
                 <label>Contact Number/s <span className="required">*</span></label>
-                <input type="text" name="contact_number" value={formData.contact_number} onChange={handleInputChange} required />
+                <input
+                  type="text"
+                  name="contact_number"
+                  value={formData.contact_number}
+                  onChange={handleInputChange}
+                  required
+                  placeholder={FIELD_PATTERNS.contact_number.hint}
+                  className={formErrors.contact_number ? 'input-error' : ''}
+                />
+                <span className="field-hint">{FIELD_PATTERNS.contact_number.hint}</span>
+                {formErrors.contact_number && <span className="field-error-msg">{formErrors.contact_number}</span>}
               </div>
 
               <div className="form-group">
@@ -492,7 +694,17 @@ export default function RegisterPage() {
               {!isEbike && (
                 <div className="form-group col-span-2">
                   <label>Driver's License Number <span className="required">*</span></label>
-                  <input type="text" name="drivers_license" value={formData.drivers_license} onChange={handleInputChange} required={!isEbike} />
+                  <input
+                    type="text"
+                    name="drivers_license"
+                    value={formData.drivers_license}
+                    onChange={handleInputChange}
+                    required={!isEbike}
+                    placeholder={FIELD_PATTERNS.drivers_license.hint}
+                    className={formErrors.drivers_license ? 'input-error' : ''}
+                  />
+                  <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
+                  {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
                 </div>
               )}
 
