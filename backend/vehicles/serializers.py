@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera
 from accounts.models import User
 
 
@@ -72,3 +72,11 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.reference_image.url)
         return obj.reference_image.url
+
+
+class CameraSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Camera
+        fields = ['id', 'cam_number', 'name', 'ip', 'device_id', 'password',
+                  'rtsp_url', 'assignment', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']

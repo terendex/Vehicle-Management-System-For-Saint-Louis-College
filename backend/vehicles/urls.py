@@ -7,6 +7,7 @@ router.register('rules',           views.RuleConstraintViewSet, basename='rule-c
 router.register('reference-items', views.ReferenceItemViewSet,  basename='reference-item')
 router.register('parking',         views.ParkingSpaceViewSet,   basename='parking-space')
 router.register('parking-zones',   views.ParkingZoneViewSet,    basename='parking-zone')
+router.register('cameras',         views.CameraViewSet,         basename='camera')
 router.register('',                views.VehicleViewSet,        basename='vehicle')
 
 urlpatterns = [

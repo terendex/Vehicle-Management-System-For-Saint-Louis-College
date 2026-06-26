@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
+import { camerasApi } from '../../api/cameras'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './ParkingManagement.css'
 
@@ -105,12 +106,23 @@ export default function ParkingManagement() {
 
   useEffect(() => { loadZones() }, [loadZones])
 
-  // Load view-cameras from localStorage when zone changes
+  // Load view-cameras when zone changes — API-managed cameras first, then localStorage
   useEffect(() => {
     disconnectAllPkCams()
     if (!selId) return
-    const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
-    saved.forEach(c => addPkCamera(c.name, c.url))
+    const init = async () => {
+      const addedUrls = new Set()
+      try {
+        const cams = await camerasApi.list({ assignment: 'parking' })
+        cams.forEach(c => {
+          addPkCamera(c.name, c.rtsp_url)
+          addedUrls.add(c.rtsp_url)
+        })
+      } catch { /* ignore */ }
+      const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
+      saved.filter(s => !addedUrls.has(s.url)).forEach(c => addPkCamera(c.name, c.url))
+    }
+    init()
   }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Camera status polling ───────────────────────────────────────
@@ -381,7 +393,7 @@ export default function ParkingManagement() {
           <div className="pm-header-left">
             <ParkingCircle size={22} className="pm-header-icon" />
             <div>
-              <h1 className="pm-title">Live Parking Management</h1>
+              <h1 className="pm-title">Parking</h1>
               <p className="pm-subtitle">
                 Draw space boxes in Edit Layout mode. Connect an IP CCTV camera via RTSP to
                 detect vehicles automatically — the backend updates occupancy in real time.
