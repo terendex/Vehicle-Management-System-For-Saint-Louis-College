@@ -221,10 +221,6 @@ export default function EntryManagement() {
 
   const [webcams, setCameras] = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId] = useState(1)
-  const [rtspAddName, setRtspAddName] = useState('')
-  const [rtspAddUrl,  setRtspAddUrl]  = useState('')
-
-  const RTSP_LS_KEY = 'rtsp_cams_admin_entry'
 
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
@@ -308,21 +304,11 @@ export default function EntryManagement() {
     if (rtspResults?.length > 0) handleScanSuccess(rtspResults)
   }, [rtspResults, handleScanSuccess])
 
-  // Load cameras on mount — API-managed cameras first, then localStorage fallback
+  // Load cameras from Device Management (DB only)
   useEffect(() => {
-    const init = async () => {
-      const addedUrls = new Set()
-      try {
-        const cams = await camerasApi.list({ assignment: 'entry' })
-        cams.forEach(c => {
-          addRtspCamera(c.name, c.rtsp_url)
-          addedUrls.add(c.rtsp_url)
-        })
-      } catch { /* ignore — fall through to localStorage */ }
-      const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
-      saved.filter(s => !addedUrls.has(s.url)).forEach(c => addRtspCamera(c.name, c.url))
-    }
-    init()
+    camerasApi.list({ assignment: 'entry' })
+      .then(cams => cams.forEach(c => addRtspCamera(c.name, c.rtsp_url)))
+      .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-open WS if token ever changes
@@ -371,32 +357,14 @@ export default function EntryManagement() {
     setBbox(null)
   }
 
-  const handleRtspAdd = () => {
-    if (!rtspAddUrl.trim()) return
-    const name = rtspAddName.trim()
-    const url  = rtspAddUrl.trim()
-    addRtspCamera(name, url)
-    const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
-    saved.push({ name: name || `Camera ${saved.length + 1}`, url })
-    localStorage.setItem(RTSP_LS_KEY, JSON.stringify(saved))
-    setRtspAddName('')
-    setRtspAddUrl('')
-  }
-
   const handleRtspDisconnectAll = () => {
     disconnectAllRtsp()
-    localStorage.removeItem(RTSP_LS_KEY)
     setResult(null)
     setBbox(null)
   }
 
   const handleRemoveRtspCam = (camId) => {
-    const cam = rtspCameras.find(c => c.id === camId)
     removeRtspCamera(camId)
-    if (cam) {
-      const saved = JSON.parse(localStorage.getItem(RTSP_LS_KEY) || '[]')
-      localStorage.setItem(RTSP_LS_KEY, JSON.stringify(saved.filter(s => s.url !== cam.url)))
-    }
   }
 
   const stopAllAndSwitchMode = (nextMode) => {
@@ -620,7 +588,7 @@ export default function EntryManagement() {
                   ) : (
                     <div className="em-cam-off">
                       <Wifi size={52} style={{ color: '#374151' }} />
-                      <p>Add RTSP cameras below to begin monitoring</p>
+                      <p>No entry cameras configured. Add cameras in Device Management.</p>
                     </div>
                   )}
                 </div>
@@ -719,42 +687,18 @@ export default function EntryManagement() {
                   </button>
                 )
               ) : mode === 'rtsp' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', alignItems: 'stretch' }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input
-                      className="em-input"
-                      style={{ width: 120, flexShrink: 0, fontSize: 12, padding: '7px 10px' }}
-                      placeholder="Name (optional)"
-                      value={rtspAddName}
-                      onChange={e => setRtspAddName(e.target.value)}
-                    />
-                    <input
-                      className="em-input"
-                      style={{ flex: 1, fontFamily: 'monospace', fontSize: 12, padding: '7px 10px' }}
-                      placeholder="rtsp://user:pass@192.168.x.x:554/stream1"
-                      value={rtspAddUrl}
-                      onChange={e => setRtspAddUrl(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleRtspAdd() }}
-                    />
-                    <button
-                      className="em-btn em-btn-primary"
-                      onClick={handleRtspAdd}
-                      disabled={!rtspAddUrl.trim()}
-                    >
-                      <Wifi size={14} /> Add
-                    </button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+                  <div className={`em-autoscan-status ${rtspCameras.some(c => c.streamConnected) ? 'scanning' : ''}`} style={{ flex: 1 }}>
+                    {rtspCameras.length === 0
+                      ? <><Video size={13} /> No entry cameras configured — add them in Device Management</>
+                      : rtspCameras.some(c => c.streamConnected)
+                        ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
+                        : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>}
                   </div>
                   {rtspCameras.length > 0 && (
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <div className={`em-autoscan-status ${rtspCameras.some(c => c.streamConnected) ? 'scanning' : ''}`} style={{ flex: 1 }}>
-                        {rtspCameras.some(c => c.streamConnected)
-                          ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
-                          : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>}
-                      </div>
-                      <button className="em-btn em-btn-danger" onClick={handleRtspDisconnectAll}>
-                        <Link2 size={14} /> Disconnect All
-                      </button>
-                    </div>
+                    <button className="em-btn em-btn-danger" onClick={handleRtspDisconnectAll}>
+                      <Link2 size={14} /> Disconnect All
+                    </button>
                   )}
                 </div>
               ) : (

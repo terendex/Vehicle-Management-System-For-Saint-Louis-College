@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { zoneApi } from '../../api/parking'
+import { camerasApi } from '../../api/cameras'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import '../Admin/ParkingManagement.css'
 
@@ -55,8 +56,9 @@ export default function SecurityParkingView() {
   useEffect(() => {
     disconnectAllPkCams()
     if (!selId) return
-    const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
-    saved.forEach(c => addPkCamera(c.name, c.url))
+    camerasApi.list({ assignment: 'parking' })
+      .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url)))
+      .catch(() => {})
   }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Camera status polling ───────────────────────────────────────

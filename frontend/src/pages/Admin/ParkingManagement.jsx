@@ -62,8 +62,6 @@ export default function ParkingManagement() {
 
   // Live-view RTSP cameras panel
   const [showCamPanel, setShowCamPanel] = useState(false)
-  const [camAddName,   setCamAddName]   = useState('')
-  const [camAddUrl,    setCamAddUrl]    = useState('')
 
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') || '' : ''
   const {
@@ -106,23 +104,13 @@ export default function ParkingManagement() {
 
   useEffect(() => { loadZones() }, [loadZones])
 
-  // Load view-cameras when zone changes — API-managed cameras first, then localStorage
+  // Load parking cameras from Device Management (DB only)
   useEffect(() => {
     disconnectAllPkCams()
     if (!selId) return
-    const init = async () => {
-      const addedUrls = new Set()
-      try {
-        const cams = await camerasApi.list({ assignment: 'parking' })
-        cams.forEach(c => {
-          addPkCamera(c.name, c.rtsp_url)
-          addedUrls.add(c.rtsp_url)
-        })
-      } catch { /* ignore */ }
-      const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
-      saved.filter(s => !addedUrls.has(s.url)).forEach(c => addPkCamera(c.name, c.url))
-    }
-    init()
+    camerasApi.list({ assignment: 'parking' })
+      .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url)))
+      .catch(() => {})
   }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Camera status polling ───────────────────────────────────────
@@ -317,24 +305,9 @@ export default function ParkingManagement() {
     } catch { alert('Failed.') }
   }
 
-  // ── Parking live-cam add/remove ─────────────────────────────────────────────
-  const handleAddPkCam = () => {
-    if (!camAddUrl.trim() || !selId) return
-    addPkCamera(camAddName, camAddUrl.trim())
-    const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
-    saved.push({ name: camAddName.trim() || `Camera ${saved.length + 1}`, url: camAddUrl.trim() })
-    localStorage.setItem(`rtsp_cams_${selId}`, JSON.stringify(saved))
-    setCamAddName('')
-    setCamAddUrl('')
-  }
-
+  // ── Parking live-cam remove ─────────────────────────────────────────────────
   const handleRemovePkCam = (camId) => {
-    const cam = parkingCams.find(c => c.id === camId)
     removePkCameraHook(camId)
-    if (cam && selId) {
-      const saved = JSON.parse(localStorage.getItem(`rtsp_cams_${selId}`) || '[]')
-      localStorage.setItem(`rtsp_cams_${selId}`, JSON.stringify(saved.filter(c => c.url !== cam.url)))
-    }
   }
 
   // ── IP Camera controls ──────────────────────────────────────────
@@ -778,31 +751,11 @@ export default function ParkingManagement() {
                 </div>
               )}
 
-              {/* Add camera form */}
-              <div className="pm-cam-add-col">
-                <input
-                  className="pm-modal-input"
-                  placeholder="Name (optional)"
-                  value={camAddName}
-                  onChange={e => setCamAddName(e.target.value)}
-                />
-                <input
-                  className="pm-modal-input"
-                  style={{ fontFamily: 'monospace', fontSize: 12 }}
-                  placeholder="rtsp://user:pass@ip:port/stream"
-                  value={camAddUrl}
-                  onChange={e => setCamAddUrl(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddPkCam() }}
-                />
-                <button
-                  className="pm-btn pm-btn--primary"
-                  style={{ width: '100%', justifyContent: 'center' }}
-                  onClick={handleAddPkCam}
-                  disabled={!camAddUrl.trim()}
-                >
-                  <Plus size={13} /> Add Camera
-                </button>
-              </div>
+              {parkingCams.length === 0 && (
+                <p style={{ fontSize: 12, color: '#7C80A3', margin: '8px 0 0', textAlign: 'center' }}>
+                  No parking cameras configured — add them in Device Management.
+                </p>
+              )}
 
             </div>
           )}

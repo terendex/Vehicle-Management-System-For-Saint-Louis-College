@@ -23,12 +23,38 @@ log = logging.getLogger(__name__)
 
 WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
 
-# Expected class names in the order the model was trained.
-# Used only for validation — actual inference uses model.names at runtime.
-CLASS_NAMES = ["license_plate", "vehicle", "bicycle", "e_bike", "electric_scooter", "motorcycle"]
+# The 3 detection targets for the campus entry system.
+TARGET_CLASSES = ["license_plate", "vehicle", "motorcycle"]
 
-# Classes detected by the model but intentionally ignored in processing
-_IGNORED_CLASSES = {"bicycle", "e_bike", "electric_scooter", "ebike", "escooter"}
+# Dynamic remap: any model class name → one of the 3 targets.
+# Anything NOT in this map is silently ignored (bicycle, e_bike, scooters, etc.).
+# Works with the current 6-class weights, future 3-class retrained weights,
+# and even COCO pre-trained models (which use "car", "truck", "bus", etc.).
+_CLASS_MAP: dict[str, str] = {
+    # ── license plates ───────────────────────────────────────────────
+    "license_plate":   "license_plate",
+    "plate":           "license_plate",
+    "licence_plate":   "license_plate",
+    "number_plate":    "license_plate",
+    # ── 4-wheel vehicles (all normalised to "vehicle") ───────────────
+    "vehicle":         "vehicle",
+    "car":             "vehicle",
+    "truck":           "vehicle",
+    "bus":             "vehicle",
+    "van":             "vehicle",
+    "suv":             "vehicle",
+    "pickup":          "vehicle",
+    "jeep":            "vehicle",
+    "jeepney":         "vehicle",
+    "taxi":            "vehicle",
+    "ambulance":       "vehicle",
+    # ── motorcycles ──────────────────────────────────────────────────
+    "motorcycle":      "motorcycle",
+    "motorbike":       "motorcycle",
+    "moto":            "motorcycle",
+    "tricycle":        "motorcycle",
+    "sidecar":         "motorcycle",
+}
 
 _model = None
 _load_attempted = False  # only try once; avoids re-loading on every frame after failure
@@ -36,29 +62,30 @@ _load_attempted = False  # only try once; avoids re-loading on every frame after
 
 def _validate_model_classes(model) -> bool:
     """
-    Validate loaded model class names against CLASS_NAMES.
-    Returns True if OK (or validation can't run), False if mismatch.
-    A mismatch means the weights were trained with a different class order —
-    inference would silently produce wrong labels so we refuse to run it.
+    Check the loaded model's class names against _CLASS_MAP.
+    Logs a warning for unknown classes (they are ignored at inference time).
+    Returns False only if the model has NO recognised classes at all.
     """
     try:
-        model_names: dict[int, str] = model.names
-        model_class_list = [model_names.get(i, f"<unknown_{i}>") for i in range(len(model_names))]
-        if model_class_list != CLASS_NAMES:
+        model_names = list(model.names.values())
+        known   = [n for n in model_names if n.lower() in _CLASS_MAP]
+        unknown = [n for n in model_names if n.lower() not in _CLASS_MAP]
+        if unknown:
+            log.info("[DETECT] Ignoring model classes not in target set: %s", unknown)
+        if not known:
             log.error(
-                "[DETECT] CLASS MISMATCH — inference disabled to prevent silent misclassification.\n"
+                "[DETECT] Model has NO recognised classes — detection disabled.\n"
                 "  Model classes : %s\n"
-                "  Code expects  : %s\n"
-                "  Fix: retrain with the same class list, or update CLASS_NAMES in detection.py.",
-                model_class_list,
-                CLASS_NAMES,
+                "  Expected any of: %s",
+                model_names, list(_CLASS_MAP.keys()),
             )
             return False
-        log.info("[DETECT] Class names OK: %s", CLASS_NAMES)
+        log.info("[DETECT] Active classes: %s → mapped to %s",
+                 known, sorted({_CLASS_MAP[n.lower()] for n in known}))
         return True
     except Exception as exc:
-        log.warning("[DETECT] Class validation skipped (non-fatal): %s", exc)
-        return True  # don't block if validation itself errors
+        log.warning("[DETECT] Class check skipped (non-fatal): %s", exc)
+        return True
 
 
 def _get_yolo():
@@ -118,9 +145,9 @@ def _get_yolo():
     return _model
 
 
-# Per-class confidence minimums — plates need higher recall than vehicles
-_CONF_PLATE   = 0.10   # low threshold; aspect ratio + size filters catch false positives
-_CONF_VEHICLE = 0.25   # standard threshold for vehicle/motorcycle
+# Per-class confidence minimums — low thresholds; size/aspect filters catch false positives
+_CONF_PLATE   = 0.05   # very permissive — OCR vote accumulation handles noise
+_CONF_VEHICLE = 0.10   # low — catches motorcycles the model is less confident about
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -191,7 +218,9 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             x1, y1, x2, y2 = (int(x1) + offset_x, int(y1) + offset_y,
                                int(x2) + offset_x, int(y2) + offset_y)
 
-            if class_name in _IGNORED_CLASSES:
+            # Map to one of 3 targets; skip anything not in the map (bicycle, e_bike, etc.)
+            class_name = _CLASS_MAP.get(class_name.lower())
+            if class_name is None:
                 continue
 
             box_w, box_h = x2 - x1, y2 - y1
