@@ -176,7 +176,7 @@ export default function LoginPage() {
             <button
               type="button"
               className="register-cta-btn"
-              onClick={() => navigate('/register')}
+              onClick={() => navigate('/register?type=student')}
             >
               <Car size={18} />
               Apply for a Vehicle Pass
