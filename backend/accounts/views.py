@@ -200,6 +200,7 @@ class DashboardStatsView(APIView):
         week_ago = today - timedelta(days=7)
 
         if user.role == 'admin':
+            from django.db.models.functions import ExtractWeekDay
             from vehicles.models import Vehicle, VehicleRegistration
 
             total_users         = User.objects.count()
@@ -222,6 +223,23 @@ class DashboardStatsView(APIView):
                 scanned_at__date=today, status__in=['denied', 'wrong_day']
             ).count()
             unknown_today    = AccessLog.objects.filter(scanned_at__date=today, status='unknown').count()
+
+            # Day distribution: authorized entries per weekday (Mon–Sat)
+            # Django ExtractWeekDay: 1=Sunday, 2=Monday, …, 7=Saturday
+            DAY_MAP = {2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu', 6: 'Fri', 7: 'Sat'}
+            day_rows = (
+                AccessLog.objects
+                .filter(status='authorized')
+                .annotate(wd=ExtractWeekDay('scanned_at'))
+                .filter(wd__in=DAY_MAP.keys())
+                .values('wd')
+                .annotate(count=Count('id'))
+            )
+            day_dist_map = {row['wd']: row['count'] for row in day_rows}
+            day_distribution = [
+                {'day': DAY_MAP[wd], 'count': day_dist_map.get(wd, 0)}
+                for wd in sorted(DAY_MAP.keys())
+            ]
 
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='admin'
@@ -254,6 +272,7 @@ class DashboardStatsView(APIView):
                     'denied_today':     denied_today,
                     'unknown_today':    unknown_today,
                 },
+                'day_distribution': day_distribution,
                 'recent_activity': {
                     'admin':    AuditLogSerializer(recent_admin_logs, many=True).data,
                     'security': AuditLogSerializer(recent_security_logs, many=True).data,

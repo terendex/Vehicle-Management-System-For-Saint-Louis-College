@@ -3,13 +3,14 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2
+  ParkingCircle, Bike, Loader2, Megaphone
 } from 'lucide-react'
 import OwnerLayout from '../../components/Layout/OwnerLayout'
 import useAuthStore from '../../stores/authStore'
 import { usersApi } from '../../api/users'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
+import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
 
 /* ── password strength rules ── */
@@ -57,10 +58,14 @@ export default function OwnerDashboard() {
   const [violationsError, setViolationsError] = useState(null)
 
   /* ── parking availability ── */
-  const [parking, setParking] = useState(null)  // { spaces, summary }
+  const [parking, setParking] = useState(null)  // { spaces, summary, zones }
   const [parkingLoading, setParkingLoading] = useState(false)
   const [parkingError, setParkingError] = useState(null)
   const [parkingCategory, setParkingCategory] = useState(null)
+
+  /* ── notices ── */
+  const [notices, setNotices] = useState([])
+  const [noticesLoading, setNoticesLoading] = useState(false)
 
   /* ── password change modal ── */
   const mustChange = user?.must_change_password === true
@@ -80,7 +85,20 @@ export default function OwnerDashboard() {
   useEffect(() => {
     fetchReg()
     fetchViolations()
+    fetchNotices()
   }, [])
+
+  const fetchNotices = async () => {
+    setNoticesLoading(true)
+    try {
+      const { data } = await getNotices()
+      setNotices(data)
+    } catch {
+      // non-critical, fail silently
+    } finally {
+      setNoticesLoading(false)
+    }
+  }
 
   const fetchReg = async () => {
     setLoading(true)
@@ -164,6 +182,7 @@ export default function OwnerDashboard() {
   /* ── Parking grid helpers ── */
   const parkingSummary = parking?.summary?.[parkingCategory] || null
   const parkingSpaces  = (parking?.spaces || []).filter(s => s.vehicle_category === parkingCategory)
+  const parkingZones   = (parking?.zones || []).filter(z => z.category === parkingCategory)
 
   return (
     <OwnerLayout>
@@ -441,6 +460,33 @@ export default function OwnerDashboard() {
               )}
             </div>
 
+            {/* ── Announcements Section ── */}
+            {(noticesLoading || notices.length > 0) && (
+              <>
+                <div className="od-section-title-row">
+                  <Megaphone size={17} />
+                  <h2 className="od-section-title">Announcements</h2>
+                  {noticesLoading && <Loader2 size={15} className="od-spin-icon" />}
+                </div>
+                {!noticesLoading && (
+                  <div className="od-notices-list">
+                    {notices.map(n => (
+                      <div key={n.id} className="od-notice-item">
+                        <div className="od-notice-icon"><Megaphone size={15} /></div>
+                        <div className="od-notice-content">
+                          <span className="od-notice-title">{n.title}</span>
+                          <p className="od-notice-body">{n.body}</p>
+                          <span className="od-notice-date">
+                            {new Date(n.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
             {/* ── Parking Availability Section ── */}
             <div className="od-section-title-row">
               {parkingCategory === 'motorcycle' ? <Bike size={17} /> : <ParkingCircle size={17} />}
@@ -483,6 +529,31 @@ export default function OwnerDashboard() {
                       </div>
                     </div>
                   ) : null}
+
+                  {/* Per-zone fill percentage */}
+                  {parkingZones.length > 0 && (
+                    <div className="od-zone-fill-grid">
+                      {parkingZones.map(z => (
+                        <div key={z.zone_id} className="od-zone-fill-card">
+                          <div className="od-zone-fill-header">
+                            <span className="od-zone-fill-name">{z.zone_name}</span>
+                            <span className={`od-zone-fill-pct ${z.fill_pct >= 90 ? 'critical' : z.fill_pct >= 70 ? 'high' : 'normal'}`}>
+                              {z.fill_pct}%
+                            </span>
+                          </div>
+                          <div className="od-zone-fill-bar-bg">
+                            <div
+                              className={`od-zone-fill-bar ${z.fill_pct >= 90 ? 'critical' : z.fill_pct >= 70 ? 'high' : 'normal'}`}
+                              style={{ width: `${z.fill_pct}%` }}
+                            />
+                          </div>
+                          <div className="od-zone-fill-sub">
+                            {z.available} of {z.total} spaces available
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Parking grid */}
                   {parkingSpaces.length > 0 ? (

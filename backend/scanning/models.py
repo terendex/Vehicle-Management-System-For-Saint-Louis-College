@@ -60,6 +60,8 @@ class AccessLog(models.Model):
     status         = models.CharField(max_length=20, choices=Status.choices)
     gate_id        = models.CharField(max_length=50, default='main')
     denied_reason  = models.CharField(max_length=255, blank=True)
+    is_override    = models.BooleanField(default=False)
+    override_reason = models.CharField(max_length=255, blank=True)
     snapshot       = models.ImageField(upload_to='snapshots/', blank=True)
     scanned_at     = models.DateTimeField(auto_now_add=True)
     scanned_by     = models.ForeignKey(

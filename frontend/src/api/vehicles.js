@@ -9,3 +9,10 @@ export const getVehicleTypeAccess = (params) => api.get('/vehicles/vehicle-types
 export const createVehicleTypeAccess = (data) => api.post('/vehicles/vehicle-types/', data)
 export const updateVehicleTypeAccess = (id, data) => api.patch(`/vehicles/vehicle-types/${id}/`, data)
 export const deleteVehicleTypeAccess = (id) => api.delete(`/vehicles/vehicle-types/${id}/`)
+
+export const getSystemSettings    = ()     => api.get('/vehicles/system-settings/')
+export const updateSystemSettings = (data) => api.put('/vehicles/system-settings/', data)
+
+export const getNotices       = ()        => api.get('/vehicles/notices/')
+export const createNotice     = (data)    => api.post('/vehicles/notices/', data)
+export const deactivateNotice = (id)      => api.delete(`/vehicles/notices/${id}/`)

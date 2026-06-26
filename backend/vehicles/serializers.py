@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, ParkingNotice
 from accounts.models import User
 
 
@@ -54,6 +54,15 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
 
     def get_vehicle_category(self, obj):
         return obj.zone.vehicle_category if obj.zone else None
+
+
+class ParkingNoticeSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+
+    class Meta:
+        model  = ParkingNotice
+        fields = ['id', 'title', 'body', 'is_active', 'created_by', 'created_by_name', 'created_at']
+        read_only_fields = ['created_by', 'created_at']
 
 
 class ParkingZoneSerializer(serializers.ModelSerializer):
