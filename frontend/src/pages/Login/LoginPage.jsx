@@ -1,37 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, AlertCircle, Car, User, Bike, Users, X, ChevronRight, Info } from 'lucide-react'
+import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
-import { registrationApi } from '../../api/registration'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
-
-const REGISTRATION_TYPES = [
-  {
-    id: 'student',
-    icon: <User size={22} />,
-    label: 'Student — Vehicle',
-    description: 'Registered SLC student with a car or motorcycle',
-  },
-  {
-    id: 'student_ebike',
-    icon: <Bike size={22} />,
-    label: 'Student — E-Bike',
-    description: 'Registered SLC student with an electric bicycle',
-  },
-  {
-    id: 'employee',
-    icon: <Car size={22} />,
-    label: 'Employee',
-    description: 'SLC faculty or staff member',
-  },
-  {
-    id: 'fetcher',
-    icon: <Users size={22} />,
-    label: 'Fetcher / Drop & Go',
-    description: 'Parent or guardian fetching a student',
-  },
-]
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -41,11 +13,6 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
   const [showErrorModal, setShowErrorModal] = useState(false)
-
-  // Registration modal state
-  const [showRegModal, setShowRegModal] = useState(false)
-  const [regStatus, setRegStatus] = useState(null)  // { is_open, open_date, close_date }
-  const [regStatusLoading, setRegStatusLoading] = useState(false)
 
   const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
 
@@ -87,26 +54,6 @@ export default function LoginPage() {
   const closeErrorModal = () => {
     setShowErrorModal(false)
     clearError()
-  }
-
-  const handleOpenRegModal = async () => {
-    setShowRegModal(true)
-    if (!regStatus) {
-      setRegStatusLoading(true)
-      try {
-        const status = await registrationApi.getRegistrationStatus()
-        setRegStatus(status)
-      } catch {
-        setRegStatus({ is_open: false, open_date: 'June 1 (tentative)', close_date: 'October 31 (tentative)' })
-      } finally {
-        setRegStatusLoading(false)
-      }
-    }
-  }
-
-  const handleSelectType = (typeId) => {
-    setShowRegModal(false)
-    navigate(`/register?type=${typeId}`)
   }
 
   return (
@@ -222,7 +169,7 @@ export default function LoginPage() {
             <button
               type="button"
               className="register-cta-btn"
-              onClick={handleOpenRegModal}
+              onClick={() => navigate('/register')}
             >
               <Car size={18} />
               Apply for a Vehicle Pass
@@ -250,64 +197,6 @@ export default function LoginPage() {
         </div>
       )}
 
-      {/* Registration Type Selection Modal */}
-      {showRegModal && (
-        <div className="modal-overlay" onClick={() => setShowRegModal(false)}>
-          <div className="reg-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="reg-modal-header">
-              <div>
-                <h2 className="reg-modal-title">Vehicle Pass Application</h2>
-                <p className="reg-modal-subtitle">Select your registrant type to begin</p>
-              </div>
-              <button className="reg-modal-close" onClick={() => setShowRegModal(false)}>
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Registration window notice */}
-            {regStatusLoading ? (
-              <div className="reg-status-loading">Checking registration status…</div>
-            ) : regStatus ? (
-              <div className={`reg-window-notice ${regStatus.is_open ? 'open' : 'closed'}`}>
-                <Info size={14} />
-                {regStatus.is_open ? (
-                  <span>
-                    <strong>Registration is currently open.</strong> Window: {regStatus.open_date} – {regStatus.close_date}
-                  </span>
-                ) : (
-                  <span>
-                    <strong>Registration is currently closed.</strong> The next window opens approximately on {regStatus.open_date}.
-                    You may still fill out the form but submission will not be accepted outside the registration period.
-                  </span>
-                )}
-              </div>
-            ) : null}
-
-            <div className="reg-type-list">
-              {REGISTRATION_TYPES.map(t => (
-                <button
-                  key={t.id}
-                  className="reg-type-item"
-                  onClick={() => handleSelectType(t.id)}
-                  disabled={regStatus && !regStatus.is_open}
-                >
-                  <div className="reg-type-icon">{t.icon}</div>
-                  <div className="reg-type-text">
-                    <span className="reg-type-label">{t.label}</span>
-                    <span className="reg-type-desc">{t.description}</span>
-                  </div>
-                  <ChevronRight size={16} className="reg-type-arrow" />
-                </button>
-              ))}
-            </div>
-
-            <p className="reg-modal-note">
-              Registration opens 2 months before the school year and closes during the first semester.
-              Dates are tentative and subject to change.
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
