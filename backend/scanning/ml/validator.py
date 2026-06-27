@@ -30,6 +30,8 @@ PH_PLATE_PATTERNS = [
 
 def is_valid_ph_plate(text: str) -> bool:
     cleaned = normalize_plate(text)
+    if len(cleaned) < 4:   # shortest real PH plate is 4 chars (old motorcycle)
+        return False
     return any(p.match(cleaned) for p in PH_PLATE_PATTERNS)
 
 def normalize_plate(text: str) -> str:

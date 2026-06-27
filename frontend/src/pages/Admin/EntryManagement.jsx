@@ -514,8 +514,6 @@ export default function EntryManagement() {
                           <div className="em-scan-inner" />
                           {!wsScanning && <div className="em-scan-line" />}
                       </div>
-                      {flashState && <div className="em-flash" />}
-
                       <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                         {webcams.find(c => c.id === activeCamId)?.name}
                       </div>
@@ -568,7 +566,6 @@ export default function EntryManagement() {
                           />
                         </div>
                       ))}
-                      {rtspFlash && <div className="em-flash" style={{ position: 'absolute', inset: 0 }} />}
                       {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
                         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
                           <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.15)' }} />
@@ -622,7 +619,6 @@ export default function EntryManagement() {
               uploadFile ? (
                 <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                  {flashState && <div className="em-flash" />}
                   {/* Bounding Box overlays */}
                   {bbox && bbox.length > 0 && bbox.map((b, i) => {
                     const isAbsolute = b.x > 1 || b.y > 1;

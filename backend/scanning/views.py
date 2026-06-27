@@ -383,3 +383,39 @@ class ExitLogView(APIView):
             'entry_scanned_at': entry_scanned_at,
             'scanned_at':      exit_log.scanned_at,
         })
+
+
+class TestRtspView(APIView):
+    """Quick probe: tries to open an RTSP URL and read one frame, returns ok/message."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import cv2, os, concurrent.futures
+        rtsp_url = (request.data.get('rtsp_url') or '').strip()
+        if not rtsp_url.lower().startswith('rtsp://'):
+            return Response({'ok': False, 'message': 'URL must start with rtsp://'}, status=400)
+
+        def _probe():
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
+                'rtsp_transport;tcp|buffer_size;0|max_delay;0|stimeout;5000000'
+            )
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                cap.release()
+                return False, 'Cannot connect — verify the URL, credentials, and that the camera is on the same network as this server.'
+            ret, _ = cap.read()
+            cap.release()
+            if ret:
+                return True, 'Camera connected and streaming successfully.'
+            return False, 'Reached the camera but received no frames — check stream path or encoding settings.'
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(_probe)
+            try:
+                ok, msg = future.result(timeout=15)
+            except concurrent.futures.TimeoutError:
+                ok, msg = False, 'Connection timed out (15 s) — camera is unreachable from this server.'
+            except Exception as e:
+                ok, msg = False, f'Error: {e}'
+
+        return Response({'ok': ok, 'message': msg})

@@ -55,12 +55,19 @@ _TO_LETTER = str.maketrans({
 
 def _correct_plate_chars(text: str) -> str:
     """Correct common OCR misreads for Philippine plates — position-aware."""
+    import re as _re
     text = text.replace('_', '').replace('+', '').replace('.', '')
     text = text.upper()
-    
-    if is_valid_ph_plate(normalize_plate(text)):
+
+    clean = normalize_plate(text)
+    # Pure-digit plates (all numbers, no letters) are almost always misreads of mixed
+    # letter+digit plates for this use-case (motorcycle/car on a college campus).
+    # Diplomatic plates (7 digits) are extremely rare, so don't early-return for them —
+    # instead fall through to layout correction which may produce a better candidate.
+    _is_pure_digits = bool(_re.match(r'^[0-9]+$', clean))
+    if is_valid_ph_plate(clean) and not _is_pure_digits:
         return text
-    
+
     to_digit = str.maketrans({
         'B': '8', 'O': '0', 'I': '1', 'L': '1', 'Z': '2', 'S': '5',
         'G': '6', 'Q': '9', 'U': '0', 'D': '0', 'A': '4', 'R': '2',
@@ -73,8 +80,6 @@ def _correct_plate_chars(text: str) -> str:
     letter_fix = str.maketrans({
         'H': 'M', 'W': 'M',
     })
-    
-    clean = normalize_plate(text)
     
     layouts = [
         # ── 7-char ───────────────────────────────────
@@ -134,7 +139,17 @@ def _correct_plate_chars(text: str) -> str:
             translated = clean[:i] + clean[i:i+1].translate(trans_table) + clean[i+1:]
             if is_valid_ph_plate(normalize_plate(translated)):
                 return translated
-    
+
+    # If OCR produced a pure-digit result longer than 6 chars, try substrings of
+    # length 6 with layout correction — OCR often inserts extra noise characters.
+    if _is_pure_digits and len(clean) >= 7:
+        for start in range(len(clean) - 5):
+            substr = clean[start:start + 6]
+            corrected = _correct_plate_chars(substr)
+            cn = normalize_plate(corrected)
+            if is_valid_ph_plate(cn) and not _re.match(r'^[0-9]+$', cn):
+                return cn
+
     return text
 
 
@@ -378,34 +393,86 @@ def _combine_lmr_text(texts: dict[str, str]) -> str:
     return ''
 
 
+def _to_bw(img: np.ndarray) -> np.ndarray:
+    """
+    Convert a BGR plate crop to a clean black-and-white binary image.
+
+    Uses HSV white-region extraction first (best for Philippine green plates
+    with white text), then falls back to CLAHE + Otsu if the HSV mask is too
+    sparse (e.g. yellow, red, or heavily shadowed plates).
+    """
+    if len(img.shape) == 2:
+        gray = img
+    else:
+        # HSV approach: isolate white text/background (low saturation, decent brightness)
+        # V threshold lowered to 140 to handle nighttime / underexposed RTSP frames.
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        white_mask = cv2.inRange(hsv, (0, 0, 140), (180, 80, 255))
+        # If at least 3% of pixels are "white" the HSV mask is usable
+        if white_mask.sum() > img.shape[0] * img.shape[1] * 0.03 * 255:
+            return white_mask
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+    gray = cl.apply(gray)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return bw
+
+
 def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] | tuple[None, None]:
     """
     Run EasyOCR on a cropped plate image.
 
-    Generates multiple augmented variants and ranks results.
+    Converts the crop to black-and-white first, then scans.
+    Falls back to inverted B&W if the normal pass finds nothing.
     Returns (normalized_plate, confidence) or (None, None) on failure.
     """
-    MIN_WIDTH = 400
+    MIN_WIDTH = 640
     h_crop, w_crop = crop.shape[:2]
 
     if w_crop < MIN_WIDTH:
         scale = MIN_WIDTH / max(w_crop, 1)
-        crop = cv2.resize(
-            crop, (MIN_WIDTH, max(int(h_crop * scale), 80)),
-            interpolation=cv2.INTER_CUBIC,
-        )
-        log.info("[OCR-CROP] Upscaled crop to %dx%d", crop.shape[1], crop.shape[0])
+        new_w = MIN_WIDTH
+        new_h = max(int(h_crop * scale), 80)
+        crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        # Sharpen after upscale to restore edge crispness lost during interpolation
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+        crop = cv2.filter2D(crop, -1, kernel)
+        log.info("[OCR-CROP] Upscaled crop to %dx%d (scale=%.2f)", crop.shape[1], crop.shape[0], scale)
 
     deskewed = _deskew_plate(crop, aspect_ratio)
     ocr = _get_ocr()
 
-    def _run_ocr(img, label):
-        if img is None or getattr(img, "size", 0) == 0:
+    # Convert to B&W variants fed to EasyOCR
+    bw     = _to_bw(deskewed)
+    bw_inv = cv2.bitwise_not(bw)
+    _gray  = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
+    # CLAHE-sharpened — good for faded / low-contrast plates
+    _cl         = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    _cl_applied = _cl.apply(_gray)
+    clahe_sharp = cv2.addWeighted(_cl_applied, 1.5,
+                                  cv2.GaussianBlur(_cl_applied, (3, 3), 0), -0.5, 0)
+    # Adaptive threshold — handles uneven lighting across the plate (night / shadows)
+    _denoised = cv2.medianBlur(_gray, 3)
+    adaptive  = cv2.adaptiveThreshold(
+        _denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10
+    )
+    # Bilateral + Otsu — edge-preserving denoise before threshold (good for RTSP compression artifacts)
+    _bilateral = cv2.bilateralFilter(_gray, 9, 75, 75)
+    _, bilateral_bw = cv2.threshold(_bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Gamma-brightened — lifts underexposed nighttime frames so Otsu gets a cleaner histogram
+    _gamma_lut = np.array([min(255, int(255 * ((i / 255.0) ** (1.0 / 1.8)))) for i in range(256)], dtype=np.uint8)
+    _gamma_gray = cv2.LUT(_gray, _gamma_lut)
+    _, gamma_bw  = cv2.threshold(_gamma_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+
+    def _run_ocr(img: np.ndarray, label: str):
+        if img is None or img.size == 0:
             return
         allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
         raw = ocr.readtext(
-            img, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5,
-            allowlist=allowlist,
+            img, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0,
+            allowlist=allowlist, adjust_contrast=0.7, min_size=15,
         )
         log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
         combined_text, avg_conf = combine_multiline_text(raw)
@@ -416,31 +483,16 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
                 valid = is_valid_ph_plate(corrected)
                 conf = float(avg_conf)
                 if valid:
-                    conf *= 1.15
-                    conf = min(conf, 1.0)
+                    conf = min(conf * 1.15, 1.0)
                 log.info("[OCR-CROP]   %s: '%s' -> '%s' conf=%.3f valid=%s",
                          label, text_clean, corrected, conf, valid)
                 yield corrected, conf, valid
 
     candidates: list[tuple[float, str]] = []
-    fallback: list[tuple[float, str]] = []
+    fallback:   list[tuple[float, str]] = []
 
-    gray = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
-    binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    # Inverted binary — handles plates where characters are lighter than background
-    binary_inv = cv2.bitwise_not(binary)
-    # CLAHE-sharpened — improves contrast on dim, faded, or shadowed plates
-    _cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    clahe_gray = _cl.apply(gray)
-    clahe_sharp = cv2.addWeighted(clahe_gray, 1.5,
-                                  cv2.GaussianBlur(clahe_gray, (3, 3), 0), -0.5, 0)
-    base_variants: list[tuple[np.ndarray, str]] = [
-        (cv2.cvtColor(binary,      cv2.COLOR_GRAY2BGR), "binary"),
-        (cv2.cvtColor(binary_inv,  cv2.COLOR_GRAY2BGR), "binary_inv"),
-        (cv2.cvtColor(clahe_sharp, cv2.COLOR_GRAY2BGR), "clahe"),
-    ]
-
-    for img_v, label in base_variants:
+    _variants = [(bw, "bw"), (bw_inv, "bw_inv"), (clahe_sharp, "clahe"), (adaptive, "adaptive"), (bilateral_bw, "bilateral"), (gamma_bw, "gamma")]
+    for img_v, label in _variants:
         for text, conf, valid in _run_ocr(img_v, label):
             if valid and conf > 0.08:
                 candidates.append((conf, text))
@@ -450,66 +502,49 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
             elif conf > 0.05:
                 fallback.append((conf, text))
 
-    h_img, w_img = deskewed.shape[:2]
+    # L/M/R tiled pass — helps when text is split across regions
+    h_img, w_img = bw.shape[:2]
     if w_img > 90:
-        third = w_img // 3
+        third      = w_img // 3
         two_thirds = 2 * third
         lmr_texts: dict[str, str] = {}
-        for img_v, label in base_variants:
-            variants_l = [
+        for img_v, label in _variants:
+            for sv, sl in [
                 (img_v[:, :third],          f"{label}_L"),
                 (img_v[:, third:two_thirds],f"{label}_M"),
                 (img_v[:, two_thirds:],     f"{label}_R"),
-            ]
-            for sv, sl in variants_l:
+            ]:
                 for text, conf, valid in _run_ocr(sv, sl):
                     if valid and conf > 0.08:
                         candidates.append((conf, text))
                     elif conf > 0.05:
                         fallback.append((conf, text))
-                    if sl.endswith('_L') and text:
-                        lmr_texts['L'] = lmr_texts.get('L', '') + text
-                    elif sl.endswith('_M') and text:
-                        lmr_texts['M'] = lmr_texts.get('M', '') + text
-                    elif sl.endswith('_R') and text:
-                        lmr_texts['R'] = lmr_texts.get('R', '') + text
-        
+                    region = sl.split("_")[-1]
+                    if text:
+                        lmr_texts[region] = lmr_texts.get(region, "") + text
+
         combined = _combine_lmr_text(lmr_texts)
         if combined and is_valid_ph_plate(normalize_plate(combined)):
             log.info("[OCR-CROP] Valid combined LMR: '%s'", combined)
             return normalize_plate(combined), 0.5
 
-    if candidates:
-        candidates.sort(reverse=True)
+    for pool in (candidates, fallback):
+        if not pool:
+            continue
+        pool.sort(reverse=True)
         by_text: dict[str, float] = {}
-        for conf, text in candidates:
+        for conf, text in pool:
             by_text[text] = max(by_text.get(text, 0.0), conf)
-        best_text = max(by_text.items(), key=lambda x: x[1])
-        if is_valid_ph_plate(best_text[0]):
-            log.info("[OCR-CROP] Best valid: '%s' (conf=%.3f)", best_text[0], best_text[1])
-            return best_text[0], best_text[1]
-        for candidate in extract_plate_candidates(best_text[0]):
+        best_text, best_conf = max(by_text.items(), key=lambda x: x[1])
+        if is_valid_ph_plate(best_text):
+            log.info("[OCR-CROP] Best valid: '%s' (conf=%.3f)", best_text, best_conf)
+            return best_text, best_conf
+        for candidate in extract_plate_candidates(best_text):
             if is_valid_ph_plate(candidate):
                 log.info("[OCR-CROP] Valid plate from candidate: '%s'", candidate)
-                return candidate, best_text[1]
-        log.info("[OCR-CROP] Best fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
-        return best_text[0], best_text[1]
-
-    if fallback:
-        fallback.sort(reverse=True)
-        by_text = {}
-        for conf, text in fallback:
-            by_text[text] = max(by_text.get(text, 0.0), conf)
-        best_text = max(by_text.items(), key=lambda x: x[1])
-        if is_valid_ph_plate(best_text[0]):
-            log.info("[OCR-CROP] Valid fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
-            return best_text[0], best_text[1]
-        for candidate in extract_plate_candidates(best_text[0]):
-            if is_valid_ph_plate(candidate):
-                log.info("[OCR-CROP] Valid plate from fallback candidate: '%s'", candidate)
-                return candidate, best_text[1]
-        log.info("[OCR-CROP] Best fallback: '%s' (conf=%.3f)", best_text[0], best_text[1])
-        return best_text[0], best_text[1]
+                return candidate, best_conf
+        log.info("[OCR-CROP] Best (invalid): '%s' (conf=%.3f)", best_text, best_conf)
+        return best_text, best_conf
 
     raw_text, raw_conf = _run_raw_ocr_fallback(crop)
     if raw_text:
@@ -530,7 +565,7 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
     up = cv2.resize(bw, (int(bw.shape[1] * scale), int(bw.shape[0] * scale)), interpolation=cv2.INTER_CUBIC)
     try:
         ocr = _get_ocr()
-        raw = ocr.readtext(up, text_threshold=0.15, link_threshold=0.15, low_text=0.05, mag_ratio=1.5)
+        raw = ocr.readtext(up, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0, adjust_contrast=0.7, min_size=15)
         log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(raw))
         candidates: list[tuple[float, str]] = []
         for item in raw:

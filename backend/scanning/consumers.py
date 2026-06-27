@@ -22,9 +22,9 @@ FRAME_RATE_LIMIT_MS = 100
 _DEFAULT_DEDUP_SECONDS = 30  # fallback used if DB is unavailable at connect time
 
 # Per-track OCR accumulation settings
-_OCR_LOCK_CONF    = 0.60   # lock immediately if any single read reaches this
+_OCR_LOCK_CONF    = 0.50   # lock immediately if any single read reaches this
 _OCR_MIN_CONF     = 0.08   # minimum confidence to count a read — low to handle noisy vehicle crops
-_OCR_MAX_ATTEMPTS = 8      # more attempts before force-locking, helps accumulate votes
+_OCR_MAX_ATTEMPTS = 15     # more attempts before force-locking, helps accumulate votes
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
@@ -219,12 +219,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_w = w
         self._last_img_h = h
 
-        # Skip rotation passes once every active track already has a locked plate —
-        # saves up to 6 extra YOLO passes per frame on CPU.
-        all_plates_locked = bool(self._tracker.tracks) and all(
-            t.ocr_done for t in self._tracker.tracks.values()
-            if t.class_name == "license_plate"
-        )
+        # Skip rotation passes only when every *plate-class* track is already locked.
+        # Previously used all() on an empty iterable (when only vehicle tracks exist),
+        # which returned True and incorrectly disabled rotation before any plate was found.
+        plate_tracks = [t for t in self._tracker.tracks.values()
+                        if t.class_name == "license_plate"]
+        all_plates_locked = bool(plate_tracks) and all(t.ocr_done for t in plate_tracks)
         detections = detect_plates(img, try_rotation=not all_plates_locked)
 
         result = []
@@ -328,6 +328,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "result", "results": [enriched]})
         except Exception as db_exc:
             logger.error("[WS] DB error for plate %s: %s", plate_text, db_exc)
+            self._plate_cache[plate_text] = (time.time(), {"plate_number": plate_text, "error": True})
 
     # ── process tracks that already have plate text ────────────────────────────
 
@@ -375,6 +376,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 results.append(enriched)
             except Exception as exc:
                 logger.error("[WS] Vehicle check failed for %s: %s", plate_number, exc)
+                # Cache the failure so we don't retry every frame and spam the log
+                self._plate_cache[plate_number] = (time.time(), {"plate_number": plate_number, "error": True})
 
         if results:
             await sync_to_async(self._record_ml_sample)(None, results)
@@ -421,7 +424,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
 
-        vehicle = Vehicle.objects.select_related("owner").filter(
+        vehicle = Vehicle.objects.select_related("user").filter(
             plate_number=plate_number
         ).first()
 
@@ -563,6 +566,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_w            = 1280
         self._last_img_h            = 720
         self._stream_task           = None
+        self._dedup_seconds         = _DEFAULT_DEDUP_SECONDS
 
         await self.accept()
         logger.info("[RTSP] Connected: user=%s", self._user)
@@ -873,10 +877,9 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_w = w
         self._last_img_h = h
 
-        all_plates_locked = bool(self._tracker.tracks) and all(
-            t.ocr_done for t in self._tracker.tracks.values()
-            if t.class_name == "license_plate"
-        )
+        plate_tracks = [t for t in self._tracker.tracks.values()
+                        if t.class_name == "license_plate"]
+        all_plates_locked = bool(plate_tracks) and all(t.ocr_done for t in plate_tracks)
         detections = detect_plates(img, try_rotation=not all_plates_locked)
 
         out = []
