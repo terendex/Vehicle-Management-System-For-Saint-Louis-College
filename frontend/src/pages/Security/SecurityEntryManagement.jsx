@@ -4,14 +4,14 @@ import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, ShieldCheck, Video, Plus,
-  Shield, Wifi, Link2
+  Shield, Wifi, Zap
 } from 'lucide-react'
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
-import { getAccessLogs, getOffices, createVisitorPass, scanPlate } from '../../api/scanning'
+import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry, logExit } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
-import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
+import { getRuleConstraints, getVehicleTypeAccess, getSystemSettings } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
@@ -102,9 +102,71 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   )
 }
 
+// ─── OverrideModal ────────────────────────────────────────────────────────────
+function OverrideModal({ plate, onClose, onOverridden }) {
+  const [reason, setReason]   = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!reason.trim()) { toast.error('Please provide a reason for the override.'); return }
+    setLoading(true)
+    try {
+      await overrideEntry({ plate_number: plate, reason })
+      toast.success(`Entry override logged for ${plate}.`)
+      onOverridden()
+      onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Override failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><Shield size={17} /> Override Entry</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="em-modal-body">
+            <div className="em-field">
+              <label className="em-label">License Plate</label>
+              <input className="em-input" value={plate} readOnly />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Override Reason</label>
+              <textarea
+                className="em-textarea"
+                placeholder="e.g. Event day — general admission, special clearance…"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={3}
+                required
+              />
+            </div>
+            <p style={{ margin: 0, fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+              This override will be logged in the audit trail.
+            </p>
+          </div>
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading} style={{ background: '#d97706', borderColor: '#d97706' }}>
+              {loading ? <><div className="em-spinner" /> Overriding…</> : 'Confirm Override'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── ResultCard ───────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated }) {
-  const [showModal, setShowModal] = useState(false)
+function ResultCard({ result, offices, onPassCreated, onOverride }) {
+  const [showModal, setShowModal]         = useState(false)
+  const [showOverride, setShowOverride]   = useState(false)
 
   if (!result) {
     return (
@@ -123,7 +185,8 @@ function ResultCard({ result, offices, onPassCreated }) {
 
   const { Icon, label, cls } = getMeta(result.status)
   const owner = result.owner ?? result.vehicle?.owner
-  const isVisitor = result.status === 'unknown' || result.status === 'no_pass'
+  const isVisitor   = result.status === 'unknown' || result.status === 'no_pass'
+  const isDeniable  = result.status === 'denied' || result.status === 'wrong_day' || result.status === 'disabled'
 
   return (
     <>
@@ -173,13 +236,32 @@ function ResultCard({ result, offices, onPassCreated }) {
                   </span>
                 </div>
               )}
+              {result.already_inside && (
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Warning</span>
+                  <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+                    <AlertTriangle size={10} /> Already inside — no exit logged
+                  </span>
+                </div>
+              )}
             </div>
           )}
-          {isVisitor && (
-            <button className="em-btn em-btn-secondary" style={{ width: '100%', marginTop: 4 }} onClick={() => setShowModal(true)}>
-              <UserPlus size={14} /> Create Visitor Pass
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: 6, marginTop: 4, flexDirection: 'column' }}>
+            {isVisitor && (
+              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowModal(true)}>
+                <UserPlus size={14} /> Create Visitor Pass
+              </button>
+            )}
+            {isDeniable && (
+              <button
+                className="em-btn"
+                style={{ width: '100%', background: '#d97706', color: '#fff', border: 'none', justifyContent: 'center' }}
+                onClick={() => setShowOverride(true)}
+              >
+                <Shield size={14} /> Override Entry
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -189,6 +271,14 @@ function ResultCard({ result, offices, onPassCreated }) {
           offices={offices}
           onClose={() => setShowModal(false)}
           onCreated={onPassCreated}
+        />
+      )}
+
+      {showOverride && (
+        <OverrideModal
+          plate={result.plate_number}
+          onClose={() => setShowOverride(false)}
+          onOverridden={() => { onOverride?.(); setShowOverride(false) }}
         />
       )}
     </>
@@ -233,6 +323,45 @@ export default function SecurityEntryManagement() {
   const [loadingVehicles, setLoadingVehicles] = useState(true)
   const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId]   = useState(1)
+  const [eventMode, setEventMode]       = useState(false)  // read-only, fetched from backend
+  const [exitPlate, setExitPlate]       = useState('')
+  const [exitResult, setExitResult]     = useState(null)
+  const [exitLoading, setExitLoading]   = useState(false)
+
+  const DENIED_STATUSES = ['denied', 'wrong_day', 'disabled']
+
+  const handleRecordExit = async (e) => {
+    e.preventDefault()
+    const plate = exitPlate.trim().toUpperCase()
+    if (!plate) return
+    setExitLoading(true)
+    try {
+      const res = await logExit({ plate_number: plate })
+      setExitResult(res.data)
+      setExitPlate('')
+      const dur = res.data.duration_minutes
+      toast.success(
+        dur != null
+          ? `Exit recorded for ${plate} — inside for ${dur} min.`
+          : `Exit recorded for ${plate}.`
+      )
+      getAccessLogs({ limit: 20 }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record exit.')
+    } finally {
+      setExitLoading(false)
+    }
+  }
+
+  const autoOverride = async (plate) => {
+    try {
+      await overrideEntry({ plate_number: plate, reason: 'Event mode — automatic override' })
+    } catch {
+      // silent; event mode overrides are best-effort
+    }
+  }
+
+
   const webcamRefs = useRef({})
   const fileInputRef = useRef(null)
 
@@ -252,7 +381,6 @@ export default function SecurityEntryManagement() {
     setActiveCamId:  setRtspActiveCam,
     activeCam:       rtspActiveCam,
     addCamera:       addRtspCamera,
-    removeCamera:    removeRtspCamera,
     disconnectAll:   disconnectAllRtsp,
     results:         rtspResults,
     flash:           rtspFlash,
@@ -271,6 +399,11 @@ export default function SecurityEntryManagement() {
       setVehicleTypes((r.data?.results ?? r.data ?? []).filter(v => v.enabled))
       setLoadingVehicles(false)
     }).catch(() => setLoadingVehicles(false))
+    getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
+    const settingsPoll = setInterval(() => {
+      getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
+    }, 15000)
+    return () => clearInterval(settingsPoll)
   }, [])
 
   // ── WS plate results → display + log ───────────────────────────────────────
@@ -279,6 +412,9 @@ export default function SecurityEntryManagement() {
     setDisplayResult(wsResults)
     setCooldown(true)
     setTimeout(() => setCooldown(false), 5000)
+    if (eventMode) {
+      wsResults.forEach(r => { if (DENIED_STATUSES.includes(r.status)) autoOverride(r.plate_number) })
+    }
     setLogs((prev) => {
       const newLogs = wsResults.map(r => ({
         id: Date.now() + Math.random(),
@@ -288,7 +424,7 @@ export default function SecurityEntryManagement() {
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
-  }, [wsResults])
+  }, [wsResults]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── RTSP results (any camera) → display + log ──────────────────────────────
   useEffect(() => {
@@ -296,6 +432,9 @@ export default function SecurityEntryManagement() {
     setDisplayResult(rtspResults)
     setCooldown(true)
     setTimeout(() => setCooldown(false), 5000)
+    if (eventMode) {
+      rtspResults.forEach(r => { if (DENIED_STATUSES.includes(r.status)) autoOverride(r.plate_number) })
+    }
     setLogs((prev) => {
       const newLogs = rtspResults.map(r => ({
         id: Date.now() + Math.random(),
@@ -305,24 +444,22 @@ export default function SecurityEntryManagement() {
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
-  }, [rtspResults])
+  }, [rtspResults]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Load entry cameras from Device Management (DB only) ──────────────────────
+  // ── Load entry cameras from Device Management (DB) when RTSP mode is opened ──
   useEffect(() => {
+    if (mode !== 'rtsp') return
+    if (rtspCameras.length > 0) return
     camerasApi.list({ assignment: 'entry' })
       .then(cams => cams.forEach(c => addRtspCamera(c.name, c.rtsp_url)))
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handlers ───────────────────────────────────────────────────────────────────
   const handleRtspDisconnectAll = () => {
     disconnectAllRtsp()
     setCooldown(false)
     setDisplayResult(null)
-  }
-
-  const handleRemoveRtspCam = (camId) => {
-    removeRtspCamera(camId)
   }
 
   const addWebcam = () => {
@@ -412,16 +549,33 @@ export default function SecurityEntryManagement() {
               Scan license plates — entry is decided automatically based on registration and schedule.
             </p>
           </div>
-          {cameraOn ? (
-            <div className={`em-live-badge ${connected ? '' : 'connecting'}`}>
-              <span className="em-live-dot" />
-              {connected ? 'LIVE' : 'CONNECTING…'}
-            </div>
-          ) : (
-            <div className="em-live-badge offline">
-              <span className="em-live-dot" /> OFFLINE
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 13px', borderRadius: 20, border: '1.5px solid',
+                fontSize: 11.5, fontWeight: 700, userSelect: 'none',
+                background: eventMode ? '#16a34a' : '#f3f4f6',
+                color:      eventMode ? '#fff'    : '#9ca3af',
+                borderColor: eventMode ? '#16a34a' : '#e5e7eb',
+                letterSpacing: 0.3,
+              }}
+              title={eventMode ? 'Event mode is ON — denied scans are auto-overridden. Controlled by admin.' : 'Event mode is OFF. Controlled by admin.'}
+            >
+              <Shield size={13} />
+              {eventMode ? 'EVENT MODE ON' : 'EVENT MODE OFF'}
+            </span>
+            {cameraOn ? (
+              <div className={`em-live-badge ${connected ? '' : 'connecting'}`}>
+                <span className="em-live-dot" />
+                {connected ? 'LIVE' : 'CONNECTING…'}
+              </div>
+            ) : (
+              <div className="em-live-badge offline">
+                <span className="em-live-dot" /> OFFLINE
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Main grid */}
@@ -588,11 +742,6 @@ export default function SecurityEntryManagement() {
                         <div className="em-cam-thumb-label">{cam.name}</div>
                         {/* Status dot */}
                         <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280', display: 'inline-block' }} />
-                        <div className="em-cam-thumb-actions">
-                          <button className="em-cam-delete" onClick={e => { e.stopPropagation(); handleRemoveRtspCam(cam.id) }} title="Disconnect">
-                            <X size={12} />
-                          </button>
-                        </div>
                       </div>
                     ))}
                   </div>
@@ -649,18 +798,22 @@ export default function SecurityEntryManagement() {
                   </button>
                 )
               ) : mode === 'rtsp' ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-                  <div className={`em-autoscan-status ${rtspCameras.some(c => c.streamConnected) ? '' : 'cooldown'}`} style={{ flex: 1 }}>
-                    {rtspCameras.length === 0
-                      ? <><Video size={13} /> No entry cameras configured — add them in Device Management</>
-                      : rtspCameras.some(c => c.streamConnected)
-                        ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
-                        : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>}
-                  </div>
-                  {rtspCameras.length > 0 && (
-                    <button className="em-btn em-btn-danger" onClick={handleRtspDisconnectAll}>
-                      <Link2 size={14} /> Disconnect All
-                    </button>
+                <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'center' }}>
+                  {rtspCameras.length === 0 ? (
+                    <div className="em-autoscan-status" style={{ flex: 1, justifyContent: 'center', color: '#6b7280' }}>
+                      <Video size={13} /> No entry cameras configured — add them in Device Management
+                    </div>
+                  ) : (
+                    <>
+                      <div className={`em-autoscan-status ${rtspCameras.some(c => c.streamConnected) ? 'scanning' : ''}`} style={{ flex: 1 }}>
+                        {rtspCameras.some(c => c.streamConnected)
+                          ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
+                          : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>}
+                      </div>
+                      <button className="em-btn em-btn-danger" onClick={handleRtspDisconnectAll}>
+                        <CameraOff size={14} /> Disconnect All
+                      </button>
+                    </>
                   )}
                 </div>
               ) : (
@@ -690,11 +843,17 @@ export default function SecurityEntryManagement() {
             {displayResult?.length > 0 ? (
               <div className="em-results-stack">
                 {displayResult.map((r, idx) => (
-                  <ResultCard key={`result-${idx}-${r.plate_number}`} result={r} offices={offices} onPassCreated={handlePassCreated} />
+                  <ResultCard
+                    key={`result-${idx}-${r.plate_number}`}
+                    result={r}
+                    offices={offices}
+                    onPassCreated={handlePassCreated}
+                    onOverride={handlePassCreated}
+                  />
                 ))}
               </div>
             ) : (
-              <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} />
+              <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} onOverride={handlePassCreated} />
             )}
 
             {/* Entry rules */}
@@ -745,6 +904,37 @@ export default function SecurityEntryManagement() {
                       </div>
                     )
                   })
+                )}
+              </div>
+            </div>
+
+            {/* Record Exit */}
+            <div className="em-card">
+              <div className="em-card-head">
+                <span className="em-card-label"><CheckCircle size={14} /> Record Exit</span>
+              </div>
+              <div style={{ padding: '10px 14px' }}>
+                <form onSubmit={handleRecordExit} style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    value={exitPlate}
+                    onChange={e => setExitPlate(e.target.value)}
+                    placeholder="Plate number…"
+                    style={{ flex: 1, padding: '6px 10px', border: '1.5px solid #E2E6EE', borderRadius: 7, fontSize: 13, outline: 'none' }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={exitLoading || !exitPlate.trim()}
+                    className="em-btn em-btn-primary"
+                    style={{ padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap' }}
+                  >
+                    {exitLoading ? '…' : 'Log Exit'}
+                  </button>
+                </form>
+                {exitResult && (
+                  <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
+                    <strong>{exitResult.plate_number}</strong> exited
+                    {exitResult.duration_minutes != null && <span> · inside <strong>{exitResult.duration_minutes} min</strong></span>}
+                  </div>
                 )}
               </div>
             </div>

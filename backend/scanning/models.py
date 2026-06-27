@@ -58,8 +58,15 @@ class AccessLog(models.Model):
     vehicle_type   = models.CharField(max_length=20, blank=True)
     digital_id_used = models.CharField(max_length=50, blank=True)
     status         = models.CharField(max_length=20, choices=Status.choices)
-    gate_id        = models.CharField(max_length=50, default='main')
-    denied_reason  = models.CharField(max_length=255, blank=True)
+    gate_id         = models.CharField(max_length=50, default='main')
+    denied_reason   = models.CharField(max_length=255, blank=True)
+    is_override     = models.BooleanField(default=False)
+    override_reason = models.CharField(max_length=255, blank=True)
+    paired_entry    = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='exit_log',
+        help_text="For exit logs: points to the matching entry log.",
+    )
     snapshot       = models.ImageField(upload_to='snapshots/', blank=True)
     scanned_at     = models.DateTimeField(auto_now_add=True)
     scanned_by     = models.ForeignKey(

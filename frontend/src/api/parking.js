@@ -73,6 +73,11 @@ export const zoneApi = {
     return data
   },
 
+  setCapacity: async (id, capacity_override) => {
+    const { data } = await api.patch(`/vehicles/parking-zones/${id}/set-capacity/`, { capacity_override })
+    return data
+  },
+
   // ── IP Camera ────────────────────────────────────────────────────
   startCamera: async (id) => {
     const { data } = await api.post(`/vehicles/parking-zones/${id}/start-camera/`)

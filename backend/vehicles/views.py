@@ -10,8 +10,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rest_framework import status as drf_status
-from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera
-from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice
+from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
 from . import parking_camera
 
 class VehicleViewSet(viewsets.ModelViewSet):
@@ -95,6 +95,23 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
             result.append(space)
 
         return Response(ParkingSpaceSerializer(result, many=True).data)
+
+    @action(detail=True, methods=['patch'], url_path='set-capacity')
+    def set_capacity(self, request, pk=None):
+        """Guard/admin sets (or clears) the event-mode capacity override for a zone."""
+        zone = self.get_object()
+        value = request.data.get('capacity_override')
+        if value is None or str(value).strip() == '':
+            zone.capacity_override = None
+        else:
+            try:
+                zone.capacity_override = int(value)
+                if zone.capacity_override < 0:
+                    return Response({'error': 'Capacity must be a non-negative integer.'}, status=400)
+            except (TypeError, ValueError):
+                return Response({'error': 'Capacity must be a number.'}, status=400)
+        zone.save(update_fields=['capacity_override'])
+        return Response(self.get_serializer(zone).data)
 
     # ── IP Camera ──────────────────────────────────────────────────────────────
 
@@ -653,6 +670,7 @@ class ParkingAvailabilityView(APIView):
             qs = qs.filter(zone__vehicle_category=category)
         spaces = ParkingSpaceSerializer(qs, many=True).data
         summary = {}
+        zone_agg = {}  # zone_id -> {name, category, total, occupied}
         for s in spaces:
             cat = s['vehicle_category']
             if cat not in summary:
@@ -662,4 +680,167 @@ class ParkingAvailabilityView(APIView):
                 summary[cat]['occupied'] += 1
             else:
                 summary[cat]['available'] += 1
-        return Response({"spaces": spaces, "summary": summary})
+            # per-zone aggregation
+            zid = s['zone']
+            if zid not in zone_agg:
+                zone_obj = ParkingZone.objects.filter(pk=zid).first()
+                zone_agg[zid] = {
+                    'zone_id':   zid,
+                    'zone_name': zone_obj.name if zone_obj else str(zid),
+                    'category':  cat,
+                    'total':     0,
+                    'occupied':  0,
+                }
+            zone_agg[zid]['total'] += 1
+            if s['is_occupied']:
+                zone_agg[zid]['occupied'] += 1
+
+        zones = []
+        for z in zone_agg.values():
+            fill_pct = round(z['occupied'] / z['total'] * 100) if z['total'] > 0 else 0
+            zones.append({**z, 'available': z['total'] - z['occupied'], 'fill_pct': fill_pct})
+
+        return Response({"spaces": spaces, "summary": summary, "zones": zones})
+
+
+class SystemSettingsView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated()]
+        return [IsAdminOrCdso()]
+
+    def _serialize(self, obj):
+        return {
+            "retention_years":    obj.retention_years,
+            "scan_dedup_seconds": obj.scan_dedup_seconds,
+            "event_mode_parking": obj.event_mode_parking,
+            "event_mode_entry":   obj.event_mode_entry,
+        }
+
+    def get(self, request):
+        return Response(self._serialize(SystemSettings.get()))
+
+    def put(self, request):
+        obj = SystemSettings.get()
+        errors = {}
+
+        retention_years    = request.data.get("retention_years",    obj.retention_years)
+        scan_dedup_seconds = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
+        event_mode_parking = request.data.get("event_mode_parking", obj.event_mode_parking)
+        event_mode_entry   = request.data.get("event_mode_entry",   obj.event_mode_entry)
+
+        try:
+            retention_years = int(retention_years)
+            if not (1 <= retention_years <= 10):
+                errors["retention_years"] = "Must be between 1 and 10 years."
+        except (TypeError, ValueError):
+            errors["retention_years"] = "Must be an integer."
+
+        try:
+            scan_dedup_seconds = int(scan_dedup_seconds)
+            if not (5 <= scan_dedup_seconds <= 300):
+                errors["scan_dedup_seconds"] = "Must be between 5 and 300 seconds."
+        except (TypeError, ValueError):
+            errors["scan_dedup_seconds"] = "Must be an integer."
+
+        if errors:
+            return Response(errors, status=400)
+
+        obj.retention_years    = retention_years
+        obj.scan_dedup_seconds = scan_dedup_seconds
+        obj.event_mode_parking = bool(event_mode_parking)
+        obj.event_mode_entry   = bool(event_mode_entry)
+        obj.save()
+
+        return Response(self._serialize(obj))
+
+    def patch(self, request):
+        """Lightweight partial update — supports toggling event_mode_parking and/or event_mode_entry."""
+        obj = SystemSettings.get()
+        update_fields = []
+        if 'event_mode_parking' in request.data:
+            obj.event_mode_parking = bool(request.data['event_mode_parking'])
+            update_fields.append('event_mode_parking')
+        if 'event_mode_entry' in request.data:
+            obj.event_mode_entry = bool(request.data['event_mode_entry'])
+            update_fields.append('event_mode_entry')
+        if update_fields:
+            obj.save(update_fields=update_fields)
+        return Response(self._serialize(obj))
+
+
+# ──────────────────────────────────────────────
+# Parking Notices (CDSO/Admin broadcast, owner read)
+# ──────────────────────────────────────────────
+
+class ParkingNoticeView(APIView):
+    def get_permissions(self):
+        return [permissions.IsAuthenticated()]
+
+    def get(self, request):
+        """All authenticated users see active notices."""
+        notices = ParkingNotice.objects.filter(is_active=True)
+        return Response(ParkingNoticeSerializer(notices, many=True).data)
+
+    def post(self, request):
+        """Admin/CDSO create and broadcast a notice to all vehicle owners."""
+        if request.user.role not in ('admin', 'cdso'):
+            return Response({'error': 'Permission denied.'}, status=403)
+
+        serializer = ParkingNoticeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        notice = serializer.save(created_by=request.user)
+
+        # Email blast to all active vehicle owners
+        from accounts.models import User as UserModel
+        from django.core.mail import send_mail
+        from django.conf import settings
+
+        recipients = list(
+            UserModel.objects.filter(role='vehicle_owner', is_active=True)
+            .values_list('email', flat=True)
+        )
+        if recipients:
+            html_msg = f"""
+            <html>
+              <body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;margin:0;">
+                <div style="max-width:580px;margin:0 auto;background:#fff;border-radius:12px;border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
+                  <div style="padding:28px 32px 24px;">
+                    <h2 style="color:#2A2B61;margin:0 0 6px;">Parking Notice</h2>
+                    <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">From the CDSO / SLC Vehicle Management Office</p>
+                    <h3 style="margin:0 0 12px;color:#1A1D2E;">{notice.title}</h3>
+                    <p style="color:#374151;font-size:14px;line-height:1.6;margin:0 0 24px;white-space:pre-line;">{notice.body}</p>
+                  </div>
+                  <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:14px 32px;text-align:center;">
+                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                    <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+            send_mail(
+                subject=f"SLC Parking Notice: {notice.title}",
+                message=f"Parking Notice\n\n{notice.title}\n\n{notice.body}",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=recipients,
+                html_message=html_msg,
+                fail_silently=True,
+            )
+
+        return Response(ParkingNoticeSerializer(notice).data, status=201)
+
+
+class ParkingNoticeDetailView(APIView):
+    def get_permissions(self):
+        return [permissions.IsAuthenticated()]
+
+    def delete(self, request, pk):
+        """Admin/CDSO deactivate (soft-delete) a notice."""
+        if request.user.role not in ('admin', 'cdso'):
+            return Response({'error': 'Permission denied.'}, status=403)
+        notice = get_object_or_404(ParkingNotice, pk=pk)
+        notice.is_active = False
+        notice.save(update_fields=['is_active'])
+        return Response({'message': 'Notice deactivated.'}, status=200)

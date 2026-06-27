@@ -34,5 +34,12 @@ urlpatterns = [
     path('registrations/<int:pk>/accept/', views.AcceptRegistrationView.as_view(),       name='accept-registration'),
     path('registrations/<int:pk>/reject/', views.RejectRegistrationView.as_view(),       name='reject-registration'),
 
+    # System-wide settings (admin / CDSO)
+    path('system-settings/', views.SystemSettingsView.as_view(), name='system-settings'),
+
+    # Parking notices (admin/CDSO broadcast, owner read)
+    path('notices/',          views.ParkingNoticeView.as_view(),       name='parking-notices'),
+    path('notices/<int:pk>/', views.ParkingNoticeDetailView.as_view(), name='parking-notice-detail'),
+
     path('', include(router.urls)),
 ]

@@ -1,0 +1,279 @@
+/* ============================================================
+   VIOLATIONS MANAGEMENT PAGE
+   Palette: SLC Navy #2A2B61 · Background #F0F2F7
+            Card #FFFFFF · Border #E2E6EE · Text #1A1D2E / #5A5F72
+   ============================================================ */
+
+.vm-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  min-height: 100%;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.vm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.vm-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #1A1D2E;
+  margin: 0 0 3px;
+}
+
+.vm-subtitle {
+  font-size: 0.85rem;
+  color: #5A5F72;
+  margin: 0;
+}
+
+.vm-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff7ed;
+  border: 1.5px solid #fed7aa;
+  color: #c2410c;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 5px 13px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────── */
+
+.vm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.vm-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.vm-filter-icon {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.vm-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 13px;
+  border-radius: 20px;
+  border: 1.5px solid #E2E6EE;
+  background: #fff;
+  color: #5A5F72;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vm-filter-btn:hover { background: #F0F2F7; }
+.vm-filter-btn.active {
+  background: #2A2B61;
+  color: #fff;
+  border-color: #2A2B61;
+}
+
+.vm-badge {
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+
+.vm-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1.5px solid #E2E6EE;
+  background: #fff;
+  color: #5A5F72;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.vm-refresh-btn:hover { background: #F0F2F7; color: #2A2B61; }
+
+/* ── Card / Table ─────────────────────────────────────────────── */
+
+.vm-card {
+  background: #fff;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.vm-empty {
+  padding: 2.5rem;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.vm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.vm-table th {
+  background: #F0F2F7;
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 700;
+  color: #5A5F72;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 1.5px solid #E2E6EE;
+}
+
+.vm-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #F0F2F7;
+  color: #1A1D2E;
+  vertical-align: middle;
+}
+
+.vm-table tr:last-child td { border-bottom: none; }
+
+.vm-row-unreleased { background: #fffbeb; }
+.vm-row-resolved   { opacity: 0.55; }
+
+.vm-plate {
+  font-weight: 700;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+  color: #1A1D2E;
+}
+
+.vm-owner { color: #374151; }
+
+.vm-notes {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.vm-time {
+  color: #9ca3af;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* ── Type pills ────────────────────────────────────────────────── */
+
+.vm-type-pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vm-type-no_sticker           { background: #fef9c3; color: #a16207; }
+.vm-type-expired_registration { background: #fee2e2; color: #b91c1c; }
+.vm-type-unauthorized         { background: #fde8d8; color: #c2410c; }
+.vm-type-other                { background: #f3f4f6; color: #374151; }
+
+/* ── Fine tag ──────────────────────────────────────────────────── */
+
+.vm-fine-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── Status badges ─────────────────────────────────────────────── */
+
+.vm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.vm-status-pending  { background: #fff7ed; color: #c2410c; }
+.vm-status-released { background: #eff6ff; color: #1d4ed8; }
+.vm-status-resolved { background: #f0fdf4; color: #15803d; }
+
+/* ── Action buttons ────────────────────────────────────────────── */
+
+.vm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.vm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.vm-btn-release {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+.vm-btn-release:hover:not(:disabled) { background: #dbeafe; }
+
+.vm-btn-hide {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+.vm-btn-hide:hover:not(:disabled) { background: #ffedd5; }
+
+.vm-btn-resolve {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+.vm-btn-resolve:hover:not(:disabled) { background: #dcfce7; }

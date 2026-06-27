@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -8,13 +9,52 @@ from vehicles.models import Vehicle, VehicleRegistration
 
 
 class ViolationViewSet(viewsets.ModelViewSet):
-    queryset           = Violation.objects.select_related('vehicle').all()
+    queryset           = Violation.objects.select_related('vehicle__user').all()
     serializer_class   = ViolationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def _notify_resolved(self, instance):
+        try:
+            from .email_utils import send_violation_resolved_email
+            send_violation_resolved_email(instance)
+        except Exception:
+            pass
+
+    def update(self, request, *args, **kwargs):
+        was_resolved = self.get_object().is_resolved
+        response = super().update(request, *args, **kwargs)
+        if not was_resolved and response.data.get('is_resolved'):
+            instance = self.get_object()
+            self._notify_resolved(instance)
+        return response
+
+    def partial_update(self, request, *args, **kwargs):
+        was_resolved = self.get_object().is_resolved
+        response = super().partial_update(request, *args, **kwargs)
+        if not was_resolved and response.data.get('is_resolved'):
+            instance = self.get_object()
+            self._notify_resolved(instance)
+        return response
+
+    @action(detail=True, methods=['post'], url_path='release')
+    def release(self, request, pk=None):
+        """CDSO/admin releases a violation so the owner can see it."""
+        violation = self.get_object()
+        violation.is_released = True
+        violation.save(update_fields=['is_released'])
+        return Response(ViolationSerializer(violation).data)
+
+    @action(detail=True, methods=['post'], url_path='unrelease')
+    def unrelease(self, request, pk=None):
+        """Undo a release (revert to hidden)."""
+        violation = self.get_object()
+        violation.is_released = False
+        violation.save(update_fields=['is_released'])
+        return Response(ViolationSerializer(violation).data)
+
 
 class MyViolationsView(APIView):
-    """Returns violations for the authenticated vehicle owner's vehicle."""
+    """Returns released violations for the authenticated vehicle owner."""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -27,5 +67,8 @@ class MyViolationsView(APIView):
         except VehicleRegistration.DoesNotExist:
             return Response([])
 
-        violations = Violation.objects.filter(vehicle=vehicle).order_by('-issued_at')
+        violations = Violation.objects.filter(
+            vehicle=vehicle,
+            is_released=True,
+        ).order_by('-issued_at')
         return Response(ViolationSerializer(violations, many=True).data)
