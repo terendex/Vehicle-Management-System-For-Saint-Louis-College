@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
@@ -7,14 +9,57 @@ from django.utils import timezone
 from django.db.models import Q
 from vehicles.models import Vehicle
 from violations.models import Violation
-from accounts.models import User
+from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample
 from .entry_logic import check_entry
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer
-from accounts.models import AuditLog
+
+AUTO_VIOLATION_DEDUP_SECONDS = 300   # one auto-violation per plate per 5 min
+
+
+def _already_inside(plate_number: str) -> bool:
+    """True if the plate has an authorized entry today with no paired exit yet."""
+    today = timezone.localdate()
+    return AccessLog.objects.filter(
+        plate_number=plate_number,
+        status=AccessLog.Status.AUTHORIZED,
+        scanned_at__date=today,
+        exit_log__isnull=True,
+    ).exists()
+
+
+def _pair_entry_exit(exit_log) -> None:
+    """Link exit_log to the most recent unpaired entry for the same plate today."""
+    today = timezone.localdate()
+    entry = AccessLog.objects.filter(
+        plate_number=exit_log.plate_number,
+        status=AccessLog.Status.AUTHORIZED,
+        scanned_at__date=today,
+        exit_log__isnull=True,
+    ).order_by('-scanned_at').first()
+    if entry:
+        exit_log.paired_entry = entry
+        exit_log.save(update_fields=['paired_entry'])
+
+
+def _auto_log_violation(vehicle, message: str):
+    """Create an unauthorized violation if none was logged in the last 5 minutes."""
+    cutoff = timezone.now() - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
+    already = Violation.objects.filter(
+        vehicle=vehicle,
+        violation_type=Violation.Type.UNAUTHORIZED,
+        issued_at__gte=cutoff,
+    ).exists()
+    if not already:
+        Violation.objects.create(
+            vehicle=vehicle,
+            violation_type=Violation.Type.UNAUTHORIZED,
+            notes=f'Auto-logged: {message}',
+            fine_amount=Violation.compute_fine(vehicle),
+        )
 
 
 class ScanView(APIView):
@@ -77,6 +122,9 @@ class ScanView(APIView):
                 ip_address=self.get_client_ip(request),
             )
 
+            if not entry['allowed']:
+                _auto_log_violation(vehicle, entry['message'])
+
             resp = {
                 'plate_number':    plate,
                 'status':          entry['status'],
@@ -85,6 +133,7 @@ class ScanView(APIView):
                 'constraint':      entry.get('constraint'),
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'has_violations':  has_violations,
+                'already_inside':  _already_inside(plate),
                 'bbox':            bbox,
             }
             if ml_sample:
@@ -252,4 +301,85 @@ class MLStatsView(APIView):
             'verified':      verified,
             'rejected':      rejected,
             'pending_train': pending_train,
+        })
+
+
+class OverrideEntryView(APIView):
+    """Guard overrides a denial and grants entry with a logged reason."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        reason       = (request.data.get('reason') or '').strip()
+
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+        if not reason:
+            return Response({'error': 'reason is required.'}, status=400)
+
+        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+
+        AccessLog.objects.create(
+            plate_number    = plate_number,
+            vehicle         = vehicle,
+            status          = AccessLog.Status.AUTHORIZED,
+            is_override     = True,
+            override_reason = reason,
+            scanned_by      = request.user,
+        )
+
+        try:
+            AuditLog.objects.create(
+                actor   = request.user,
+                action  = AuditLog.Action.SCAN,
+                details = f"Override entry — Plate: {plate_number}, Reason: {reason}",
+            )
+        except Exception:
+            pass
+
+        return Response({'status': 'overridden', 'plate_number': plate_number})
+
+
+class ExitLogView(APIView):
+    """Guard records a vehicle exit and auto-pairs it to the matching entry."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+
+        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+
+        exit_log = AccessLog.objects.create(
+            plate_number = plate_number,
+            vehicle      = vehicle,
+            status       = AccessLog.Status.EXITED,
+            scanned_by   = request.user,
+        )
+
+        _pair_entry_exit(exit_log)
+
+        duration_minutes = None
+        entry_scanned_at = None
+        if exit_log.paired_entry:
+            delta            = exit_log.scanned_at - exit_log.paired_entry.scanned_at
+            duration_minutes = int(delta.total_seconds() / 60)
+            entry_scanned_at = exit_log.paired_entry.scanned_at
+
+        try:
+            AuditLog.objects.create(
+                actor   = request.user,
+                action  = AuditLog.Action.SCAN,
+                details = f"Exit recorded — Plate: {plate_number}, Duration: {duration_minutes} min",
+            )
+        except Exception:
+            pass
+
+        return Response({
+            'plate_number':    plate_number,
+            'status':          'exited',
+            'duration_minutes': duration_minutes,
+            'entry_scanned_at': entry_scanned_at,
+            'scanned_at':      exit_log.scanned_at,
         })

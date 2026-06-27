@@ -1192,3 +1192,126 @@
     flex-direction: column;
   }
 }
+
+/* ===== Announcements / Notices ===== */
+
+.od-notices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.od-notice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: #FFF9EC;
+  border: 1px solid #FDE68A;
+  border-left: 4px solid #F59E0B;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.od-notice-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #FEF3C7;
+  color: #D97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.od-notice-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.od-notice-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.od-notice-body {
+  font-size: 13px;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.od-notice-date {
+  font-size: 11.5px;
+  color: #B0B4C7;
+  margin-top: 2px;
+}
+
+/* ===== Zone Fill % ===== */
+
+.od-zone-fill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.od-zone-fill-card {
+  background: #F8F9FC;
+  border: 1px solid #E8EBF4;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.od-zone-fill-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.od-zone-fill-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.od-zone-fill-pct {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.od-zone-fill-pct.normal   { color: #059669; }
+.od-zone-fill-pct.high     { color: #D97706; }
+.od-zone-fill-pct.critical { color: #DC2626; }
+
+.od-zone-fill-bar-bg {
+  height: 7px;
+  background: #E8EBF4;
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.od-zone-fill-bar {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+.od-zone-fill-bar.normal   { background: #059669; }
+.od-zone-fill-bar.high     { background: #D97706; }
+.od-zone-fill-bar.critical { background: #DC2626; }
+
+.od-zone-fill-sub {
+  font-size: 11.5px;
+  color: #9CA3AF;
+}

@@ -161,17 +161,71 @@ class ParkingZone(models.Model):
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
         CAR        = 'car',        'Car'
 
-    name             = models.CharField(max_length=100)
-    vehicle_category = models.CharField(max_length=20, choices=VehicleCategory.choices)
-    reference_image  = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
-    rtsp_url         = models.CharField(max_length=500, blank=True)
-    created_at       = models.DateTimeField(auto_now_add=True)
+    name              = models.CharField(max_length=100)
+    vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
+    reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
+    rtsp_url          = models.CharField(max_length=500, blank=True)
+    capacity_override = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Event-mode capacity override. If set, overrides the mapped space count as the effective capacity.",
+    )
+    created_at        = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['vehicle_category', 'name']
 
     def __str__(self):
         return f"{self.name} ({self.get_vehicle_category_display()})"
+
+
+class SystemSettings(models.Model):
+    """Singleton row (pk=1) for CDSO/admin-configurable system-wide parameters."""
+    retention_years      = models.IntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+    )
+    scan_dedup_seconds   = models.IntegerField(
+        default=30,
+        validators=[MinValueValidator(5), MaxValueValidator(300)],
+    )
+    event_mode_parking   = models.BooleanField(
+        default=False,
+        help_text="When enabled, guards can override full-parking restrictions.",
+    )
+    event_mode_entry     = models.BooleanField(
+        default=False,
+        help_text="When enabled, guards can override denied entry scans at the gate.",
+    )
+
+    class Meta:
+        verbose_name        = "System Settings"
+        verbose_name_plural = "System Settings"
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return "System Settings"
+
+
+class ParkingNotice(models.Model):
+    """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
+    title      = models.CharField(max_length=200)
+    body       = models.TextField()
+    is_active  = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='parking_notices',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
 
 
 class ParkingSpace(models.Model):

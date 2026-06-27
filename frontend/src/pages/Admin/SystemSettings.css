@@ -1,0 +1,402 @@
+/* ============================================================
+   SYSTEM SETTINGS PAGE
+   Palette: SLC Navy #2A2B61 · Background #F0F2F7
+            Card #FFFFFF · Border #E2E6EE · Text #1A1D2E / #5A5F72
+   ============================================================ */
+
+.ss-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  min-height: 100%;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+
+.ss-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.ss-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #1A1D2E;
+  margin: 0 0 3px;
+}
+
+.ss-subtitle {
+  font-size: 0.85rem;
+  color: #5A5F72;
+  margin: 0;
+}
+
+.ss-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #F0F0FA;
+  border: 1.5px solid #B8BAD4;
+  color: #2A2B61;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 5px 13px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+/* ── Loading ────────────────────────────────────────────────────── */
+
+.ss-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #5A5F72;
+  font-size: 0.9rem;
+  padding: 2rem 0;
+}
+
+/* ── Cards grid ─────────────────────────────────────────────────── */
+
+.ss-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1.25rem;
+}
+
+.ss-card {
+  background: #fff;
+  border: 1px solid #E2E6EE;
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Card head ──────────────────────────────────────────────────── */
+
+.ss-card-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ss-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ss-icon-red  { background: #FFF0F0; color: #C0392B; }
+.ss-icon-blue { background: #EFF5FF; color: #1A55C4; }
+
+.ss-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0 0 4px;
+}
+
+.ss-card-desc {
+  font-size: 0.82rem;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ── Field ──────────────────────────────────────────────────────── */
+
+.ss-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ss-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #1A1D2E;
+}
+
+.ss-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ss-input {
+  width: 100px;
+  padding: 8px 12px;
+  border: 1.5px solid #D1D5E0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1A1D2E;
+  background: #FAFBFC;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ss-input:focus {
+  border-color: #2A2B61;
+  background: #fff;
+}
+
+.ss-unit {
+  font-size: 0.85rem;
+  color: #5A5F72;
+}
+
+.ss-hint {
+  font-size: 0.78rem;
+  color: #8A8FA6;
+  margin: 0;
+}
+
+/* ── Info row ───────────────────────────────────────────────────── */
+
+.ss-info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 0.8rem;
+  color: #8A3A2A;
+  background: #FFF5F5;
+  border: 1px solid #F5C6BC;
+  border-radius: 8px;
+  padding: 9px 12px;
+  line-height: 1.4;
+}
+
+.ss-info-row svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ── Save bar ───────────────────────────────────────────────────── */
+
+.ss-save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #E2E6EE;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.ss-save-bar--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ss-unsaved-label {
+  font-size: 0.82rem;
+  color: #5A5F72;
+}
+
+.ss-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #2A2B61;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ss-save-btn:hover:not(:disabled) {
+  background: #1e1f4a;
+}
+
+.ss-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Spinner ────────────────────────────────────────────────────── */
+
+.ss-spinner {
+  animation: ss-spin 0.8s linear infinite;
+}
+
+@keyframes ss-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Notice section ─────────────────────────────────────────────── */
+
+.ss-notice-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.ss-notice-card {
+  gap: 1.25rem;
+}
+
+.ss-icon-purple { background: #F3EEFF; color: #6D28D9; }
+
+.ss-text-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid #D1D5E0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #1A1D2E;
+  background: #FAFBFC;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.ss-text-input:focus { border-color: #2A2B61; background: #fff; }
+
+.ss-textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid #D1D5E0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #1A1D2E;
+  background: #FAFBFC;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.ss-textarea:focus { border-color: #2A2B61; background: #fff; }
+
+.ss-notice-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.ss-broadcast-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  background: #2A2B61;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 20px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+
+.ss-broadcast-btn:hover:not(:disabled) { background: #1e1f4a; }
+.ss-broadcast-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ss-notices-list-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #8A8FA6;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #F0F2F7;
+}
+
+.ss-no-notices {
+  font-size: 0.85rem;
+  color: #B0B4C7;
+  margin: 4px 0 0;
+}
+
+.ss-notices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ss-notice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #F8F9FC;
+  border: 1px solid #E8EBF4;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.ss-notice-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ss-notice-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.ss-notice-meta {
+  font-size: 0.75rem;
+  color: #9CA3AF;
+}
+
+.ss-notice-body {
+  font-size: 0.83rem;
+  color: #5A5F72;
+  margin: 4px 0 0;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.ss-notice-remove {
+  background: none;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 7px;
+  padding: 5px 7px;
+  color: #9CA3AF;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.ss-notice-remove:hover:not(:disabled) {
+  border-color: #DC2626;
+  color: #DC2626;
+  background: #FEF2F2;
+}
+
+.ss-notice-remove:disabled { opacity: 0.5; cursor: not-allowed; }

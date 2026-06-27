@@ -18,8 +18,9 @@ export default function ProtectedRoute({ allowedRoles }) {
       return <Navigate to="/security" replace />
     } else if (user.role === 'vehicle_owner') {
       return <Navigate to="/owner" replace />
+    } else if (user.role === 'cdso') {
+      return <Navigate to="/admin/settings" replace />
     } else {
-      // Fallback if role is unknown
       return <Navigate to="/login" replace />
     }
   }

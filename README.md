@@ -641,11 +641,10 @@ main          ← production only, never push directly
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@slc.edu.ph | admin123 |
+| Admin | admin@slc.edu.ph | Admin123! |
 | Security | guard@slc.edu.ph | guard123 |
-| Vehicle Owner | owner@slc.edu.ph | owner123 |
 
-> Use these credentials to log in at `http://localhost:5173`. Change passwords after initial setup.
+> Use these credentials to log in at `http://localhost:5173`.
 
 ---
 

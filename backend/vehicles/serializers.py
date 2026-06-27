@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice
 from accounts.models import User
 
 
@@ -56,14 +56,27 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
         return obj.zone.vehicle_category if obj.zone else None
 
 
+class ParkingNoticeSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+
+    class Meta:
+        model  = ParkingNotice
+        fields = ['id', 'title', 'body', 'is_active', 'created_by', 'created_by_name', 'created_at']
+        read_only_fields = ['created_by', 'created_at']
+
+
 class ParkingZoneSerializer(serializers.ModelSerializer):
     spaces              = ParkingSpaceSerializer(many=True, read_only=True)
     reference_image_url = serializers.SerializerMethodField()
+    total_capacity      = serializers.SerializerMethodField()
+    occupied_count      = serializers.SerializerMethodField()
+    is_full             = serializers.SerializerMethodField()
 
     class Meta:
         model  = ParkingZone
         fields = ['id', 'name', 'vehicle_category', 'rtsp_url', 'reference_image',
-                  'reference_image_url', 'created_at', 'spaces']
+                  'reference_image_url', 'capacity_override', 'total_capacity',
+                  'occupied_count', 'is_full', 'created_at', 'spaces']
 
     def get_reference_image_url(self, obj):
         if not obj.reference_image:
@@ -72,6 +85,19 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.reference_image.url)
         return obj.reference_image.url
+
+    def get_total_capacity(self, obj):
+        if obj.capacity_override is not None:
+            return obj.capacity_override
+        return obj.spaces.count()
+
+    def get_occupied_count(self, obj):
+        return obj.spaces.filter(is_occupied=True).count()
+
+    def get_is_full(self, obj):
+        cap = obj.capacity_override if obj.capacity_override is not None else obj.spaces.count()
+        occ = obj.spaces.filter(is_occupied=True).count()
+        return cap > 0 and occ >= cap
 
 
 class CameraSerializer(serializers.ModelSerializer):
