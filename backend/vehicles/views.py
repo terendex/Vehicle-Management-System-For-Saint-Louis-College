@@ -95,6 +95,23 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
 
         return Response(ParkingSpaceSerializer(result, many=True).data)
 
+    @action(detail=True, methods=['patch'], url_path='set-capacity')
+    def set_capacity(self, request, pk=None):
+        """Guard/admin sets (or clears) the event-mode capacity override for a zone."""
+        zone = self.get_object()
+        value = request.data.get('capacity_override')
+        if value is None or str(value).strip() == '':
+            zone.capacity_override = None
+        else:
+            try:
+                zone.capacity_override = int(value)
+                if zone.capacity_override < 0:
+                    return Response({'error': 'Capacity must be a non-negative integer.'}, status=400)
+            except (TypeError, ValueError):
+                return Response({'error': 'Capacity must be a number.'}, status=400)
+        zone.save(update_fields=['capacity_override'])
+        return Response(self.get_serializer(zone).data)
+
     # ── IP Camera ──────────────────────────────────────────────────────────────
 
     @action(detail=True, methods=['post'], url_path='start-camera')
@@ -654,21 +671,30 @@ class ParkingAvailabilityView(APIView):
 
 
 class SystemSettingsView(APIView):
-    permission_classes = [IsAdminOrCdso]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated()]
+        return [IsAdminOrCdso()]
 
-    def get(self, request):
-        obj = SystemSettings.get()
-        return Response({
+    def _serialize(self, obj):
+        return {
             "retention_years":    obj.retention_years,
             "scan_dedup_seconds": obj.scan_dedup_seconds,
-        })
+            "event_mode_parking": obj.event_mode_parking,
+            "event_mode_entry":   obj.event_mode_entry,
+        }
+
+    def get(self, request):
+        return Response(self._serialize(SystemSettings.get()))
 
     def put(self, request):
         obj = SystemSettings.get()
         errors = {}
 
-        retention_years = request.data.get("retention_years", obj.retention_years)
+        retention_years    = request.data.get("retention_years",    obj.retention_years)
         scan_dedup_seconds = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
+        event_mode_parking = request.data.get("event_mode_parking", obj.event_mode_parking)
+        event_mode_entry   = request.data.get("event_mode_entry",   obj.event_mode_entry)
 
         try:
             retention_years = int(retention_years)
@@ -689,12 +715,25 @@ class SystemSettingsView(APIView):
 
         obj.retention_years    = retention_years
         obj.scan_dedup_seconds = scan_dedup_seconds
+        obj.event_mode_parking = bool(event_mode_parking)
+        obj.event_mode_entry   = bool(event_mode_entry)
         obj.save()
 
-        return Response({
-            "retention_years":    obj.retention_years,
-            "scan_dedup_seconds": obj.scan_dedup_seconds,
-        })
+        return Response(self._serialize(obj))
+
+    def patch(self, request):
+        """Lightweight partial update — supports toggling event_mode_parking and/or event_mode_entry."""
+        obj = SystemSettings.get()
+        update_fields = []
+        if 'event_mode_parking' in request.data:
+            obj.event_mode_parking = bool(request.data['event_mode_parking'])
+            update_fields.append('event_mode_parking')
+        if 'event_mode_entry' in request.data:
+            obj.event_mode_entry = bool(request.data['event_mode_entry'])
+            update_fields.append('event_mode_entry')
+        if update_fields:
+            obj.save(update_fields=update_fields)
+        return Response(self._serialize(obj))
 
 
 # ──────────────────────────────────────────────

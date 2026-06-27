@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, DoorOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
+import api from '../../api/axios'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
-  const [form, setForm]       = useState({ retention_years: 5, scan_dedup_seconds: 30 })
-  const [saved, setSaved]     = useState({ retention_years: 5, scan_dedup_seconds: 30 })
+  const [form, setForm]       = useState({ retention_years: 5, scan_dedup_seconds: 30, event_mode_parking: false, event_mode_entry: false })
+  const [saved, setSaved]     = useState({ retention_years: 5, scan_dedup_seconds: 30, event_mode_parking: false, event_mode_entry: false })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
 
@@ -60,6 +61,18 @@ export default function SystemSettings() {
       toast.error('Failed to remove notice.')
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  const toggleEventMode = async () => {
+    const next = !form.event_mode_entry
+    try {
+      const { data } = await api.patch('/vehicles/system-settings/', { event_mode_entry: next })
+      setForm(f => ({ ...f, event_mode_entry: data.event_mode_entry }))
+      setSaved(f => ({ ...f, event_mode_entry: data.event_mode_entry }))
+      toast[next ? 'success' : 'info'](next ? 'Event mode enabled.' : 'Event mode disabled.')
+    } catch {
+      toast.error('Failed to toggle event mode.')
     }
   }
 
@@ -187,6 +200,46 @@ export default function SystemSettings() {
                   <span className="ss-unit">seconds</span>
                 </div>
                 <p className="ss-hint">Allowed range: 5 – 300 seconds. Takes effect for new WebSocket connections.</p>
+              </div>
+            </div>
+
+            {/* ── Event Mode ────────────────────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+                  <DoorOpen size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Entry Gate Event Mode</h2>
+                  <p className="ss-card-desc">
+                    When enabled, denied scans at the entry gate are auto-approved and logged for
+                    audit. Guards can always manually override parking regardless of this setting.
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={toggleEventMode}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    padding: '8px 18px', borderRadius: 8, border: '1.5px solid',
+                    fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                    background:  form.event_mode_entry ? '#16a34a' : '#fff',
+                    color:       form.event_mode_entry ? '#fff'    : '#374151',
+                    borderColor: form.event_mode_entry ? '#16a34a' : '#d1d5db',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <span style={{ width: 32, height: 18, borderRadius: 9, border: '2px solid', display: 'inline-flex', alignItems: 'center', borderColor: form.event_mode_entry ? '#fff6' : '#9ca3af', background: 'none' }}>
+                    <span style={{ width: 14, height: 14, borderRadius: '50%', background: form.event_mode_entry ? '#fff' : '#9ca3af', marginLeft: form.event_mode_entry ? 14 : 0, transition: 'all 0.2s', flexShrink: 0 }} />
+                  </span>
+                  {form.event_mode_entry ? 'Event Mode ON' : 'Event Mode OFF'}
+                </button>
+                <span style={{ fontSize: 12, color: form.event_mode_entry ? '#15803d' : '#9ca3af' }}>
+                  {form.event_mode_entry
+                    ? 'All denied entry scans are auto-overridden and logged.'
+                    : 'Normal entry restrictions apply.'}
+                </span>
               </div>
             </div>
 

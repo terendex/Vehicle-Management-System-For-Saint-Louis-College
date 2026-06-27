@@ -431,6 +431,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             except Exception:
                 pass
 
+        try:
+            from .views import _already_inside
+            already_inside = _already_inside(plate_number)
+        except Exception:
+            already_inside = False
+
         return {
             "status":         entry["status"],
             "allowed":        entry["allowed"],
@@ -438,6 +444,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "constraint":     entry.get("constraint"),
             "vehicle":        VehicleSerializer(vehicle).data,
             "has_violations": has_violations,
+            "already_inside": already_inside,
         }
 
     def _record_ml_sample(self, raw_bytes, results):

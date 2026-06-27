@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   ParkingCircle, Bike, Car, RefreshCw, Video, Wifi,
+  Shield, AlertTriangle, X,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { zoneApi } from '../../api/parking'
+import { overrideEntry } from '../../api/scanning'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import '../Admin/ParkingManagement.css'
 
@@ -12,12 +15,78 @@ const CAT_OPTS = [
   { key: 'car',        label: 'Car',        Icon: Car  },
 ]
 
+// ─── Parking Override Modal ───────────────────────────────────────────────────
+function ParkingOverrideModal({ zoneName, onClose, onDone }) {
+  const [plate,   setPlate]   = useState('')
+  const [reason,  setReason]  = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!plate.trim() || !reason.trim()) { toast.error('Plate and reason are required.'); return }
+    setLoading(true)
+    try {
+      await overrideEntry({ plate_number: plate.trim().toUpperCase(), reason: `Parking override — ${zoneName}: ${reason}` })
+      toast.success(`Parking override logged for ${plate.toUpperCase()}.`)
+      onDone()
+      onClose()
+    } catch {
+      toast.error('Override failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{ background: '#fff', borderRadius: 14, width: 360, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #E2E6EE', background: '#fffbeb' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Shield size={15} /> Parking Override
+          </span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit} style={{ padding: 18 }}>
+          <p style={{ margin: '0 0 12px', fontSize: 12, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+            Allow a vehicle to park in <strong>{zoneName}</strong> even if the zone is full. This will be logged.
+          </p>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>License Plate</label>
+          <input
+            value={plate} onChange={e => setPlate(e.target.value)}
+            placeholder="e.g. ABC 123"
+            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }}
+            required
+          />
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Reason</label>
+          <textarea
+            value={reason} onChange={e => setReason(e.target.value)}
+            placeholder="e.g. Event day, special clearance…"
+            rows={2}
+            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+            required
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+              {loading ? 'Logging…' : 'Confirm Override'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function SecurityParkingView() {
-  const [zones,       setZones]       = useState([])
-  const [selId,       setSelId]       = useState(null)
-  const [camStatus,   setCamStatus]   = useState({})
-  const [loading,     setLoading]     = useState(true)
-  const [showCamPanel, setShowCamPanel] = useState(false)
+  const [zones,         setZones]         = useState([])
+  const [selId,         setSelId]         = useState(null)
+  const [camStatus,     setCamStatus]     = useState({})
+  const [loading,       setLoading]       = useState(true)
+  const [showCamPanel,  setShowCamPanel]  = useState(false)
+  const [showOverride,  setShowOverride]  = useState(false)
 
   const token = typeof localStorage !== 'undefined'
     ? localStorage.getItem('access_token') || ''
@@ -50,6 +119,7 @@ export default function SecurityParkingView() {
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
 
   // Load cameras saved by admin from localStorage when zone changes
   useEffect(() => {
@@ -90,9 +160,11 @@ export default function SecurityParkingView() {
   }, [refreshZone])
 
   // ── Derived ─────────────────────────────────────────────────────
-  const liveSpaces = selZone?.spaces ?? []
-  const occ        = liveSpaces.filter(s => s.is_occupied).length
-  const sumFr      = liveSpaces.length - occ
+  const liveSpaces   = selZone?.spaces ?? []
+  const occ          = selZone?.occupied_count ?? liveSpaces.filter(s => s.is_occupied).length
+  const totalCap     = selZone?.total_capacity ?? liveSpaces.length
+  const isFull       = selZone?.is_full ?? false
+  const sumFr        = Math.max(0, totalCap - occ)
 
   return (
     <SecurityLayout>
@@ -155,20 +227,37 @@ export default function SecurityParkingView() {
 
               {/* Toolbar — view-only summary */}
               <div className="pm-toolbar">
-                <div className="pm-toolbar-left">
+                <div className="pm-toolbar-left" style={{ flexWrap: 'wrap', gap: 8 }}>
                   <div className="pm-summary">
                     <span className="pm-sum-free">{sumFr} free</span>
                     <span className="pm-sum-sep">·</span>
                     <span className="pm-sum-occ">{occ} occupied</span>
                     <span className="pm-sum-sep">·</span>
-                    <span className="pm-sum-total">{liveSpaces.length} total</span>
+                    <span className="pm-sum-total">{totalCap} capacity</span>
                   </div>
+                  {isFull && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
+                      <AlertTriangle size={11} /> FULL
+                    </span>
+                  )}
+                  {selZone?.capacity_override != null && (
+                    <span style={{ fontSize: 11, color: '#92400e', background: '#fef9c3', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: 20, fontWeight: 600 }}>
+                      event capacity override
+                    </span>
+                  )}
                   {camRunning && (
                     <span className="pm-camera-badge">
                       <span className="pm-camera-dot" /> Camera active
                     </span>
                   )}
                 </div>
+                <button
+                  onClick={() => setShowOverride(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                  title="Allow a vehicle to park regardless of zone capacity"
+                >
+                  <Shield size={13} /> Override Parking
+                </button>
               </div>
 
               {/* Canvas */}
@@ -339,6 +428,15 @@ export default function SecurityParkingView() {
         )}
 
       </div>
+
+      {showOverride && selZone && (
+        <ParkingOverrideModal
+          zoneName={selZone.name}
+          onClose={() => setShowOverride(false)}
+          onDone={() => { setShowOverride(false); refreshZone() }}
+        />
+      )}
+
     </SecurityLayout>
   )
 }
