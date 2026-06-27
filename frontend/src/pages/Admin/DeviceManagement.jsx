@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
   ShieldCheck, ParkingCircle, Video, Link2, AlertTriangle, RefreshCw,
+  CheckCircle2, XCircle, Wifi,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
+import { testRtsp } from '../../api/scanning'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,13 +45,29 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
   const [showPw,      setShowPw]      = useState(false)
   const [saving,      setSaving]      = useState(false)
   const [rtspTouched, setRtspTouched] = useState(false)
+  const [testing,     setTesting]     = useState(false)
+  const [testResult,  setTestResult]  = useState(null) // { ok, message } | null
 
   useEffect(() => {
     if (!rtspTouched) setRtspUrl(buildRtspUrl(ip, deviceId, password))
   }, [ip, deviceId, password, rtspTouched])
 
-  const handleRtspChange = (v) => { setRtspTouched(true); setRtspUrl(v) }
-  const handleAutoFill   = () => { setRtspTouched(false); setRtspUrl(buildRtspUrl(ip, deviceId, password)) }
+  const handleRtspChange = (v) => { setRtspTouched(true); setRtspUrl(v); setTestResult(null) }
+  const handleAutoFill   = () => { setRtspTouched(false); setRtspUrl(buildRtspUrl(ip, deviceId, password)); setTestResult(null) }
+
+  const handleTestRtsp = async () => {
+    if (!rtspUrl.startsWith('rtsp://')) { toast.error('RTSP URL must start with rtsp://'); return }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await testRtsp(rtspUrl)
+      setTestResult(res.data)
+    } catch {
+      setTestResult({ ok: false, message: 'Could not reach the server to run the test.' })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -129,9 +147,14 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
             <div className="form-group">
               <div className="dm-label-row">
                 <label className="form-label">RTSP Stream URL <span className="required">*</span></label>
-                <button type="button" className="dm-link-btn" onClick={handleAutoFill}>
-                  <Link2 size={12} /> Auto-fill
-                </button>
+                <div className="dm-label-actions">
+                  <button type="button" className="dm-link-btn" onClick={handleAutoFill}>
+                    <Link2 size={12} /> Auto-fill
+                  </button>
+                  <button type="button" className="dm-link-btn" onClick={handleTestRtsp} disabled={testing || !rtspUrl}>
+                    <Wifi size={12} /> {testing ? 'Testing…' : 'Test Connection'}
+                  </button>
+                </div>
               </div>
               <input
                 className="form-input dm-input-mono"
@@ -140,8 +163,16 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
                 onChange={(e) => handleRtspChange(e.target.value)}
                 required
               />
-              {rtspTouched && (
+              {rtspTouched && !testResult && (
                 <p className="dm-hint"><AlertTriangle size={11} /> Manually edited — click Auto-fill to regenerate</p>
+              )}
+              {testResult && (
+                <p className={`dm-hint ${testResult.ok ? 'dm-hint-ok' : 'dm-hint-error'}`}>
+                  {testResult.ok
+                    ? <CheckCircle2 size={11} />
+                    : <XCircle size={11} />}
+                  {' '}{testResult.message}
+                </p>
               )}
             </div>
 

@@ -11,7 +11,7 @@ import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry, logExit } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
-import { getRuleConstraints, getVehicleTypeAccess, getSystemSettings } from '../../api/vehicles'
+import { getRuleConstraints, getSystemSettings } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
@@ -319,9 +319,7 @@ export default function SecurityEntryManagement() {
   const [offices, setOffices]         = useState([])
   const [rules, setRules]             = useState([])
   const [loadingRules, setLoadingRules] = useState(true)
-  const [vehicleTypes, setVehicleTypes] = useState([])
-  const [loadingVehicles, setLoadingVehicles] = useState(true)
-  const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
+const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId]   = useState(1)
   const [eventMode, setEventMode]       = useState(false)  // read-only, fetched from backend
   const [exitPlate, setExitPlate]       = useState('')
@@ -395,11 +393,7 @@ export default function SecurityEntryManagement() {
       setRules((r.data?.results ?? r.data ?? []).filter(rule => rule.enabled))
       setLoadingRules(false)
     }).catch(() => setLoadingRules(false))
-    getVehicleTypeAccess().then((r) => {
-      setVehicleTypes((r.data?.results ?? r.data ?? []).filter(v => v.enabled))
-      setLoadingVehicles(false)
-    }).catch(() => setLoadingVehicles(false))
-    getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
+getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
     const settingsPoll = setInterval(() => {
       getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
     }, 15000)
@@ -629,8 +623,6 @@ export default function SecurityEntryManagement() {
                       ))}
                       {cameraOn && <BBoxLegend />}
 
-                      {flash && <div className="em-flash" />}
-
                       <canvas
                         ref={canvasRef}
                         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
@@ -697,8 +689,6 @@ export default function SecurityEntryManagement() {
                           />
                         </div>
                       ))}
-                      {/* Flash effect */}
-                      {rtspFlash && <div className="em-flash" style={{ position: 'absolute', inset: 0 }} />}
                       {/* Connecting overlay */}
                       {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
                         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
@@ -751,7 +741,6 @@ export default function SecurityEntryManagement() {
               uploadFile ? (
                 <div className="em-upload-preview">
                   <img src={uploadFile.url} alt="Plate capture" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                  {flash && <div className="em-flash" />}
                 </div>
               ) : (
                 <div
@@ -886,25 +875,6 @@ export default function SecurityEntryManagement() {
                   })
                 )}
 
-                <div className="em-rules-section-label" style={{ borderColor: '#f59e0b', marginTop: 16 }}>Vehicle Access Privileges</div>
-                {loadingVehicles ? (
-                  <p className="em-log-empty">Loading vehicle types…</p>
-                ) : vehicleTypes.length === 0 ? (
-                  <p className="em-log-empty">No vehicle types configured.</p>
-                ) : (
-                  vehicleTypes.map((v) => {
-                    const dotColor = v.status === 'allowed' ? 'green' : 'orange'
-                    const hoursDisplay = v.hours_display || (v.is_all_hours ? 'All hours' : `${v.hours_start || ''}–${v.hours_end || ''}`)
-                    return (
-                      <div key={`vt-${v.id}`} className="em-rule-row">
-                        <span className={`em-rule-dot ${dotColor}`} />
-                        <span className="em-rule-text" title={v.sub}>
-                          <strong>{v.label}</strong>{' — '}{v.gate}, {hoursDisplay}
-                        </span>
-                      </div>
-                    )
-                  })
-                )}
               </div>
             </div>
 

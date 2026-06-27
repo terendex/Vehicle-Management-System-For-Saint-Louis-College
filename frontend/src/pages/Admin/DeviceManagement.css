@@ -497,6 +497,13 @@
   font-family: inherit;
 }
 .dm-link-btn:hover { text-decoration: underline; }
+.dm-link-btn:disabled { opacity: 0.5; cursor: not-allowed; text-decoration: none; }
+
+.dm-label-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 
 .dm-hint {
   font-size: 11px;
@@ -506,6 +513,8 @@
   gap: 4px;
   margin: 0;
 }
+.dm-hint-ok    { color: #16a34a; }
+.dm-hint-error { color: #dc2626; }
 
 /* Section label inside modal */
 .dm-section-label {

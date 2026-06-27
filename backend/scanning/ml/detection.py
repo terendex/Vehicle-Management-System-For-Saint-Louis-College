@@ -21,7 +21,8 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
+WEIGHTS_PATH       = Path(__file__).resolve().parent / "weights" / "best.pt"
+PLATE_WEIGHTS_PATH = Path(__file__).resolve().parent / "runs" / "plate_detector" / "weights" / "best.pt"
 
 # The 3 detection targets for the campus entry system.
 TARGET_CLASSES = ["license_plate", "vehicle", "motorcycle"]
@@ -56,8 +57,10 @@ _CLASS_MAP: dict[str, str] = {
     "sidecar":         "motorcycle",
 }
 
-_model = None
-_load_attempted = False  # only try once; avoids re-loading on every frame after failure
+_model              = None   # vehicle/motorcycle model (weights/best.pt)
+_plate_model        = None   # dedicated plate detector (runs/plate_detector/weights/best.pt)
+_load_attempted     = False
+_plate_load_attempted = False
 
 
 def _validate_model_classes(model) -> bool:
@@ -125,10 +128,14 @@ def _get_yolo():
         # Warm-up: run a dummy inference so the first real frame is fast
         log.info("[DETECT] Warming up model (compiling JIT graph)…")
         dummy = np.zeros((480, 640, 3), np.uint8)
-        _model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.10, verbose=False)
+        _model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
         log.info("[DETECT] Warm-up complete — model ready.")
 
-        # Pre-load EasyOCR now so the first real plate read is instant
+        # Pre-load plate detector and EasyOCR so first real frame is fast
+        try:
+            _get_plate_yolo()
+        except Exception as _pe:
+            log.warning("[DETECT] Plate-detector pre-load skipped: %s", _pe)
         try:
             from .reader import _get_ocr
             log.info("[DETECT] Pre-loading EasyOCR…")
@@ -145,9 +152,41 @@ def _get_yolo():
     return _model
 
 
-# Per-class confidence minimums — low thresholds; size/aspect filters catch false positives
-_CONF_PLATE   = 0.05   # very permissive — OCR vote accumulation handles noise
-_CONF_VEHICLE = 0.10   # low — catches motorcycles the model is less confident about
+def _get_plate_yolo():
+    """Lazy-load the dedicated plate-detector model. Tries once; None on failure."""
+    global _plate_model, _plate_load_attempted
+    if _plate_load_attempted:
+        return _plate_model
+    _plate_load_attempted = True
+
+    if not PLATE_WEIGHTS_PATH.exists():
+        log.warning("[DETECT] Plate-detector weights not found at %s — using main model only.", PLATE_WEIGHTS_PATH)
+        return None
+
+    try:
+        import torch
+        from ultralytics import YOLO
+        candidate = YOLO(str(PLATE_WEIGHTS_PATH))
+        _plate_model = candidate
+        if is_gpu_available():
+            _plate_model.to("cuda")
+            log.info("[DETECT] Plate-detector on GPU: %s", PLATE_WEIGHTS_PATH)
+        else:
+            log.info("[DETECT] Plate-detector on CPU: %s", PLATE_WEIGHTS_PATH)
+
+        dummy = np.zeros((480, 640, 3), np.uint8)
+        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.15, verbose=False)
+        log.info("[DETECT] Plate-detector warm-up complete.")
+    except Exception as exc:
+        log.error("[DETECT] Failed to load plate-detector: %s", exc)
+        _plate_model = None
+
+    return _plate_model
+
+
+# Per-class confidence minimums
+_CONF_PLATE   = 0.15   # raised from 0.05 — was generating false positives on truck bodies
+_CONF_VEHICLE = 0.15   # raised from 0.10
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -229,30 +268,21 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             is_plate = class_name == "license_plate"
             min_conf = _CONF_PLATE if is_plate else _CONF_VEHICLE
 
-            if score < min_conf or box_w < 20 or box_h < 8:
+            if score < min_conf or box_w < 30 or box_h < 12:
                 continue
             if not is_plate:
-                if aspect_ratio < 0.3 or aspect_ratio > 8.0:
+                if aspect_ratio < 0.3 or aspect_ratio > 6.0:
                     continue
 
             vehicle_type = None
             if is_plate:
-                if aspect_ratio < 2.0 and (box_w < 60 or box_h < 40):
-                    pad_x, pad_y_top, pad_y_bot = (max(int(box_w * 0.6), 20),
-                                                    max(int(box_h * 0.5), 15),
-                                                    max(int(box_h * 2.5), 60))
-                elif aspect_ratio < 2.0:
-                    pad_x, pad_y_top, pad_y_bot = (int(box_w * 0.3),
-                                                    int(box_h * 0.3),
-                                                    int(box_h * 1.5))
-                else:
-                    pad_x, pad_y_top, pad_y_bot = (int(box_w * 0.25),
-                                                    int(box_h * 0.25),
-                                                    int(box_h * 0.3))
-                cx1 = max(0, x1 - pad_x)
-                cy1 = max(0, y1 - pad_y_top)
-                cx2 = min(img_w, x2 + pad_x)
-                cy2 = min(img_h, y2 + pad_y_bot)
+                # Small uniform padding — plate_detector gives tight boxes so
+                # large padding just adds motorcycle body that hurts OCR.
+                pad = max(int(min(box_w, box_h) * 0.10), 6)
+                cx1 = max(0,      x1 - pad)
+                cy1 = max(0,      y1 - pad)
+                cx2 = min(img_w,  x2 + pad)
+                cy2 = min(img_h,  y2 + pad)
             else:
                 cx1, cy1 = max(0, x1), max(0, y1)
                 cx2, cy2 = min(img_w, x2), min(img_h, y2)
@@ -260,11 +290,12 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
 
             dets.append({
                 "crop": img[cy1:cy2, cx1:cx2],
+                # tight bbox (YOLO output) — used for display on the frontend
                 "bbox": {
-                    "x":      float(cx1 / img_w),
-                    "y":      float(cy1 / img_h),
-                    "width":  float((cx2 - cx1) / img_w),
-                    "height": float((cy2 - cy1) / img_h),
+                    "x":      float(x1 / img_w),
+                    "y":      float(y1 / img_h),
+                    "width":  float((x2 - x1) / img_w),
+                    "height": float((y2 - y1) / img_h),
                 },
                 "score":        score,
                 "aspect_ratio": aspect_ratio,
@@ -278,32 +309,53 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
 def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                   try_rotation: bool = True) -> list[dict]:
     """
-    Detect vehicles and license plates in an image using custom-trained YOLOv8.
+    Detect vehicles and license plates in an image.
+
+    Uses two specialised models:
+    - plate_detector (runs/plate_detector/weights/best.pt) — license plates only,
+      trained specifically for Philippine plates.  Falls back to the main model
+      if the plate-detector weights are missing.
+    - main model (weights/best.pt) — vehicles & motorcycles for tracking bboxes.
 
     Handles all conditions via:
     - Adaptive preprocessing  (dark/night/glare/dim)
     - Multi-rotation fallback (tilted cameras / angled plates) — skip with try_rotation=False
     - GPU tiled pass          (high-res frames, GPU only)
-
-    Pass try_rotation=False when the scene already has locked plate tracks to
-    avoid up to 6 redundant YOLO passes on frames where no new plate is needed.
     """
-    model = _get_yolo()
-    if model is None:
+    model       = _get_yolo()
+    plate_model = _get_plate_yolo()
+    if model is None and plate_model is None:
         return []
 
     h, w = img.shape[:2]
-    gpu = is_gpu_available()
-    imgsz = 960 if gpu else 640
+    gpu   = is_gpu_available()
+    imgsz = 1280 if gpu else 960
 
-    # Pass 0 — normal orientation
     img_proc = _preprocess_adaptive(img)
-    results = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
-                            half=gpu, imgsz=imgsz)
-    all_dets = _parse_boxes(results, img, w, h, model)
+    all_dets: list[dict] = []
 
-    # GPU: tiled pass for high-res frames
-    if gpu and (w > 1280 or h > 960):
+    # ── Pass 1: main model → vehicles & motorcycles only (plates handled by plate_detector) ──
+    if model is not None:
+        res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
+                            half=gpu, imgsz=imgsz)
+        all_dets.extend(
+            d for d in _parse_boxes(res, img, w, h, model)
+            if d["class_name"] != "license_plate"
+        )
+
+    # ── Pass 2: dedicated plate detector → license plates only ────────────────────
+    active_plate_model = plate_model if plate_model is not None else model
+    if active_plate_model is not None:
+        plate_res = active_plate_model.predict(
+            img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
+            half=gpu, imgsz=640,   # plate_detector was trained at 640
+        )
+        plate_dets = _parse_boxes(plate_res, img, w, h, active_plate_model)
+        # Only keep license_plate detections from this model
+        all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
+
+    # GPU: tiled pass for high-res frames (main model handles large scenes)
+    if gpu and model is not None and (w > 1280 or h > 960):
         tile, overlap = 640, 0.2
         stride = int(tile * (1 - overlap))
         for y0 in range(0, h, stride):
@@ -318,10 +370,9 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                 all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
                                              offset_x=x0, offset_y=y0))
 
-    # Rotation fallback — fires when no plate found at 0°.
-    # Handles cameras mounted at an angle and tilted plates (up to ±60°).
-    # Each pass takes ~0.17 s on CPU; skipped entirely when try_rotation=False
-    # (caller sets this once all active tracks have a locked plate).
+    # ── Rotation fallback ─────────────────────────────────────────────────────────
+    # Fires when no plate found at 0°. Uses the plate_detector if available.
+    rot_model = active_plate_model
     if try_rotation and not any(d["class_name"] == "license_plate" for d in all_dets):
         center = (w // 2, h // 2)
         for angle in [20, -20, 40, -40, 60, -60]:
@@ -329,13 +380,12 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
             img_rot = cv2.warpAffine(img, M, (w, h),
                                      flags=cv2.INTER_LINEAR,
                                      borderMode=cv2.BORDER_REFLECT_101)
-            rot_res = model.predict(_preprocess_adaptive(img_rot), conf=conf,
-                                    verbose=False, max_det=100,
-                                    half=gpu, imgsz=imgsz)
-            rot_dets = _parse_boxes(rot_res, img_rot, w, h, model)
+            rot_res = rot_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
+                                        verbose=False, max_det=100,
+                                        half=gpu, imgsz=640)
+            rot_dets = _parse_boxes(rot_res, img_rot, w, h, rot_model)
 
             if rot_dets:
-                # Map bboxes back to original (unrotated) coordinate space
                 M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
                 for d in rot_dets:
                     bx = d["_xyxy"]

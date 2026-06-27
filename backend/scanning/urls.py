@@ -13,4 +13,5 @@ urlpatterns = [
     path('ml/samples/<int:pk>/',    views.MLTrainingSampleReview.as_view(), name='ml-sample-review'),
     path('ml/stats/',               views.MLStatsView.as_view(),           name='ml-stats'),
     path('ml/retrain/',             views.TriggerRetrainView.as_view(),    name='ml-retrain'),
+    path('test-rtsp/',              views.TestRtspView.as_view(),          name='test-rtsp'),
 ]

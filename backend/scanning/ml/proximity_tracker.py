@@ -23,14 +23,16 @@ class PlateTrack:
 
 
 class ProximityTracker:
-    # Match radius as a fraction of image width; minimum 60px floor.
-    # 15% of 640px = 96px, 15% of 1280px = 192px — scales with resolution.
-    MATCH_RADIUS_FRACTION = 0.15
-    MATCH_RADIUS_MIN      = 60
+    # Match radius as a fraction of image width; minimum 80px floor.
+    # 25% of 1280px = 320px — large enough to re-match a close-up motorcycle
+    # whose centre shifts significantly between CPU-speed detection frames.
+    MATCH_RADIUS_FRACTION = 0.25
+    MATCH_RADIUS_MIN      = 80
 
-    # Increased from 1.5s: at CPU speeds (~300ms/frame) 1.5s only allows
-    # ~5 frames, so a single YOLO miss could drop a track and restart OCR.
-    EXPIRY_SECONDS = 3.0
+    # At ~500ms/frame on CPU, 3 s only gives ~6 frames before a track drops.
+    # 6 s keeps the track alive through brief detection gaps (passing occlusion,
+    # model miss on one angle) without accumulating stale ghost tracks.
+    EXPIRY_SECONDS = 6.0
 
     next_id: int = 1
 

@@ -29,3 +29,6 @@ export const overrideEntry = (data) => api.post('/scan/override/', data)
 
 // Record a vehicle exit and pair it to its entry log
 export const logExit = (data) => api.post('/scan/exit/', data)
+
+// Test an RTSP URL from the server side — returns { ok, message }
+export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
