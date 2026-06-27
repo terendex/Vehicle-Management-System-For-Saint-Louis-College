@@ -26,3 +26,6 @@ export const updateVisitorPass = (id, data) => api.patch(`/scan/visitor-pass/${i
 
 // Guard override — grant entry with logged reason
 export const overrideEntry = (data) => api.post('/scan/override/', data)
+
+// Record a vehicle exit and pair it to its entry log
+export const logExit = (data) => api.post('/scan/exit/', data)

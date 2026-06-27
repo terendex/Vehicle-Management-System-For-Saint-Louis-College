@@ -36,8 +36,8 @@ export default function AdminLayout({ children }) {
     ] : []),
     ...((isAdmin || isCdso) ? [
       { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },
-      { name: 'Violations',       path: '/admin/violations',  icon: <AlertTriangle size={18} /> },
       { name: 'Parking',          path: '/admin/parking',     icon: <ParkingCircle size={18} /> },
+      { name: 'Violations',       path: '/admin/violations',  icon: <AlertTriangle size={18} /> },
     ] : []),
     ...(isAdmin ? [
       { name: 'Rule Constraints', path: '/admin/rules',    icon: <FileSliders size={18} /> },

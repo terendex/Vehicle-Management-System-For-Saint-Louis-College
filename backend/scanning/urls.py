@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path('',                        views.ScanView.as_view(),              name='scan'),
     path('override/',               views.OverrideEntryView.as_view(),     name='scan-override'),
+    path('exit/',                   views.ExitLogView.as_view(),           name='scan-exit'),
     path('visitor-pass/',           views.VisitorPassView.as_view(),       name='visitor-pass'),
     path('visitor-pass/<int:pk>/exit/', views.ExitScanView.as_view(),      name='visitor-exit'),
     path('offices/',                views.OfficeListView.as_view(),        name='offices'),

@@ -4,13 +4,13 @@ import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, ShieldCheck, Video, Plus,
-  Shield, ShieldOff, Wifi, Zap
+  Shield, Wifi, Zap
 } from 'lucide-react'
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
-import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry } from '../../api/scanning'
-import { getRuleConstraints, getVehicleTypeAccess } from '../../api/vehicles'
+import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry, logExit } from '../../api/scanning'
+import { getRuleConstraints, getVehicleTypeAccess, getSystemSettings } from '../../api/vehicles'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
@@ -235,6 +235,14 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
                   </span>
                 </div>
               )}
+              {result.already_inside && (
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Warning</span>
+                  <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+                    <AlertTriangle size={10} /> Already inside — no exit logged
+                  </span>
+                </div>
+              )}
             </div>
           )}
           <div style={{ display: 'flex', gap: 6, marginTop: 4, flexDirection: 'column' }}>
@@ -314,10 +322,36 @@ export default function SecurityEntryManagement() {
   const [loadingVehicles, setLoadingVehicles] = useState(true)
   const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId]   = useState(1)
-  const [eventMode, setEventMode]       = useState(false)
+  const [eventMode, setEventMode]       = useState(false)  // read-only, fetched from backend
+  const [exitPlate, setExitPlate]       = useState('')
+  const [exitResult, setExitResult]     = useState(null)
+  const [exitLoading, setExitLoading]   = useState(false)
   const RTSP_LS_KEY = 'rtsp_cams_admin_entry'
 
   const DENIED_STATUSES = ['denied', 'wrong_day', 'disabled']
+
+  const handleRecordExit = async (e) => {
+    e.preventDefault()
+    const plate = exitPlate.trim().toUpperCase()
+    if (!plate) return
+    setExitLoading(true)
+    try {
+      const res = await logExit({ plate_number: plate })
+      setExitResult(res.data)
+      setExitPlate('')
+      const dur = res.data.duration_minutes
+      toast.success(
+        dur != null
+          ? `Exit recorded for ${plate} — inside for ${dur} min.`
+          : `Exit recorded for ${plate}.`
+      )
+      getAccessLogs({ limit: 20 }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record exit.')
+    } finally {
+      setExitLoading(false)
+    }
+  }
 
   const autoOverride = async (plate) => {
     try {
@@ -364,6 +398,11 @@ export default function SecurityEntryManagement() {
       setVehicleTypes((r.data?.results ?? r.data ?? []).filter(v => v.enabled))
       setLoadingVehicles(false)
     }).catch(() => setLoadingVehicles(false))
+    getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
+    const settingsPoll = setInterval(() => {
+      getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
+    }, 15000)
+    return () => clearInterval(settingsPoll)
   }, [])
 
   // ── WS plate results → display + log ───────────────────────────────────────
@@ -504,27 +543,21 @@ export default function SecurityEntryManagement() {
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button
-              onClick={() => {
-                const next = !eventMode
-                setEventMode(next)
-                toast[next ? 'success' : 'info'](
-                  next ? 'Event Mode ON — denied vehicles will be auto-overridden.' : 'Event Mode OFF.'
-                )
-              }}
+            <span
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '5px 13px', borderRadius: 20, border: '1.5px solid',
-                fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
-                background: eventMode ? '#d97706' : '#fff',
-                color:      eventMode ? '#fff'    : '#b45309',
-                borderColor: eventMode ? '#d97706' : '#fde68a',
+                fontSize: 11.5, fontWeight: 700, userSelect: 'none',
+                background: eventMode ? '#16a34a' : '#f3f4f6',
+                color:      eventMode ? '#fff'    : '#9ca3af',
+                borderColor: eventMode ? '#16a34a' : '#e5e7eb',
                 letterSpacing: 0.3,
               }}
+              title={eventMode ? 'Event mode is ON — denied scans are auto-overridden. Controlled by admin.' : 'Event mode is OFF. Controlled by admin.'}
             >
-              {eventMode ? <Shield size={13} /> : <ShieldOff size={13} />}
-              {eventMode ? 'EVENT MODE ON' : 'EVENT MODE'}
-            </button>
+              <Shield size={13} />
+              {eventMode ? 'EVENT MODE ON' : 'EVENT MODE OFF'}
+            </span>
             {cameraOn ? (
               <div className={`em-live-badge ${connected ? '' : 'connecting'}`}>
                 <span className="em-live-dot" />
@@ -859,6 +892,37 @@ export default function SecurityEntryManagement() {
                       </div>
                     )
                   })
+                )}
+              </div>
+            </div>
+
+            {/* Record Exit */}
+            <div className="em-card">
+              <div className="em-card-head">
+                <span className="em-card-label"><CheckCircle size={14} /> Record Exit</span>
+              </div>
+              <div style={{ padding: '10px 14px' }}>
+                <form onSubmit={handleRecordExit} style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    value={exitPlate}
+                    onChange={e => setExitPlate(e.target.value)}
+                    placeholder="Plate number…"
+                    style={{ flex: 1, padding: '6px 10px', border: '1.5px solid #E2E6EE', borderRadius: 7, fontSize: 13, outline: 'none' }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={exitLoading || !exitPlate.trim()}
+                    className="em-btn em-btn-primary"
+                    style={{ padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap' }}
+                  >
+                    {exitLoading ? '…' : 'Log Exit'}
+                  </button>
+                </form>
+                {exitResult && (
+                  <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
+                    <strong>{exitResult.plate_number}</strong> exited
+                    {exitResult.duration_minutes != null && <span> · inside <strong>{exitResult.duration_minutes} min</strong></span>}
+                  </div>
                 )}
               </div>
             </div>
