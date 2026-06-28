@@ -14,12 +14,35 @@ const ACTION_LABELS = {
   scan: 'Vehicle Scanned',
 }
 
+const DATE_PERIODS = [
+  { value: 'all',   label: 'All' },
+  { value: 'day',   label: 'Today' },
+  { value: 'week',  label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'year',  label: 'Year' },
+]
+
+function getPeriodStart(period) {
+  const d = new Date()
+  if (period === 'day') { d.setHours(0, 0, 0, 0) }
+  else if (period === 'week') {
+    const dow = d.getDay()
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+    d.setHours(0, 0, 0, 0)
+  } else if (period === 'month') { d.setDate(1); d.setHours(0, 0, 0, 0) }
+  else if (period === 'year')  { d.setMonth(0, 1); d.setHours(0, 0, 0, 0) }
+  return d
+}
+
+function toDateStr(d) { return d.toISOString().split('T')[0] }
+
 export default function SecurityAuditLog() {
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [actionFilter, setActionFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [datePeriod, setDatePeriod] = useState('all')
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -55,6 +78,16 @@ export default function SecurityAuditLog() {
   useEffect(() => {
     fetchLogs()
   }, [fetchLogs])
+
+  const applyPeriod = (period) => {
+    setDatePeriod(period)
+    if (period === 'all') {
+      setDateFrom(''); setDateTo('')
+    } else {
+      setDateFrom(toDateStr(getPeriodStart(period)))
+      setDateTo(toDateStr(new Date()))
+    }
+  }
 
   const formatDate = (iso) => {
     if (!iso) return '—'
@@ -93,6 +126,17 @@ export default function SecurityAuditLog() {
         </div>
 
         <div className="sal-toolbar">
+          <div className="sal-period-btns">
+            {DATE_PERIODS.map(p => (
+              <button
+                key={p.value}
+                className={`sal-period-btn ${datePeriod === p.value ? 'active' : ''}`}
+                onClick={() => applyPeriod(p.value)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <div className="sal-filter-group">
             <div className="sal-filter-item">
               <Filter size={14} />
@@ -117,7 +161,7 @@ export default function SecurityAuditLog() {
                 className="sal-date-input"
                 type="date"
                 value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                onChange={(e) => { setDateFrom(e.target.value); setDatePeriod('') }}
                 placeholder="From"
               />
             </div>
@@ -127,7 +171,7 @@ export default function SecurityAuditLog() {
                 className="sal-date-input"
                 type="date"
                 value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
+                onChange={(e) => { setDateTo(e.target.value); setDatePeriod('') }}
                 placeholder="To"
               />
             </div>

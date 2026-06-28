@@ -3,17 +3,39 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DAY_SHORT = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' }
 
+const DATE_PERIODS = [
+  { value: 'all',   label: 'All' },
+  { value: 'day',   label: 'Today' },
+  { value: 'week',  label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'year',  label: 'Year' },
+]
+
+function getPeriodStart(period) {
+  const d = new Date()
+  if (period === 'day') { d.setHours(0, 0, 0, 0) }
+  else if (period === 'week') {
+    const dow = d.getDay()
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+    d.setHours(0, 0, 0, 0)
+  } else if (period === 'month') { d.setDate(1); d.setHours(0, 0, 0, 0) }
+  else if (period === 'year')  { d.setMonth(0, 1); d.setHours(0, 0, 0, 0) }
+  return d
+}
+
 export default function VehicleRegistration() {
   // Registrations State
   const [registrations, setRegistrations] = useState([])
   const [statusFilter, setStatusFilter] = useState('pending')
+  const [datePeriod, setDatePeriod] = useState('all')
+  const [search, setSearch] = useState('')
 
   // Pagination
   const [regPage, setRegPage] = useState(1)
@@ -28,6 +50,7 @@ export default function VehicleRegistration() {
   // Accept flow — OR number + free day-picker (inline in details modal)
   const [orNumber, setOrNumber] = useState('')
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
+  const [specialCaseReason, setSpecialCaseReason] = useState('')
 
   const orValid = orNumber.trim().length >= 6
 
@@ -78,12 +101,15 @@ export default function VehicleRegistration() {
   // ── Accept flow ──
   const confirmAccept = async () => {
     if (!selectedReg) return
+    const originalDays  = selectedReg.campus_days || []
+    const hasAddedDays  = daysOverride.some(d => !originalDays.includes(d))
     setSubmitting(true)
     try {
       const result = await registrationApi.acceptRegistration(
         selectedReg.id,
         orNumber.trim(),
         daysOverride.length > 0 ? daysOverride : undefined,
+        hasAddedDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
       )
       setIsViewModalOpen(false)
       fetchRegistrations()
@@ -123,14 +149,28 @@ export default function VehicleRegistration() {
   const openViewModal = (reg) => {
     setSelectedReg(reg)
     setIsViewModalOpen(true)
-    // Pre-fill OR and days for the inline accept form
     setOrNumber('')
     setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
+    setSpecialCaseReason('')
   }
   const openRejectModal = () => setIsRejectModalOpen(true)
 
-  const paginatedRegistrations = registrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
-  const totalRegPages = Math.ceil(registrations.length / itemsPerPage)
+  const filteredRegistrations = registrations.filter(r => {
+    if (datePeriod !== 'all' && new Date(r.created_at) < getPeriodStart(datePeriod)) return false
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      if (
+        !r.full_name?.toLowerCase().includes(q) &&
+        !r.plate_number?.toLowerCase().includes(q) &&
+        !r.registrant_type?.toLowerCase().includes(q)
+      ) return false
+    }
+    return true
+  })
+  const paginatedRegistrations = filteredRegistrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
+  const totalRegPages = Math.ceil(filteredRegistrations.length / itemsPerPage)
+  const hasActiveFilters = datePeriod !== 'all' || search.trim() !== ''
+  const clearFilters = () => { setDatePeriod('all'); setSearch(''); setRegPage(1) }
 
   return (
     <AdminLayout>
@@ -142,19 +182,52 @@ export default function VehicleRegistration() {
 
         {/* SECTION: Registrations */}
         <div className="section-container">
-          <div className="section-header">
-            <h2 className="section-title">Applications</h2>
-            <select
-              className="filter-select"
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setRegPage(1) }}
-            >
-              <option value="pending">Pending Review</option>
-              <option value="accepted">Accepted</option>
-              <option value="rejected">Rejected</option>
-            </select>
+          <h2 className="section-title" style={{ marginBottom: 14 }}>Applications</h2>
+          <div className="vr-toolbar">
+            <div className="vr-toolbar-left">
+              <div className="vr-period-btns">
+                {DATE_PERIODS.map(p => (
+                  <button
+                    key={p.value}
+                    className={`vr-period-btn ${datePeriod === p.value ? 'active' : ''}`}
+                    onClick={() => { setDatePeriod(p.value); setRegPage(1) }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div className="vr-search-wrap">
+                <Search size={14} className="vr-search-icon" />
+                <input
+                  className="vr-search-input"
+                  placeholder="Search name, plate, type…"
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setRegPage(1) }}
+                />
+                {search && (
+                  <button className="vr-search-clear" onClick={() => { setSearch(''); setRegPage(1) }}>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="vr-toolbar-right">
+              <select
+                className="filter-select"
+                value={statusFilter}
+                onChange={(e) => { setStatusFilter(e.target.value); setRegPage(1) }}
+              >
+                <option value="pending">Pending Review</option>
+                <option value="accepted">Accepted</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              {hasActiveFilters && (
+                <button className="vr-clear-btn" onClick={clearFilters} title="Clear filters">
+                  <X size={13} /> Clear
+                </button>
+              )}
+            </div>
           </div>
-
           <div className="table-container">
             <table className="data-table">
               <thead>
@@ -180,6 +253,9 @@ export default function VehicleRegistration() {
                       <span className={`status-badge status-${r.status}`}>
                         {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
                       </span>
+                      {r.is_special_case && (
+                        <span className="special-case-badge">Special Case</span>
+                      )}
                     </td>
                     <td>
                       <button className="view-btn" onClick={() => openViewModal(r)} title="View Details">
@@ -188,9 +264,9 @@ export default function VehicleRegistration() {
                     </td>
                   </tr>
                 ))}
-                {registrations.length === 0 && (
+                {filteredRegistrations.length === 0 && (
                   <tr className="empty-row">
-                    <td colSpan="7">No {statusFilter} registrations found.</td>
+                    <td colSpan="7">No {statusFilter} registrations found{datePeriod !== 'all' ? ' for this period' : ''}.</td>
                   </tr>
                 )}
               </tbody>
@@ -199,10 +275,17 @@ export default function VehicleRegistration() {
 
           {totalRegPages > 1 && (
             <div className="pagination-bar">
-              <span className="pagination-info">Page {regPage} of {totalRegPages}</span>
+              <span className="pagination-info">
+                Showing {(regPage - 1) * itemsPerPage + 1}–{Math.min(regPage * itemsPerPage, filteredRegistrations.length)} of {filteredRegistrations.length}
+              </span>
               <div className="pagination-buttons">
-                <button className="pagination-btn" disabled={regPage === 1} onClick={() => setRegPage(p => Math.max(1, p - 1))}>Previous</button>
-                <button className="pagination-btn" disabled={regPage === totalRegPages} onClick={() => setRegPage(p => Math.min(totalRegPages, p + 1))}>Next</button>
+                <button className="pagination-btn icon-only" disabled={regPage === 1} onClick={() => setRegPage(p => Math.max(1, p - 1))}>
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="pagination-info">Page {regPage} of {totalRegPages}</span>
+                <button className="pagination-btn icon-only" disabled={regPage === totalRegPages} onClick={() => setRegPage(p => Math.min(totalRegPages, p + 1))}>
+                  <ChevronRight size={16} />
+                </button>
               </div>
             </div>
           )}
@@ -327,85 +410,122 @@ export default function VehicleRegistration() {
               </div>
             </div>
 
-            {selectedReg.status === 'pending' && (
-              <div className="accept-inline-section">
-                <h3 className="accept-inline-title">
-                  <Receipt size={15} /> Accept Registration
-                </h3>
-                <p className="accept-inline-desc">
-                  Confirm that <strong>{selectedReg.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
-                </p>
-
-                <div className="form-group">
-                  <label className="form-label">
-                    Official Receipt (OR) Number <span className="required">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    className={`form-input${orValid ? ' input-valid' : ''}`}
-                    value={orNumber}
-                    onChange={(e) => setOrNumber(e.target.value)}
-                    placeholder="e.g. OR-2026-000123"
-                    disabled={submitting}
-                  />
-                  <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
+            {selectedReg.status === 'accepted' && selectedReg.is_special_case && (
+              <div className="special-case-section">
+                <div className="special-case-section-head">
+                  <AlertCircle size={15} />
+                  Special Case
                 </div>
-
-                {selectedReg.registrant_type === 'student' && (
-                  <div className="form-group">
-                    <label className="form-label">
-                      <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                      Campus Schedule
-                    </label>
-                    {selectedReg.campus_days?.length > 0 && (
-                      <p className="form-hint" style={{ marginBottom: 8 }}>
-                        Applicant chose:{' '}
-                        {selectedReg.campus_days.map(d => (
-                          <span key={d} className="day-chip">{d}</span>
-                        ))}
-                      </p>
-                    )}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-                      {ALL_DAYS.map(day => {
-                        const selected = daysOverride.includes(day)
-                        return (
-                          <button
-                            key={day}
-                            type="button"
-                            disabled={submitting}
-                            onClick={() => setDaysOverride(prev =>
-                              prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-                            )}
-                            className={`day-override-btn${selected ? ' selected' : ''}`}
-                          >
-                            {DAY_SHORT[day]}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {daysOverride.length > 0 ? (
-                      <p className="form-hint">Assigned: <strong>{daysOverride.join(', ')}</strong></p>
-                    ) : (
-                      <p className="form-hint" style={{ color: '#dc2626' }}>No days selected — original choice will be kept.</p>
-                    )}
-                  </div>
-                )}
-
-                <div className="detail-actions">
-                  <button className="btn-danger" onClick={openRejectModal} disabled={submitting}>
-                    <X size={18} /> Reject
-                  </button>
-                  <button
-                    className="btn-success"
-                    onClick={confirmAccept}
-                    disabled={submitting || !orValid}
-                    title={!orValid ? 'Enter a valid OR number to enable' : ''}
-                  >
-                    {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
-                  </button>
-                </div>
+                <p className="special-case-reason">{selectedReg.special_case_reason}</p>
               </div>
             )}
+
+            {selectedReg.status === 'pending' && (() => {
+              const originalDays = selectedReg.campus_days || []
+              const addedDays    = daysOverride.filter(d => !originalDays.includes(d))
+              const hasAddedDays = addedDays.length > 0
+              const canAccept    = orValid && (!hasAddedDays || specialCaseReason.trim())
+              return (
+                <div className="accept-inline-section">
+                  <h3 className="accept-inline-title">
+                    <Receipt size={15} /> Accept Registration
+                  </h3>
+                  <p className="accept-inline-desc">
+                    Confirm that <strong>{selectedReg.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
+                  </p>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      Official Receipt (OR) Number <span className="required">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      className={`form-input${orValid ? ' input-valid' : ''}`}
+                      value={orNumber}
+                      onChange={(e) => setOrNumber(e.target.value)}
+                      placeholder="e.g. OR-2026-000123"
+                      disabled={submitting}
+                    />
+                    <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
+                  </div>
+
+                  {selectedReg.registrant_type === 'student' && (
+                    <div className="form-group">
+                      <label className="form-label">
+                        <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                        Campus Schedule
+                      </label>
+                      {selectedReg.campus_days?.length > 0 && (
+                        <p className="form-hint" style={{ marginBottom: 8 }}>
+                          Applicant chose:{' '}
+                          {selectedReg.campus_days.map(d => (
+                            <span key={d} className="day-chip">{d}</span>
+                          ))}
+                        </p>
+                      )}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                        {ALL_DAYS.map(day => {
+                          const sel = daysOverride.includes(day)
+                          const isAdded = sel && !originalDays.includes(day)
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              disabled={submitting}
+                              onClick={() => setDaysOverride(prev =>
+                                prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                              )}
+                              className={`day-override-btn${sel ? ' selected' : ''}${isAdded ? ' added' : ''}`}
+                            >
+                              {DAY_SHORT[day]}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {daysOverride.length > 0 ? (
+                        <p className="form-hint">Assigned: <strong>{daysOverride.join(', ')}</strong></p>
+                      ) : (
+                        <p className="form-hint" style={{ color: '#dc2626' }}>No days selected — original choice will be kept.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {hasAddedDays && (
+                    <div className="form-group special-case-reason-group">
+                      <label className="form-label special-case-reason-label">
+                        <AlertCircle size={13} />
+                        Reason for Added Days <span className="required">*</span>
+                      </label>
+                      <p className="form-hint special-case-added-hint">
+                        You added <strong>{addedDays.join(', ')}</strong> — not in the original request. Provide a reason; this registration will be flagged as a Special Case.
+                      </p>
+                      <textarea
+                        className="form-textarea"
+                        rows={2}
+                        value={specialCaseReason}
+                        onChange={(e) => setSpecialCaseReason(e.target.value)}
+                        placeholder="e.g. Faculty clearance for make-up sessions on Friday…"
+                        disabled={submitting}
+                      />
+                    </div>
+                  )}
+
+                  <div className="detail-actions">
+                    <button className="btn-danger" onClick={openRejectModal} disabled={submitting}>
+                      <X size={18} /> Reject
+                    </button>
+                    <button
+                      className="btn-success"
+                      onClick={confirmAccept}
+                      disabled={submitting || !canAccept}
+                      title={!orValid ? 'Enter a valid OR number to enable' : hasAddedDays && !specialCaseReason.trim() ? 'Provide a reason for the added days' : ''}
+                    >
+                      {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
 
             {selectedReg.status === 'accepted' && (
               <div className="detail-actions">

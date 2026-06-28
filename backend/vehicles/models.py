@@ -76,6 +76,12 @@ class VehicleRegistration(models.Model):
         on_delete=models.SET_NULL,
         related_name='registrations',
     )
+    vehicle = models.ForeignKey(
+        'Vehicle',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='registrations',
+    )
 
     # Common fields
     registrant_type = models.CharField(max_length=20, choices=RegistrantType.choices)
@@ -122,6 +128,10 @@ class VehicleRegistration(models.Model):
     rejection_reason = models.TextField(blank=True)
     or_number        = models.CharField(max_length=100, blank=True)
     source           = models.CharField(max_length=20, choices=Source.choices, default=Source.PUBLIC)
+
+    # Special case — set when admin grants days beyond the original request
+    is_special_case      = models.BooleanField(default=False)
+    special_case_reason  = models.TextField(blank=True)
 
     # Auto-assigned unique system IDs (populated on acceptance)
     system_student_id  = models.CharField(max_length=30, blank=True, unique=True, null=True)
@@ -195,6 +205,14 @@ class SystemSettings(models.Model):
     event_mode_entry     = models.BooleanField(
         default=False,
         help_text="When enabled, guards can override denied entry scans at the gate.",
+    )
+    registration_start   = models.DateField(
+        null=True, blank=True,
+        help_text="First day vehicle registrations are accepted.",
+    )
+    registration_end     = models.DateField(
+        null=True, blank=True,
+        help_text="Last day vehicle registrations are accepted.",
     )
 
     class Meta:

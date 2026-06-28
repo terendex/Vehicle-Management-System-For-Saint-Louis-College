@@ -103,6 +103,21 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
+        from rest_framework.exceptions import AuthenticationFailed
+
+        email = attrs.get(self.username_field, '')
+        password = attrs.get('password', '')
+
+        # Check for disabled account before SimpleJWT swallows it into a generic error
+        try:
+            user = User.objects.get(**{self.username_field: email})
+            if user.check_password(password) and not user.is_active:
+                raise AuthenticationFailed(
+                    'Your account has been disabled. Please contact the administrator.'
+                )
+        except User.DoesNotExist:
+            pass
+
         data = super().validate(attrs)
         data['role'] = self.user.role
         data['user_code'] = self.user.user_code

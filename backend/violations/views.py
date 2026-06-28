@@ -13,6 +13,19 @@ class ViolationViewSet(viewsets.ModelViewSet):
     serializer_class   = ViolationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), 'request': self.request}
+
+    def perform_create(self, serializer):
+        """Allow passing plate_number instead of vehicle FK."""
+        plate = self.request.data.get('plate_number', '').strip().upper()
+        if plate and 'vehicle' not in self.request.data:
+            vehicle = get_object_or_404(Vehicle, plate_number=plate)
+            fine = Violation.compute_fine(vehicle)
+            serializer.save(vehicle=vehicle, fine_amount=fine)
+        else:
+            serializer.save()
+
     def _notify_resolved(self, instance):
         try:
             from .email_utils import send_violation_resolved_email
@@ -63,12 +76,18 @@ class MyViolationsView(APIView):
                 user=request.user,
                 status=VehicleRegistration.Status.ACCEPTED,
             ).latest('reviewed_at')
-            vehicle = get_object_or_404(Vehicle, plate_number=reg.plate_number)
         except VehicleRegistration.DoesNotExist:
+            return Response([])
+
+        # Prefer FK link; fall back to plate lookup for legacy records
+        vehicle = (
+            reg.vehicle
+            or Vehicle.objects.filter(plate_number=reg.plate_number).first()
+        )
+        if not vehicle:
             return Response([])
 
         violations = Violation.objects.filter(
             vehicle=vehicle,
-            is_released=True,
         ).order_by('-issued_at')
-        return Response(ViolationSerializer(violations, many=True).data)
+        return Response(ViolationSerializer(violations, many=True, context={'request': request}).data)

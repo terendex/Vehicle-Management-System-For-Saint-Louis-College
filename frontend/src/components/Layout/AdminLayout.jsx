@@ -11,7 +11,7 @@ import {
   HelpCircle,
   LogOut,
   Video,
-  AlertTriangle
+  AlertTriangle,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -31,9 +31,9 @@ export default function AdminLayout({ children }) {
 
   const navItems = [
     ...(isAdmin ? [
-      { name: 'Dashboard',            path: '/admin',          icon: <LayoutDashboard size={18} /> },
-      { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} /> },
-      { name: 'User Management',      path: '/admin/users',    icon: <Users size={18} /> },
+      { name: 'Dashboard',            path: '/admin',                  icon: <LayoutDashboard size={18} /> },
+      { name: 'Vehicle Registration', path: '/admin/vehicles',         icon: <Car size={18} /> },
+      { name: 'User Management',      path: '/admin/users',            icon: <Users size={18} /> },
       { name: 'Device Management',    path: '/admin/devices',  icon: <Video size={18} /> },
     ] : []),
     ...((isAdmin || isCdso) ? [

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
 import {
-  Search, ClipboardList, Calendar, Filter,
+  Search, ClipboardList, Filter,
   RefreshCw, ChevronLeft, ChevronRight, Download, X
 } from 'lucide-react'
 import './AuditLog.css'
@@ -20,6 +20,28 @@ const ACTION_LABELS = {
   device_deleted: 'Device Removed',
 }
 
+const DATE_PERIODS = [
+  { value: 'all',   label: 'All' },
+  { value: 'day',   label: 'Today' },
+  { value: 'week',  label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'year',  label: 'Year' },
+]
+
+function getPeriodStart(period) {
+  const d = new Date()
+  if (period === 'day') { d.setHours(0, 0, 0, 0) }
+  else if (period === 'week') {
+    const dow = d.getDay()
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+    d.setHours(0, 0, 0, 0)
+  } else if (period === 'month') { d.setDate(1); d.setHours(0, 0, 0, 0) }
+  else if (period === 'year')  { d.setMonth(0, 1); d.setHours(0, 0, 0, 0) }
+  return d
+}
+
+function toDateStr(d) { return d.toISOString().split('T')[0] }
+
 export default function AuditLog() {
   const [logs, setLogs]             = useState([])
   const [loading, setLoading]       = useState(true)
@@ -27,12 +49,13 @@ export default function AuditLog() {
   const [actionFilter, setAction]   = useState('')
   const [dateFrom, setDateFrom]     = useState('')
   const [dateTo, setDateTo]         = useState('')
+  const [datePeriod, setDatePeriod] = useState('all')
   const [page, setPage]             = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const searchTimer = useRef(null)
 
-  const hasFilters = search || actionFilter || dateFrom || dateTo
+  const hasFilters = search || actionFilter || datePeriod !== 'all'
 
   const fetchLogs = useCallback(async (currentPage, currentSearch) => {
     setLoading(true)
@@ -81,11 +104,22 @@ export default function AuditLog() {
     fetchLogs(page, search)
   }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const applyPeriod = (period) => {
+    setDatePeriod(period)
+    if (period === 'all') {
+      setDateFrom(''); setDateTo('')
+    } else {
+      setDateFrom(toDateStr(getPeriodStart(period)))
+      setDateTo(toDateStr(new Date()))
+    }
+  }
+
   const clearFilters = () => {
     setSearch('')
     setAction('')
     setDateFrom('')
     setDateTo('')
+    setDatePeriod('all')
     setPage(1)
   }
 
@@ -149,70 +183,65 @@ export default function AuditLog() {
         </div>
 
         <div className="al-toolbar">
+          <div className="al-period-btns">
+            {DATE_PERIODS.map(p => (
+              <button
+                key={p.value}
+                className={`al-period-btn ${datePeriod === p.value ? 'active' : ''}`}
+                onClick={() => applyPeriod(p.value)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
           <div className="al-search-wrapper">
-            <Search size={16} />
+            <Search size={15} />
             <input
               className="al-search-input"
               type="text"
-              placeholder="Search by actor name or ID..."
+              placeholder="Search actor, target…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             {search && (
-              <button className="al-search-clear" onClick={() => setSearch('')} title="Clear search">
-                <X size={13} />
+              <button className="al-search-clear" onClick={() => setSearch('')}>
+                <X size={12} />
               </button>
             )}
           </div>
-          <div className="al-filter-group">
-            <div className="al-filter-item">
-              <Filter size={14} />
-              <select
-                className="al-form-select"
-                value={actionFilter}
-                onChange={(e) => setAction(e.target.value)}
-              >
-                <option value="">All Actions</option>
-                <option value="user_created">User Created</option>
-                <option value="user_updated">User Updated</option>
-                <option value="user_deleted">User Deleted</option>
-                <option value="user_disabled">User Disabled</option>
-                <option value="user_enabled">User Enabled</option>
-                <option value="admin_replaced">Admin Replaced</option>
-                <option value="scan">Vehicle Scanned</option>
-                <option value="device_created">Device Added</option>
-                <option value="device_updated">Device Updated</option>
-                <option value="device_deleted">Device Removed</option>
-              </select>
-            </div>
-            <div className="al-filter-item">
-              <Calendar size={14} />
-              <input
-                className="al-date-input"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
-            </div>
-            <div className="al-filter-item">
-              <Calendar size={14} />
-              <input
-                className="al-date-input"
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
-            </div>
-            {hasFilters && (
-              <button className="al-clear-btn" onClick={clearFilters} title="Clear all filters">
-                <X size={14} />
-                <span>Clear</span>
-              </button>
-            )}
-            <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
-              <RefreshCw size={14} />
+
+          <span className="al-sep" />
+
+          <div className="al-filter-item">
+            <Filter size={13} />
+            <select
+              className="al-form-select"
+              value={actionFilter}
+              onChange={(e) => setAction(e.target.value)}
+            >
+              <option value="">All Actions</option>
+              <option value="user_created">User Created</option>
+              <option value="user_updated">User Updated</option>
+              <option value="user_deleted">User Deleted</option>
+              <option value="user_disabled">User Disabled</option>
+              <option value="user_enabled">User Enabled</option>
+              <option value="admin_replaced">Admin Replaced</option>
+              <option value="scan">Vehicle Scanned</option>
+              <option value="device_created">Device Added</option>
+              <option value="device_updated">Device Updated</option>
+              <option value="device_deleted">Device Removed</option>
+            </select>
+          </div>
+
+          {hasFilters && (
+            <button className="al-clear-btn" onClick={clearFilters}>
+              <X size={13} /> Clear
             </button>
-          </div>
+          )}
+          <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
+            <RefreshCw size={14} />
+          </button>
         </div>
 
         <div className="al-table-container">

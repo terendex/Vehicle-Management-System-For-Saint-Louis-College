@@ -98,10 +98,15 @@ const useAuthStore = create((set, get) => {
 
         return user
       } catch (error) {
-        const message =
+        const raw =
           error.response?.data?.detail ||
           error.response?.data?.non_field_errors?.[0] ||
           'Login failed. Please check your credentials.'
+
+        // Humanise SimpleJWT's generic "no active account" into something clear
+        const message = raw === 'No active account found with the given credentials'
+          ? 'Incorrect email or password.'
+          : raw
 
         set({ isLoading: false, error: message })
         throw new Error(message)

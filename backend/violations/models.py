@@ -21,6 +21,7 @@ class Violation(models.Model):
     is_resolved    = models.BooleanField(default=False)
     is_released    = models.BooleanField(default=False)
     issued_at      = models.DateTimeField(auto_now_add=True)
+    evidence       = models.ImageField(upload_to='violations/evidence/', blank=True, null=True)
 
     @classmethod
     def compute_fine(cls, vehicle) -> Decimal:

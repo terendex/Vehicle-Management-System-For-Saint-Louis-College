@@ -1,6 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard,
   ShieldCheck,
   ClipboardList,
   ParkingCircle,
@@ -21,7 +20,6 @@ export default function SecurityLayout({ children }) {
   }
 
   const navItems = [
-    { name: 'Dashboard', path: '/security', icon: <LayoutDashboard size={18} /> },
     { name: 'Entry Management', path: '/security/entries', icon: <ShieldCheck size={18} /> },
     { name: 'Parking', path: '/security/parking', icon: <ParkingCircle size={18} /> },
     { name: 'Audit Log', path: '/security/audit', icon: <ClipboardList size={18} /> },

@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ParkingCircle, Bike, Car, RefreshCw, Video, Wifi,
-  Shield, AlertTriangle, X,
+  Shield, AlertTriangle, X, Upload,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { overrideEntry } from '../../api/scanning'
+import { createViolation } from '../../api/violations'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import '../Admin/ParkingManagement.css'
 
@@ -81,6 +82,115 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
   )
 }
 
+// ─── Issue Violation Modal ────────────────────────────────────────────────────
+function IssueViolationModal({ onClose }) {
+  const [plate, setPlate]       = useState('')
+  const [type, setType]         = useState('no_sticker')
+  const [notes, setNotes]       = useState('')
+  const [evidence, setEvidence] = useState(null)
+  const [preview, setPreview]   = useState(null)
+  const [loading, setLoading]   = useState(false)
+  const fileRef                 = useRef(null)
+
+  const handleFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
+    setEvidence(file)
+    setPreview(URL.createObjectURL(file))
+  }
+
+  const removeEvidence = () => {
+    if (preview) URL.revokeObjectURL(preview)
+    setEvidence(null); setPreview(null)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!plate.trim()) { toast.error('Plate number is required.'); return }
+    setLoading(true)
+    try {
+      await createViolation({
+        plate_number: plate.trim().toUpperCase(),
+        violation_type: type,
+        notes,
+        ...(evidence ? { evidence } : {}),
+      })
+      toast.success(`Violation issued for ${plate.trim().toUpperCase()}.`)
+      onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #E2E6EE', background: '#FEF2F2' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#991b1b', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertTriangle size={15} /> Issue Violation
+          </span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit} style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>License Plate *</label>
+            <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Violation Type</label>
+            <select value={type} onChange={e => setType(e.target.value)}
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', background: '#fff' }}>
+              <option value="no_sticker">No Sticker</option>
+              <option value="expired_registration">Expired Registration</option>
+              <option value="unauthorized">Unauthorized Entry</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional additional details…"
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Screenshot Evidence</label>
+            {preview ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <img src={preview} alt="preview" style={{ maxWidth: '100%', maxHeight: 130, borderRadius: 8, border: '1.5px solid #E2E6EE', objectFit: 'contain' }} />
+                <button type="button" onClick={removeEvidence} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 6, border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <X size={11} /> Remove
+                </button>
+              </div>
+            ) : (
+              <div
+                onClick={() => fileRef.current?.click()}
+                onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }}
+                onDragOver={e => e.preventDefault()}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: 14, border: '2px dashed #C7CAD9', borderRadius: 10, background: '#F8F9FC', cursor: 'pointer' }}
+              >
+                <Upload size={20} style={{ color: '#9ca3af' }} />
+                <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Drop image or <span style={{ color: '#2A2B61', fontWeight: 600, textDecoration: 'underline' }}>click to browse</span></p>
+                <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleFile(e.target.files?.[0])} />
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+              {loading ? 'Issuing…' : 'Issue Violation'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function SecurityParkingView() {
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
@@ -88,6 +198,7 @@ export default function SecurityParkingView() {
   const [loading,       setLoading]       = useState(true)
   const [showCamPanel,  setShowCamPanel]  = useState(false)
   const [showOverride,  setShowOverride]  = useState(false)
+  const [showViolation, setShowViolation] = useState(false)
 
   const token = typeof localStorage !== 'undefined'
     ? localStorage.getItem('access_token') || ''
@@ -253,13 +364,22 @@ export default function SecurityParkingView() {
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={() => setShowOverride(true)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                  title="Allow a vehicle to park regardless of zone capacity"
-                >
-                  <Shield size={13} /> Override Parking
-                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => setShowViolation(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    title="Issue a violation to a vehicle"
+                  >
+                    <AlertTriangle size={13} /> Issue Violation
+                  </button>
+                  <button
+                    onClick={() => setShowOverride(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    title="Allow a vehicle to park regardless of zone capacity"
+                  >
+                    <Shield size={13} /> Override Parking
+                  </button>
+                </div>
               </div>
 
               {/* Canvas */}
@@ -437,6 +557,10 @@ export default function SecurityParkingView() {
           onClose={() => setShowOverride(false)}
           onDone={() => { setShowOverride(false); refreshZone() }}
         />
+      )}
+
+      {showViolation && (
+        <IssueViolationModal onClose={() => setShowViolation(false)} />
       )}
 
     </SecurityLayout>

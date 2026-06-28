@@ -26,6 +26,34 @@ class VehicleViewSet(viewsets.ModelViewSet):
         vehicle.save()
         return Response({'plate': vehicle.plate_number, 'is_authorized': vehicle.is_authorized})
 
+    @action(detail=True, methods=['get'])
+    def profile(self, request, pk=None):
+        """Return full vehicle profile: owner, latest registration, active and resolved violations."""
+        from violations.serializers import ViolationSerializer
+        from .models import VehicleRegistration
+        from .serializers import VehicleRegistrationSerializer
+
+        vehicle = self.get_object()
+
+        # Latest accepted registration — FK-linked first, then plate fallback for legacy records
+        reg = (
+            vehicle.registrations.filter(status='accepted').order_by('-reviewed_at').first()
+            or VehicleRegistration.objects.filter(
+                plate_number=vehicle.plate_number,
+                status='accepted',
+            ).order_by('-reviewed_at').first()
+        )
+
+        active_violations   = vehicle.violations.filter(is_resolved=False).order_by('-issued_at')
+        resolved_violations = vehicle.violations.filter(is_resolved=True).order_by('-issued_at')
+
+        return Response({
+            'vehicle':             VehicleSerializer(vehicle).data,
+            'registration':        VehicleRegistrationSerializer(reg).data if reg else None,
+            'active_violations':   ViolationSerializer(active_violations, many=True).data,
+            'resolved_violations': ViolationSerializer(resolved_violations, many=True).data,
+        })
+
 class RuleConstraintViewSet(viewsets.ModelViewSet):
     queryset           = RuleConstraint.objects.all()
     serializer_class   = RuleConstraintSerializer
@@ -245,7 +273,7 @@ from django.utils import timezone
 from .models import VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
 from accounts.models import User
-from .email_utils import send_acceptance_email, send_rejection_email
+from .email_utils import send_acceptance_email, send_rejection_email, send_pending_email
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -296,6 +324,19 @@ class AcceptRegistrationView(APIView):
         # Admin may override campus_days (free day picker) and/or schedule group
         campus_days_override = request.data.get('campus_days', None)  # list or None
         schedule_override    = request.data.get('schedule', '').strip()
+        special_case_reason  = request.data.get('special_case_reason', '').strip()
+
+        # Early validation: if admin is adding days beyond the original, a reason is required
+        if campus_days_override is not None and isinstance(campus_days_override, list):
+            valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
+            _cleaned_check = [d for d in campus_days_override if d in valid_days]
+            _original_days = set(registration.campus_days or [])
+            _added_days    = set(_cleaned_check) - _original_days
+            if _added_days and not special_case_reason:
+                return Response(
+                    {"error": "A reason is required when adding days not in the original schedule."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if User.objects.filter(email=registration.email).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
@@ -316,13 +357,17 @@ class AcceptRegistrationView(APIView):
             address=registration.address,
         )
 
-        # Create Vehicle linked directly to User
-        Vehicle.objects.create(
-            plate_number=registration.plate_number,
-            vehicle_type=registration.vehicle_type,
-            color=registration.vehicle_color,
-            is_authorized=True,
-            user=user,
+        # Create or update Vehicle linked directly to User
+        # update_or_create handles duplicate plates gracefully (plate_number is unique)
+        plate_normalized = registration.plate_number.strip().upper().replace(' ', '')
+        vehicle_obj, _ = Vehicle.objects.update_or_create(
+            plate_number=plate_normalized,
+            defaults={
+                'vehicle_type': registration.vehicle_type,
+                'color':        registration.vehicle_color,
+                'is_authorized': True,
+                'user':          user,
+            }
         )
 
         # Auto-generate unique system ID
@@ -333,12 +378,21 @@ class AcceptRegistrationView(APIView):
             registration.system_employee_id = f"SLC-EMP-{padded_id}"
 
         registration.or_number = or_number
-        registration.user = user  # direct FK — eliminates email-string lookups
+        registration.user = user        # direct FK to account
+        registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
 
         # Apply campus_days / schedule overrides
         if campus_days_override is not None and isinstance(campus_days_override, list):
             valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
             cleaned = [d for d in campus_days_override if d in valid_days]
+
+            # Mark as special case if days were added beyond original request
+            original_days = set(registration.campus_days or [])
+            added_days    = set(cleaned) - original_days
+            if added_days:
+                registration.is_special_case     = True
+                registration.special_case_reason = special_case_reason
+
             registration.campus_days = cleaned
             # Re-derive schedule group from the new days
             mwf_days  = {'Monday', 'Wednesday', 'Friday'}
@@ -474,12 +528,15 @@ class CdsoDirectRegisterView(APIView):
             address=registration.address,
         )
 
-        Vehicle.objects.create(
-            plate_number=registration.plate_number,
-            vehicle_type=registration.vehicle_type,
-            color=registration.vehicle_color,
-            is_authorized=True,
-            user=user,
+        plate_normalized = registration.plate_number.strip().upper().replace(' ', '')
+        vehicle_obj, _ = Vehicle.objects.update_or_create(
+            plate_number=plate_normalized,
+            defaults={
+                'vehicle_type':  registration.vehicle_type,
+                'color':         registration.vehicle_color,
+                'is_authorized': True,
+                'user':          user,
+            }
         )
 
         padded_id = str(registration.pk).zfill(6)
@@ -488,6 +545,7 @@ class CdsoDirectRegisterView(APIView):
         else:
             registration.system_employee_id = f"SLC-EMP-{padded_id}"
         registration.user = user
+        registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
         registration.save()
 
         user.refresh_from_db()
@@ -623,10 +681,14 @@ class PublicOpenRegistrationView(APIView):
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
-            serializer.save(
+            registration = serializer.save(
                 registrant_type=registrant_type,
                 source=VehicleRegistration.Source.PUBLIC,
             )
+            try:
+                send_pending_email(registration)
+            except Exception:
+                pass  # don't fail the submission if email errors
             return Response({"message": "Registration submitted successfully. Please wait for CDSO review."}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -715,6 +777,8 @@ class SystemSettingsView(APIView):
             "scan_dedup_seconds": obj.scan_dedup_seconds,
             "event_mode_parking": obj.event_mode_parking,
             "event_mode_entry":   obj.event_mode_entry,
+            "registration_start": obj.registration_start.isoformat() if obj.registration_start else None,
+            "registration_end":   obj.registration_end.isoformat()   if obj.registration_end   else None,
         }
 
     def get(self, request):
@@ -724,10 +788,13 @@ class SystemSettingsView(APIView):
         obj = SystemSettings.get()
         errors = {}
 
-        retention_years    = request.data.get("retention_years",    obj.retention_years)
-        scan_dedup_seconds = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
-        event_mode_parking = request.data.get("event_mode_parking", obj.event_mode_parking)
-        event_mode_entry   = request.data.get("event_mode_entry",   obj.event_mode_entry)
+        from datetime import date as date_type
+        retention_years      = request.data.get("retention_years",    obj.retention_years)
+        scan_dedup_seconds   = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
+        event_mode_parking   = request.data.get("event_mode_parking", obj.event_mode_parking)
+        event_mode_entry     = request.data.get("event_mode_entry",   obj.event_mode_entry)
+        registration_start   = request.data.get("registration_start", obj.registration_start)
+        registration_end     = request.data.get("registration_end",   obj.registration_end)
 
         try:
             retention_years = int(retention_years)
@@ -743,6 +810,27 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError):
             errors["scan_dedup_seconds"] = "Must be an integer."
 
+        def parse_date(val):
+            if not val:
+                return None
+            if isinstance(val, date_type):
+                return val
+            from datetime import datetime
+            return datetime.strptime(str(val), "%Y-%m-%d").date()
+
+        try:
+            registration_start = parse_date(registration_start)
+        except ValueError:
+            errors["registration_start"] = "Invalid date format. Use YYYY-MM-DD."
+
+        try:
+            registration_end = parse_date(registration_end)
+        except ValueError:
+            errors["registration_end"] = "Invalid date format. Use YYYY-MM-DD."
+
+        if not errors and registration_start and registration_end and registration_end < registration_start:
+            errors["registration_end"] = "End date must be on or after the start date."
+
         if errors:
             return Response(errors, status=400)
 
@@ -750,6 +838,8 @@ class SystemSettingsView(APIView):
         obj.scan_dedup_seconds = scan_dedup_seconds
         obj.event_mode_parking = bool(event_mode_parking)
         obj.event_mode_entry   = bool(event_mode_entry)
+        obj.registration_start = registration_start
+        obj.registration_end   = registration_end
         obj.save()
 
         return Response(self._serialize(obj))

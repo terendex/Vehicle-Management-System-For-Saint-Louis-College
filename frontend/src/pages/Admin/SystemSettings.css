@@ -182,6 +182,65 @@
   margin-top: 1px;
 }
 
+/* ── Registration Period ─────────────────────────────────────────── */
+
+.ss-reg-period-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.ss-reg-period-sep {
+  font-size: 13px;
+  color: #8892A4;
+  font-weight: 600;
+  padding-bottom: 10px;
+}
+
+.ss-date-input {
+  padding: 8px 12px;
+  border: 1.5px solid #D1D5E0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #1A1D2E;
+  background: #FAFBFC;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+  min-width: 155px;
+}
+
+.ss-date-input:focus {
+  border-color: #2A2B61;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
+}
+
+.ss-reg-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1.5px solid #FECACA;
+  background: #FEF2F2;
+  color: #DC2626;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 0;
+}
+
+.ss-reg-clear-btn:hover {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
+}
+
 /* ── Save bar ───────────────────────────────────────────────────── */
 
 .ss-save-bar {
