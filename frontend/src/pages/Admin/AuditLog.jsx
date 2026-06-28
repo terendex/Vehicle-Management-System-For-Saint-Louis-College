@@ -8,13 +8,16 @@ import {
 import './AuditLog.css'
 
 const ACTION_LABELS = {
-  user_created:  'User Created',
-  user_updated:  'User Updated',
-  user_deleted:  'User Deleted',
-  user_disabled: 'User Disabled',
-  user_enabled:  'User Enabled',
-  admin_replaced:'Admin Replaced',
-  scan:          'Vehicle Scanned',
+  user_created:   'User Created',
+  user_updated:   'User Updated',
+  user_deleted:   'User Deleted',
+  user_disabled:  'User Disabled',
+  user_enabled:   'User Enabled',
+  admin_replaced: 'Admin Replaced',
+  scan:           'Vehicle Scanned',
+  device_created: 'Device Added',
+  device_updated: 'Device Updated',
+  device_deleted: 'Device Removed',
 }
 
 export default function AuditLog() {
@@ -120,6 +123,7 @@ export default function AuditLog() {
       user_created: 'created', user_updated: 'updated', user_deleted: 'deleted',
       user_disabled: 'disabled', user_enabled: 'enabled', admin_replaced: 'replaced',
       scan: 'scan',
+      device_created: 'device-created', device_updated: 'device-updated', device_deleted: 'device-deleted',
     }
     return map[action] || ''
   }
@@ -176,6 +180,9 @@ export default function AuditLog() {
                 <option value="user_enabled">User Enabled</option>
                 <option value="admin_replaced">Admin Replaced</option>
                 <option value="scan">Vehicle Scanned</option>
+                <option value="device_created">Device Added</option>
+                <option value="device_updated">Device Updated</option>
+                <option value="device_deleted">Device Removed</option>
               </select>
             </div>
             <div className="al-filter-item">

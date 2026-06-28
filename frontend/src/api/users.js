@@ -53,6 +53,12 @@ export const usersApi = {
     return data
   },
 
+  /** Create an audit log entry manually (used for device management actions). */
+  createAuditLog: async (payload) => {
+    const { data } = await api.post('/accounts/audit-logs/', payload)
+    return data
+  },
+
   /** Get audit log statistics (admin only). */
   getAuditLogStats: async () => {
     const { data } = await api.get('/accounts/audit-logs/stats/')

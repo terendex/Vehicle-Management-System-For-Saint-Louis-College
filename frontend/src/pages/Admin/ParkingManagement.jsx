@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ParkingCircle, Bike, Car, Plus, RefreshCw, Upload, Save,
-  Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, VideoOff, Settings, Wifi,
+  Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
 } from 'lucide-react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
@@ -53,13 +53,6 @@ export default function ParkingManagement() {
   const [showNew,      setShowNew]      = useState(false)
   const [newZone,      setNewZone]      = useState({ name: '', vehicle_category: 'motorcycle' })
   const [addingZone,   setAddingZone]   = useState(false)
-  // IP Camera state (backend AI detection stream)
-  const [camStatus,    setCamStatus]    = useState({})   // { zone_id: bool }
-  const [camLoading,   setCamLoading]   = useState(false)
-  const [rtspModal,    setRtspModal]    = useState(false)
-  const [rtspInput,    setRtspInput]    = useState('')
-  const [savingRtsp,   setSavingRtsp]   = useState(false)
-
   // Live-view RTSP cameras panel
   const [showCamPanel, setShowCamPanel] = useState(false)
 
@@ -85,12 +78,7 @@ export default function ParkingManagement() {
   useEffect(() => { draftsRef.current = drafts }, [drafts])
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
 
-  const selZone     = zones.find(z => z.id === selId) ?? null
-  const camRunning  = selId != null && !!camStatus[selId]
-  // Relative URL → Vite proxy → Django (no CORS issues)
-  const streamUrl   = (selId && token)
-    ? `/api/vehicles/parking-zones/${selId}/stream/?token=${token}`
-    : null
+  const selZone = zones.find(z => z.id === selId) ?? null
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -112,23 +100,6 @@ export default function ParkingManagement() {
       .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url)))
       .catch(() => {})
   }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Camera status polling ───────────────────────────────────────
-  const refreshCamStatus = useCallback(async () => {
-    try {
-      const s = await zoneApi.getCameraStatus()
-      // API returns {zone_id_str: bool} — normalise keys to int
-      const normalised = {}
-      Object.entries(s).forEach(([k, v]) => { normalised[parseInt(k, 10)] = v })
-      setCamStatus(normalised)
-    } catch { /* silent */ }
-  }, [])
-
-  useEffect(() => {
-    refreshCamStatus()
-    const t = setInterval(refreshCamStatus, 5000)
-    return () => clearInterval(t)
-  }, [refreshCamStatus])
 
   // Live occupancy polling (always on in live mode)
   const refreshZone = useCallback(async () => {
@@ -171,7 +142,6 @@ export default function ParkingManagement() {
 
   const handleDeleteZone = async () => {
     if (!selZone || !confirm(`Delete zone "${selZone.name}" and all its spaces?`)) return
-    if (camRunning) await zoneApi.stopCamera(selId).catch(() => {})
     try {
       await zoneApi.remove(selZone.id)
       const rest = zones.filter(z => z.id !== selZone.id)
@@ -283,7 +253,7 @@ export default function ParkingManagement() {
 
   // ── Space click (live mode) ─────────────────────────────────────
   const onSpaceClick = (sp) => {
-    if (mode !== 'live' || camRunning) return
+    if (mode !== 'live') return
     if (sp.is_occupied) setSpaceOp({ type: 'free',   space: sp })
     else                { setSpaceOp({ type: 'occupy', space: sp }); setSpaceOpPlate('') }
   }
@@ -303,50 +273,6 @@ export default function ParkingManagement() {
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))
       setSpaceOp(null)
     } catch { alert('Failed.') }
-  }
-
-  // ── Parking live-cam remove ─────────────────────────────────────────────────
-  const handleRemovePkCam = (camId) => {
-    removePkCameraHook(camId)
-  }
-
-  // ── IP Camera controls ──────────────────────────────────────────
-  const handleStartCamera = async () => {
-    if (!selId) return
-    setCamLoading(true)
-    try {
-      await zoneApi.startCamera(selId)
-      await refreshCamStatus()
-    } catch (err) {
-      const msg = err?.response?.data?.error || 'Failed to start camera.'
-      alert(msg)
-    } finally { setCamLoading(false) }
-  }
-
-  const handleStopCamera = async () => {
-    if (!selId) return
-    setCamLoading(true)
-    try {
-      await zoneApi.stopCamera(selId)
-      await refreshCamStatus()
-    } catch { alert('Failed to stop camera.') }
-    finally { setCamLoading(false) }
-  }
-
-  const handleOpenRtsp = () => {
-    setRtspInput(selZone?.rtsp_url || '')
-    setRtspModal(true)
-  }
-
-  const handleSaveRtsp = async (e) => {
-    e.preventDefault()
-    setSavingRtsp(true)
-    try {
-      const z = await zoneApi.update(selId, { rtsp_url: rtspInput.trim() })
-      setZones(p => p.map(x => x.id === z.id ? { ...x, rtsp_url: z.rtsp_url } : x))
-      setRtspModal(false)
-    } catch { alert('Failed to save RTSP URL.') }
-    finally { setSavingRtsp(false) }
   }
 
   // ── Derived ─────────────────────────────────────────────────────
@@ -439,47 +365,13 @@ export default function ParkingManagement() {
                 </div>
 
                 {mode === 'live' && (
-                  <>
-                    {/* Camera start / stop */}
-                    {camRunning ? (
-                      <button
-                        className="pm-btn pm-btn--camera-on"
-                        onClick={handleStopCamera}
-                        disabled={camLoading}
-                      >
-                        {camLoading
-                          ? <Loader2 size={13} className="pm-spin" />
-                          : <VideoOff size={13} />
-                        } Stop Camera
-                      </button>
-                    ) : (
-                      <button
-                        className="pm-btn pm-btn--outline"
-                        onClick={handleStartCamera}
-                        disabled={camLoading || !selZone?.rtsp_url}
-                        title={!selZone?.rtsp_url ? 'Configure an RTSP URL first' : ''}
-                      >
-                        {camLoading
-                          ? <Loader2 size={13} className="pm-spin" />
-                          : <Video size={13} />
-                        } Start Camera
-                      </button>
-                    )}
-
-                    <div className="pm-summary">
-                      <span className="pm-sum-free">{sumFr} free</span>
-                      <span className="pm-sum-sep">·</span>
-                      <span className="pm-sum-occ">{occ} occupied</span>
-                      <span className="pm-sum-sep">·</span>
-                      <span className="pm-sum-total">{liveSpaces.length} total</span>
-                    </div>
-
-                    {camRunning && (
-                      <span className="pm-camera-badge">
-                        <span className="pm-camera-dot" /> Camera active
-                      </span>
-                    )}
-                  </>
+                  <div className="pm-summary">
+                    <span className="pm-sum-free">{sumFr} free</span>
+                    <span className="pm-sum-sep">·</span>
+                    <span className="pm-sum-occ">{occ} occupied</span>
+                    <span className="pm-sum-sep">·</span>
+                    <span className="pm-sum-total">{liveSpaces.length} total</span>
+                  </div>
                 )}
 
                 {mode === 'edit' && (
@@ -488,11 +380,6 @@ export default function ParkingManagement() {
               </div>
 
               <div className="pm-toolbar-right">
-                {mode === 'live' && (
-                  <button className="pm-btn pm-btn--outline" onClick={handleOpenRtsp} title="Configure RTSP URL">
-                    <Settings size={13} /> RTSP
-                  </button>
-                )}
                 {mode === 'edit' && (
                   <>
                     <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onImageFile} />
@@ -512,16 +399,8 @@ export default function ParkingManagement() {
 
             {/* Canvas */}
             <div className="pm-canvas-wrapper">
-              {/* Background: MJPEG stream OR reference image OR placeholder */}
-              {camRunning && streamUrl ? (
-                <img
-                  key={`stream-${selId}`}
-                  src={streamUrl}
-                  className="pm-canvas-img"
-                  draggable={false}
-                  alt="Camera stream"
-                />
-              ) : selZone.reference_image_url ? (
+              {/* Background: reference image OR placeholder */}
+              {selZone.reference_image_url ? (
                 <img src={selZone.reference_image_url} className="pm-canvas-img" draggable={false} alt="" />
               ) : (
                 <div className="pm-canvas-no-img">
@@ -639,11 +518,9 @@ export default function ParkingManagement() {
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--free" />Free</span>
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--occ" />Occupied</span>
               <span className="pm-legend-note">
-                {camRunning
-                  ? 'IP camera active — backend detects vehicles and updates occupancy automatically'
-                  : mode === 'live'
-                    ? 'Click a space to toggle manually · auto-refreshes every 8 s'
-                    : 'Click-drag to draw · click a box to rename or delete'}
+                {mode === 'live'
+                  ? 'Click a space to toggle manually · auto-refreshes every 8 s'
+                  : 'Click-drag to draw · click a box to rename or delete'}
               </span>
             </div>
           </div>{/* /pm-canvas-area */}
@@ -725,29 +602,8 @@ export default function ParkingManagement() {
                       />
                       <Wifi size={14} />
                       <span className="pm-cam-strip-label">{cam.name}</span>
-                      <button
-                        className="pm-cam-remove"
-                        style={{ marginLeft: 'auto', flexShrink: 0 }}
-                        onClick={e => { e.stopPropagation(); handleRemovePkCam(cam.id) }}
-                        title="Remove"
-                      >
-                        <X size={11} />
-                      </button>
                     </div>
                   ))}
-                </div>
-              )}
-
-              {/* Remove button when only 1 camera */}
-              {parkingCams.length === 1 && (
-                <div style={{ padding: '0 12px 4px', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    className="pm-btn pm-btn--danger-outline"
-                    style={{ padding: '4px 10px', fontSize: 11 }}
-                    onClick={() => handleRemovePkCam(parkingCams[0].id)}
-                  >
-                    <X size={12} /> Remove
-                  </button>
                 </div>
               )}
 
@@ -799,39 +655,6 @@ export default function ParkingManagement() {
               <button type="button" className="pm-btn pm-btn--outline" onClick={() => setShowNew(false)}>Cancel</button>
               <button type="submit" className="pm-btn pm-btn--primary" disabled={addingZone || !newZone.name.trim()}>
                 {addingZone ? <Loader2 size={13} className="pm-spin" /> : <Plus size={13} />} Create Zone
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ── Modal: Configure RTSP ── */}
-      {rtspModal && (
-        <div className="pm-overlay" onClick={() => setRtspModal(false)}>
-          <form className="pm-modal" onSubmit={handleSaveRtsp} onClick={e => e.stopPropagation()}>
-            <div className="pm-modal-header">
-              <span>Configure IP Camera — {selZone?.name}</span>
-              <button type="button" className="pm-modal-close" onClick={() => setRtspModal(false)}><X size={16} /></button>
-            </div>
-            <div className="pm-modal-body">
-              <label className="pm-modal-label">RTSP URL</label>
-              <input
-                className="pm-modal-input"
-                value={rtspInput}
-                onChange={e => setRtspInput(e.target.value)}
-                placeholder="rtsp://<device-id>:<password>@192.168.1.x:554/stream0"
-                autoFocus
-              />
-              <p style={{ fontSize: 12, color: '#7C80A3', marginTop: 8, lineHeight: 1.5 }}>
-                <strong>V380 Pro format:</strong> <code>rtsp://&lt;device-id&gt;:&lt;password&gt;@&lt;camera-IP&gt;:554/stream0</code>
-                <br />The device ID and IP are in the V380 app → Device Info.
-                <br />Use <code>stream1</code> instead of <code>stream0</code> if the feed doesn't appear (stream0 is H.265; stream1 is H.264).
-              </p>
-            </div>
-            <div className="pm-modal-footer">
-              <button type="button" className="pm-btn pm-btn--outline" onClick={() => setRtspModal(false)}>Cancel</button>
-              <button type="submit" className="pm-btn pm-btn--primary" disabled={savingRtsp}>
-                {savingRtsp ? <Loader2 size={13} className="pm-spin" /> : <Save size={13} />} Save
               </button>
             </div>
           </form>

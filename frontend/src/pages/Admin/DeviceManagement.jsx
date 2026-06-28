@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
-  ShieldCheck, ParkingCircle, Video, Link2, AlertTriangle, RefreshCw,
-  CheckCircle2, XCircle, Wifi,
+  ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
-import { testRtsp } from '../../api/scanning'
+import { usersApi } from '../../api/users'
+import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -34,60 +34,42 @@ function AssignmentBadge({ value }) {
 
 // ── Camera Form Modal ─────────────────────────────────────────────────────────
 
-function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
+function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
   const isEdit = mode === 'edit'
 
-  const [ip,          setIp]          = useState(camera?.ip         ?? '')
-  const [deviceId,    setDeviceId]    = useState(camera?.device_id  ?? '')
-  const [password,    setPassword]    = useState(camera?.password   ?? '')
-  const [rtspUrl,     setRtspUrl]     = useState(camera?.rtsp_url   ?? '')
-  const [assignment,  setAssignment]  = useState(camera?.assignment ?? 'entry')
-  const [showPw,      setShowPw]      = useState(false)
-  const [saving,      setSaving]      = useState(false)
-  const [rtspTouched, setRtspTouched] = useState(false)
-  const [testing,     setTesting]     = useState(false)
-  const [testResult,  setTestResult]  = useState(null) // { ok, message } | null
-
-  useEffect(() => {
-    if (!rtspTouched) setRtspUrl(buildRtspUrl(ip, deviceId, password))
-  }, [ip, deviceId, password, rtspTouched])
-
-  const handleRtspChange = (v) => { setRtspTouched(true); setRtspUrl(v); setTestResult(null) }
-  const handleAutoFill   = () => { setRtspTouched(false); setRtspUrl(buildRtspUrl(ip, deviceId, password)); setTestResult(null) }
-
-  const handleTestRtsp = async () => {
-    if (!rtspUrl.startsWith('rtsp://')) { toast.error('RTSP URL must start with rtsp://'); return }
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const res = await testRtsp(rtspUrl)
-      setTestResult(res.data)
-    } catch {
-      setTestResult({ ok: false, message: 'Could not reach the server to run the test.' })
-    } finally {
-      setTesting(false)
-    }
-  }
+  const [ip,         setIp]         = useState(camera?.ip         ?? '')
+  const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
+  const [password,   setPassword]   = useState(camera?.password   ?? '')
+  const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
+  const [showPw,     setShowPw]     = useState(false)
+  const [saving,     setSaving]     = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!ip.trim() || !deviceId.trim() || !password.trim() || !rtspUrl.trim()) {
+    if (!ip.trim() || !deviceId.trim() || !password.trim()) {
       toast.error('Please fill in all fields.')
-      return
-    }
-    if (!rtspUrl.startsWith('rtsp://')) {
-      toast.error('RTSP URL must start with rtsp://')
       return
     }
     setSaving(true)
     try {
-      const payload = { ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(), rtsp_url: rtspUrl.trim(), assignment }
+      const rtspUrl = buildRtspUrl(ip.trim(), deviceId.trim(), password.trim())
+      const payload = { ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(), rtsp_url: rtspUrl, assignment }
       if (isEdit) {
-        await camerasApi.update(camera.id, payload)
+        const updated = await camerasApi.update(camera.id, payload)
         toast.success(`${camera.name} updated.`)
+        onAuditLog?.({
+          action: 'device_updated',
+          target_name: updated.name,
+          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}`,
+        })
       } else {
-        await camerasApi.create(payload)
+        const created = await camerasApi.create(payload)
         toast.success('Camera added successfully.')
+        onAuditLog?.({
+          action: 'device_created',
+          target_name: created.name,
+          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}`,
+        })
       }
       onSaved()
       onClose()
@@ -144,38 +126,6 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
               </div>
             </div>
 
-            <div className="form-group">
-              <div className="dm-label-row">
-                <label className="form-label">RTSP Stream URL <span className="required">*</span></label>
-                <div className="dm-label-actions">
-                  <button type="button" className="dm-link-btn" onClick={handleAutoFill}>
-                    <Link2 size={12} /> Auto-fill
-                  </button>
-                  <button type="button" className="dm-link-btn" onClick={handleTestRtsp} disabled={testing || !rtspUrl}>
-                    <Wifi size={12} /> {testing ? 'Testing…' : 'Test Connection'}
-                  </button>
-                </div>
-              </div>
-              <input
-                className="form-input dm-input-mono"
-                placeholder="rtsp://device_id:password@ip/stream1"
-                value={rtspUrl}
-                onChange={(e) => handleRtspChange(e.target.value)}
-                required
-              />
-              {rtspTouched && !testResult && (
-                <p className="dm-hint"><AlertTriangle size={11} /> Manually edited — click Auto-fill to regenerate</p>
-              )}
-              {testResult && (
-                <p className={`dm-hint ${testResult.ok ? 'dm-hint-ok' : 'dm-hint-error'}`}>
-                  {testResult.ok
-                    ? <CheckCircle2 size={11} />
-                    : <XCircle size={11} />}
-                  {' '}{testResult.message}
-                </p>
-              )}
-            </div>
-
             <p className="dm-section-label" style={{ marginTop: '20px' }}>Assignment</p>
             <div className="dm-assignment-row">
               <button
@@ -209,7 +159,7 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved }) {
 
 // ── Delete Confirm Modal ──────────────────────────────────────────────────────
 
-function DeleteModal({ camera, onClose, onDeleted }) {
+function DeleteModal({ camera, onClose, onDeleted, onAuditLog }) {
   const [deleting, setDeleting] = useState(false)
 
   const handleDelete = async () => {
@@ -217,6 +167,11 @@ function DeleteModal({ camera, onClose, onDeleted }) {
     try {
       await camerasApi.remove(camera.id)
       toast.success(`${camera.name} removed.`)
+      onAuditLog?.({
+        action: 'device_deleted',
+        target_name: camera.name,
+        details: `IP: ${camera.ip}, Assignment: ${camera.assignment}`,
+      })
       onDeleted()
       onClose()
     } catch {
@@ -256,7 +211,26 @@ export default function DeviceManagement() {
   const [loading,  setLoading]  = useState(true)
   const [nextName, setNextName] = useState(null)
   const [modal,    setModal]    = useState(null)
-  const [showPwId, setShowPwId] = useState(null)
+
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') || '' : ''
+
+  const {
+    cameras:        streamCams,
+    addCamera:      connectCamera,
+    removeCamera:   disconnectCamera,
+    disconnectAll,
+    registerCanvas,
+  } = useMultiRtspStream(token)
+
+  // Match a DB camera to its stream instance by name
+  const getStreamCam    = (dbCam) => streamCams.find(c => c.name === dbCam.name)
+  const isConnected     = (dbCam) => !!getStreamCam(dbCam)
+
+  const handleConnect    = (cam) => connectCamera(cam.name, cam.rtsp_url)
+  const handleDisconnect = (cam) => {
+    const sc = getStreamCam(cam)
+    if (sc) disconnectCamera(sc.id)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -272,6 +246,10 @@ export default function DeviceManagement() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const logAuditEvent = useCallback((payload) => {
+    usersApi.createAuditLog(payload).catch(() => {})
+  }, [])
 
   const entryCams   = cameras.filter(c => c.assignment === 'entry')
   const parkingCams = cameras.filter(c => c.assignment === 'parking')
@@ -313,8 +291,8 @@ export default function DeviceManagement() {
           </div>
         </div>
 
-        {/* Content */}
-        <div className="section-container">
+        {/* Cameras Table */}
+        <div className="section-container" style={{ marginBottom: 24 }}>
           <div className="section-header">
             <h2 className="section-title">Cameras</h2>
           </div>
@@ -342,15 +320,17 @@ export default function DeviceManagement() {
                     <th>Assignment</th>
                     <th>IP Address</th>
                     <th>Device ID</th>
-                    <th>Password</th>
-                    <th>RTSP URL</th>
+                    <th>Connection</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cameras.map(cam => {
-                    const masked = '•'.repeat(Math.min(cam.password.length, 10))
-                    const showing = showPwId === cam.id
+                    const sc = getStreamCam(cam)
+                    const connected = !!sc
+                    const live = sc?.streamConnected
+                    const connecting = connected && !live && sc?.wsActive
+
                     return (
                       <tr key={cam.id}>
                         <td className="dm-cam-name">
@@ -361,14 +341,25 @@ export default function DeviceManagement() {
                         <td className="token-link">{cam.ip}</td>
                         <td className="token-link">{cam.device_id}</td>
                         <td>
-                          <span className="dm-pw-cell">
-                            <span className="dm-pw-text">{showing ? cam.password : masked}</span>
-                            <button className="dm-pw-toggle" onClick={() => setShowPwId(showing ? null : cam.id)}>
-                              {showing ? <EyeOff size={12} /> : <Eye size={12} />}
+                          {!connected ? (
+                            <button className="dm-conn-btn dm-conn-btn-connect" onClick={() => handleConnect(cam)}>
+                              <Wifi size={12} /> Connect
                             </button>
-                          </span>
+                          ) : (
+                            <div className="dm-conn-active">
+                              <span className="dm-conn-status">
+                                <span className={`dm-conn-dot ${live ? 'live' : 'connecting'}`} />
+                                {connecting
+                                  ? <><Loader2 size={11} className="dm-spin" /> Connecting…</>
+                                  : 'Live'
+                                }
+                              </span>
+                              <button className="dm-conn-btn dm-conn-btn-disconnect" onClick={() => handleDisconnect(cam)}>
+                                <WifiOff size={12} /> Disconnect
+                              </button>
+                            </div>
+                          )}
                         </td>
-                        <td className="dm-rtsp-cell">{cam.rtsp_url}</td>
                         <td>
                           <div className="dm-row-actions">
                             <button className="view-btn" title="Edit" onClick={() => setModal({ type: 'edit', camera: cam })}>
@@ -388,17 +379,92 @@ export default function DeviceManagement() {
           )}
         </div>
 
+        {/* Live Feeds */}
+        <div className="section-container" style={{ marginTop: 24 }}>
+          <div className="section-header">
+            <h2 className="section-title">Live Feeds</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {streamCams.length > 0 && (
+                <span className="dm-feeds-live-count">
+                  {streamCams.filter(c => c.streamConnected).length}/{streamCams.length} live
+                </span>
+              )}
+              {streamCams.length > 0 && (
+                <button className="btn-outline btn-sm" onClick={disconnectAll}>
+                  <WifiOff size={13} /> Disconnect All
+                </button>
+              )}
+            </div>
+          </div>
+
+          {streamCams.length === 0 ? (
+            <div className="dm-feeds-empty">
+              <Video size={32} className="dm-feeds-empty-icon" />
+              <p className="dm-feeds-empty-title">No active feeds</p>
+              <p className="dm-feeds-empty-sub">Click Connect on a camera above to view its live RTSP feed here.</p>
+            </div>
+          ) : (
+            <div className={`dm-feeds-grid${streamCams.length === 1 ? ' dm-feeds-grid-single' : ''}`}>
+              {streamCams.map(sc => {
+                const dbCam = cameras.find(c => c.name === sc.name)
+                const dotCls = sc.streamConnected ? 'live' : sc.wsActive ? 'connecting' : 'offline'
+                return (
+                  <div key={sc.id} className="dm-feed-card">
+                    <div className="dm-feed-header">
+                      <span className="dm-feed-name">
+                        <span className={`dm-feed-dot ${dotCls}`} />
+                        {sc.name}
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {dbCam && <AssignmentBadge value={dbCam.assignment} />}
+                        <button
+                          className="dm-feed-disconnect"
+                          onClick={() => disconnectCamera(sc.id)}
+                          title="Disconnect"
+                        >
+                          <WifiOff size={13} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="dm-feed-viewport">
+                      <canvas
+                        ref={el => registerCanvas(sc.id, el)}
+                        className="dm-feed-canvas"
+                      />
+                      {!sc.streamConnected && (
+                        <div className="dm-feed-overlay">
+                          {sc.wsActive ? (
+                            <>
+                              <Loader2 size={28} className="dm-spin" style={{ color: '#60a5fa' }} />
+                              <span>{sc.statusMsg || 'Connecting…'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <WifiOff size={28} style={{ color: '#374151' }} />
+                              <span>Disconnected</span>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* Modals */}
       {modal?.type === 'add' && (
-        <CameraModal mode="add" nextName={nextName} onClose={() => setModal(null)} onSaved={load} />
+        <CameraModal mode="add" nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
       )}
       {modal?.type === 'edit' && (
-        <CameraModal mode="edit" camera={modal.camera} nextName={nextName} onClose={() => setModal(null)} onSaved={load} />
+        <CameraModal mode="edit" camera={modal.camera} nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
       )}
       {modal?.type === 'delete' && (
-        <DeleteModal camera={modal.camera} onClose={() => setModal(null)} onDeleted={load} />
+        <DeleteModal camera={modal.camera} onClose={() => setModal(null)} onDeleted={load} onAuditLog={logAuditEvent} />
       )}
     </AdminLayout>
   )

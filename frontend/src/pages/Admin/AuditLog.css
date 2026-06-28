@@ -338,6 +338,18 @@
   background: #E0E7FF;
   color: #4F46E5;
 }
+.al-action-badge.device-created {
+  background: #ECFDF5;
+  color: #059669;
+}
+.al-action-badge.device-updated {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+.al-action-badge.device-deleted {
+  background: #FFF7ED;
+  color: #C2410C;
+}
 
 .al-loading {
   text-align: center;
