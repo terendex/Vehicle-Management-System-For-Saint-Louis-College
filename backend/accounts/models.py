@@ -85,13 +85,18 @@ class User(AbstractUser):
 
 class AuditLog(models.Model):
     class Action(models.TextChoices):
-        USER_CREATED     = 'user_created',    'User Created'
-        USER_UPDATED     = 'user_updated',    'User Updated'
-        USER_DELETED     = 'user_deleted',    'User Deleted'
-        USER_DISABLED    = 'user_disabled',   'User Disabled'
-        USER_ENABLED     = 'user_enabled',    'User Enabled'
+        USER_CREATED     = 'user_created',     'User Created'
+        USER_UPDATED     = 'user_updated',     'User Updated'
+        USER_DELETED     = 'user_deleted',     'User Deleted'
+        USER_DISABLED    = 'user_disabled',    'User Disabled'
+        USER_ENABLED     = 'user_enabled',     'User Enabled'
         ADMIN_REPLACED   = 'admin_replaced',   'Admin Replaced'
         SCAN             = 'scan',             'Vehicle Scanned'
+        VEHICLE_ENTERED  = 'vehicle_entered',  'Vehicle Entered'
+        VEHICLE_EXITED   = 'vehicle_exited',   'Vehicle Exited'
+        VISITOR_ISSUED   = 'visitor_issued',   'Visitor Pass Issued'
+        VISITOR_EXITED   = 'visitor_exited',   'Visitor Exited'
+        ENTRY_OVERRIDE   = 'entry_override',   'Entry Override'
 
     actor       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='audit_logs')
     action      = models.CharField(max_length=30, choices=Action.choices)

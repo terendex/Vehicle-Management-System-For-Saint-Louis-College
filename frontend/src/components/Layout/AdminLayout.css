@@ -212,3 +212,13 @@
   padding: 2rem;
   overflow-y: auto;
 }
+
+/* Fill-height variant: used by pages that must show everything without scrolling
+   (entry management). Turns admin-content into a flex column so children
+   can fill the remaining viewport height. */
+.admin-content--fill {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.5rem;
+}

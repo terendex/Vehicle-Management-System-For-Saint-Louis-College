@@ -15,7 +15,10 @@ class VisitorPassSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class AccessLogSerializer(serializers.ModelSerializer):
-    scanned_by_name = serializers.CharField(source='scanned_by.full_name', read_only=True)
+    scanned_by_name    = serializers.CharField(source='scanned_by.full_name',     read_only=True, default=None)
+    vehicle_owner_name = serializers.CharField(source='vehicle.user.full_name',   read_only=True, default=None)
+    vehicle_type_info  = serializers.CharField(source='vehicle.vehicle_type',     read_only=True, default=None)
+
     class Meta:
         model  = AccessLog
         fields = '__all__'

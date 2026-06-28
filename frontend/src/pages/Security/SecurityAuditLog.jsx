@@ -5,13 +5,18 @@ import { ClipboardList, Calendar, Filter, RefreshCw, ChevronLeft, ChevronRight }
 import './SecurityAuditLog.css'
 
 const ACTION_LABELS = {
-  user_created: 'User Created',
-  user_updated: 'User Updated',
-  user_deleted: 'User Deleted',
-  user_disabled: 'User Disabled',
-  user_enabled: 'User Enabled',
-  admin_replaced: 'Admin Replaced',
-  scan: 'Vehicle Scanned',
+  user_created:    'User Created',
+  user_updated:    'User Updated',
+  user_deleted:    'User Deleted',
+  user_disabled:   'User Disabled',
+  user_enabled:    'User Enabled',
+  admin_replaced:  'Admin Replaced',
+  scan:            'Vehicle Scanned',
+  vehicle_entered: 'Vehicle Entered',
+  vehicle_exited:  'Vehicle Exited',
+  visitor_issued:  'Visitor Pass Issued',
+  visitor_exited:  'Visitor Exited',
+  entry_override:  'Entry Override',
 }
 
 const DATE_PERIODS = [
@@ -101,13 +106,18 @@ export default function SecurityAuditLog() {
   }
 
   const actionBadgeClass = (action) => {
-    if (action === 'user_created') return 'created'
-    if (action === 'user_updated') return 'updated'
-    if (action === 'user_deleted') return 'deleted'
-    if (action === 'user_disabled') return 'disabled'
-    if (action === 'user_enabled') return 'enabled'
-    if (action === 'admin_replaced') return 'replaced'
-    if (action === 'scan') return 'scan'
+    if (action === 'user_created')    return 'created'
+    if (action === 'user_updated')    return 'updated'
+    if (action === 'user_deleted')    return 'deleted'
+    if (action === 'user_disabled')   return 'disabled'
+    if (action === 'user_enabled')    return 'enabled'
+    if (action === 'admin_replaced')  return 'replaced'
+    if (action === 'scan')            return 'scan'
+    if (action === 'vehicle_entered') return 'scan'
+    if (action === 'vehicle_exited')  return 'scan'
+    if (action === 'visitor_issued')  return 'created'
+    if (action === 'visitor_exited')  return 'scan'
+    if (action === 'entry_override')  return 'updated'
     return ''
   }
 
@@ -146,13 +156,18 @@ export default function SecurityAuditLog() {
                 onChange={(e) => setActionFilter(e.target.value)}
               >
                 <option value="">All Actions</option>
+                <option value="vehicle_entered">Vehicle Entered</option>
+                <option value="vehicle_exited">Vehicle Exited</option>
+                <option value="visitor_issued">Visitor Pass Issued</option>
+                <option value="visitor_exited">Visitor Exited</option>
+                <option value="entry_override">Entry Override</option>
+                <option value="scan">Vehicle Scanned (denied)</option>
                 <option value="user_created">User Created</option>
                 <option value="user_updated">User Updated</option>
                 <option value="user_deleted">User Deleted</option>
                 <option value="user_disabled">User Disabled</option>
                 <option value="user_enabled">User Enabled</option>
                 <option value="admin_replaced">Admin Replaced</option>
-                <option value="scan">Vehicle Scanned</option>
               </select>
             </div>
             <div className="sal-filter-item">

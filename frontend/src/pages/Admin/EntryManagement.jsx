@@ -2,13 +2,12 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Camera,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, ShieldCheck, Zap, Video, Wifi,
+  ClipboardList, UserPlus, X, Zap, Video, Wifi,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
-import { getRuleConstraints } from '../../api/vehicles'
 import useAuthStore from '../../stores/authStore'
 import { camerasApi } from '../../api/cameras'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
@@ -288,9 +287,6 @@ export default function EntryManagement() {
   const [result, setResult] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
-  const [rules, setRules] = useState([])
-  const [loadingRules, setLoadingRules] = useState(true)
-
   const plateCooldownRef = useRef(new Set())
 
   const getToken = useCallback(() => {
@@ -353,17 +349,12 @@ export default function EntryManagement() {
   useEffect(() => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
-    getRuleConstraints().then((r) => {
-      const data = (r.data?.results ?? r.data ?? [])
-      setRules(data.filter(rule => rule.enabled))
-      setLoadingRules(false)
-    }).catch(() => setLoadingRules(false))
   }, [])
 
   const isLive = rtspCameras.some(c => c.streamConnected)
 
   return (
-    <AdminLayout>
+    <AdminLayout fillHeight>
       <div className="em-page">
 
         {/* Header */}
@@ -384,7 +375,7 @@ export default function EntryManagement() {
         <div className="em-grid">
 
           {/* CCTV Camera card */}
-          <div className="em-card">
+          <div className="em-card em-camera-card">
             <div className="em-card-head">
               <span className="em-card-label">
                 <Video size={15} /> IP Camera (CCTV)
@@ -476,38 +467,6 @@ export default function EntryManagement() {
             ) : (
               <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} />
             )}
-
-            {/* Entry rules */}
-            <div className="em-card em-rules">
-              <div className="em-card-head">
-                <span className="em-card-label"><ShieldCheck size={14} /> Entry Rules</span>
-              </div>
-              <div className="em-rules-body">
-                <div style={{ marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px', paddingLeft: '8px', borderLeft: '2px solid #3b82f6' }}>Schedule Restrictions</div>
-                {loadingRules ? (
-                  <p className="em-log-empty">Loading rules…</p>
-                ) : rules.length === 0 ? (
-                  <p className="em-log-empty">No rules configured.</p>
-                ) : (
-                  rules.map((rule) => {
-                    const dotColor = rule.constraint_type === 'employee' ? 'green'
-                                   : rule.constraint_type === 'student'  ? 'blue' : 'purple'
-                    const daysSummary = rule.days.length === 6 ? 'Mon–Sat'
-                      : rule.days.length === 5 ? 'Mon–Fri'
-                      : rule.days.join(', ').toUpperCase() || 'All days'
-                    return (
-                      <div key={`rule-${rule.id}`} className="em-rule-row">
-                        <span className={`em-rule-dot ${dotColor}`} />
-                        <span className="em-rule-text">
-                          <strong>{rule.constraint_type.charAt(0).toUpperCase() + rule.constraint_type.slice(1)}s</strong>
-                          {' — '}{daysSummary}, {rule.start_time}–{rule.end_time}
-                        </span>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </div>
 
             {/* Recent scans */}
             <div className="em-card">
