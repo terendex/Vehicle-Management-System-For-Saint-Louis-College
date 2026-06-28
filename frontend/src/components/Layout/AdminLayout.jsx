@@ -12,12 +12,13 @@ import {
   LogOut,
   Video,
   AlertTriangle,
+  MonitorDot,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './AdminLayout.css'
 
-export default function AdminLayout({ children }) {
+export default function AdminLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
 
@@ -34,7 +35,8 @@ export default function AdminLayout({ children }) {
       { name: 'Dashboard',            path: '/admin',                  icon: <LayoutDashboard size={18} /> },
       { name: 'Vehicle Registration', path: '/admin/vehicles',         icon: <Car size={18} /> },
       { name: 'User Management',      path: '/admin/users',            icon: <Users size={18} /> },
-      { name: 'Device Management',    path: '/admin/devices',  icon: <Video size={18} /> },
+      { name: 'Device Management',    path: '/admin/devices',          icon: <Video size={18} />       },
+      { name: 'Guard Monitor',        path: '/admin/guard-monitor',    icon: <MonitorDot size={18} />  },
     ] : []),
     ...((isAdmin || isCdso) ? [
       { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },
@@ -97,7 +99,7 @@ export default function AdminLayout({ children }) {
       <main className="admin-main">
 
         {/* Dynamic Page Content */}
-        <div className="admin-content">
+        <div className={`admin-content${fillHeight ? ' admin-content--fill' : ''}`}>
           {children}
         </div>
       </main>

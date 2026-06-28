@@ -35,8 +35,10 @@ class VisitorPass(models.Model):
         'accounts.User', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='issued_passes',
     )
+    allowed_duration = models.PositiveIntegerField(default=60, help_text="Allowed time inside in minutes")
     valid_date = models.DateField(default=timezone.now)
     entered_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
     exited_at  = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):

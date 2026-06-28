@@ -32,3 +32,10 @@ export const logExit = (data) => api.post('/scan/exit/', data)
 
 // Test an RTSP URL from the server side — returns { ok, message }
 export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
+
+// Extend the allowed duration of an active visitor pass
+export const extendVisitorPass = (id, extra_minutes) =>
+  api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
+
+// Admin: live guard activity monitor
+export const getGuardMonitor = () => api.get('/scan/guard-monitor/')

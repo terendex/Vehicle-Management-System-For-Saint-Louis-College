@@ -546,6 +546,7 @@
 .em-log-dot.wrong_day  { background: #ef4444; }
 .em-log-dot.pending    { background: #f59e0b; }
 .em-log-dot.visitor    { background: #8b5cf6; }
+.em-log-dot.exited     { background: #6b7280; }
 
 .em-log-plate {
   flex: 1;
@@ -805,6 +806,11 @@
   color: #5b21b6;
 }
 
+.em-log-badge.exited {
+  background: #f3f4f6;
+  color: #374151;
+}
+
 /* ── Modal tabs (DigitalIDModal) ─────────────────────────────── */
 .em-tabs {
   display: flex;
@@ -993,3 +999,62 @@
 @media (max-width: 600px) {
   .em-right { grid-template-columns: 1fr; }
 }
+
+/* ── Fill-height (no-scroll) layout ─────────────────────────────
+   Activated by .admin-content--fill on the layout wrapper.
+   Only entry management pages opt in — all other pages unaffected.
+   ─────────────────────────────────────────────────────────────── */
+
+/* em-page grows to fill the flex-column admin-content */
+.admin-content--fill .em-page {
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+/* Grid fills remaining height after the page header */
+.admin-content--fill .em-grid {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+  gap: 1rem;
+  grid-template-columns: 1fr 300px;
+}
+
+/* Camera card becomes a flex column that fills its grid cell */
+.admin-content--fill .em-camera-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Viewport fills remaining card height — drop the fixed aspect ratio */
+.admin-content--fill .em-camera-card .em-viewport {
+  aspect-ratio: unset;
+  flex: 1;
+  min-height: 0 !important; /* override inline minHeight: 340 */
+}
+
+/* Upload zone and preview mirror viewport behaviour in fill mode */
+.admin-content--fill .em-camera-card .em-upload-zone,
+.admin-content--fill .em-camera-card .em-upload-preview {
+  aspect-ratio: unset;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Right panel: full height, cards scroll internally */
+.admin-content--fill .em-right {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 0.75rem;
+  scrollbar-width: thin;
+  scrollbar-color: #e5e7eb transparent;
+}
+
+.admin-content--fill .em-right::-webkit-scrollbar { width: 4px; }
+.admin-content--fill .em-right::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }

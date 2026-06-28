@@ -3,7 +3,7 @@ import Webcam from 'react-webcam'
 import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, ShieldCheck, Video, Plus,
+  ClipboardList, UserPlus, X, Video, Plus,
   Shield, Wifi, Zap
 } from 'lucide-react'
 import { toast } from "sonner"
@@ -11,7 +11,7 @@ import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry, logExit } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
-import { getRuleConstraints, getSystemSettings } from '../../api/vehicles'
+import { getSystemSettings } from '../../api/vehicles'
 import { createViolation } from '../../api/violations'
 import useAuthStore from '../../stores/authStore'
 import { useScanStream } from '../../hooks/useScanStream'
@@ -28,6 +28,7 @@ const STATUS_META = {
   disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   cooldown:   { label: 'Recently Scanned',       Icon: Clock,         cls: 'pending',    logCls: 'pending'    },
+  exited:     { label: 'Exited',                 Icon: CheckCircle,   cls: 'authorized', logCls: 'exited'     },
 }
 
 function getMeta(status) {
@@ -39,26 +40,118 @@ function timeAgo(ts) {
   catch { return '' }
 }
 
+// ─── printVisitorSlip ─────────────────────────────────────────────────────────
+function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration }) {
+  const w = window.open('', '_blank', 'width=320,height=520')
+  if (!w) { return }
+  const fmt = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
+  w.document.write(`<!DOCTYPE html><html><head>
+<meta charset="utf-8"/>
+<title>Visitor Slip</title>
+<style>
+  @media print { @page { size: 80mm auto; margin: 0; } }
+  body { font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0 auto; padding: 6px; }
+  h2 { text-align: center; font-size: 13px; margin: 4px 0 2px; }
+  .sub { text-align: center; font-size: 10px; color: #555; margin-bottom: 8px; }
+  hr { border: none; border-top: 1px dashed #999; margin: 6px 0; }
+  .row { display: flex; justify-content: space-between; margin: 3px 0; }
+  .label { color: #555; }
+  .plate { font-size: 20px; font-weight: bold; text-align: center; letter-spacing: 3px; margin: 8px 0; border: 2px solid #000; padding: 4px; }
+  .footer { text-align: center; font-size: 9px; color: #888; margin-top: 10px; }
+  .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
+</style></head><body>
+<h2>SAINT LOUIS COLLEGE</h2>
+<div class="sub">Vehicle Management System</div>
+<div class="sub">--- VISITOR SLIP ---</div>
+<div class="plate">${plate}</div>
+<hr/>
+<div class="row"><span class="label">Office:</span><span>${officeName || 'N/A'}</span></div>
+<div class="row"><span class="label">Purpose:</span><span>${purpose || 'N/A'}</span></div>
+<div class="row"><span class="label">Duration:</span><span>${duration} min</span></div>
+<hr/>
+<div class="row"><span class="label">Issued:</span><span>${fmt(issuedAt)}</span></div>
+<div class="row"><span class="label">Expires:</span><span>${fmt(expiresAt)}</span></div>
+<div class="row"><span class="label">Guard:</span><span>${guardName || 'N/A'}</span></div>
+<hr/>
+<div class="warn">RETURN THIS SLIP UPON EXIT</div>
+<div class="footer">Unauthorized possession is subject to penalty.</div>
+</body></html>`)
+  w.document.close()
+  w.focus()
+  setTimeout(() => { w.print(); w.close() }, 400)
+}
+
 // ─── VisitorPassModal ─────────────────────────────────────────────────────────
-function VisitorPassModal({ plate, offices, onClose, onCreated }) {
-  const [officeId, setOfficeId] = useState('')
-  const [purpose, setPurpose] = useState('')
-  const [loading, setLoading] = useState(false)
+function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
+  const [officeId, setOfficeId]       = useState('')
+  const [purpose, setPurpose]         = useState('')
+  const [duration, setDuration]       = useState(60)
+  const [loading, setLoading]         = useState(false)
+  const [createdPass, setCreatedPass] = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!officeId || !purpose.trim()) { toast.error('Please fill in all fields.'); return }
     setLoading(true)
     try {
-      await createVisitorPass({ plate_number: plate, office: officeId, purpose })
-      toast.success('Visitor pass created — awaiting office confirmation.')
+      const res = await createVisitorPass({
+        plate_number: plate,
+        office: officeId,
+        purpose,
+        allowed_duration: duration,
+      })
+      const pass = res.data
+      setCreatedPass(pass)
+      toast.success('Visitor pass created.')
       onCreated()
-      onClose()
+      const officeName = offices.find(o => String(o.id) === String(officeId))?.name
+      printVisitorSlip({
+        plate,
+        purpose,
+        officeName,
+        guardName,
+        issuedAt: pass.entered_at,
+        expiresAt: pass.expires_at,
+        duration,
+      })
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
     } finally {
       setLoading(false)
     }
+  }
+
+  if (createdPass) {
+    return (
+      <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="em-modal">
+          <div className="em-modal-head">
+            <span className="em-modal-title"><CheckCircle size={17} style={{ color: '#10b981' }} /> Pass Created</span>
+            <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+          </div>
+          <div className="em-modal-body">
+            <p style={{ margin: 0, fontSize: 13, color: '#166534' }}>
+              Visitor slip printed for <strong>{plate}</strong> — valid for <strong>{duration} min</strong>.
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#6b7280' }}>
+              Expires: {createdPass.expires_at ? new Date(createdPass.expires_at).toLocaleTimeString() : '—'}
+            </p>
+          </div>
+          <div className="em-modal-foot">
+            <button
+              type="button" className="em-btn em-btn-secondary"
+              onClick={() => {
+                const officeName = offices.find(o => String(o.id) === String(officeId))?.name
+                printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt: createdPass.entered_at, expiresAt: createdPass.expires_at, duration })
+              }}
+            >
+              Print Again
+            </button>
+            <button type="button" className="em-btn em-btn-primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -91,11 +184,25 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
                 required
               />
             </div>
+            <div className="em-field">
+              <label className="em-label">Allowed Duration (minutes)</label>
+              <input
+                className="em-input"
+                type="number"
+                min={1}
+                max={480}
+                value={duration}
+                onChange={(e) => setDuration(Math.max(1, parseInt(e.target.value) || 60))}
+              />
+              <span style={{ fontSize: 11, color: '#6b7280', marginTop: 3, display: 'block' }}>
+                Default is 60 min. Guard can extend after issuance.
+              </span>
+            </div>
           </div>
           <div className="em-modal-foot">
             <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
-              {loading ? <><div className="em-spinner" /> Creating…</> : 'Create Pass'}
+              {loading ? <><div className="em-spinner" /> Creating…</> : 'Create & Print Slip'}
             </button>
           </div>
         </form>
@@ -271,7 +378,7 @@ function IssueViolationModal({ initialPlate = '', onClose }) {
 }
 
 // ─── ResultCard ───────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, guardName }) {
   const [showModal, setShowModal]         = useState(false)
   const [showOverride, setShowOverride]   = useState(false)
   const [showViolation, setShowViolation] = useState(false)
@@ -478,6 +585,7 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
           offices={offices}
           onClose={() => setShowModal(false)}
           onCreated={onPassCreated}
+          guardName={guardName}
         />
       )}
 
@@ -532,8 +640,6 @@ export default function SecurityEntryManagement() {
   const [displayResult, setDisplayResult] = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [rules, setRules]             = useState([])
-  const [loadingRules, setLoadingRules] = useState(true)
 const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Front' }])
   const [activeCamId, setActiveCamId]   = useState(1)
   const [eventMode, setEventMode]       = useState(false)  // read-only, fetched from backend
@@ -558,6 +664,13 @@ const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Fr
           ? `Exit recorded for ${plate} — inside for ${dur} min.`
           : `Exit recorded for ${plate}.`
       )
+      setLogs((prev) => [{
+        id: Date.now(),
+        plate_number:    plate,
+        status:          'exited',
+        scanned_at:      new Date().toISOString(),
+        scanned_by_name: user?.full_name || null,
+      }, ...prev].slice(0, 20))
       getAccessLogs({ limit: 20 }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Failed to record exit.')
@@ -604,10 +717,6 @@ const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Fr
   useEffect(() => {
     getAccessLogs({ limit: 20 }).then((r) => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then((r) => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
-    getRuleConstraints().then((r) => {
-      setRules((r.data?.results ?? r.data ?? []).filter(rule => rule.enabled))
-      setLoadingRules(false)
-    }).catch(() => setLoadingRules(false))
 getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
     const settingsPoll = setInterval(() => {
       getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() => {})
@@ -627,10 +736,11 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
     setLogs((prev) => {
       const newLogs = wsResults.map(r => ({
         id: Date.now() + Math.random(),
-        plate_number: r.plate_number,
-        status: r.status,
-        scanned_at: new Date().toISOString(),
-        scanned_by_name: user?.full_name || null,
+        plate_number:      r.plate_number,
+        status:            r.status,
+        scanned_at:        new Date().toISOString(),
+        scanned_by_name:   user?.full_name || null,
+        vehicle_owner_name: r.vehicle?.user?.full_name || null,
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
@@ -648,10 +758,11 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
     setLogs((prev) => {
       const newLogs = rtspResults.map(r => ({
         id: Date.now() + Math.random(),
-        plate_number: r.plate_number,
-        status: r.status,
-        scanned_at: new Date().toISOString(),
-        scanned_by_name: user?.full_name || null,
+        plate_number:      r.plate_number,
+        status:            r.status,
+        scanned_at:        new Date().toISOString(),
+        scanned_by_name:   user?.full_name || null,
+        vehicle_owner_name: r.vehicle?.user?.full_name || null,
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
@@ -729,10 +840,11 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
         setLogs((prev) => {
           const newLogs = data.map(r => ({
             id: Date.now() + Math.random(),
-            plate_number: r.plate_number,
-            status: r.status,
-            scanned_at: new Date().toISOString(),
-            scanned_by_name: user?.full_name || null,
+            plate_number:      r.plate_number,
+            status:            r.status,
+            scanned_at:        new Date().toISOString(),
+            scanned_by_name:   user?.full_name || null,
+            vehicle_owner_name: r.vehicle?.user?.full_name || null,
           }))
           return [...newLogs, ...prev].slice(0, 20)
         })
@@ -750,7 +862,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <SecurityLayout>
+    <SecurityLayout fillHeight>
       <div className="em-page">
 
         {/* Header */}
@@ -794,7 +906,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
         <div className="em-grid">
 
           {/* Camera / Upload card */}
-          <div className="em-card">
+          <div className="em-card em-camera-card">
             <div className="em-card-head">
               <span className="em-card-label">
                 <Camera size={15} />
@@ -1056,45 +1168,13 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
                     offices={offices}
                     onPassCreated={handlePassCreated}
                     onOverride={handlePassCreated}
+                    guardName={user?.full_name}
                   />
                 ))}
               </div>
             ) : (
-              <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} onOverride={handlePassCreated} />
+              <ResultCard result={null} offices={offices} onPassCreated={handlePassCreated} onOverride={handlePassCreated} guardName={user?.full_name} />
             )}
-
-            {/* Entry rules */}
-            <div className="em-card em-rules">
-              <div className="em-card-head">
-                <span className="em-card-label"><ShieldCheck size={14} /> Entry Rules</span>
-              </div>
-              <div className="em-rules-body">
-                <div className="em-rules-section-label" style={{ borderColor: '#3b82f6' }}>Schedule Restrictions</div>
-                {loadingRules ? (
-                  <p className="em-log-empty">Loading rules…</p>
-                ) : rules.length === 0 ? (
-                  <p className="em-log-empty">No rules configured.</p>
-                ) : (
-                  rules.map((rule) => {
-                    const dotColor = rule.constraint_type === 'employee' ? 'green'
-                                   : rule.constraint_type === 'student'  ? 'blue' : 'purple'
-                    const daysSummary = rule.days.length === 6 ? 'Mon–Sat'
-                      : rule.days.length === 5 ? 'Mon–Fri'
-                      : rule.days.join(', ').toUpperCase() || 'All days'
-                    return (
-                      <div key={`rule-${rule.id}`} className="em-rule-row">
-                        <span className={`em-rule-dot ${dotColor}`} />
-                        <span className="em-rule-text">
-                          <strong>{rule.constraint_type.charAt(0).toUpperCase() + rule.constraint_type.slice(1)}s</strong>
-                          {' — '}{daysSummary}, {rule.start_time}–{rule.end_time}
-                        </span>
-                      </div>
-                    )
-                  })
-                )}
-
-              </div>
-            </div>
 
             {/* Record Exit */}
             <div className="em-card">
@@ -1139,14 +1219,22 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
                 <div className="em-log-list">
                   {logs.map((log, i) => {
                     const m = getMeta(log.status)
+                    const ownerName = log.vehicle_owner_name
                     return (
                       <div key={log.id ?? i} className="em-log-item">
                         <span className={`em-log-dot ${m.logCls}`} />
-                        <span className="em-log-plate">{log.plate_number || '—'}</span>
-                        <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
-                        {log.scanned_by_name && (
-                          <span className="em-log-guard">{log.scanned_by_name}</span>
-                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span className="em-log-plate">{log.plate_number || '—'}</span>
+                            <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                          </div>
+                          {(ownerName || log.scanned_by_name) && (
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1, display: 'flex', gap: 8 }}>
+                              {ownerName && <span>Owner: {ownerName}</span>}
+                              {log.scanned_by_name && <span>Guard: {log.scanned_by_name}</span>}
+                            </div>
+                          )}
+                        </div>
                         <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
                       </div>
                     )

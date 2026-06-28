@@ -12,6 +12,7 @@ import RuleConstraints from './pages/Admin/RuleConstraints'
 import AuditLog from './pages/Admin/AuditLog'
 import ParkingManagement from './pages/Admin/ParkingManagement'
 import DeviceManagement from './pages/Admin/DeviceManagement'
+import GuardMonitor from './pages/Admin/GuardMonitor'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/admin/rules" element={<RuleConstraints />} />
           <Route path="/admin/audit" element={<AuditLog />} />
           <Route path="/admin/devices" element={<DeviceManagement />} />
+          <Route path="/admin/guard-monitor" element={<GuardMonitor />} />
         </Route>
 
         {/* Admin + CDSO shared routes */}

@@ -10,7 +10,7 @@ import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './AdminLayout.css' // Reusing the exact same layout styles
 
-export default function SecurityLayout({ children }) {
+export default function SecurityLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
 
@@ -74,7 +74,7 @@ export default function SecurityLayout({ children }) {
       {/* Main Column */}
       <main className="admin-main">
         {/* Dynamic Page Content */}
-        <div className="admin-content">
+        <div className={`admin-content${fillHeight ? ' admin-content--fill' : ''}`}>
           {children}
         </div>
       </main>

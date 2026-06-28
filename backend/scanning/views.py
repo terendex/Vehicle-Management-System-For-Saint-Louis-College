@@ -17,6 +17,25 @@ from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer
 
+
+def get_client_ip(request):
+    x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded:
+        return x_forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
+
+
+def _audit(request, action, details=''):
+    try:
+        AuditLog.objects.create(
+            actor=request.user,
+            action=action,
+            details=details,
+            ip_address=get_client_ip(request),
+        )
+    except Exception:
+        pass
+
 AUTO_VIOLATION_DEDUP_SECONDS = 300   # one auto-violation per plate per 5 min
 
 
@@ -115,12 +134,21 @@ class ScanView(APIView):
                 snapshot      = request.FILES.get('image'),
             )
 
-            AuditLog.objects.create(
-                actor=request.user,
-                action=AuditLog.Action.SCAN,
-                details=f"Plate: {plate}, Status: {entry['status']}",
-                ip_address=self.get_client_ip(request),
-            )
+            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            guard_name = request.user.full_name
+            if entry['allowed']:
+                action  = AuditLog.Action.VEHICLE_ENTERED
+                details = (
+                    f"Plate: {plate} | Owner: {owner_name} | "
+                    f"Vehicle: {vehicle.vehicle_type or 'N/A'} | Guard: {guard_name}"
+                )
+            else:
+                action  = AuditLog.Action.SCAN
+                details = (
+                    f"Plate: {plate} | Owner: {owner_name} | "
+                    f"Status: {entry['status']} | Reason: {entry['message']} | Guard: {guard_name}"
+                )
+            _audit(request, action, details)
 
             if not entry['allowed']:
                 _auto_log_violation(vehicle, entry['message'])
@@ -169,6 +197,12 @@ class VisitorPassView(APIView):
             from .models import Office as OfficeModel
             office = OfficeModel.objects.filter(pk=office_id).first()
 
+        try:
+            allowed_duration = max(1, int(request.data.get('allowed_duration', 60)))
+        except (TypeError, ValueError):
+            allowed_duration = 60
+
+        now = timezone.now()
         pass_ = VisitorPass.objects.create(
             vehicle=vehicle,
             plate_number=plate_number,
@@ -176,7 +210,29 @@ class VisitorPassView(APIView):
             purpose=request.data.get('purpose', ''),
             issued_by=request.user,
             valid_date=timezone.localdate(),
+            allowed_duration=allowed_duration,
+            expires_at=now + timedelta(minutes=allowed_duration),
         )
+
+        # Log entry in AccessLog so the visitor appears in "Recent Scans"
+        AccessLog.objects.create(
+            plate_number=plate_number,
+            vehicle=vehicle,
+            status=AccessLog.Status.AUTHORIZED,
+            gate_id='main',
+            scanned_by=request.user,
+        )
+
+        guard_name  = request.user.full_name
+        office_name = office.name if office else 'N/A'
+        _audit(
+            request,
+            AuditLog.Action.VISITOR_ISSUED,
+            f"Visitor pass issued | Plate: {plate_number} | "
+            f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
+            f"Duration: {allowed_duration} min | Guard: {guard_name}",
+        )
+
         return Response(VisitorPassSerializer(pass_).data, status=201)
 
     def get(self, request):
@@ -214,6 +270,15 @@ class ExitScanView(APIView):
             status=AccessLog.Status.EXITED,
             gate_id=request.data.get('gate_id', 'main'),
             scanned_by=request.user,
+        )
+
+        duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
+        guard_name = request.user.full_name
+        _audit(
+            request,
+            AuditLog.Action.VISITOR_EXITED,
+            f"Visitor exited | Plate: {pass_.plate_number} | "
+            f"Duration: {duration_minutes} min | Guard: {guard_name}",
         )
 
         return Response(VisitorPassSerializer(pass_).data)
@@ -328,14 +393,14 @@ class OverrideEntryView(APIView):
             scanned_by      = request.user,
         )
 
-        try:
-            AuditLog.objects.create(
-                actor   = request.user,
-                action  = AuditLog.Action.SCAN,
-                details = f"Override entry — Plate: {plate_number}, Reason: {reason}",
-            )
-        except Exception:
-            pass
+        guard_name = request.user.full_name
+        owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unregistered'
+        _audit(
+            request,
+            AuditLog.Action.ENTRY_OVERRIDE,
+            f"Entry override | Plate: {plate_number} | Owner: {owner_name} | "
+            f"Reason: {reason} | Guard: {guard_name}",
+        )
 
         return Response({'status': 'overridden', 'plate_number': plate_number})
 
@@ -367,14 +432,15 @@ class ExitLogView(APIView):
             duration_minutes = int(delta.total_seconds() / 60)
             entry_scanned_at = exit_log.paired_entry.scanned_at
 
-        try:
-            AuditLog.objects.create(
-                actor   = request.user,
-                action  = AuditLog.Action.SCAN,
-                details = f"Exit recorded — Plate: {plate_number}, Duration: {duration_minutes} min",
-            )
-        except Exception:
-            pass
+        owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unknown'
+        guard_name = request.user.full_name
+        _audit(
+            request,
+            AuditLog.Action.VEHICLE_EXITED,
+            f"Vehicle exited | Plate: {plate_number} | Owner: {owner_name} | "
+            f"Duration: {duration_minutes if duration_minutes is not None else 'N/A'} min | "
+            f"Guard: {guard_name}",
+        )
 
         return Response({
             'plate_number':    plate_number,
@@ -383,6 +449,103 @@ class ExitLogView(APIView):
             'entry_scanned_at': entry_scanned_at,
             'scanned_at':      exit_log.scanned_at,
         })
+
+
+class GuardMonitorView(APIView):
+    """Admin-only: see every security guard's today activity and recent scans."""
+
+    def get(self, request):
+        if not request.user.is_authenticated or request.user.role != 'admin':
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
+        from django.db.models import Count, Q
+        from accounts.models import User as UserModel
+
+        today  = timezone.localdate()
+        guards = UserModel.objects.filter(role='security').order_by('full_name')
+
+        result = []
+        for guard in guards:
+            today_logs = AccessLog.objects.filter(
+                scanned_by=guard,
+                scanned_at__date=today,
+            )
+
+            stats = today_logs.aggregate(
+                total      = Count('id'),
+                authorized = Count('id', filter=Q(status=AccessLog.Status.AUTHORIZED)),
+                denied     = Count('id', filter=Q(status__in=[
+                    AccessLog.Status.DENIED, AccessLog.Status.WRONG_DAY, AccessLog.Status.UNKNOWN,
+                ])),
+                exited     = Count('id', filter=Q(status=AccessLog.Status.EXITED)),
+            )
+
+            visitors = VisitorPass.objects.filter(
+                issued_by=guard,
+                valid_date=today,
+            ).count()
+
+            recent = (
+                today_logs
+                .select_related('vehicle__user')
+                .order_by('-scanned_at')[:10]
+            )
+
+            last_log  = recent.first()
+            last_seen = last_log.scanned_at if last_log else None
+
+            result.append({
+                'id':        guard.id,
+                'full_name': guard.full_name,
+                'user_code': guard.user_code,
+                'last_seen': last_seen,
+                'is_active': last_seen is not None,
+                'stats': {
+                    'total':      stats['total']      or 0,
+                    'authorized': stats['authorized'] or 0,
+                    'denied':     stats['denied']     or 0,
+                    'exited':     stats['exited']     or 0,
+                    'visitors':   visitors,
+                },
+                'recent_logs': AccessLogSerializer(recent, many=True).data,
+            })
+
+        result.sort(key=lambda g: (not g['is_active'], g['full_name']))
+        return Response({'guards': result})
+
+
+class ExtendVisitorPassView(APIView):
+    """Guard extends the allowed time for an active visitor pass."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        pass_ = get_object_or_404(VisitorPass, pk=pk)
+
+        if pass_.status != VisitorPass.Status.ACTIVE:
+            return Response({'error': f'Cannot extend — pass is already {pass_.status}.'}, status=400)
+
+        try:
+            extra_minutes = int(request.data.get('extra_minutes', 0))
+            if extra_minutes <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({'error': 'extra_minutes must be a positive integer.'}, status=400)
+
+        pass_.allowed_duration += extra_minutes
+        if pass_.expires_at:
+            pass_.expires_at += timedelta(minutes=extra_minutes)
+        pass_.save(update_fields=['allowed_duration', 'expires_at'])
+
+        guard_name = request.user.full_name
+        _audit(
+            request,
+            AuditLog.Action.VISITOR_ISSUED,
+            f"Visitor pass extended | Plate: {pass_.plate_number} | "
+            f"+{extra_minutes} min | New total: {pass_.allowed_duration} min | Guard: {guard_name}",
+        )
+
+        return Response(VisitorPassSerializer(pass_).data)
 
 
 class TestRtspView(APIView):
