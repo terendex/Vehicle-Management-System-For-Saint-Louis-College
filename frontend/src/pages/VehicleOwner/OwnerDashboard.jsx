@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2, Megaphone
+  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn
 } from 'lucide-react'
 import OwnerLayout from '../../components/Layout/OwnerLayout'
 import useAuthStore from '../../stores/authStore'
@@ -56,6 +56,7 @@ export default function OwnerDashboard() {
   const [violations, setViolations] = useState([])
   const [violationsLoading, setViolationsLoading] = useState(false)
   const [violationsError, setViolationsError] = useState(null)
+  const [evidenceLightbox, setEvidenceLightbox] = useState(null)
 
   /* ── parking availability ── */
   const [parking, setParking] = useState(null)  // { spaces, summary, zones }
@@ -341,21 +342,20 @@ export default function OwnerDashboard() {
                     <div className="od-detail"><span className="od-detail-label">Age</span><span className="od-detail-val">{reg.age || '—'}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Driver's License</span><span className="od-detail-val">{reg.drivers_license || '—'}</span></div>
                     <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Address</span><span className="od-detail-val">{reg.address || '—'}</span></div>
-                    {reg.schedule && (
+                    {(reg.campus_days?.length > 0 || reg.schedule) && (
                       <div className="od-detail" style={{ gridColumn: 'span 2' }}>
                         <span className="od-detail-label">Assigned Schedule</span>
-                        <span className="od-day-badges">
-                          <span className="od-day-badge">{reg.schedule}</span>
-                          <span className="od-day-badge-sub">
-                            {reg.schedule === 'MWF' ? 'Mon · Wed · Fri' : reg.schedule === 'TTHS' ? 'Tue · Thu · Sat' : reg.schedule}
-                          </span>
-                        </span>
-                      </div>
-                    )}
-                    {reg.campus_days?.length > 0 && !reg.schedule && (
-                      <div className="od-detail" style={{ gridColumn: 'span 2' }}>
-                        <span className="od-detail-label">Campus Days</span>
-                        <div className="od-day-badges">{reg.campus_days.map(d => <span key={d} className="od-day-badge">{d}</span>)}</div>
+                        {reg.campus_days?.length > 0 ? (
+                          <div className="od-day-badges">
+                            {reg.campus_days.map(d => (
+                              <span key={d} className="od-day-badge">{d}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="od-day-badges">
+                            <span className="od-day-badge">{reg.schedule}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -431,32 +431,81 @@ export default function OwnerDashboard() {
                   <span className="od-clean-sub">Keep up your good driving behavior on campus!</span>
                 </div>
               ) : (
-                <div className="od-violations-table-wrap">
-                  <table className="od-violations-table">
-                    <thead>
-                      <tr>
-                        <th>Violation</th>
-                        <th>Notes</th>
-                        <th>Date Issued</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {violations.map(v => (
-                        <tr key={v.id} className={v.is_resolved ? 'od-viol-resolved' : 'od-viol-active'}>
-                          <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
-                          <td className="od-viol-notes">{v.notes || '—'}</td>
-                          <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
-                          <td>
-                            <span className={`od-viol-badge ${v.is_resolved ? 'resolved' : 'active'}`}>
-                              {v.is_resolved ? 'Resolved' : 'Active'}
-                            </span>
-                          </td>
+                <>
+                  {(() => {
+                    const totalOutstanding = violations
+                      .filter(v => !v.is_resolved)
+                      .reduce((sum, v) => sum + parseFloat(v.fine_amount || 0), 0)
+                    return totalOutstanding > 0 ? (
+                      <div className="od-outstanding-banner">
+                        <AlertTriangle size={15} />
+                        <span>Outstanding fines: <strong>₱{totalOutstanding.toFixed(2)}</strong> — please settle at the CDSO office.</span>
+                      </div>
+                    ) : null
+                  })()}
+                  <div className="od-violations-table-wrap">
+                    <table className="od-violations-table">
+                      {evidenceLightbox && (
+                        <div
+                          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                          onClick={() => setEvidenceLightbox(null)}
+                        >
+                          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+                            <img src={evidenceLightbox} alt="violation evidence" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 10, display: 'block', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }} />
+                            <button
+                              onClick={() => setEvidenceLightbox(null)}
+                              style={{ position: 'absolute', top: -12, right: -12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}
+                            ><X size={14} /></button>
+                          </div>
+                        </div>
+                      )}
+                      <thead>
+                        <tr>
+                          <th>Violation</th>
+                          <th>Notes</th>
+                          <th>Fine</th>
+                          <th>Evidence</th>
+                          <th>Date Issued</th>
+                          <th>Status</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {violations.map(v => {
+                          const badge = v.is_resolved
+                            ? { cls: 'resolved',   label: 'Resolved' }
+                            : v.is_released
+                            ? { cls: 'notified',   label: 'Pending Payment' }
+                            : { cls: 'review',     label: 'Under Review' }
+                          return (
+                            <tr key={v.id} className={v.is_resolved ? 'od-viol-resolved' : 'od-viol-active'}>
+                              <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                              <td className="od-viol-notes">{v.notes || '—'}</td>
+                              <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
+                              <td>
+                                {v.evidence_url ? (
+                                  <button
+                                    className="od-evidence-thumb-btn"
+                                    onClick={() => setEvidenceLightbox(v.evidence_url)}
+                                    title="View evidence"
+                                  >
+                                    <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                    <ZoomIn size={11} className="od-evidence-zoom" />
+                                  </button>
+                                ) : (
+                                  <span className="od-no-evidence"><Image size={12} /></span>
+                                )}
+                              </td>
+                              <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                              <td>
+                                <span className={`od-viol-badge ${badge.cls}`}>{badge.label}</span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
 

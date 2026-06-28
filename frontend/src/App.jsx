@@ -14,7 +14,6 @@ import ParkingManagement from './pages/Admin/ParkingManagement'
 import DeviceManagement from './pages/Admin/DeviceManagement'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
-import SecurityDashboard from './pages/Security/SecurityDashboard'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityAuditLog from './pages/Security/SecurityAuditLog'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
@@ -66,7 +65,7 @@ export default function App() {
 
         {/* Security Routes */}
         <Route element={<ProtectedRoute allowedRoles={['security']} />}>
-          <Route path="/security" element={<SecurityDashboard />} />
+          <Route path="/security" element={<Navigate to="/security/entries" replace />} />
           <Route path="/security/entries" element={<SecurityEntryManagement />} />
           <Route path="/security/audit" element={<SecurityAuditLog />} />
           <Route path="/security/parking" element={<SecurityParkingView />} />

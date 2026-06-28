@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, DoorOpen } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, DoorOpen, CalendarRange } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
@@ -7,8 +7,9 @@ import api from '../../api/axios'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
-  const [form, setForm]       = useState({ retention_years: 5, scan_dedup_seconds: 30, event_mode_parking: false, event_mode_entry: false })
-  const [saved, setSaved]     = useState({ retention_years: 5, scan_dedup_seconds: 30, event_mode_parking: false, event_mode_entry: false })
+  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 30, event_mode_parking: false, event_mode_entry: false, registration_start: '', registration_end: '' }
+  const [form, setForm]       = useState(FORM_DEFAULTS)
+  const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
 
@@ -21,7 +22,15 @@ export default function SystemSettings() {
 
   useEffect(() => {
     getSystemSettings()
-      .then(({ data }) => { setForm(data); setSaved(data) })
+      .then(({ data }) => {
+        const normalized = {
+          ...data,
+          registration_start: data.registration_start ?? '',
+          registration_end:   data.registration_end   ?? '',
+        }
+        setForm(normalized)
+        setSaved(normalized)
+      })
       .catch(() => toast.error('Failed to load system settings.'))
       .finally(() => setLoading(false))
     fetchNotices()
@@ -77,12 +86,14 @@ export default function SystemSettings() {
   }
 
   const isDirty =
-    form.retention_years    !== saved.retention_years ||
-    form.scan_dedup_seconds !== saved.scan_dedup_seconds
+    form.retention_years    !== saved.retention_years    ||
+    form.scan_dedup_seconds !== saved.scan_dedup_seconds ||
+    form.registration_start !== (saved.registration_start ?? '') ||
+    form.registration_end   !== (saved.registration_end   ?? '')
 
   const handleChange = (e) => {
-    const { name, value } = e.target
-    setForm((prev) => ({ ...prev, [name]: Number(value) }))
+    const { name, value, type } = e.target
+    setForm((prev) => ({ ...prev, [name]: type === 'number' ? Number(value) : value }))
   }
 
   const handleSave = async () => {
@@ -241,6 +252,66 @@ export default function SystemSettings() {
                     : 'Normal entry restrictions apply.'}
                 </span>
               </div>
+            </div>
+
+            {/* ── Registration Period ───────────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                  <CalendarRange size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Vehicle Registration Period</h2>
+                  <p className="ss-card-desc">
+                    Set the date range during which vehicle registrations are accepted. Leave blank to allow registrations at any time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="ss-reg-period-row">
+                <div className="ss-field">
+                  <label className="ss-label" htmlFor="registration_start">Start date</label>
+                  <input
+                    id="registration_start"
+                    name="registration_start"
+                    type="date"
+                    value={form.registration_start || ''}
+                    onChange={handleChange}
+                    className="ss-date-input"
+                  />
+                </div>
+                <div className="ss-reg-period-sep">to</div>
+                <div className="ss-field">
+                  <label className="ss-label" htmlFor="registration_end">End date</label>
+                  <input
+                    id="registration_end"
+                    name="registration_end"
+                    type="date"
+                    value={form.registration_end || ''}
+                    min={form.registration_start || undefined}
+                    onChange={handleChange}
+                    className="ss-date-input"
+                  />
+                </div>
+                {(form.registration_start || form.registration_end) && (
+                  <button
+                    type="button"
+                    className="ss-reg-clear-btn"
+                    onClick={() => setForm(f => ({ ...f, registration_start: '', registration_end: '' }))}
+                    title="Clear dates"
+                  >
+                    <X size={14} />
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {form.registration_start && form.registration_end && (
+                <div className="ss-info-row">
+                  <CalendarRange size={13} />
+                  Registration open from <strong>{new Date(form.registration_start + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</strong> to <strong>{new Date(form.registration_end + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</strong>.
+                </div>
+              )}
             </div>
 
           </div>

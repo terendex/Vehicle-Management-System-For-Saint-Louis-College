@@ -308,6 +308,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     async def _finalize_plate(self, track_id: int, plate_text: str, conf: float):
         """Write to DB and broadcast result once a plate is locked."""
+        plate_text = plate_text.strip().upper().replace(' ', '')
         cached = self._plate_cache.get(plate_text)
         now_ts = time.time()
         if cached and (now_ts - cached[0]) < self._dedup_seconds:
@@ -338,7 +339,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         for track_data in tracks_list:
             track_id     = track_data["track_id"]
-            plate_number = track_data.get("plate_text", "")
+            plate_number = track_data.get("plate_text", "").strip().upper().replace(' ', '')
             det_conf     = track_data.get("detection_conf", 0.0)
             bbox = {
                 "x": track_data["bbox"][0], "y": track_data["bbox"][1],
@@ -417,12 +418,15 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         )
 
     def _check_vehicle(self, plate_number: str, bbox):
-        from vehicles.models import Vehicle
+        from vehicles.models import Vehicle, VehicleRegistration
         from .models import AccessLog
         from .entry_logic import check_entry
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
+
+        # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
+        plate_number = plate_number.strip().upper().replace(' ', '')
 
         vehicle = Vehicle.objects.select_related("user").filter(
             plate_number=plate_number
@@ -440,6 +444,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "message":        "Plate not registered.",
                 "constraint":     None,
                 "vehicle":        None,
+                "registration":   None,
                 "has_violations": False,
             }
 
@@ -477,12 +482,42 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         except Exception:
             already_inside = False
 
+        # Fetch registration details for non-visitor plates
+        registration_data = None
+        owner_type = vehicle.user.owner_type if vehicle.user else None
+        if owner_type and owner_type != 'visitor':
+            try:
+                reg = (
+                    vehicle.registrations.filter(
+                        status='accepted'
+                    ).order_by('-reviewed_at').first()
+                    or VehicleRegistration.objects.filter(
+                        plate_number=vehicle.plate_number,
+                        status='accepted',
+                    ).order_by('-reviewed_at').first()
+                )
+                if reg:
+                    registration_data = {
+                        'registrant_type': reg.registrant_type,
+                        'campus_days':     reg.campus_days,
+                        'schedule':        reg.schedule,
+                        'or_number':       reg.or_number,
+                        'student_id':      reg.student_id,
+                        'program_year':    reg.program_year,
+                        'employee_id':     reg.employee_id,
+                        'department_name': reg.department.name if reg.department else '',
+                        'reviewed_at':     reg.reviewed_at.isoformat() if reg.reviewed_at else None,
+                    }
+            except Exception:
+                pass
+
         return {
             "status":         entry["status"],
             "allowed":        entry["allowed"],
             "message":        entry["message"],
             "constraint":     entry.get("constraint"),
             "vehicle":        VehicleSerializer(vehicle).data,
+            "registration":   registration_data,
             "has_violations": has_violations,
             "already_inside": already_inside,
         }

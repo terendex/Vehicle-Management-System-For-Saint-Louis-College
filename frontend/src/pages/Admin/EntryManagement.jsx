@@ -9,6 +9,7 @@ import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
 import { getRuleConstraints } from '../../api/vehicles'
+import useAuthStore from '../../stores/authStore'
 import { camerasApi } from '../../api/cameras'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './EntryManagement.css'
@@ -125,8 +126,11 @@ function ResultCard({ result, offices, onPassCreated }) {
   }
 
   const { Icon, label, cls } = getMeta(result.status)
-  const owner = result.vehicle?.owner
+  const owner     = result.vehicle?.user
+  const reg       = result.registration
+  const vehicle   = result.vehicle
   const isVisitor = result.status === 'unknown' || result.status === 'no_pass'
+  const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
   return (
     <>
@@ -140,44 +144,119 @@ function ResultCard({ result, offices, onPassCreated }) {
         </div>
         <div className="em-result-body">
           <p className="em-result-msg">{result.message}</p>
+
           {result.constraint && (
-            <div className="em-constraint-info" style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 8, background: '#fef3c7', border: '1px solid #f59e0b', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="em-constraint-info">
               <AlertTriangle size={13} style={{ flexShrink: 0 }} />
               <span>Rule blocked: <strong>{result.constraint}</strong></span>
             </div>
           )}
-          {owner && (
+
+          {/* Registered non-visitor: full details */}
+          {!isVisitor && owner && (
+            <>
+              <div className="em-result-rows">
+                {owner.full_name && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Owner</span>
+                    <span className="em-result-row-value">{owner.full_name}</span>
+                  </div>
+                )}
+                {owner.owner_type && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Type</span>
+                    <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
+                      {owner.owner_type.replace('_', ' ')}
+                    </span>
+                  </div>
+                )}
+                {owner.contact && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Contact</span>
+                    <span className="em-result-row-value">{owner.contact}</span>
+                  </div>
+                )}
+              </div>
+
+              {reg?.campus_days?.length > 0 && (
+                <div className="em-campus-days">
+                  <span className="em-campus-days-label">Campus Days</span>
+                  <div className="em-campus-days-list">
+                    {reg.campus_days.map(day => (
+                      <span key={day} className={`em-day-chip${day === todayName ? ' today' : ''}`}>
+                        {day.slice(0, 3)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="em-result-rows">
+                {reg?.registrant_type === 'student' && (
+                  <>
+                    {reg.student_id && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Student ID</span>
+                        <span className="em-result-row-value">{reg.student_id}</span>
+                      </div>
+                    )}
+                    {reg.program_year && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Program</span>
+                        <span className="em-result-row-value">{reg.program_year}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {reg?.registrant_type === 'employee' && (
+                  <>
+                    {reg.employee_id && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Employee ID</span>
+                        <span className="em-result-row-value">{reg.employee_id}</span>
+                      </div>
+                    )}
+                    {reg.department_name && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Department</span>
+                        <span className="em-result-row-value">{reg.department_name}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {vehicle && (vehicle.vehicle_type || vehicle.color) && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Vehicle</span>
+                    <span className="em-result-row-value">
+                      {[
+                        vehicle.vehicle_type && vehicle.vehicle_type.charAt(0).toUpperCase() + vehicle.vehicle_type.slice(1),
+                        vehicle.color && vehicle.color.charAt(0).toUpperCase() + vehicle.color.slice(1),
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {result.has_violations && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Violations</span>
+                    <span className="em-violation-pill">
+                      <AlertTriangle size={10} /> Unresolved violations
+                    </span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Visitor / unknown: minimal info */}
+          {isVisitor && owner?.full_name && (
             <div className="em-result-rows">
-              {owner.full_name && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Owner</span>
-                  <span className="em-result-row-value">{owner.full_name}</span>
-                </div>
-              )}
-              {owner.owner_type && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Type</span>
-                  <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
-                    {owner.owner_type.replace('_', ' ')}
-                  </span>
-                </div>
-              )}
-              {owner.schedule && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Schedule</span>
-                  <span className="em-result-row-value">{owner.schedule}</span>
-                </div>
-              )}
-              {result.has_violations && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Violations</span>
-                  <span className="em-violation-pill">
-                    <AlertTriangle size={10} /> Unresolved violations
-                  </span>
-                </div>
-              )}
+              <div className="em-result-row">
+                <span className="em-result-row-label">Owner</span>
+                <span className="em-result-row-value">{owner.full_name}</span>
+              </div>
             </div>
           )}
+
           {isVisitor && (
             <button
               className="em-btn em-btn-secondary"
@@ -205,6 +284,7 @@ function ResultCard({ result, offices, onPassCreated }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function EntryManagement() {
+  const { user } = useAuthStore()
   const [result, setResult] = useState(null)
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
@@ -249,6 +329,7 @@ export default function EntryManagement() {
           plate_number: r.plate_number,
           status: r.status,
           scanned_at: new Date().toISOString(),
+          scanned_by_name: user?.full_name || null,
         }))
       return [...newLogs, ...prev].slice(0, LOG_LIMIT)
     })
@@ -443,8 +524,11 @@ export default function EntryManagement() {
                     return (
                       <div key={log.id ?? i} className="em-log-item">
                         <span className={`em-log-dot ${m.logCls}`} />
-                        <span className="em-log-plate">{log.plate_number}</span>
+                        <span className="em-log-plate">{log.plate_number || '—'}</span>
                         <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                        {log.scanned_by_name && (
+                          <span className="em-log-guard">{log.scanned_by_name}</span>
+                        )}
                         <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
                       </div>
                     )

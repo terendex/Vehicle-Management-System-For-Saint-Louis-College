@@ -128,17 +128,12 @@ export default function ResetPasswordPage() {
 
           {/* Invalid / missing token in URL */}
           {invalidLink ? (
-            <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
-              <div style={{
-                width: 56, height: 56, borderRadius: '50%',
-                background: 'linear-gradient(135deg,#DC2626,#F87171)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 16px',
-              }}>
+            <div className="rp-state-body">
+              <div className="rp-icon-red">
                 <AlertCircle size={26} color="#fff" />
               </div>
               <h2 className="card-title">Invalid Reset Link</h2>
-              <p className="card-subtitle" style={{ marginBottom: 24 }}>
+              <p className="card-subtitle rp-state-subtitle">
                 This reset link is missing required information. Please request a new one.
               </p>
               <button className="login-button" onClick={() => navigate('/forgot-password')}>
@@ -151,17 +146,12 @@ export default function ResetPasswordPage() {
 
           /* Success state */
           ) : success ? (
-            <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
-              <div style={{
-                width: 60, height: 60, borderRadius: '50%',
-                background: 'linear-gradient(135deg,#2A2B61,#4a4b8e)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 18px',
-              }}>
+            <div className="rp-state-body">
+              <div className="rp-icon-navy">
                 <CheckCircle size={28} color="#fff" />
               </div>
               <h2 className="card-title">Password Updated</h2>
-              <p className="card-subtitle" style={{ marginBottom: 24 }}>
+              <p className="card-subtitle rp-state-subtitle">
                 Your password has been reset successfully. You can now log in with your new password.
               </p>
               <button className="login-button" onClick={() => navigate('/login')}>
@@ -188,10 +178,10 @@ export default function ResetPasswordPage() {
               )}
 
               {fieldErrors.length > 0 && (
-                <div className="error-alert" role="alert" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                <div className="error-alert rp-field-errors" role="alert">
                   {fieldErrors.map((e) => (
-                    <div key={e} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                    <div key={e} className="rp-field-error-row">
+                      <AlertCircle size={14} className="rp-field-error-icon" />
                       <span>{e}</span>
                     </div>
                   ))}
@@ -282,14 +272,13 @@ export default function ResetPasswordPage() {
                   )}
                 </button>
 
-                <div style={{ textAlign: 'center', marginTop: 4 }}>
+                <div className="rp-back-row">
                   <button
                     type="button"
-                    className="forgot-link"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                    className="forgot-link rp-back-btn"
                     onClick={() => navigate('/forgot-password')}
                   >
-                    <ArrowLeft size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                    <ArrowLeft size={13} />
                     Request a new link
                   </button>
                 </div>

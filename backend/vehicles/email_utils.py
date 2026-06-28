@@ -168,6 +168,152 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     )
 
 
+def send_pending_email(registration):
+    """Sent immediately after a public registration form is submitted (status=pending)."""
+    submitted_at = registration.created_at.strftime('%B %d, %Y at %I:%M %p') if registration.created_at else '—'
+
+    # Identity rows differ by registrant type
+    if registration.registrant_type == 'student':
+        id_rows = (
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Student ID</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{registration.student_id or "—"}</td></tr>'
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Program &amp; Year</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{registration.program_year or "—"}</td></tr>'
+        )
+        campus_days_str = ', '.join(registration.campus_days) if registration.campus_days else '—'
+        schedule_row = (
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{campus_days_str}</td></tr>'
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Schedule Group</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{registration.schedule or "—"}</td></tr>'
+        )
+    elif registration.registrant_type == 'employee':
+        dept_name = registration.department.name if registration.department else '—'
+        id_rows = (
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Employee ID</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{registration.employee_id or "—"}</td></tr>'
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Department</td>'
+            f'<td style="padding:7px 0;font-weight:600;">{dept_name}</td></tr>'
+        )
+        schedule_row = ''
+    else:  # fetcher
+        id_rows = ''
+        schedule_row = ''
+
+    type_label = {'student': 'Student', 'employee': 'Employee', 'fetcher': 'Fetcher / Drop & Go'}.get(
+        registration.registrant_type, registration.registrant_type.capitalize()
+    )
+    ref_number = f"REG-{str(registration.pk).zfill(6)}"
+
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
+            <div style="max-width: 620px; margin: 0 auto; background: #FFFFFF; border-radius: 12px; border-top: 4px solid #D97706; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden;">
+
+                <!-- Header -->
+                <div style="padding: 28px 32px 20px;">
+                    <h2 style="color: #D97706; margin: 0 0 6px;">Registration Received &#8212; Pending Review</h2>
+                    <p style="color: #5A5F72; margin: 0; font-size: 14px;">
+                        Your vehicle registration request has been submitted and is awaiting CDSO review.
+                    </p>
+                </div>
+
+                <!-- Status Banner -->
+                <div style="margin: 0 32px 24px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 16px 20px;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <tr>
+                            <td style="vertical-align:top; width:50%;">
+                                <div style="font-size:11px;color:#92400E;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;margin-bottom:4px;">Reference No.</div>
+                                <div style="font-family:monospace;font-size:16px;font-weight:700;color:#D97706;">{ref_number}</div>
+                            </td>
+                            <td style="vertical-align:top; border-left:1px solid #FDE68A; padding-left:20px; width:50%;">
+                                <div style="font-size:11px;color:#92400E;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;margin-bottom:4px;">Submitted On</div>
+                                <div style="font-size:13px;font-weight:600;color:#1A1D2E;">{submitted_at}</div>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Greeting -->
+                <div style="padding: 0 32px 20px;">
+                    <p style="margin:0 0 8px;">Dear <strong>{registration.full_name}</strong>,</p>
+                    <p style="color:#5A5F72;font-size:14px;margin:0;">
+                        Thank you for submitting your vehicle registration. The CDSO office will review your application
+                        and send you a follow-up email once a decision has been made. Please keep this email for your records.
+                    </p>
+                </div>
+
+                <!-- Personal Information -->
+                <div style="margin: 0 32px 20px;">
+                    <h4 style="color:#2A2B61;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 10px;border-bottom:1px solid #E2E6EE;padding-bottom:8px;">
+                        Personal Information
+                    </h4>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Full Name</td><td style="padding:7px 0;font-weight:600;">{registration.full_name}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Email</td><td style="padding:7px 0;font-weight:600;">{registration.email}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Registrant Type</td><td style="padding:7px 0;font-weight:600;">{type_label}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Contact No.</td><td style="padding:7px 0;font-weight:600;">{registration.contact_number or "—"}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Address</td><td style="padding:7px 0;font-weight:600;">{registration.address or "—"}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:7px 0;font-weight:600;">{registration.drivers_license or "—"}</td></tr>
+                        {id_rows}
+                        {schedule_row}
+                    </table>
+                </div>
+
+                <!-- Vehicle Information -->
+                <div style="margin: 0 32px 20px;">
+                    <h4 style="color:#2A2B61;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 10px;border-bottom:1px solid #E2E6EE;padding-bottom:8px;">
+                        Vehicle Information
+                    </h4>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Plate Number</td><td style="padding:7px 0;font-weight:700;font-family:monospace;font-size:15px;color:#2A2B61;">{registration.plate_number}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Vehicle Type</td><td style="padding:7px 0;font-weight:600;text-transform:capitalize;">{registration.vehicle_type}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Color</td><td style="padding:7px 0;font-weight:600;">{registration.vehicle_color or "—"}</td></tr>
+                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Conduction No.</td><td style="padding:7px 0;font-weight:600;">{registration.conduction_number or "—"}</td></tr>
+                    </table>
+                </div>
+
+                <!-- What Happens Next -->
+                <div style="margin: 0 32px 24px; background: #F0F2F7; border-radius: 10px; padding: 18px 20px;">
+                    <h4 style="color:#2A2B61;margin:0 0 12px;font-size:14px;">What Happens Next?</h4>
+                    <ol style="margin:0;padding-left:20px;color:#5A5F72;font-size:13px;line-height:1.9;">
+                        <li>The CDSO office will review your submitted documents and information.</li>
+                        <li>You will receive an email once your registration is <strong>approved</strong> or <strong>declined</strong>.</li>
+                        <li>If approved, your portal login credentials and vehicle QR code will be sent to this email.</li>
+                    </ol>
+                </div>
+
+                <!-- Footer -->
+                <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:16px 32px;text-align:center;">
+                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                    <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply to this email.</p>
+                </div>
+
+            </div>
+        </body>
+    </html>
+    """
+
+    type_display = type_label
+    send_mail(
+        subject=f"SLC Vehicle Registration Received — {ref_number} (Pending Review)",
+        message=(
+            f"Dear {registration.full_name},\n\n"
+            f"Your vehicle registration has been received and is pending CDSO review.\n\n"
+            f"Reference No.: {ref_number}\n"
+            f"Plate Number:  {registration.plate_number}\n"
+            f"Type:          {type_display}\n"
+            f"Submitted:     {submitted_at}\n\n"
+            f"You will be notified by email once a decision has been made.\n\n"
+            f"Saint Louis College Vehicle Management System"
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[registration.email],
+        html_message=html_message,
+        fail_silently=True,
+    )
+
+
 def send_rejection_email(registration, reason):
     rejection_reason = reason or 'No specific reason provided.'
 

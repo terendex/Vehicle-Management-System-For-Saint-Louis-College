@@ -4,6 +4,7 @@ import { Mail, ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react'
 import { authApi } from '../../api/auth'
 import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
+import './ForgotPasswordPage.css'
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
@@ -43,25 +44,17 @@ export default function ForgotPasswordPage() {
       <main className="login-main">
         <div className="login-card">
           {sent ? (
-            <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
-              <div style={{
-                width: 60, height: 60, borderRadius: '50%',
-                background: 'linear-gradient(135deg,#2A2B61,#4a4b8e)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 18px',
-              }}>
+            <div className="fp-state-body">
+              <div className="fp-icon-navy">
                 <CheckCircle size={28} color="#fff" />
               </div>
               <h2 className="card-title">Check your email</h2>
-              <p className="card-subtitle" style={{ marginBottom: 24, lineHeight: 1.6 }}>
-                If an account with <strong>{email}</strong> exists, we sent a password reset link.
-                Check your inbox (and spam folder) — the link expires in <strong>1 hour</strong>.
+              <p className="card-subtitle fp-sent-subtitle">
+                If an account with <strong>{email}</strong> exists, we sent a password
+                reset link. Check your inbox (and spam folder) — the link expires in{' '}
+                <strong>1 hour</strong>.
               </p>
-              <button
-                className="login-button"
-                onClick={() => navigate('/login')}
-                style={{ marginTop: 0 }}
-              >
+              <button className="login-button" onClick={() => navigate('/login')}>
                 <div className="button-content">
                   <ArrowLeft size={17} />
                   <span>Back to Login</span>
@@ -116,14 +109,13 @@ export default function ForgotPasswordPage() {
                   )}
                 </button>
 
-                <div style={{ textAlign: 'center', marginTop: 4 }}>
+                <div className="fp-back-row">
                   <button
                     type="button"
-                    className="forgot-link"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                    className="forgot-link fp-back-btn"
                     onClick={() => navigate('/login')}
                   >
-                    <ArrowLeft size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                    <ArrowLeft size={13} />
                     Back to Login
                   </button>
                 </div>

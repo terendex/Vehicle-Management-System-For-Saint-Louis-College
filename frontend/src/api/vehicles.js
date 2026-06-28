@@ -1,5 +1,8 @@
 import api from './axios'
 
+export const getVehicles       = ()     => api.get('/vehicles/')
+export const getVehicleProfile = (id)   => api.get(`/vehicles/${id}/profile/`)
+
 export const getRuleConstraints = (params) => api.get('/vehicles/rules/', { params })
 export const createRuleConstraint = (data) => api.post('/vehicles/rules/', data)
 export const updateRuleConstraint = (id, data) => api.patch(`/vehicles/rules/${id}/`, data)

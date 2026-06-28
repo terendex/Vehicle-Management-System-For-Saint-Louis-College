@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, Banknote, User, Users, ChevronRight } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, Banknote, User, Users, ChevronRight, Mail, Clock, ArrowRight } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 
@@ -526,42 +526,50 @@ export default function RegisterPage() {
         {SLC_HEADER}
         <main className="register-main">
           <div className="register-card payment-popup-card">
+
+            {/* Email sent notice */}
+            <div className="popup-email-sent">
+              <Mail size={16} />
+              <span>A confirmation email was sent to <strong>{formData.email}</strong></span>
+            </div>
+
             <div className="card-icon payment-popup-icon">
-              <Banknote size={48} />
+              <Banknote size={44} />
             </div>
             <h2 className="card-title" style={{ color: '#D97706' }}>Action Required</h2>
-            <div className="payment-popup-body">
-              <p className="payment-popup-intro">
-                Your application has been submitted and is now <strong>pending review</strong>.
-                Before your registration can be processed, you must complete the following steps:
-              </p>
-              <div className="payment-steps">
-                <div className="payment-step">
-                  <div className="payment-step-num">1</div>
-                  <div className="payment-step-text">
-                    <strong>Pay ₱300.00</strong> at the <strong>Accounting Office</strong> for your <em>Vehicle Pass</em>.
-                  </div>
-                </div>
-                <div className="payment-step">
-                  <div className="payment-step-num">2</div>
-                  <div className="payment-step-text">
-                    Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO (Campus Development & Sustainability Office)</strong> for processing.
-                  </div>
-                </div>
-                <div className="payment-step">
-                  <div className="payment-step-num">3</div>
-                  <div className="payment-step-text">
-                    Wait for your email notification once your registration has been reviewed and approved.
-                  </div>
+            <p className="payment-popup-intro">
+              Your application is <strong>pending review</strong>. Complete these steps to get your registration processed:
+            </p>
+
+            <div className="payment-steps">
+              <div className="payment-step">
+                <div className="payment-step-num">1</div>
+                <div className="payment-step-text">
+                  <strong>Pay ₱300.00</strong> at the <strong>Accounting Office</strong> for your Vehicle Pass.
                 </div>
               </div>
-              <div className="payment-popup-note">
-                <Info size={14} />
-                The CDSO office will verify your Official Receipt number before approving your registration.
+              <div className="payment-step">
+                <div className="payment-step-num">2</div>
+                <div className="payment-step-text">
+                  Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO Office</strong> for processing.
+                </div>
+              </div>
+              <div className="payment-step">
+                <div className="payment-step-num">3</div>
+                <div className="payment-step-text">
+                  <strong>Check your email</strong> — you will be notified once your registration is approved or declined.
+                </div>
               </div>
             </div>
+
+            <div className="payment-popup-note">
+              <Info size={14} />
+              The CDSO office will verify your Official Receipt number before approving your registration.
+            </div>
+
             <button className="card-btn payment-popup-btn" onClick={() => setSubmitted(true)}>
-              I Understand — Proceed
+              I Understand — Continue
+              <ArrowRight size={15} />
             </button>
           </div>
         </main>
@@ -576,18 +584,51 @@ export default function RegisterPage() {
         {SLC_HEADER}
         <main className="register-main">
           <div className="register-card success-card">
-            <div className="card-icon success-card-icon">
-              <CheckCircle size={48} />
+
+            <div className="success-icon-wrap">
+              <CheckCircle size={52} strokeWidth={1.8} />
             </div>
-            <h2 className="card-title">Registration Submitted!</h2>
-            <p className="card-message">
-              Your vehicle registration application has been submitted and is pending review.
+
+            <h2 className="success-title">Application Submitted!</h2>
+            <p className="success-status-line">
+              <Clock size={13} />
+              Status: <strong>Pending CDSO Review</strong>
             </p>
-            <p className="card-help">
-              Remember to pay ₱300.00 at the Accounting Office and present your OR at the CDSO Office.
-              You will receive an email notification once your application has been processed.
-            </p>
-            <button className="card-btn" onClick={() => navigate('/login')}>
+
+            {/* Email prompt — main focus */}
+            <div className="success-email-prompt">
+              <div className="success-email-icon">
+                <Mail size={22} />
+              </div>
+              <div className="success-email-body">
+                <p className="success-email-heading">Check your inbox</p>
+                <p className="success-email-address">{formData.email}</p>
+                <p className="success-email-sub">
+                  A confirmation email with your submitted details and reference number has been sent. Check your <strong>spam or junk folder</strong> if you don't see it within a few minutes.
+                </p>
+              </div>
+            </div>
+
+            {/* Compact next steps */}
+            <div className="success-next-steps">
+              <p className="success-next-heading">What to do next</p>
+              <div className="success-next-list">
+                <div className="success-next-item">
+                  <span className="success-next-num">1</span>
+                  <span>Pay <strong>₱300.00</strong> at the <strong>Accounting Office</strong></span>
+                </div>
+                <div className="success-next-item">
+                  <span className="success-next-num">2</span>
+                  <span>Bring your <strong>OR</strong> to the <strong>CDSO Office</strong></span>
+                </div>
+                <div className="success-next-item">
+                  <span className="success-next-num">3</span>
+                  <span>Watch for an <strong>approval email</strong> with your portal credentials</span>
+                </div>
+              </div>
+            </div>
+
+            <button className="card-btn success-back-btn" onClick={() => navigate('/login')}>
               Back to Login
             </button>
           </div>

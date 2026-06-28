@@ -12,6 +12,8 @@ import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs, getOffices, createVisitorPass, scanPlate, overrideEntry, logExit } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { getRuleConstraints, getSystemSettings } from '../../api/vehicles'
+import { createViolation } from '../../api/violations'
+import useAuthStore from '../../stores/authStore'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
@@ -163,10 +165,116 @@ function OverrideModal({ plate, onClose, onOverridden }) {
   )
 }
 
+// ─── IssueViolationModal ──────────────────────────────────────────────────────
+function IssueViolationModal({ initialPlate = '', onClose }) {
+  const [plate, setPlate]       = useState(initialPlate)
+  const [type, setType]         = useState('no_sticker')
+  const [notes, setNotes]       = useState('')
+  const [evidence, setEvidence] = useState(null)
+  const [preview, setPreview]   = useState(null)
+  const [loading, setLoading]   = useState(false)
+  const fileRef                 = useRef(null)
+
+  const handleFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
+    setEvidence(file)
+    setPreview(URL.createObjectURL(file))
+  }
+
+  const removeEvidence = () => {
+    if (preview) URL.revokeObjectURL(preview)
+    setEvidence(null); setPreview(null)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!plate.trim()) { toast.error('Plate number is required.'); return }
+    setLoading(true)
+    try {
+      await createViolation({
+        plate_number: plate.trim().toUpperCase(),
+        violation_type: type,
+        notes,
+        ...(evidence ? { evidence } : {}),
+      })
+      toast.success(`Violation issued for ${plate.trim().toUpperCase()}.`)
+      onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const inputStyle = { width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit' }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><AlertTriangle size={17} /> Issue Violation</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="em-modal-body">
+            <div className="em-field">
+              <label className="em-label">License Plate *</label>
+              <input className="em-input" value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Violation Type</label>
+              <select className="em-select" value={type} onChange={e => setType(e.target.value)}>
+                <option value="no_sticker">No Sticker</option>
+                <option value="expired_registration">Expired Registration</option>
+                <option value="unauthorized">Unauthorized Entry</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="em-field">
+              <label className="em-label">Notes</label>
+              <textarea className="em-textarea" placeholder="Optional additional details…" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Screenshot Evidence</label>
+              {preview ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <img src={preview} alt="preview" style={{ maxWidth: '100%', maxHeight: 140, borderRadius: 8, border: '1.5px solid #E2E6EE', objectFit: 'contain' }} />
+                  <button type="button" onClick={removeEvidence} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 6, border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    <X size={11} /> Remove
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => fileRef.current?.click()}
+                  onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }}
+                  onDragOver={e => e.preventDefault()}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: 16, border: '2px dashed #C7CAD9', borderRadius: 10, background: '#F8F9FC', cursor: 'pointer' }}
+                >
+                  <Upload size={20} style={{ color: '#9ca3af' }} />
+                  <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Drop image or <span style={{ color: '#2A2B61', fontWeight: 600, textDecoration: 'underline' }}>click to browse</span></p>
+                  <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleFile(e.target.files?.[0])} />
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading} style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+              {loading ? <><div className="em-spinner" /> Issuing…</> : 'Issue Violation'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── ResultCard ───────────────────────────────────────────────────────────────
 function ResultCard({ result, offices, onPassCreated, onOverride }) {
   const [showModal, setShowModal]         = useState(false)
   const [showOverride, setShowOverride]   = useState(false)
+  const [showViolation, setShowViolation] = useState(false)
 
   if (!result) {
     return (
@@ -184,9 +292,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
   }
 
   const { Icon, label, cls } = getMeta(result.status)
-  const owner = result.owner ?? result.vehicle?.owner
-  const isVisitor   = result.status === 'unknown' || result.status === 'no_pass'
-  const isDeniable  = result.status === 'denied' || result.status === 'wrong_day' || result.status === 'disabled'
+  const owner      = result.vehicle?.user
+  const reg        = result.registration
+  const vehicle    = result.vehicle
+  const isVisitor  = result.status === 'unknown' || result.status === 'no_pass'
+  const isDeniable = result.status === 'denied' || result.status === 'wrong_day' || result.status === 'disabled'
+  const todayName  = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
   return (
     <>
@@ -200,52 +311,141 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
         </div>
         <div className="em-result-body">
           <p className="em-result-msg">{result.message}</p>
+
           {result.constraint && (
             <div className="em-constraint-info">
               <AlertTriangle size={13} style={{ flexShrink: 0 }} />
               <span>Rule blocked: <strong>{result.constraint}</strong></span>
             </div>
           )}
-          {owner && (
-            <div className="em-result-rows">
-              {owner.full_name && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Owner</span>
-                  <span className="em-result-row-value">{owner.full_name}</span>
+
+          {/* Registered non-visitor: full details */}
+          {!isVisitor && owner && (
+            <>
+              <div className="em-result-rows">
+                {owner.full_name && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Owner</span>
+                    <span className="em-result-row-value">{owner.full_name}</span>
+                  </div>
+                )}
+                {owner.owner_type && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Type</span>
+                    <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
+                      {owner.owner_type.replace('_', ' ')}
+                    </span>
+                  </div>
+                )}
+                {owner.contact && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Contact</span>
+                    <span className="em-result-row-value">{owner.contact}</span>
+                  </div>
+                )}
+              </div>
+
+              {reg?.campus_days?.length > 0 && (
+                <div className="em-campus-days">
+                  <span className="em-campus-days-label">Campus Days</span>
+                  <div className="em-campus-days-list">
+                    {reg.campus_days.map(day => (
+                      <span key={day} className={`em-day-chip${day === todayName ? ' today' : ''}`}>
+                        {day.slice(0, 3)}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
-              {owner.owner_type && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Type</span>
-                  <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
-                    {owner.owner_type.replace('_', ' ')}
-                  </span>
-                </div>
-              )}
-              {owner.schedule && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Schedule</span>
-                  <span className="em-result-row-value">{owner.schedule}</span>
-                </div>
-              )}
-              {result.has_violations && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Violations</span>
-                  <span className="em-violation-pill">
-                    <AlertTriangle size={10} /> Unresolved violations
-                  </span>
+
+              <div className="em-result-rows">
+                {reg?.registrant_type === 'student' && (
+                  <>
+                    {reg.student_id && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Student ID</span>
+                        <span className="em-result-row-value">{reg.student_id}</span>
+                      </div>
+                    )}
+                    {reg.program_year && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Program</span>
+                        <span className="em-result-row-value">{reg.program_year}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {reg?.registrant_type === 'employee' && (
+                  <>
+                    {reg.employee_id && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Employee ID</span>
+                        <span className="em-result-row-value">{reg.employee_id}</span>
+                      </div>
+                    )}
+                    {reg.department_name && (
+                      <div className="em-result-row">
+                        <span className="em-result-row-label">Department</span>
+                        <span className="em-result-row-value">{reg.department_name}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {vehicle && (vehicle.vehicle_type || vehicle.color) && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Vehicle</span>
+                    <span className="em-result-row-value">
+                      {[
+                        vehicle.vehicle_type && vehicle.vehicle_type.charAt(0).toUpperCase() + vehicle.vehicle_type.slice(1),
+                        vehicle.color && vehicle.color.charAt(0).toUpperCase() + vehicle.color.slice(1),
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {result.has_violations && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Violations</span>
+                    <span className="em-violation-pill">
+                      <AlertTriangle size={10} /> Unresolved violations
+                    </span>
+                  </div>
+                )}
+                {result.already_inside && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Warning</span>
+                    <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+                      <AlertTriangle size={10} /> Already inside — no exit logged
+                    </span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Visitor / unknown: minimal info */}
+          {isVisitor && (
+            <>
+              {owner?.full_name && (
+                <div className="em-result-rows">
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Owner</span>
+                    <span className="em-result-row-value">{owner.full_name}</span>
+                  </div>
                 </div>
               )}
               {result.already_inside && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Warning</span>
-                  <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
-                    <AlertTriangle size={10} /> Already inside — no exit logged
-                  </span>
+                <div className="em-result-rows">
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Warning</span>
+                    <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+                      <AlertTriangle size={10} /> Already inside — no exit logged
+                    </span>
+                  </div>
                 </div>
               )}
-            </div>
+            </>
           )}
+
           <div style={{ display: 'flex', gap: 6, marginTop: 4, flexDirection: 'column' }}>
             {isVisitor && (
               <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowModal(true)}>
@@ -261,6 +461,13 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
                 <Shield size={14} /> Override Entry
               </button>
             )}
+            <button
+              className="em-btn"
+              style={{ width: '100%', background: '#dc2626', color: '#fff', border: 'none', justifyContent: 'center' }}
+              onClick={() => setShowViolation(true)}
+            >
+              <AlertTriangle size={14} /> Issue Violation
+            </button>
           </div>
         </div>
       </div>
@@ -279,6 +486,13 @@ function ResultCard({ result, offices, onPassCreated, onOverride }) {
           plate={result.plate_number}
           onClose={() => setShowOverride(false)}
           onOverridden={() => { onOverride?.(); setShowOverride(false) }}
+        />
+      )}
+
+      {showViolation && (
+        <IssueViolationModal
+          initialPlate={result.plate_number || ''}
+          onClose={() => setShowViolation(false)}
         />
       )}
     </>
@@ -306,6 +520,7 @@ function BBoxLegend() {
 
 // ─── SecurityEntryManagement (page) ──────────────────────────────────────────
 export default function SecurityEntryManagement() {
+  const { user } = useAuthStore()
   // Use the same JWT access token as the admin page — no prompt needed
   const token = localStorage.getItem('access_token') || ''
 
@@ -415,6 +630,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
         plate_number: r.plate_number,
         status: r.status,
         scanned_at: new Date().toISOString(),
+        scanned_by_name: user?.full_name || null,
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
@@ -435,6 +651,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
         plate_number: r.plate_number,
         status: r.status,
         scanned_at: new Date().toISOString(),
+        scanned_by_name: user?.full_name || null,
       }))
       return [...newLogs, ...prev].slice(0, 20)
     })
@@ -515,6 +732,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
             plate_number: r.plate_number,
             status: r.status,
             scanned_at: new Date().toISOString(),
+            scanned_by_name: user?.full_name || null,
           }))
           return [...newLogs, ...prev].slice(0, 20)
         })
@@ -924,8 +1142,11 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
                     return (
                       <div key={log.id ?? i} className="em-log-item">
                         <span className={`em-log-dot ${m.logCls}`} />
-                        <span className="em-log-plate">{log.plate_number}</span>
+                        <span className="em-log-plate">{log.plate_number || '—'}</span>
                         <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                        {log.scanned_by_name && (
+                          <span className="em-log-guard">{log.scanned_by_name}</span>
+                        )}
                         <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
                       </div>
                     )
