@@ -34,6 +34,7 @@ export default function AdminLayout({ children }) {
       { name: 'Dashboard',            path: '/admin',          icon: <LayoutDashboard size={18} /> },
       { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} /> },
       { name: 'User Management',      path: '/admin/users',    icon: <Users size={18} /> },
+      { name: 'Device Management',    path: '/admin/devices',  icon: <Video size={18} /> },
     ] : []),
     ...((isAdmin || isCdso) ? [
       { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },
@@ -41,9 +42,8 @@ export default function AdminLayout({ children }) {
       { name: 'Violations',       path: '/admin/violations',  icon: <AlertTriangle size={18} /> },
     ] : []),
     ...(isAdmin ? [
-      { name: 'Rule Constraints',  path: '/admin/rules',    icon: <FileSliders size={18} /> },
-      { name: 'Audit Log',         path: '/admin/audit',    icon: <ClipboardList size={18} /> },
-      { name: 'Device Management', path: '/admin/devices',  icon: <Video size={18} /> },
+      { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
+      { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
     ] : []),
     { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
   ]

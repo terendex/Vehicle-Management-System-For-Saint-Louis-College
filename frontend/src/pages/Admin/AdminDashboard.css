@@ -16,8 +16,8 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 16px;
-  margin-bottom: 32px;
-  padding-bottom: 24px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid #E8EBF4;
 }
 
@@ -138,97 +138,120 @@
   50% { opacity: 0.35; }
 }
 
-/* ── Stats Grid ─────────────────────────────────────────────── */
-.ad-stats-grid {
-  display: grid;
-  gap: 14px;
-  margin-bottom: 28px;
-}
-
-.ad-grid-5 {
-  grid-template-columns: repeat(5, 1fr);
-}
-
-.ad-grid-3 {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-/* ── Stat Card ──────────────────────────────────────────────── */
-.ad-card {
+/* ── KPI Strip ──────────────────────────────────────────────── */
+.ad-kpi-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
   background: #FFFFFF;
   border: 1px solid #E8EBF4;
-  border-top: 3px solid var(--c, #2A2B61);
   border-radius: 14px;
-  padding: 18px 20px 20px;
   box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  cursor: default;
+  margin-bottom: 24px;
+  overflow: hidden;
 }
 
-.ad-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 10px 28px rgba(42, 43, 97, 0.1);
-}
-
-.ad-card-header {
+.ad-kpi-item {
+  flex: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
+  gap: 12px;
+  padding: 16px 20px;
+  border-right: 1px solid #F0F2F7;
+  transition: background 0.15s;
 }
 
-.ad-card-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #8892A4;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  line-height: 1.3;
+.ad-kpi-item:last-child {
+  border-right: none;
 }
 
-.ad-card-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--cl, rgba(42, 43, 97, 0.08));
-  color: var(--c, #2A2B61);
+.ad-kpi-item:hover {
+  background: #FAFBFD;
+}
+
+.ad-kpi-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.ad-card-value {
-  display: block;
-  font-size: 34px;
+.ad-kpi-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ad-kpi-val {
+  font-size: 22px;
   font-weight: 800;
   color: #1A1D2E;
   line-height: 1;
-  margin-bottom: 7px;
-  letter-spacing: -1.5px;
+  letter-spacing: -0.8px;
 }
 
-.ad-card-sub {
-  font-size: 12px;
-  color: #A8B0C8;
+.ad-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8892A4;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ad-kpi-sub {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #B0B8CC;
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-/* ── Activity Section ───────────────────────────────────────── */
-.ad-activity-section {
+/* ── Charts Grid ────────────────────────────────────────────── */
+.ad-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.ad-chart-card {
   background: #FFFFFF;
   border: 1px solid #E8EBF4;
   border-radius: 16px;
   box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.ad-section-head {
-  padding: 15px 22px;
+.ad-chart-head {
+  padding: 14px 20px 12px;
   border-bottom: 1px solid #F0F2F7;
+  background: #FAFBFD;
+}
+
+.ad-chart-subtitle {
+  display: block;
+  font-size: 12px;
+  color: #8892A4;
+  font-weight: 500;
+  margin-top: 3px;
+}
+
+.ad-chart-body {
+  padding: 20px 20px 18px;
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .ad-section-title {
@@ -243,6 +266,133 @@
 
 .ad-section-title svg {
   color: #2A2B61;
+}
+
+/* ── Donut Chart ────────────────────────────────────────────── */
+.ad-donut-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.ad-donut-container {
+  position: relative;
+  width: 100%;
+}
+
+.ad-donut-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.ad-donut-center-val {
+  display: block;
+  font-size: 28px;
+  font-weight: 800;
+  color: #1A1D2E;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+
+.ad-donut-center-label {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #8892A4;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-top: 4px;
+}
+
+.ad-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.ad-donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+
+.ad-donut-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ad-donut-legend-label {
+  flex: 1;
+  color: #5A5F72;
+  font-weight: 500;
+}
+
+.ad-donut-legend-val {
+  font-weight: 700;
+  color: #1A1D2E;
+  font-size: 13.5px;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ── Bar Chart ──────────────────────────────────────────────── */
+.ad-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ad-bar-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.ad-bar-summary-val {
+  font-size: 28px;
+  font-weight: 800;
+  color: #1A1D2E;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+
+.ad-bar-summary-label {
+  font-size: 12.5px;
+  color: #8892A4;
+  font-weight: 500;
+}
+
+/* ── Chart Empty State ──────────────────────────────────────── */
+.ad-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  font-size: 13px;
+  color: #B8C0D4;
+  font-weight: 500;
+  background: #FAFBFD;
+  border-radius: 10px;
+  border: 1px dashed #E2E6EE;
+}
+
+/* ── Activity Section ───────────────────────────────────────── */
+.ad-activity-section {
+  background: #FFFFFF;
+  border: 1px solid #E8EBF4;
+  border-radius: 16px;
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
+  overflow: hidden;
 }
 
 .ad-activity-grid {
@@ -361,72 +511,28 @@
   color: #B8C0D4;
 }
 
-/* ── Day Distribution Chart ─────────────────────────────────── */
-.ad-day-dist-section {
-  margin-bottom: 28px;
-}
-
-.ad-day-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  height: 160px;
-}
-
-.ad-day-bar-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-}
-
-.ad-day-bar-count {
-  font-size: 12px;
-  font-weight: 700;
-  color: #2A2B61;
-  min-height: 18px;
-}
-
-.ad-day-bar-track {
-  flex: 1;
-  width: 100%;
-  background: #EEF0FF;
-  border-radius: 8px 8px 4px 4px;
-  display: flex;
-  align-items: flex-end;
-  overflow: hidden;
-  min-height: 4px;
-}
-
-.ad-day-bar-fill {
-  width: 100%;
-  background: linear-gradient(180deg, #4F52B8 0%, #2A2B61 100%);
-  border-radius: 8px 8px 0 0;
-  min-height: 4px;
-  transition: height 0.4s ease;
-}
-
-.ad-day-bar-label {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: #8892A4;
-}
-
 /* ── Responsive ─────────────────────────────────────────────── */
-@media (max-width: 1200px) {
-  .ad-grid-5 {
-    grid-template-columns: repeat(3, 1fr);
+@media (max-width: 1100px) {
+  .ad-kpi-strip {
+    flex-wrap: wrap;
+  }
+  .ad-kpi-item {
+    flex: 1 1 calc(33% - 1px);
   }
 }
 
-@media (max-width: 900px) {
-  .ad-grid-5 {
-    grid-template-columns: repeat(2, 1fr);
+@media (max-width: 1000px) {
+  .ad-charts-grid {
+    grid-template-columns: 1fr;
   }
-  .ad-grid-3 {
-    grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 768px) {
+  .ad-page {
+    padding: 20px;
+  }
+  .ad-kpi-item {
+    flex: 1 1 calc(50% - 1px);
   }
   .ad-activity-grid {
     grid-template-columns: 1fr;
@@ -440,24 +546,14 @@
   }
 }
 
-@media (max-width: 768px) {
-  .ad-page {
-    padding: 20px;
-  }
-  .ad-grid-3 {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
 @media (max-width: 480px) {
   .ad-page {
     padding: 16px;
   }
-  .ad-grid-5,
-  .ad-grid-3 {
-    grid-template-columns: 1fr;
+  .ad-kpi-item {
+    flex: 1 1 100%;
   }
-  .ad-card-value {
-    font-size: 28px;
+  .ad-kpi-sub {
+    display: none;
   }
 }
