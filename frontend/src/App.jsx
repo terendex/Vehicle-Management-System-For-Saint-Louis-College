@@ -17,8 +17,6 @@ import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
-import SecurityViolationsView from './pages/Security/SecurityViolationsView'
-import GuardQrLoginPage from './pages/Security/GuardQrLoginPage'
 import SecurityQRLogin from './pages/Security/SecurityQRLogin'
 import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
 import RegisterPage from './pages/Register/RegisterPage'
@@ -38,7 +36,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/guard-login" element={<GuardQrLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -75,7 +72,6 @@ export default function App() {
           <Route path="/security/entries" element={<SecurityEntryManagement />} />
           {/* Gate-specific entry views */}
           <Route path="/security/gate/:gate/entries" element={<SecurityEntryManagement />} />
-          <Route path="/security/violations" element={<SecurityViolationsView />} />
           <Route path="/security/parking" element={<SecurityParkingView />} />
         </Route>
 

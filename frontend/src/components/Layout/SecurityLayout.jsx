@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   ShieldCheck,
   ParkingCircle,
-  AlertTriangle,
   LogOut,
   MapPin,
   Clock,
@@ -43,16 +42,14 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   const shift     = useCurrentShift(gate)
 
   const handleLogout = () => {
-    logout()
-    navigate('/guard-login')
+    logout('/security/qr-login')
   }
 
   const entryPath = gate ? `/security/gate/${gate}/entries` : '/security/entries'
 
   const navItems = [
-    { name: 'Entry Management',  path: entryPath,              icon: <ShieldCheck size={18} /> },
-    { name: 'Parking',           path: '/security/parking',    icon: <ParkingCircle size={18} /> },
-    { name: 'Violations Issued', path: '/security/violations', icon: <AlertTriangle size={18} /> },
+    { name: 'Entry Management', path: entryPath,           icon: <ShieldCheck size={18} /> },
+    { name: 'Parking',          path: '/security/parking', icon: <ParkingCircle size={18} /> },
   ]
 
   return (
@@ -94,17 +91,17 @@ export default function SecurityLayout({ children, fillHeight = false }) {
               Switch Gate
             </span>
             <div style={{ display: 'flex', gap: 6 }}>
-              {['1', '2'].map(g => (
+              {[{ key: 'gate1', label: '1' }, { key: 'gate4', label: '4' }].map(g => (
                 <NavLink
-                  key={g}
-                  to={`/security/gate/${g}/entries`}
+                  key={g.key}
+                  to={`/security/gate/${g.key}/entries`}
                   className={({ isActive }) =>
                     `nav-item${isActive ? ' active' : ''}`
                   }
                   style={{ flex: 1, justifyContent: 'center', padding: '6px 8px', fontSize: 12 }}
                 >
                   <DoorOpen size={14} />
-                  Gate {g}
+                  Gate {g.label}
                 </NavLink>
               ))}
             </div>
