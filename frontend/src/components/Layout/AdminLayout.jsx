@@ -8,11 +8,11 @@ import {
   ClipboardList,
   ParkingCircle,
   Settings2,
-  HelpCircle,
   LogOut,
   Video,
   AlertTriangle,
-  MonitorDot,
+  TowerControl,
+  HelpCircle,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -35,13 +35,12 @@ export default function AdminLayout({ children, fillHeight = false }) {
       { name: 'Dashboard',            path: '/admin',                  icon: <LayoutDashboard size={18} /> },
       { name: 'Vehicle Registration', path: '/admin/vehicles',         icon: <Car size={18} /> },
       { name: 'User Management',      path: '/admin/users',            icon: <Users size={18} /> },
-      { name: 'Device Management',    path: '/admin/devices',          icon: <Video size={18} />       },
-      { name: 'Guard Monitor',        path: '/admin/guard-monitor',    icon: <MonitorDot size={18} />  },
+      { name: 'Device Management',    path: '/admin/devices',          icon: <Video size={18} />          },
+      { name: 'Operations Center',    path: '/admin/entries',          icon: <TowerControl size={18} />   },
     ] : []),
     ...((isAdmin || isCdso) ? [
-      { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },
-      { name: 'Parking',          path: '/admin/parking',     icon: <ParkingCircle size={18} /> },
-      { name: 'Violations',       path: '/admin/violations',  icon: <AlertTriangle size={18} /> },
+      { name: 'Parking',    path: '/admin/parking',    icon: <ParkingCircle size={18} /> },
+      { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
     ] : []),
     ...(isAdmin ? [
       { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },

@@ -10,12 +10,12 @@ from django.db.models import Q
 from vehicles.models import Vehicle
 from violations.models import Violation
 from accounts.models import User, AuditLog
-from .models import AccessLog, VisitorPass, Office, MLTrainingSample
+from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
 from .entry_logic import check_entry
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
-from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer
+from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer
 
 
 def get_client_ip(request):
@@ -296,7 +296,12 @@ class AccessLogListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        logs = AccessLog.objects.all().order_by('-scanned_at')[:200]
+        qs = AccessLog.objects.all().order_by('-scanned_at')
+        gate_id = request.query_params.get('gate_id')
+        if gate_id:
+            qs = qs.filter(gate_id=gate_id)
+        limit = int(request.query_params.get('limit', 200))
+        logs = qs[:limit]
         return Response(AccessLogSerializer(logs, many=True).data)
 
 
@@ -452,10 +457,10 @@ class ExitLogView(APIView):
 
 
 class GuardMonitorView(APIView):
-    """Admin-only: see every security guard's today activity and recent scans."""
+    """Admin-only: per-gate activity, current shifts, and cross-gate discrepancies."""
 
     def get(self, request):
-        if not request.user.is_authenticated or request.user.role != 'admin':
+        if not request.user.is_authenticated or request.user.role not in ('admin', 'cdso'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
 
@@ -465,12 +470,19 @@ class GuardMonitorView(APIView):
         today  = timezone.localdate()
         guards = UserModel.objects.filter(role='security').order_by('full_name')
 
+        # Current active shifts keyed by gate
+        active_shifts = {}
+        for shift in GuardShift.objects.filter(clocked_out_at__isnull=True).select_related('guard'):
+            active_shifts[shift.gate] = {
+                'guard_name':    shift.guard.full_name,
+                'guard_code':    shift.guard.user_code,
+                'clocked_in_at': shift.clocked_in_at,
+                'shift_id':      shift.id,
+            }
+
         result = []
         for guard in guards:
-            today_logs = AccessLog.objects.filter(
-                scanned_by=guard,
-                scanned_at__date=today,
-            )
+            today_logs = AccessLog.objects.filter(scanned_by=guard, scanned_at__date=today)
 
             stats = today_logs.aggregate(
                 total      = Count('id'),
@@ -481,26 +493,24 @@ class GuardMonitorView(APIView):
                 exited     = Count('id', filter=Q(status=AccessLog.Status.EXITED)),
             )
 
-            visitors = VisitorPass.objects.filter(
-                issued_by=guard,
-                valid_date=today,
-            ).count()
+            visitors = VisitorPass.objects.filter(issued_by=guard, valid_date=today).count()
 
-            recent = (
-                today_logs
-                .select_related('vehicle__user')
-                .order_by('-scanned_at')[:10]
-            )
-
+            recent = today_logs.select_related('vehicle__user').order_by('-scanned_at')[:10]
             last_log  = recent.first()
             last_seen = last_log.scanned_at if last_log else None
 
+            # Shift history for today
+            shifts_today = GuardShift.objects.filter(
+                guard=guard, clocked_in_at__date=today,
+            ).values('id', 'gate', 'clocked_in_at', 'clocked_out_at')
+
             result.append({
-                'id':        guard.id,
-                'full_name': guard.full_name,
-                'user_code': guard.user_code,
-                'last_seen': last_seen,
-                'is_active': last_seen is not None,
+                'id':              guard.id,
+                'full_name':       guard.full_name,
+                'user_code':       guard.user_code,
+                'gate_assignment': guard.gate_assignment,
+                'last_seen':       last_seen,
+                'is_active':       last_seen is not None,
                 'stats': {
                     'total':      stats['total']      or 0,
                     'authorized': stats['authorized'] or 0,
@@ -509,10 +519,35 @@ class GuardMonitorView(APIView):
                     'visitors':   visitors,
                 },
                 'recent_logs': AccessLogSerializer(recent, many=True).data,
+                'shifts_today': list(shifts_today),
             })
 
         result.sort(key=lambda g: (not g['is_active'], g['full_name']))
-        return Response({'guards': result})
+
+        # Cross-gate discrepancies: vehicle entered one gate, exited a different gate today
+        cross_gate = []
+        exit_logs = (
+            AccessLog.objects
+            .filter(status=AccessLog.Status.EXITED, scanned_at__date=today, paired_entry__isnull=False)
+            .select_related('paired_entry', 'vehicle__user')
+        )
+        for ex_log in exit_logs:
+            entry = ex_log.paired_entry
+            if entry and entry.gate_id != ex_log.gate_id and entry.gate_id and ex_log.gate_id:
+                cross_gate.append({
+                    'plate_number':  ex_log.plate_number,
+                    'owner_name':    ex_log.vehicle.user.full_name if ex_log.vehicle and ex_log.vehicle.user else '—',
+                    'entry_gate':    entry.gate_id,
+                    'exit_gate':     ex_log.gate_id,
+                    'entered_at':    entry.scanned_at,
+                    'exited_at':     ex_log.scanned_at,
+                })
+
+        return Response({
+            'guards':          result,
+            'active_shifts':   active_shifts,
+            'cross_gate_flags': cross_gate,
+        })
 
 
 class ExtendVisitorPassView(APIView):
@@ -582,3 +617,180 @@ class TestRtspView(APIView):
                 ok, msg = False, f'Error: {e}'
 
         return Response({'ok': ok, 'message': msg})
+
+
+# ─── Dual-Gate System Views ───────────────────────────────────────────────────
+
+class ManualEntryView(APIView):
+    """Guard manually types a plate number — no image scan required."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
+        vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate_number).first()
+
+        if not vehicle:
+            AccessLog.objects.create(
+                plate_number=plate_number,
+                status=AccessLog.Status.UNKNOWN,
+                gate_id=gate_id,
+                scanned_by=request.user,
+            )
+            return Response({
+                'plate_number': plate_number,
+                'status':       'unknown',
+                'allowed':      False,
+                'message':      'Plate not found in the system.',
+                'gate_id':      gate_id,
+            })
+
+        entry = check_entry(vehicle)
+        has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
+
+        AccessLog.objects.create(
+            plate_number  = plate_number,
+            vehicle       = vehicle,
+            status        = entry['status'],
+            gate_id       = gate_id,
+            denied_reason = '' if entry['allowed'] else entry['message'],
+            scanned_by    = request.user,
+        )
+
+        owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+        guard_name = request.user.full_name
+        action = AuditLog.Action.VEHICLE_ENTERED if entry['allowed'] else AuditLog.Action.SCAN
+        _audit(
+            request, action,
+            f"Plate: {plate_number} | Owner: {owner_name} | Gate: {gate_id} | Guard: {guard_name} | Status: {entry['status']}",
+        )
+
+        if not entry['allowed']:
+            _auto_log_violation(vehicle, entry['message'])
+
+        return Response({
+            'plate_number':   plate_number,
+            'status':         entry['status'],
+            'allowed':        entry['allowed'],
+            'message':        entry['message'],
+            'constraint':     entry.get('constraint'),
+            'vehicle':        VehicleSerializer(vehicle).data,
+            'has_violations': has_violations,
+            'already_inside': _already_inside(plate_number),
+            'gate_id':        gate_id,
+        })
+
+
+class QRLoginView(APIView):
+    """
+    Kiosk QR scan login — validates guard's QR token, ends any active shift
+    at their assigned gate, starts a new shift, and returns JWT tokens.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from django.utils import timezone as tz
+
+        qr_token = (request.data.get('qr_token') or '').strip()
+        if not qr_token:
+            return Response({'error': 'qr_token is required.'}, status=400)
+
+        try:
+            guard = User.objects.get(qr_token=qr_token, role='security', is_active=True)
+        except User.DoesNotExist:
+            return Response({'error': 'Invalid or unrecognised QR code.'}, status=403)
+
+        gate = guard.gate_assignment
+        if not gate:
+            return Response({'error': 'This guard has no gate assignment. Contact the admin.'}, status=400)
+
+        now = tz.now()
+
+        # End previous active shift at this gate (whoever was logged in before)
+        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
+            clocked_out_at=now,
+            clocked_out_by=guard,
+        )
+
+        # Start new shift
+        GuardShift.objects.create(guard=guard, gate=gate)
+
+        # Issue JWT
+        refresh  = RefreshToken.for_user(guard)
+        access   = str(refresh.access_token)
+
+        # Audit
+        _audit_ip = get_client_ip(request)
+        try:
+            AuditLog.objects.create(
+                actor=guard,
+                action=AuditLog.Action.VEHICLE_ENTERED,
+                details=f"Guard QR login | Gate: {gate} | Guard: {guard.full_name}",
+                ip_address=_audit_ip,
+            )
+        except Exception:
+            pass
+
+        return Response({
+            'access':  access,
+            'refresh': str(refresh),
+            'user': {
+                'id':              guard.id,
+                'user_code':       guard.user_code,
+                'full_name':       guard.full_name,
+                'email':           guard.email,
+                'role':            guard.role,
+                'gate_assignment': guard.gate_assignment,
+                'must_change_password': guard.must_change_password,
+            },
+        })
+
+
+class CurrentShiftsView(APIView):
+    """Return the currently active shift for each gate."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        active = (
+            GuardShift.objects
+            .filter(clocked_out_at__isnull=True)
+            .select_related('guard')
+        )
+        result = {}
+        for shift in active:
+            result[shift.gate] = {
+                'guard_name':    shift.guard.full_name,
+                'guard_code':    shift.guard.user_code,
+                'gate':          shift.gate,
+                'clocked_in_at': shift.clocked_in_at,
+            }
+        return Response(result)
+
+
+class GuardShiftListView(APIView):
+    """Admin: paginated full shift history."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role not in ('admin', 'cdso'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
+        from .serializers import GuardShiftSerializer as GSSer
+        gate   = request.query_params.get('gate', '').strip()
+        guard  = request.query_params.get('guard', '').strip()
+        date   = request.query_params.get('date', '').strip()
+
+        qs = GuardShift.objects.select_related('guard', 'clocked_out_by').all()
+        if gate:
+            qs = qs.filter(gate=gate)
+        if guard:
+            qs = qs.filter(guard__id=guard)
+        if date:
+            qs = qs.filter(clocked_in_at__date=date)
+
+        return Response(GSSer(qs[:100], many=True).data)

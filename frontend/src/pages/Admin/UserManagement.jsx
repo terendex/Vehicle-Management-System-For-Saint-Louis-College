@@ -5,8 +5,10 @@ import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
-  Check, Circle, MoreVertical, ChevronLeft, ChevronRight
+  Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
+import { toast } from 'sonner'
 import './UserManagement.css'
 
 /* ─── password helpers ───────────────────────────────────── */
@@ -56,6 +58,40 @@ export default function UserManagement() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [formErrors, setFormErrors] = useState({})
+
+  // QR badge modal
+  const [qrGuard,    setQrGuard]    = useState(null)
+  const [qrToken,    setQrToken]    = useState(null)
+  const [qrLoading,  setQrLoading]  = useState(false)
+
+  const openQrModal = async (guard) => {
+    setQrGuard(guard)
+    setQrToken(null)
+    setQrLoading(true)
+    try {
+      const data = await usersApi.getGuardQR(guard.id)
+      setQrToken(data.qr_token)
+    } catch {
+      toast.error('Failed to load QR token.')
+      setQrGuard(null)
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const handleRegenerateQR = async () => {
+    if (!qrGuard) return
+    setQrLoading(true)
+    try {
+      const data = await usersApi.regenerateGuardQR(qrGuard.id)
+      setQrToken(data.qr_token)
+      toast.success('QR badge regenerated. Old badge is now invalid.')
+    } catch {
+      toast.error('Failed to regenerate QR.')
+    } finally {
+      setQrLoading(false)
+    }
+  }
 
   // Add type selector: 'user' or 'admin'
   const [addType, setAddType] = useState(null) // null = show selector, 'user' | 'admin' = show form
@@ -115,7 +151,7 @@ export default function UserManagement() {
   /* ─── open modals ───── */
   const openAdd = () => {
     setAddType(null)
-    setForm({ full_name: '', email: '', role: 'security', password: '', confirm_password: '' })
+    setForm({ full_name: '', email: '', role: 'security', gate_assignment: '', password: '', confirm_password: '' })
     setFormErrors({})
     setShowPassword(false)
     setShowConfirm(false)
@@ -175,13 +211,17 @@ export default function UserManagement() {
   const handleAddUser = async () => {
     setSubmitting(true)
     try {
-      await usersApi.createUser({
+      const payload = {
         full_name: form.full_name.trim(),
         email: form.email.trim(),
         role: form.role,
         password: form.password,
         confirm_password: form.confirm_password,
-      })
+      }
+      if (form.role === 'security' && form.gate_assignment) {
+        payload.gate_assignment = form.gate_assignment
+      }
+      await usersApi.createUser(payload)
       fetchUsers()
       showResult('User created successfully!')
     } catch (err) {
@@ -420,6 +460,11 @@ export default function UserManagement() {
                         <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
                           <Eye size={15} /> View Profile
                         </button>
+                        {u.role === 'security' && (
+                          <button className="um-dropdown-item view" onClick={() => { openQrModal(u); setActiveMenu(null) }}>
+                            <QrCode size={15} /> QR Badge
+                          </button>
+                        )}
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
                           onClick={() => { openToggle(u); setActiveMenu(null) }}
@@ -543,10 +588,26 @@ export default function UserManagement() {
                         id="add-role"
                         className="um-form-select"
                         value={form.role}
-                        onChange={(e) => setForm({ ...form, role: e.target.value })}
+                        onChange={(e) => setForm({ ...form, role: e.target.value, gate_assignment: '' })}
                       >
                         <option value="security">Security Personnel</option>
                         <option value="vehicle_owner">Vehicle Owner</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {addType === 'user' && form.role === 'security' && (
+                    <div className="um-form-group">
+                      <label htmlFor="add-gate">Gate Assignment</label>
+                      <select
+                        id="add-gate"
+                        className="um-form-select"
+                        value={form.gate_assignment}
+                        onChange={(e) => setForm({ ...form, gate_assignment: e.target.value })}
+                      >
+                        <option value="">Unassigned (guard selects at kiosk)</option>
+                        <option value="gate1">Gate 1 — Main Entrance</option>
+                        <option value="gate4">Gate 4 — Side Entrance</option>
                       </select>
                     </div>
                   )}
@@ -683,6 +744,16 @@ export default function UserManagement() {
                     {selectedUser.user_code || `#${selectedUser.id}`}
                   </span>
                 </div>
+                {selectedUser.role === 'security' && (
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">Gate Assignment</span>
+                    <span className="um-profile-value">
+                      {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
+                        : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
+                        : 'Unassigned'}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
             <div className="um-modal-footer">
@@ -779,6 +850,51 @@ export default function UserManagement() {
               <button className="um-btn-secondary" disabled={submitting} onClick={() => setModal('add')}>Back</button>
               <button className="um-btn-primary" disabled={submitting} onClick={addType === 'admin' ? handleReplaceAdmin : handleAddUser}>
                 {submitting ? 'Processing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR BADGE MODAL */}
+      {qrGuard && (
+        <div className="um-modal-overlay" onClick={() => setQrGuard(null)}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, textAlign: 'center' }}>
+            <div className="um-modal-header">
+              <h2><QrCode size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Guard QR Badge</h2>
+              <button className="um-modal-close" onClick={() => setQrGuard(null)}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '24px 20px' }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{qrGuard.full_name}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                  {qrGuard.user_code} · {qrGuard.gate_assignment === 'gate1' ? 'Gate 1' : qrGuard.gate_assignment === 'gate4' ? 'Gate 4' : 'No gate assigned'}
+                </p>
+              </div>
+              {qrLoading ? (
+                <div style={{ width: 200, height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div className="um-spinner" />
+                </div>
+              ) : qrToken ? (
+                <>
+                  <div style={{ padding: 12, background: '#fff', border: '2px solid #E2E6EE', borderRadius: 12 }}>
+                    <QRCodeSVG value={qrToken} size={180} level="M" />
+                  </div>
+                  <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 300 }}>
+                    Token: {qrToken}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 11, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 10px' }}>
+                    Print this QR code as the guard's badge. Do not share digitally.
+                  </p>
+                </>
+              ) : null}
+            </div>
+            <div className="um-modal-footer" style={{ justifyContent: 'space-between' }}>
+              <button className="um-btn-secondary" onClick={() => setQrGuard(null)}>Close</button>
+              <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <RefreshCw size={14} />
+                {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
               </button>
             </div>
           </div>
