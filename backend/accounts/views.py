@@ -12,6 +12,8 @@ from .serializers import (
     UserUpdateSerializer,
     RegisterSerializer,
     AdminReplaceSerializer,
+    GuardCreateSerializer,
+    AdminOwnerCreateSerializer,
     CustomTokenObtainPairSerializer,
     AuditLogSerializer,
 )
@@ -189,6 +191,36 @@ class AdminReplaceView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AdminCreateGuardView(APIView):
+    """Admin creates a security-guard account.  No email or password in the form —
+    guards authenticate via QR badge only."""
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        serializer = GuardCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        guard = serializer.save()
+        log_action(request, AuditLog.Action.USER_CREATED, target_user=guard,
+                   details=f'Guard account created: {guard.full_name}')
+        return Response(UserSerializer(guard, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
+
+
+class AdminCreateOwnerView(APIView):
+    """Admin creates a vehicle-owner account directly.  Password is auto-generated
+    and emailed to the owner; must_change_password is set."""
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        serializer = AdminOwnerCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        owner = serializer.save()
+        log_action(request, AuditLog.Action.USER_CREATED, target_user=owner,
+                   details=f'Vehicle-owner account created by admin: {owner.full_name}')
+        return Response(UserSerializer(owner, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
 
 
 class DashboardStatsView(APIView):
