@@ -1,7 +1,7 @@
 from django.utils import timezone
 from django.db.models import Q
 from .models import SCHEDULE_DAYS, VisitorPass, AccessLog
-from vehicles.models import RuleConstraint, Vehicle
+from vehicles.models import RuleConstraint, Vehicle, SystemSettings
 from accounts.models import User
 
 DAY_TO_WEEKDAY = {
@@ -39,6 +39,12 @@ def _is_within_days(rule, today_weekday=None):
     return today_key in rule.days
 
 def check_entry(vehicle) -> dict:
+    # Open Campus Mode — bypass all rules, allow everything
+    settings = SystemSettings.get()
+    if settings.open_campus_mode:
+        owner_name = vehicle.user.full_name if vehicle.user else vehicle.plate_number
+        return _result('authorized', True, f'Open Campus Mode active — {owner_name}. Entry granted.', None)
+
     user = vehicle.user
 
     if not user:

@@ -12,6 +12,7 @@ import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
 import './AdminLayout.css'
+import './SecurityLayout.css'
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
@@ -52,7 +53,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   ]
 
   return (
-    <div className="admin-layout">
+    <div className="admin-layout security-layout">
 
       {/* Sidebar */}
       <aside className="admin-sidebar">

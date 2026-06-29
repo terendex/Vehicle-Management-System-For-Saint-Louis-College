@@ -6,7 +6,7 @@ import {
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
-import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
+import { useCameraContext } from '../../context/CameraContext'
 import './ParkingManagement.css'
 
 const CAT_OPTS = [
@@ -56,17 +56,14 @@ export default function ParkingManagement() {
   // Live-view RTSP cameras panel
   const [showCamPanel, setShowCamPanel] = useState(false)
 
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') || '' : ''
-  const {
-    cameras:        parkingCams,
-    activeCamId:    pkActiveCamId,
-    setActiveCamId: setPkActiveCam,
-    activeCam:      pkActiveCam,
-    addCamera:      addPkCamera,
-    removeCamera:   removePkCameraHook,
-    disconnectAll:  disconnectAllPkCams,
-    registerCanvas: registerPkCanvas,
-  } = useMultiRtspStream(token)
+  const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
+  const [pkActiveCamId, setPkActiveCam] = useState(null)
+  const parkingCams = allCameras.filter(c => c.assignment === 'parking')
+  const pkActiveCam = parkingCams.find(c => c.id === pkActiveCamId) ?? parkingCams[0] ?? null
+
+  useEffect(() => {
+    if (!pkActiveCamId && parkingCams.length > 0) setPkActiveCam(parkingCams[0].id)
+  }) // intentionally no deps — runs after every render until activeCamId is set
 
   const svgEl     = useRef(null)
   const fileRef   = useRef(null)
@@ -92,14 +89,12 @@ export default function ParkingManagement() {
 
   useEffect(() => { loadZones() }, [loadZones])
 
-  // Load parking cameras from Device Management (DB only)
+  // Load parking cameras once on mount — persists across navigation
   useEffect(() => {
-    disconnectAllPkCams()
-    if (!selId) return
     camerasApi.list({ assignment: 'parking' })
-      .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url)))
+      .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url, 'parking')))
       .catch(() => {})
-  }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live occupancy polling (always on in live mode)
   const refreshZone = useCallback(async () => {

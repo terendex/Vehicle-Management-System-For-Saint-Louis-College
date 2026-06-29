@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   AlertTriangle, CheckCircle, EyeOff, Filter,
   RotateCcw, Search, Bell, BellOff, X,
-  Image, ZoomIn,
+  Image, ZoomIn, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
@@ -87,6 +87,8 @@ export default function ViolationsManagement() {
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
+  const [page, setPage]                   = useState(1)
+  const PAGE_SIZE = 10
 
   const fetchAll = () => {
     setLoading(true)
@@ -99,7 +101,7 @@ export default function ViolationsManagement() {
   useEffect(() => { fetchAll() }, [])
 
   const filtered = useMemo(() => {
-    let list = violations
+    let list = [...violations]
 
     // Status filter
     if (filter === 'pending')  list = list.filter(v => !v.is_released && !v.is_resolved)
@@ -122,8 +124,17 @@ export default function ViolationsManagement() {
       )
     }
 
+    // LIFO — newest violations first
+    list.sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at))
+
     return list
   }, [violations, filter, datePeriod, search])
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1) }, [filter, datePeriod, search])
+
+  const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   // Summary stats
   const pendingCount    = violations.filter(v => !v.is_released && !v.is_resolved).length
@@ -280,7 +291,7 @@ export default function ViolationsManagement() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((v) => (
+                {paginated.map((v) => (
                   <tr key={v.id} className={v.is_resolved ? 'vm-row-resolved' : v.is_released ? 'vm-row-notified' : ''}>
                     <td className="vm-plate">{v.plate_number}</td>
                     <td className="vm-owner">
@@ -361,6 +372,24 @@ export default function ViolationsManagement() {
             </table>
           )}
         </div>
+
+        {/* Pagination */}
+        {!loading && totalPages > 1 && (
+          <div className="vm-pagination">
+            <span className="vm-page-info">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <div className="vm-page-controls">
+              <button className="vm-page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+                <ChevronLeft size={15} />
+              </button>
+              <span className="vm-page-current">Page {page} of {totalPages}</span>
+              <button className="vm-page-btn" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
     </AdminLayout>

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut,
+  CheckCircle, XCircle, HelpCircle, AlertTriangle,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -10,6 +10,8 @@ import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, logExit,
 } from '../../api/scanning'
+import { camerasApi } from '../../api/cameras'
+import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
 import './SecurityEntryManagement.css'
 
@@ -346,11 +348,53 @@ export default function SecurityEntryManagement() {
   const [exitLoading, setExitLoading] = useState(false)
   const [exitResult, setExitResult]   = useState(null)
 
+  const { cameras, results, addCamera, registerCanvas } = useCameraContext()
+  const [rtspActiveCamId, setRtspActiveCam] = useState(null)
+  const rtspCameras = cameras.filter(c => c.assignment === 'entry')
+  const rtspActiveCam = rtspCameras.find(c => c.id === rtspActiveCamId) ?? rtspCameras[0] ?? null
+  const rtspResults = results.filter(r => rtspCameras.some(c => c.id === r._camId))
+
+  useEffect(() => {
+    if (!rtspActiveCamId && rtspCameras.length > 0) setRtspActiveCam(rtspCameras[0].id)
+  }) // intentionally no deps — runs after every render until activeCamId is set
+
+  const isLive = rtspCameras.some(c => c.streamConnected)
+
+  const scanCooldown = useRef(new Set())
+
+  // Auto-process ML scan results from camera
+  useEffect(() => {
+    if (!rtspResults?.length) return
+    rtspResults.forEach(r => {
+      if (!r.plate_number || scanCooldown.current.has(r.plate_number)) return
+      scanCooldown.current.add(r.plate_number)
+      setTimeout(() => scanCooldown.current.delete(r.plate_number), 3000)
+      setResult(r)
+      const m = getMeta(r.status)
+      if (r.allowed) {
+        toast.success(`Entry approved: ${r.plate_number}`)
+      } else {
+        toast.error(`${m.label}: ${r.plate_number}`)
+      }
+      setLogs(prev => [{
+        id: Date.now() + Math.random(),
+        plate_number: r.plate_number,
+        status: r.status,
+        scanned_at: new Date().toISOString(),
+        scanned_by_name: user?.full_name,
+        gate_id: user?.gate_assignment,
+      }, ...prev].slice(0, 20))
+    })
+  }, [rtspResults]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const gateFilter = user?.gate_assignment ? { gate_id: user.gate_assignment } : {}
 
   useEffect(() => {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
+    camerasApi.list({ assignment: 'entry' })
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
+      .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshLogs = () =>
@@ -402,32 +446,82 @@ export default function SecurityEntryManagement() {
     <SecurityLayout fillHeight>
       <div className="em-page">
 
-        {/* Header */}
-        <div className="em-header">
-          <div>
-            <h1 className="em-title">Entry Management — {gateLabel}</h1>
-            <p className="em-subtitle">
-              Manually enter a plate number to check vehicle access rights.
-            </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 13px', borderRadius: 20,
-              border: '1.5px solid #2A2B61', background: '#EEF0FC', color: '#2A2B61', fontSize: 11.5, fontWeight: 700 }}>
-              <Shield size={13} /> {gateLabel}
-            </span>
-          </div>
-        </div>
-
         {/* Main grid */}
         <div className="em-grid">
 
-          {/* Left: plate lookup */}
+          {/* Left: CCTV + plate lookup */}
           <div className="em-card em-camera-card">
             <div className="em-card-head">
-              <span className="em-card-label"><Search size={15} /> Plate Lookup</span>
+              <span className="em-card-label"><Video size={15} /> CCTV Monitor</span>
+              <span className={`em-autoscan-status${isLive ? ' scanning' : ''}`} style={{ marginLeft: 'auto' }}>
+                {rtspCameras.length === 0
+                  ? <><Wifi size={12} /> No cameras</>
+                  : isLive
+                    ? <><Video size={12} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} live</>
+                    : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>
+                }
+              </span>
             </div>
 
-            <div style={{ padding: '20px 20px 8px' }}>
+            {/* Viewport */}
+            <div className="em-viewport" style={{ background: '#0d1117', minHeight: 280, position: 'relative' }}>
+              {rtspCameras.length > 0 ? (
+                <div style={{ position: 'relative', width: '100%', minHeight: 260 }}>
+                  {rtspCameras.map((cam, idx) => (
+                    <div
+                      key={cam.id}
+                      style={{ display: rtspActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
+                    >
+                      <canvas
+                        ref={el => registerCanvas(cam.id, el)}
+                        style={{ width: '100%', display: 'block', background: '#000', minHeight: 260 }}
+                      />
+                    </div>
+                  ))}
+                  {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
+                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.15)' }} />
+                      <p style={{ color: '#93c5fd', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
+                    </div>
+                  )}
+                  <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
+                    {rtspActiveCam?.name || 'Camera'}
+                  </div>
+                </div>
+              ) : (
+                <div className="em-cam-off">
+                  <Wifi size={40} style={{ color: '#374151' }} />
+                  <p>No entry cameras configured.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Camera thumbnail strip */}
+            {rtspCameras.length > 1 && (
+              <div className="em-cam-thumbnails" style={{ borderTop: '1px solid #1e2235' }}>
+                {rtspCameras.map(cam => (
+                  <div
+                    key={`thumb-${cam.id}`}
+                    className={`em-cam-thumb ${rtspActiveCamId === cam.id ? 'active' : ''}`}
+                    onClick={() => setRtspActiveCam(cam.id)}
+                    style={{ position: 'relative' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
+                      <Wifi size={18} />
+                    </div>
+                    <div className="em-cam-thumb-label">{cam.name}</div>
+                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280' }} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Plate Lookup */}
+            <div className="em-card-head" style={{ borderTop: '1px solid #f3f4f6' }}>
+              <span className="em-card-label"><Search size={14} /> Plate Lookup</span>
+            </div>
+            <div style={{ padding: '12px 16px 8px' }}>
               <form onSubmit={handleCheckEntry} style={{ display: 'flex', gap: 8 }}>
                 <input
                   className="em-plate-input"
@@ -443,15 +537,15 @@ export default function SecurityEntryManagement() {
                   {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Entry</>}
                 </button>
               </form>
-              <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 8, marginBottom: 0 }}>
-                Type the license plate number and press Check Entry or hit Enter.
+              <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, marginBottom: 0 }}>
+                Type the license plate and press Check Entry or hit Enter.
               </p>
             </div>
 
             {/* Record Exit */}
-            <div style={{ padding: '12px 20px 20px' }}>
-              <div className="em-card-head" style={{ marginBottom: 10 }}>
-                <span className="em-card-label"><LogOut size={14} /> Record Exit</span>
+            <div style={{ padding: '8px 16px 16px' }}>
+              <div className="em-card-head" style={{ marginBottom: 8 }}>
+                <span className="em-card-label"><LogOut size={13} /> Record Exit</span>
               </div>
               <form onSubmit={handleRecordExit} style={{ display: 'flex', gap: 6 }}>
                 <input
