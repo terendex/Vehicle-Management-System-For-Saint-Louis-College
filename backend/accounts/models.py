@@ -1,3 +1,4 @@
+import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 
@@ -50,11 +51,19 @@ class User(AbstractUser):
         'cdso':          'CDS',
     }
 
+    class Gate(models.TextChoices):
+        GATE1 = 'gate1', 'Gate 1'
+        GATE4 = 'gate4', 'Gate 4'
+
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
     user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
-    must_change_password = models.BooleanField(default=False)  # True for auto-provisioned accounts
+    must_change_password = models.BooleanField(default=False)
+
+    # Security guard fields
+    gate_assignment = models.CharField(max_length=10, choices=Gate.choices, null=True, blank=True)
+    qr_token = models.UUIDField(default=uuid.uuid4, unique=True)
 
     # Owner profile fields — only populated for vehicle_owner role
     owner_type = models.CharField(max_length=20, choices=OwnerType.choices, null=True, blank=True)

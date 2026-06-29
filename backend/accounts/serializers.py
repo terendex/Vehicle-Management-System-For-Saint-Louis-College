@@ -24,14 +24,14 @@ def validate_password_strength(password):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'gate_assignment', 'qr_token']
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     """For editing user details (no password change)."""
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'role']
+        fields = ['full_name', 'email', 'role', 'gate_assignment']
 
     def validate_email(self, value):
         user = self.instance
@@ -46,7 +46,8 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'password', 'confirm_password', 'role']
+        fields = ['full_name', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
+        extra_kwargs = {'gate_assignment': {'required': False, 'allow_null': True, 'allow_blank': True}}
 
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
@@ -129,6 +130,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'email': self.user.email,
             'role': self.user.role,
             'must_change_password': self.user.must_change_password,
+            'gate_assignment': self.user.gate_assignment,
         }
         return data
 

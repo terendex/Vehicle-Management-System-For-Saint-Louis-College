@@ -9,6 +9,9 @@ export const scanPlate = (imageBlob) => {
   })
 }
 
+// Guard manually types a plate number (no image)
+export const manualEntry = (data) => api.post('/scan/manual-entry/', data)
+
 // Get recent access logs
 export const getAccessLogs = (params) => api.get('/scan/logs/', { params })
 
@@ -37,5 +40,14 @@ export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
 export const extendVisitorPass = (id, extra_minutes) =>
   api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
 
-// Admin: live guard activity monitor
+// Admin: live guard activity monitor (now includes gate + shift + cross-gate data)
 export const getGuardMonitor = () => api.get('/scan/guard-monitor/')
+
+// QR code scan login — exchanges guard's QR token for JWT (registered at /api/auth/qr-login/)
+export const qrLogin = (qr_token, gate) => api.post('/auth/qr-login/', { qr_token, gate })
+
+// Current active shifts per gate
+export const getCurrentShifts = () => api.get('/scan/current-shifts/')
+
+// Shift history (admin) — optional params: gate, guard, date
+export const getShifts = (params) => api.get('/scan/shifts/', { params })

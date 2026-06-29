@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import VisitorPass, Office, AccessLog, MLTrainingSample
+from .models import VisitorPass, Office, AccessLog, MLTrainingSample, GuardShift
 
 class OfficeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -22,6 +22,20 @@ class AccessLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = AccessLog
         fields = '__all__'
+
+class GuardShiftSerializer(serializers.ModelSerializer):
+    guard_name       = serializers.CharField(source='guard.full_name',         read_only=True)
+    guard_code       = serializers.CharField(source='guard.user_code',         read_only=True)
+    clocked_out_by_name = serializers.CharField(source='clocked_out_by.full_name', read_only=True, default=None)
+    is_active = serializers.SerializerMethodField()
+
+    def get_is_active(self, obj):
+        return obj.clocked_out_at is None
+
+    class Meta:
+        model  = GuardShift
+        fields = '__all__'
+
 
 class MLTrainingSampleSerializer(serializers.ModelSerializer):
     class Meta:
