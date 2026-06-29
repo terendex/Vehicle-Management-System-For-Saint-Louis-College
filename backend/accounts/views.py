@@ -315,16 +315,13 @@ class DashboardStatsView(APIView):
 # ──────────────────────────────────────────────
 
 class AuditLogListView(generics.ListAPIView):
-    """List audit logs - admin sees all, security sees only their own actions."""
+    """List audit logs - admin only."""
     serializer_class   = AuditLogSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminRole]
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        if self.request.user.role == 'admin':
-            qs = AuditLog.objects.select_related('actor', 'target_user').all()
-        else:
-            qs = AuditLog.objects.select_related('actor', 'target_user').filter(actor=self.request.user)
+        qs = AuditLog.objects.select_related('actor', 'target_user').all()
 
         action = self.request.query_params.get('action', '').strip()
         if action:
