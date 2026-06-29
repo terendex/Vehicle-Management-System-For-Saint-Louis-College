@@ -1,7 +1,6 @@
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import {
   ShieldCheck,
-  ClipboardList,
   ParkingCircle,
   AlertTriangle,
   LogOut,
@@ -23,7 +22,6 @@ export default function SecurityLayout({ children, fillHeight = false }) {
     { name: gate ? `Entry – Gate ${gate}` : 'Entry Management', path: entryPath, icon: <ShieldCheck size={18} /> },
     { name: 'Parking', path: '/security/parking', icon: <ParkingCircle size={18} /> },
     { name: 'Violations Issued', path: '/security/violations', icon: <AlertTriangle size={18} /> },
-    { name: 'Audit Log', path: '/security/audit', icon: <ClipboardList size={18} /> },
   ]
 
   return (

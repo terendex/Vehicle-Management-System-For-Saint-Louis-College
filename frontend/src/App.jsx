@@ -16,7 +16,6 @@ import GuardMonitor from './pages/Admin/GuardMonitor'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
-import SecurityAuditLog from './pages/Security/SecurityAuditLog'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
 import SecurityViolationsView from './pages/Security/SecurityViolationsView'
 import GuardQrLoginPage from './pages/Security/GuardQrLoginPage'
@@ -75,7 +74,6 @@ export default function App() {
           {/* Gate-specific entry views */}
           <Route path="/security/gate/:gate/entries" element={<SecurityEntryManagement />} />
           <Route path="/security/violations" element={<SecurityViolationsView />} />
-          <Route path="/security/audit" element={<SecurityAuditLog />} />
           <Route path="/security/parking" element={<SecurityParkingView />} />
         </Route>
 
