@@ -101,6 +101,77 @@
 }
 
 
+/* --- Nav Groups (collapsible dropdowns) --- */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: none;
+  border: 1px solid transparent;
+  color: #5A5F72;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.nav-group-header:hover {
+  background: #FAFBFD;
+  color: #2A2B61;
+  border-color: #E2E6EE;
+  transform: translateX(2px);
+}
+
+.nav-group-header.has-active {
+  color: #2A2B61;
+  font-weight: 600;
+}
+
+.nav-group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-group-chevron {
+  transition: transform 0.22s ease;
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+
+.nav-group-chevron.open {
+  transform: rotate(180deg);
+}
+
+.nav-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.25s ease;
+  padding-left: 10px;
+}
+
+.nav-group-children.open {
+  max-height: 320px;
+}
+
+.nav-item.nav-child {
+  padding: 10px 14px 10px 30px;
+  font-size: 13.5px;
+}
+
 /* --- Main Content Area --- */
 .admin-main {
   flex: 1;

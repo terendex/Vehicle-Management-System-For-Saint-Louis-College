@@ -1,6 +1,7 @@
 import logging
 import base64
 import time
+import threading
 from datetime import datetime
 from typing import Any
 import asyncio
@@ -17,6 +18,12 @@ from .ml.reader import _ocr_crop, find_plate_in_crop
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_DIR = "snapshots"
+
+# Serialise VideoCapture construction so concurrent camera connections don't
+# race on os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"].  On Windows, putenv()
+# is not guaranteed thread-safe, and one camera's options can clobber another's
+# just before cv2.VideoCapture() reads them.
+_OPEN_CAP_LOCK = threading.Lock()
 
 FRAME_RATE_LIMIT_MS = 100
 _DEFAULT_DEDUP_SECONDS = 30  # fallback used if DB is unavailable at connect time
@@ -584,7 +591,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     """
 
     FRAME_RATE  = 20    # fps to send to the frontend (20 = 50ms per frame)
-    MAX_RETRIES = 3     # reconnect attempts before giving up
+    MAX_RETRIES = 5     # reconnect attempts before giving up
     RETRY_DELAY = 2.0   # seconds between reconnect attempts
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
@@ -690,52 +697,82 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "status", "connected": True, "message": "Stream connected."})
 
             # ── start background drain thread ─────────────────────────────────
-            # A dedicated thread continuously calls cap.grab() (decode-free read)
-            # so the internal buffer never fills with stale frames. The main loop
-            # calls cap.retrieve() only when it needs to actually display a frame.
-            latest_frame     = {"data": None, "ok": False}
-            drain_running     = threading.Event()
-            drain_running.set()
+            # The drain thread owns the cap object exclusively.  It calls
+            # cap.grab() in a loop to keep the RTSP buffer current, decodes
+            # every 2nd grab via cap.retrieve(), and — critically — calls
+            # cap.release() itself before exiting.
+            #
+            # WHY the drain thread must own cap.release():
+            #   cap.grab() can block for up to the full OpenCV interrupt timeout
+            #   (~30 s) on a stalled RTSP stream.  If the main async task calls
+            #   cap.release() from another thread while cap.grab() is still
+            #   running, FFmpeg's H.264 frame-threading pool hits an internal
+            #   lock assertion ("fctx->async_lock failed") and crashes.
+            #   By having the drain thread call cap.release() after cap.grab()
+            #   returns naturally, that race is eliminated entirely.
+            latest_frame = {"data": None, "ok": False}
+            drain_stop   = threading.Event()   # set to ask the thread to exit
+            cap_released = threading.Event()   # set by thread after cap.release()
 
             def _drain():
-                """Continuously drain the RTSP buffer; keep only the latest frame.
-
-                cap.grab() is a fast, decode-free read that advances the internal
-                buffer pointer. cap.retrieve() does the actual JPEG decode and is
-                only called every 3rd grab so the thread stays cheap while always
-                having a recent frame ready for the send loop.
-                """
                 _grab_count = 0
-                while drain_running.is_set():
-                    ret = cap.grab()
-                    if not ret:
-                        latest_frame["ok"] = False
-                        break
-                    _grab_count += 1
-                    if _grab_count % 3 == 0:
-                        ret2, frm = cap.retrieve()
-                        if ret2 and frm is not None:
-                            latest_frame["data"] = frm
-                            latest_frame["ok"]   = True
+                _consecutive_errors = 0
+                try:
+                    while not drain_stop.is_set():
+                        try:
+                            ret = cap.grab()
+                        except Exception:
+                            _consecutive_errors += 1
+                            if _consecutive_errors > 20:
+                                latest_frame["ok"] = False
+                                break
+                            import time as _t; _t.sleep(0.02)
+                            continue
+                        if not ret:
+                            _consecutive_errors += 1
+                            if _consecutive_errors > 20:
+                                latest_frame["ok"] = False
+                                break
+                            import time as _t; _t.sleep(0.02)
+                            continue
+                        _consecutive_errors = 0
+                        _grab_count += 1
+                        if _grab_count % 2 == 0:
+                            try:
+                                ret2, frm = cap.retrieve()
+                                if ret2 and frm is not None:
+                                    latest_frame["data"] = frm
+                                    latest_frame["ok"]   = True
+                            except Exception:
+                                pass  # single corrupt frame — keep draining
+                finally:
+                    # Always release the cap from THIS thread so the main task
+                    # never calls release() concurrently with an in-flight grab().
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    cap_released.set()
 
             drain_thread = threading.Thread(target=_drain, daemon=True)
             drain_thread.start()
 
-            # ── wait for first frame (up to 8 s) ───────────────────────────────
-            # The drain thread starts with ok=False. Without this wait the send
-            # loop below would immediately see a "failed" state and reconnect.
-            for _ in range(160):   # 160 × 0.05 s = 8 s
-                if latest_frame["ok"] or not drain_running.is_set():
+            # ── wait for first frame (up to 15 s) ──────────────────────────────
+            # 15 s gives slow or initially-corrupted streams time to deliver a
+            # valid I-frame before we decide to reconnect.
+            for _ in range(300):   # 300 × 0.05 s = 15 s
+                if latest_frame["ok"] or cap_released.is_set():
                     break
                 await asyncio.sleep(0.05)
             else:
-                # Timed out — no frames in 8 s
-                logger.warning("[RTSP] No frames in 8 s — reconnecting")
+                # Timed out — no frames in 15 s
+                logger.warning("[RTSP] No frames in 15 s — reconnecting")
                 await self.send_json({"type": "status", "connected": False,
                                       "message": "Stream timed out (no frames received)."})
-                drain_running.clear()
-                drain_thread.join(timeout=2)
-                await loop.run_in_executor(None, cap.release)
+                drain_stop.set()
+                # Wait for the drain thread to finish its current grab() and
+                # release the cap.  No separate cap.release() call needed here.
+                await loop.run_in_executor(None, cap_released.wait, 35)
                 retry += 1
                 if retry > self.MAX_RETRIES:
                     await self.send_json({"type": "error",
@@ -788,9 +825,11 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                     return
                 await asyncio.sleep(self.RETRY_DELAY)
             finally:
-                drain_running.clear()          # signal drain thread to stop
-                drain_thread.join(timeout=2)   # wait for it to exit
-                await loop.run_in_executor(None, cap.release)
+                drain_stop.set()
+                # The drain thread will call cap.release() itself once cap.grab()
+                # returns.  We just wait for that signal (up to 35 s to survive
+                # the OpenCV 30 s interrupt timeout on a fully stalled stream).
+                await loop.run_in_executor(None, cap_released.wait, 35)
 
     # ── detection + scan pipeline ──────────────────────────────────────────────
 
@@ -890,26 +929,27 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     @staticmethod
     def _open_cap(rtsp_url: str):
-        """Open OpenCV VideoCapture with low-latency FFmpeg RTSP options."""
+        """Open OpenCV VideoCapture with robust FFmpeg RTSP options."""
         import cv2
         import os
-        # Always overwrite (not setdefault) so reconnects pick up the correct options.
-        # threads;1 — forces single-threaded H.264 decode, prevents the
-        #   "Assertion fctx->async_lock failed" crash in FFmpeg's frame thread pool.
-        # err_detect;ignore_err — tolerates corrupted macroblocks (bytestream errors)
-        #   instead of aborting grab(), which was causing the reconnect loop.
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            "rtsp_transport;tcp"
-            "|buffer_size;0"
-            "|max_delay;0"
-            "|stimeout;5000000"
-            "|threads;1"
-            "|err_detect;ignore_err"
-        )
-        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)             # hint: minimal buffer
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)   # 8 s open timeout
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5 s read timeout
+        # _OPEN_CAP_LOCK ensures only one VideoCapture is being constructed at a
+        # time.  os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] is read by FFmpeg
+        # at VideoCapture() construction; concurrent writes + reads on Windows
+        # (where putenv() is not thread-safe) can strip options for one camera
+        # when two cameras connect simultaneously.
+        with _OPEN_CAP_LOCK:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp"
+                "|buffer_size;2097152"
+                "|stimeout;10000000"
+                "|threads;1"
+                "|err_detect;ignore_err"
+                "|fflags;discardcorrupt"
+            )
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)              # hint: minimal decoded frame buffer
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)   # 10 s open timeout
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)    # 5 s read timeout
         return cap
 
     @staticmethod

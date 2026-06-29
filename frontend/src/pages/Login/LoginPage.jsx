@@ -185,10 +185,6 @@ export default function LoginPage() {
 
             <div className="terms-row">
               <a href="#" className="terms-link">Policy</a>
-              <span className="terms-divider">·</span>
-              <button type="button" className="terms-link" style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }} onClick={() => navigate('/security/qr-login')}>
-                Guard Login
-              </button>
             </div>
           </form>
         </div>

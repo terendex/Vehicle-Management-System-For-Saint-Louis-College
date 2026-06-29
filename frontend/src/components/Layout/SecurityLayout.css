@@ -50,4 +50,297 @@
 
 .security-layout .sidebar-footer {
   padding: 1rem;
+  gap: 10px;
 }
+
+/* ── Change Shift trigger button (in sidebar footer) ── */
+.cs-trigger-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  background: #f0fdf4;
+  color: #166534;
+  border: 1.5px solid #bbf7d0;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.cs-trigger-btn:hover {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+/* ── Change Shift overlay ── */
+.cs-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 14, 28, 0.72);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.cs-modal {
+  background: #ffffff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.cs-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cs-modal-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #2A2B61;
+}
+
+.cs-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.cs-gate-pill {
+  background: #EEF0FB;
+  color: #2A2B61;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.cs-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 8px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cs-close:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.cs-instruction {
+  font-size: 13px;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Camera viewport */
+.cs-camera-wrap {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0d1117;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cs-scan-frame {
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.cs-scan-frame::before,
+.cs-scan-frame::after {
+  content: '';
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-color: #10b981;
+  border-style: solid;
+  border-width: 0;
+}
+
+.cs-scan-frame::before {
+  top: 20px;
+  left: 20px;
+  border-top-width: 3px;
+  border-left-width: 3px;
+  border-radius: 4px 0 0 0;
+}
+
+.cs-scan-frame::after {
+  bottom: 20px;
+  right: 20px;
+  border-bottom-width: 3px;
+  border-right-width: 3px;
+  border-radius: 0 0 4px 0;
+}
+
+.cs-camera-hint {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+/* Manual input */
+.cs-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cs-input {
+  flex: 1;
+  height: 40px;
+  padding: 0 12px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: 'Courier New', monospace;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.cs-input:focus {
+  border-color: #2A2B61;
+}
+
+.cs-eye,
+.cs-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1.5px solid #E2E6EE;
+  background: #fff;
+  color: #5A5F72;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.cs-eye:hover { background: #f9fafb; color: #1A1D2E; }
+
+.cs-submit {
+  background: #2A2B61;
+  border-color: #2A2B61;
+  color: #fff;
+}
+
+.cs-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cs-submit:not(:disabled):hover {
+  background: #1e1f4a;
+}
+
+.cs-err-text {
+  font-size: 12px;
+  color: #dc2626;
+  margin: 0;
+}
+
+.cs-toggle-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+}
+
+.cs-toggle-btn:hover { color: #2A2B61; }
+
+/* Status states */
+.cs-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 0;
+  text-align: center;
+  color: #5A5F72;
+}
+
+.cs-state h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.cs-state p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cs-state-success { color: #10b981; }
+.cs-state-success h3 { color: #065f46; }
+
+.cs-state-error { color: #ef4444; }
+.cs-state-error h3 { color: #991b1b; }
+
+.cs-hint {
+  font-size: 12px !important;
+  color: #9ca3af !important;
+}
+
+.cs-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(42, 43, 97, 0.15);
+  border-top-color: #2A2B61;
+  border-radius: 50%;
+  animation: cs-spin 0.8s linear infinite;
+}
+
+@keyframes cs-spin { to { transform: rotate(360deg); } }

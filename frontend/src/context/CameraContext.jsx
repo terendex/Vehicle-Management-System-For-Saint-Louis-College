@@ -14,6 +14,9 @@ const TRACK_COLORS = {
 const VEHICLE_TYPE_LABELS = { motorcycle: 'Motorcycle' }
 const LERP = 0.25
 
+// How long to wait before auto-reconnecting after an unexpected disconnect
+const RECONNECT_DELAY_MS = 3000
+
 function trackColor(t) {
   return TRACK_COLORS[t.vehicle_type] ?? TRACK_COLORS[t.class_name] ?? TRACK_COLORS._default
 }
@@ -35,7 +38,13 @@ export function CameraProvider({ children }) {
   const trackMap  = useRef({})
   const smoothMap = useRef({})
   const rafMap    = useRef({})
-  const urlSet    = useRef(new Set())
+
+  // url → camId: tracks all known cameras by URL, used for dedup + reconnection
+  // Using a Map instead of a Set so we can look up existing camId by URL
+  const urlToIdMap = useRef({})
+
+  // Ref that always holds the latest _connect function (needed for self-referential reconnect)
+  const connectRef = useRef(null)
 
   // ── Canvas registration (pages call this on mount/unmount) ───────────────
   const registerCanvas = useCallback((camId, el) => {
@@ -127,10 +136,19 @@ export function CameraProvider({ children }) {
     delete smoothMap.current[camId]
   }, [])
 
-  // ── Open WebSocket ────────────────────────────────────────────────────────
+  // ── Open WebSocket for a camera ───────────────────────────────────────────
   const _connect = useCallback((camId, rtspUrl) => {
     const token = localStorage.getItem('access_token') || ''
     if (!token) return
+
+    // Cancel any lingering WS before opening a new one for the same cam
+    const stale = wsMap.current[camId]
+    if (stale) {
+      stale.onclose = null
+      try { stale.close() } catch {}
+      delete wsMap.current[camId]
+    }
+
     const ws = new WebSocket(`${WS_BASE}/ws/scan/rtsp/?token=${token}`)
     wsMap.current[camId] = ws
     startRenderLoop(camId)
@@ -157,10 +175,19 @@ export function CameraProvider({ children }) {
         if (msg.type === 'error') {
           toast.error(`Camera error: ${msg.message}`)
           const wsErr = wsMap.current[camId]
-          if (wsErr) { try { wsErr.onclose = null; wsErr.close() } catch {} delete wsMap.current[camId] }
+          if (wsErr) {
+            try { wsErr.onclose = null; wsErr.close() } catch {}
+            delete wsMap.current[camId]
+          }
           stopRenderLoop(camId)
           setCameras(p => p.map(c => c.id === camId
-            ? { ...c, wsActive: false, streamConnected: false, statusMsg: 'Failed — check URL' } : c))
+            ? { ...c, wsActive: false, streamConnected: false, statusMsg: 'Failed — retrying…' } : c))
+          // Auto-reconnect after delay if camera is still tracked
+          setTimeout(() => {
+            if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
+              connectRef.current?.(camId, rtspUrl)
+            }
+          }, RECONNECT_DELAY_MS)
           return
         }
         if (msg.type === 'tracks' && msg.tracks) {
@@ -177,25 +204,41 @@ export function CameraProvider({ children }) {
         if (msg.type === 'result' && msg.results) {
           setFlash(true)
           setTimeout(() => setFlash(false), 450)
-          // Tag each result with the camera id so pages can filter to their own cameras
           setResults(msg.results.map(r => ({ ...r, _camId: camId })))
         }
       } catch { /* ignore parse errors */ }
     }
 
     ws.onerror = () => toast.error('Camera WebSocket connection error')
+
     ws.onclose = () => {
+      // Only fires for UNEXPECTED closes — disconnectCamera sets ws.onclose = null
+      // before calling ws.close(), so intentional disconnects won't reach here.
+      delete wsMap.current[camId]
       setCameras(p => p.map(c => c.id === camId
-        ? { ...c, wsActive: false, streamConnected: false } : c))
+        ? { ...c, wsActive: false, streamConnected: false, statusMsg: 'Reconnecting…' } : c))
+
+      // Auto-reconnect if camera is still tracked (not removed by the user)
+      if (urlToIdMap.current[rtspUrl] === camId) {
+        setTimeout(() => {
+          if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
+            connectRef.current?.(camId, rtspUrl)
+          }
+        }, RECONNECT_DELAY_MS)
+      }
     }
   }, [startRenderLoop, stopRenderLoop])
 
-  // ── Close WebSocket for one camera ────────────────────────────────────────
+  // Keep ref in sync so ws.onclose callbacks always call the latest _connect
+  connectRef.current = _connect
+
+  // ── Close WebSocket for one camera (user-initiated) ──────────────────────
   const disconnectCamera = useCallback((camId) => {
     const ws = wsMap.current[camId]
     if (ws) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }))
+      // Nullify onclose BEFORE close() so the auto-reconnect handler doesn't fire
       ws.onclose = null
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }))
       ws.close()
       delete wsMap.current[camId]
     }
@@ -204,16 +247,31 @@ export function CameraProvider({ children }) {
       ? { ...c, wsActive: false, streamConnected: false, statusMsg: '' } : c))
   }, [stopRenderLoop])
 
-  // ── Add camera — assignment tags which page the camera belongs to ─────────
+  // ── Add camera ────────────────────────────────────────────────────────────
+  // Safe to call multiple times for the same URL (e.g. when navigating between
+  // pages that all want the same entry cameras).  If the camera is already
+  // tracked but its WebSocket died, we reconnect it automatically.
   const addCamera = useCallback((name, url, assignment = '') => {
     const trimUrl = (url || '').trim()
     if (!trimUrl.startsWith('rtsp://')) { toast.error('URL must start with rtsp://'); return null }
-    if (urlSet.current.has(trimUrl)) {
-      // Already connected — return existing id so caller can use it
-      return null
+
+    const existingId = urlToIdMap.current[trimUrl]
+    if (existingId !== undefined) {
+      // Camera already known — reconnect if the WebSocket is gone or closed
+      const ws = wsMap.current[existingId]
+      const needsReconnect = !ws
+        || ws.readyState === WebSocket.CLOSED
+        || ws.readyState === WebSocket.CLOSING
+      if (needsReconnect) {
+        startRenderLoop(existingId)
+        _connect(existingId, trimUrl)
+      }
+      return existingId
     }
-    urlSet.current.add(trimUrl)
+
+    // Brand-new camera
     const id  = genId()
+    urlToIdMap.current[trimUrl] = id
     const cam = {
       id,
       name: (name || '').trim() || `Camera ${id}`,
@@ -226,23 +284,26 @@ export function CameraProvider({ children }) {
     setCameras(p => [...p, cam])
     _connect(id, trimUrl)
     return id
-  }, [_connect])
+  }, [_connect, startRenderLoop])
 
-  // ── Remove camera (close WS + remove from list) ───────────────────────────
+  // ── Remove camera (close WS + remove from list + stop tracking) ───────────
   const removeCamera = useCallback((camId) => {
     disconnectCamera(camId)
     setCameras(p => {
       const cam = p.find(c => c.id === camId)
-      if (cam) urlSet.current.delete(cam.url)
+      if (cam) delete urlToIdMap.current[cam.url]
       return p.filter(c => c.id !== camId)
     })
   }, [disconnectCamera])
 
-  // ── Disconnect and clear all cameras ─────────────────────────────────────
+  // ── Disconnect and clear all cameras ──────────────────────────────────────
   const disconnectAll = useCallback(() => {
     Object.keys(wsMap.current).forEach(id => {
       const ws = wsMap.current[id]
-      if (ws) { try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' })); ws.onclose = null; ws.close() } catch {} }
+      if (ws) {
+        ws.onclose = null
+        try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' })); ws.close() } catch {}
+      }
     })
     Object.keys(rafMap.current).forEach(id => cancelAnimationFrame(rafMap.current[id]))
     wsMap.current     = {}
@@ -250,7 +311,7 @@ export function CameraProvider({ children }) {
     frameMap.current  = {}
     trackMap.current  = {}
     smoothMap.current = {}
-    urlSet.current    = new Set()
+    urlToIdMap.current = {}
     setCameras([])
     setResults([])
     setFlash(false)
