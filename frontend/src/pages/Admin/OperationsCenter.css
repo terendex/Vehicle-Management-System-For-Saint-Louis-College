@@ -18,9 +18,9 @@
   gap: 1rem;
 }
 .oc-title {
-  font-size: 1.35rem;
+  font-size: 24px;
   font-weight: 800;
-  color: #111827;
+  color: #2A2B61;
   margin: 0 0 3px;
 }
 .oc-subtitle {
@@ -60,13 +60,13 @@
 }
 .oc-stat-card {
   background: #fff;
-  border: 1px solid #f0f1f5;
+  border: 1px solid #E2E6EE;
   border-radius: 14px;
   padding: 14px 16px;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
 }
 .oc-stat-icon {
   width: 38px; height: 38px;
@@ -352,10 +352,10 @@
 /* ── Guard table ── */
 .oc-guard-table-wrap {
   background: #fff;
-  border: 1.5px solid #f0f1f5;
+  border: 1px solid #E2E6EE;
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
 }
 .oc-guard-table {
   width: 100%;
@@ -363,15 +363,15 @@
   font-size: 13px;
 }
 .oc-guard-table thead tr {
-  background: #f9fafb;
-  border-bottom: 1.5px solid #f0f1f5;
+  background: #F8F9FC;
+  border-bottom: 2px solid #E2E6EE;
 }
 .oc-guard-table th {
   padding: 10px 14px;
   text-align: left;
-  font-size: 10px;
-  font-weight: 700;
-  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5A5F72;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -379,12 +379,12 @@
 .oc-guard-table th:nth-child(n+5) { text-align: center; }
 .oc-guard-table td {
   padding: 11px 14px;
-  border-bottom: 1px solid #f9fafb;
-  color: #374151;
+  border-bottom: 1px solid #F0F2F7;
+  color: #1A1D2E;
   vertical-align: middle;
 }
 .oc-guard-table tbody tr:last-child td { border-bottom: none; }
-.oc-guard-table tbody tr:hover { background: #fafafa; }
+.oc-guard-table tbody tr:hover { background: #FAFBFD; }
 .oc-guard-table tbody tr.active { background: #f0fdf4; }
 .oc-guard-table tbody tr.active:hover { background: #dcfce7; }
 

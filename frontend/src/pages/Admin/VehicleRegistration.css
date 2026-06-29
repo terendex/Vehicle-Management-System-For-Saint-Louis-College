@@ -24,7 +24,7 @@
 .page-title {
   color: #2A2B61;
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 800;
   margin-bottom: 8px;
   letter-spacing: -0.2px;
 }
@@ -187,13 +187,10 @@
 .section-container {
   background: #FFFFFF;
   border: 1px solid #E2E6EE;
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 24px;
   margin-bottom: 24px;
-  box-shadow:
-    0 4px 6px -1px rgba(42, 43, 97, 0.04),
-    0 10px 40px -4px rgba(42, 43, 97, 0.08);
-  animation: sectionFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
 }
 
 @keyframes sectionFadeIn {
@@ -248,7 +245,7 @@
   background: #F8F9FC;
   color: #5A5F72;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 2px solid #E2E6EE;
