@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, DoorOpen,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -15,33 +15,6 @@ import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
 import './SecurityEntryManagement.css'
 
-// ─── OnDutyPanel ──────────────────────────────────────────────────────────────
-function OnDutyPanel({ guard, gate }) {
-  if (!guard) return null
-  const gateLabel = GATE_LABELS[gate] || (gate ? `Gate ${gate}` : 'Main Gate')
-  return (
-    <div className="em-on-duty">
-      <div className="em-on-duty-left">
-        {guard.photo_url ? (
-          <img src={guard.photo_url} alt={guard.full_name} className="em-on-duty-photo" />
-        ) : (
-          <div className="em-on-duty-avatar">
-            {guard.full_name ? guard.full_name.charAt(0).toUpperCase() : 'G'}
-          </div>
-        )}
-        <div className="em-on-duty-info">
-          <span className="em-on-duty-label">On Duty</span>
-          <span className="em-on-duty-name">{guard.full_name || 'Guard'}</span>
-          <span className="em-on-duty-code">{guard.user_code || '—'}</span>
-        </div>
-      </div>
-      <div className="em-on-duty-gate">
-        <DoorOpen size={13} />
-        <span>{gateLabel}</span>
-      </div>
-    </div>
-  )
-}
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
@@ -248,15 +221,16 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName }) {
   const [showOverride, setShowOverride] = useState(false)
 
   if (!result) return (
-    <div className="em-card em-result">
-      <div className="em-result-banner idle">
-        <div className="em-result-icon idle"><Search size={20} /></div>
-        <div className="em-result-text">
-          <p className="em-result-status" style={{ color: '#9BA3BF' }}>Awaiting lookup</p>
-          <p className="em-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
+    <div className="em-card em-result em-result-idle-compact">
+      <div className="em-idle-compact-inner">
+        <div className="em-result-icon" style={{ width: 36, height: 36, borderRadius: 8, background: '#F3F4F8', flexShrink: 0 }}>
+          <Search size={16} style={{ color: '#9BA3BF' }} />
+        </div>
+        <div>
+          <p className="em-result-status" style={{ color: '#9BA3BF', margin: 0 }}>AWAITING LOOKUP</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#C8CCDE' }}>Type a plate and press Check Entry</p>
         </div>
       </div>
-      <p className="em-idle-hint">Type a plate number above and press Check Entry.</p>
     </div>
   )
 
@@ -367,14 +341,13 @@ export default function SecurityEntryManagement() {
   const { user } = useAuthStore()
   const gateLabel = GATE_LABELS[user?.gate_assignment] || user?.gate_assignment || 'Main Gate'
 
-  const [plateInput, setPlateInput] = useState('')
-  const [loading, setLoading]       = useState(false)
-  const [result, setResult]         = useState(null)
-  const [logs, setLogs]             = useState([])
-  const [offices, setOffices]       = useState([])
-  const [exitPlate, setExitPlate]   = useState('')
+  const [plateInput, setPlateInput]   = useState('')
+  const [loading, setLoading]         = useState(false)
   const [exitLoading, setExitLoading] = useState(false)
+  const [result, setResult]           = useState(null)
   const [exitResult, setExitResult]   = useState(null)
+  const [logs, setLogs]               = useState([])
+  const [offices, setOffices]         = useState([])
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -434,6 +407,7 @@ export default function SecurityEntryManagement() {
     if (!plate) return
     setLoading(true)
     setResult(null)
+    setExitResult(null)
     try {
       const res = await manualEntry({ plate_number: plate })
       setResult(res.data)
@@ -453,15 +427,15 @@ export default function SecurityEntryManagement() {
     } finally { setLoading(false) }
   }
 
-  const handleRecordExit = async (e) => {
-    e.preventDefault()
-    const plate = exitPlate.trim().toUpperCase()
+  const handleRecordExit = async () => {
+    const plate = plateInput.trim().toUpperCase()
     if (!plate) return
     setExitLoading(true)
+    setExitResult(null)
     try {
       const res = await logExit({ plate_number: plate })
       setExitResult(res.data)
-      setExitPlate('')
+      setPlateInput('')
       const dur = res.data.duration_minutes
       toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
       refreshLogs()
@@ -545,60 +519,53 @@ export default function SecurityEntryManagement() {
               </div>
             )}
 
-            {/* Plate Lookup */}
+            {/* Combined Plate Input */}
             <div className="em-card-head" style={{ borderTop: '1px solid #f3f4f6' }}>
-              <span className="em-card-label"><Search size={14} /> Plate Lookup</span>
+              <span className="em-card-label"><Search size={14} /> Plate Number</span>
             </div>
-            <div style={{ padding: '12px 16px 8px' }}>
-              <form onSubmit={handleCheckEntry} style={{ display: 'flex', gap: 8 }}>
+            <div style={{ padding: '12px 16px 14px' }}>
+              <form onSubmit={handleCheckEntry}>
                 <input
                   className="em-plate-input"
                   value={plateInput}
-                  onChange={e => setPlateInput(e.target.value.toUpperCase())}
-                  placeholder="e.g. ABC 123"
-                  style={{ flex: 1, padding: '10px 14px', border: '2px solid #E2E6EE', borderRadius: 10,
-                    fontSize: 16, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', outline: 'none',
-                    fontFamily: 'monospace' }}
+                  onChange={e => { setPlateInput(e.target.value.toUpperCase()); setExitResult(null) }}
+                  placeholder="E.G. ABC 123"
+                  style={{
+                    width: '100%', padding: '11px 14px', border: '2px solid #E2E6EE',
+                    borderRadius: 10, fontSize: 16, fontWeight: 700, letterSpacing: 2,
+                    textTransform: 'uppercase', outline: 'none', fontFamily: 'monospace',
+                    boxSizing: 'border-box', marginBottom: 8,
+                  }}
                   autoComplete="off"
                 />
-                <button type="submit" className="em-btn em-btn-primary em-btn-lg" disabled={loading || !plateInput.trim()}>
-                  {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Entry</>}
-                </button>
-              </form>
-              <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, marginBottom: 0 }}>
-                Type the license plate and press Check Entry or hit Enter.
-              </p>
-            </div>
-
-            {/* Record Exit */}
-            <div style={{ padding: '8px 16px 16px' }}>
-              <div className="em-card-head" style={{ marginBottom: 8 }}>
-                <span className="em-card-label"><LogOut size={13} /> Record Exit</span>
-              </div>
-              <form onSubmit={handleRecordExit} style={{ display: 'flex', gap: 6 }}>
-                <input
-                  value={exitPlate}
-                  onChange={e => setExitPlate(e.target.value.toUpperCase())}
-                  placeholder="Plate number…"
-                  style={{ flex: 1, padding: '8px 12px', border: '1.5px solid #E2E6EE', borderRadius: 8,
-                    fontSize: 14, fontFamily: 'monospace', letterSpacing: 1, outline: 'none', textTransform: 'uppercase' }}
-                />
-                <button type="submit" disabled={exitLoading || !exitPlate.trim()}
-                  className="em-btn em-btn-primary" style={{ padding: '8px 16px', fontSize: 12 }}>
-                  {exitLoading ? '…' : 'Log Exit'}
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="submit"
+                    className="em-btn em-btn-primary em-btn-lg"
+                    style={{ flex: 1 }}
+                    disabled={loading || exitLoading || !plateInput.trim()}
+                  >
+                    {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Entry</>}
+                  </button>
+                  <button
+                    type="button"
+                    className="em-btn em-btn-lg"
+                    style={{ flex: 1, background: '#f0fdf4', color: '#166534', border: '1.5px solid #bbf7d0' }}
+                    disabled={loading || exitLoading || !plateInput.trim()}
+                    onClick={handleRecordExit}
+                  >
+                    {exitLoading ? <><div className="em-spinner" style={{ borderTopColor: '#166534' }} /> Recording…</> : <><LogOut size={15} /> Log Exit</>}
+                  </button>
+                </div>
               </form>
               {exitResult && (
                 <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
                   <strong>{exitResult.plate_number}</strong> exited
-                  {exitResult.duration_minutes != null && <span> · inside <strong>{exitResult.duration_minutes} min</strong></span>}
+                  {exitResult.duration_minutes != null && <> · inside <strong>{exitResult.duration_minutes} min</strong></>}
                 </div>
               )}
             </div>
           </div>
-
-          {/* On Duty guard panel — shown below camera card */}
-          <OnDutyPanel guard={user} gate={user?.gate_assignment} />
 
           {/* Right panel */}
           <div className="em-right">
@@ -611,36 +578,51 @@ export default function SecurityEntryManagement() {
             />
 
             {/* Recent scans */}
-            <div className="em-card">
+            <div className="em-card em-audit-card">
               <div className="em-card-head">
-                <span className="em-card-label"><ClipboardList size={14} /> Recent Entries at {gateLabel}</span>
-                <span className="em-logs-count">{logs.length}</span>
+                <span className="em-card-label"><ClipboardList size={14} /> Recent Scans — {gateLabel}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="em-logs-count">{logs.length}</span>
+                  <button
+                    onClick={refreshLogs}
+                    title="Refresh"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
               {logs.length === 0 ? (
-                <p className="em-log-empty">No entries yet today.</p>
+                <div className="em-audit-empty">
+                  <ClipboardList size={22} style={{ color: '#d1d5db' }} />
+                  <p>No entries recorded yet today.</p>
+                </div>
               ) : (
-                <div className="em-log-list">
+                <div className="em-audit-list">
                   {logs.map((log, i) => {
                     const m = getMeta(log.status)
+                    const { Icon } = m
                     return (
-                      <div key={log.id ?? i} className="em-log-item">
-                        <span className={`em-log-dot ${m.logCls}`} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span className="em-log-plate">{log.plate_number || '—'}</span>
+                      <div key={log.id ?? i} className={`em-audit-row ${m.logCls}`}>
+                        <div className={`em-audit-icon ${m.logCls}`}>
+                          <Icon size={13} />
+                        </div>
+                        <div className="em-audit-info">
+                          <div className="em-audit-top">
+                            <span className="em-audit-plate">{log.plate_number || '—'}</span>
                             <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
                           </div>
                           {(log.vehicle_owner_name || log.scanned_by_name) && (
-                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1, display: 'flex', gap: 8 }}>
-                              {log.vehicle_owner_name && <span>Owner: {log.vehicle_owner_name}</span>}
-                              {log.scanned_by_name && <span>Guard: {log.scanned_by_name}</span>}
-                              {log.gate_id && log.gate_id !== 'main' && (
-                                <span style={{ color: '#6366f1' }}>{GATE_LABELS[log.gate_id] || log.gate_id}</span>
-                              )}
+                            <div className="em-audit-sub">
+                              {log.vehicle_owner_name && <span>{log.vehicle_owner_name}</span>}
+                              {log.scanned_by_name && <span>· {log.scanned_by_name}</span>}
                             </div>
                           )}
                         </div>
-                        <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
+                        <span className="em-audit-time">{timeAgo(log.scanned_at)}</span>
                       </div>
                     )
                   })}
