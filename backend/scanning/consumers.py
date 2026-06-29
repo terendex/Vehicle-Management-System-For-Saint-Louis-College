@@ -881,11 +881,18 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         """Open OpenCV VideoCapture with low-latency FFmpeg RTSP options."""
         import cv2
         import os
-        # Force TCP transport — more reliable, avoids UDP reordering jitter.
-        # Must be set before VideoCapture() opens the stream.
-        os.environ.setdefault(
-            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            "rtsp_transport;tcp|buffer_size;0|max_delay;0|stimeout;3000000"
+        # Always overwrite (not setdefault) so reconnects pick up the correct options.
+        # threads;1 — forces single-threaded H.264 decode, prevents the
+        #   "Assertion fctx->async_lock failed" crash in FFmpeg's frame thread pool.
+        # err_detect;ignore_err — tolerates corrupted macroblocks (bytestream errors)
+        #   instead of aborting grab(), which was causing the reconnect loop.
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp"
+            "|buffer_size;0"
+            "|max_delay;0"
+            "|stimeout;5000000"
+            "|threads;1"
+            "|err_detect;ignore_err"
         )
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)             # hint: minimal buffer
