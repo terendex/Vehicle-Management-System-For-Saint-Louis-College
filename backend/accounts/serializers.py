@@ -22,16 +22,28 @@ def validate_password_strength(password):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'gate_assignment', 'qr_token']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'qr_token']
+
+    def get_photo_url(self, obj):
+        if not obj.photo:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.photo.url)
+        return obj.photo.url
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
-    """For editing user details (no password change)."""
+    """For editing user details (no password change). Accepts optional photo upload."""
+    photo = serializers.ImageField(required=False, allow_null=True)
+
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'role', 'gate_assignment']
+        fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment']
 
     def validate_email(self, value):
         user = self.instance
@@ -123,6 +135,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data['role'] = self.user.role
         data['user_code'] = self.user.user_code
         data['must_change_password'] = self.user.must_change_password
+        request = self.context.get('request')
+        photo_url = (
+            request.build_absolute_uri(self.user.photo.url)
+            if request and self.user.photo else None
+        )
         data['user'] = {
             'id': self.user.id,
             'user_code': self.user.user_code,
@@ -130,6 +147,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'email': self.user.email,
             'role': self.user.role,
             'must_change_password': self.user.must_change_password,
+            'photo_url': photo_url,
             'gate_assignment': self.user.gate_assignment,
         }
         return data

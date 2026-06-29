@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
+import { authApi } from '../../api/auth'
 import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
   Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
 } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
 import { toast } from 'sonner'
 import './UserManagement.css'
 
@@ -374,6 +375,11 @@ export default function UserManagement() {
                         <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
                           <Eye size={15} /> View Profile
                         </button>
+                        {u.role === 'security' && (
+                          <button className="um-dropdown-item view" onClick={() => openQrModal(u)}>
+                            <QrCode size={15} /> QR Badge
+                          </button>
+                        )}
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
                           onClick={() => { openToggle(u); setActiveMenu(null) }}
@@ -548,9 +554,21 @@ export default function UserManagement() {
             </div>
             <div className="um-modal-body">
               <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                <div className={`um-user-avatar ${selectedUser.role}`}
-                  style={{ width: 64, height: 64, fontSize: 26, margin: '0 auto 12px' }}>
-                  {selectedUser.full_name.charAt(0).toUpperCase()}
+                <div style={{ display: 'inline-block', marginBottom: 12 }}>
+                  {selectedUser.photo_url ? (
+                    <img
+                      src={selectedUser.photo_url}
+                      alt={selectedUser.full_name}
+                      style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE', display: 'block' }}
+                    />
+                  ) : (
+                    <div
+                      className={`um-user-avatar ${selectedUser.role}`}
+                      style={{ width: 72, height: 72, fontSize: 28, margin: 0 }}
+                    >
+                      {selectedUser.full_name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                 </div>
                 <h3 style={{ margin: 0, color: '#1A1D2E', fontSize: 18 }}>{selectedUser.full_name}</h3>
                 <span className={`um-role-badge ${selectedUser.role}`} style={{ marginTop: 8, display: 'inline-flex' }}>
