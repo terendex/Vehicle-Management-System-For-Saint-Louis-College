@@ -7,11 +7,12 @@ import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
-  Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, Camera
+  Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import './UserManagement.css'
 
-/* ─── password helpers ───────────────────────────────────── */
+/* ─── password helpers ─────────────────────────────────────────── */
 const PASSWORD_RULES = [
   { key: 'length',  label: 'At least 8 characters',        test: (p) => p.length >= 8 },
   { key: 'upper',   label: 'One uppercase letter',         test: (p) => /[A-Z]/.test(p) },
@@ -29,76 +30,73 @@ function getStrength(pw) {
   if (passed === 4) return { level: 'strong', score: 4 }
   return { level: 'excellent', score: 5 }
 }
-
 const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
 
-/* ─── main component ─────────────────────────────────────── */
+/* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
   const { logout } = useAuthStore()
-  const [users, setUsers] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
+
+  /* ── users state ── */
+  const [users, setUsers]             = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [search, setSearch]           = useState('')
   const [resultModal, setResultModal] = useState(null)
-  
-  // Pagination & Filters
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [totalCount, setTotalCount] = useState(0)
-  const [roleFilter, setRoleFilter] = useState('')
+  const [page, setPage]               = useState(1)
+  const [totalPages, setTotalPages]   = useState(1)
+  const [totalCount, setTotalCount]   = useState(0)
+  const [roleFilter, setRoleFilter]   = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-
-  // Modal state
-  const [modal, setModal] = useState(null)        // 'add' | 'addAdmin' | 'edit' | 'view' | 'delete' | 'toggle'
+  const [modal, setModal]             = useState(null)
   const [selectedUser, setSelectedUser] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [activeMenu, setActiveMenu] = useState(null)
-
-  // Add/Edit form
-  const [form, setForm] = useState({ full_name: '', email: '', role: 'security', password: '', confirm_password: '' })
+  const [submitting, setSubmitting]   = useState(false)
+  const [activeMenu, setActiveMenu]   = useState(null)
+  const [form, setForm]               = useState({ full_name: '', email: '', role: 'security', password: '', confirm_password: '' })
   const [showPassword, setShowPassword] = useState(false)
-  const [showConfirm, setShowConfirm] = useState(false)
-  const [formErrors, setFormErrors] = useState({})
+  const [showConfirm, setShowConfirm]   = useState(false)
+  const [formErrors, setFormErrors]   = useState({})
+  const [addType, setAddType]         = useState(null)
 
-  // Add type selector: 'user' or 'admin'
-  const [addType, setAddType] = useState(null) // null = show selector, 'user' | 'admin' = show form
-
-  // Guard QR badge modal
-  const [qrGuard, setQrGuard] = useState(null)   // { full_name, user_code, qr_payload, photo_url }
+  /* ── QR state ── */
+  const [qrUser,    setQrUser]    = useState(null)
+  const [qrToken,   setQrToken]   = useState(null)
   const [qrLoading, setQrLoading] = useState(false)
 
-  // Guard photo upload
-  const photoInputRef = useRef(null)
-  const [photoUploading, setPhotoUploading] = useState(false)
+  /* ── QR open ── */
+  const openQrModal = async (user) => {
+    setQrUser(user)
+    setQrToken(null)
+    setQrLoading(true)
+    if (user.role === 'security') {
+      try {
+        const data = await usersApi.getGuardQR(user.id)
+        setQrToken(data.qr_token)
+      } catch {
+        toast.error('Failed to load QR token.')
+        setQrUser(null)
+      } finally {
+        setQrLoading(false)
+      }
+    } else {
+      setQrToken(user.user_code || user.email || String(user.id))
+      setQrLoading(false)
+    }
+  }
 
-  const openGuardQr = async (u) => {
-    setActiveMenu(null)
+  const handleRegenerateQR = async () => {
+    if (!qrUser || qrUser.role !== 'security') return
     setQrLoading(true)
     try {
-      const data = await authApi.getGuardQrCode(u.id)
-      setQrGuard(data)
+      const data = await usersApi.regenerateGuardQR(qrUser.id)
+      setQrToken(data.qr_token)
+      toast.success('QR badge regenerated. Old badge is now invalid.')
     } catch {
-      alert('Failed to load QR badge. Try again.')
+      toast.error('Failed to regenerate QR.')
     } finally {
       setQrLoading(false)
     }
   }
 
-  const handlePhotoUpload = async (file) => {
-    if (!file || !selectedUser) return
-    setPhotoUploading(true)
-    try {
-      const updated = await usersApi.updateUser(selectedUser.id, { photo: file })
-      setSelectedUser(updated)
-      fetchUsers()
-    } catch {
-      showResult('Failed to upload photo', 'error')
-    } finally {
-      setPhotoUploading(false)
-      if (photoInputRef.current) photoInputRef.current.value = ''
-    }
-  }
-
-  /* ─── result helper ───── */
+  /* ── result helper ── */
   const showResult = (message, type = 'success') => {
     setResultModal({ message, type })
     setModal(null)
@@ -106,7 +104,7 @@ export default function UserManagement() {
     setAddType(null)
   }
 
-  /* ─── fetch users ───── */
+  /* ── fetch users ── */
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
@@ -120,106 +118,74 @@ export default function UserManagement() {
         setTotalCount(data ? data.length : 0)
         setTotalPages(1)
       }
-    } catch (err) {
+    } catch {
       showResult('Failed to load users', 'error')
     } finally {
       setLoading(false)
     }
   }, [search, page, roleFilter, statusFilter])
 
-  useEffect(() => {
-    setPage(1)
-  }, [search, roleFilter, statusFilter])
-
+  useEffect(() => { setPage(1) }, [search, roleFilter, statusFilter])
   useEffect(() => {
     const timer = setTimeout(fetchUsers, 300)
     return () => clearTimeout(timer)
   }, [fetchUsers])
 
-  /* ─── stats ───── */
-  const totalUsers = users.length
-  const activeUsers = users.filter((u) => u.is_active).length
+  /* ── user stats ── */
+  const totalUsers    = users.length
+  const activeUsers   = users.filter((u) => u.is_active).length
   const disabledUsers = users.filter((u) => !u.is_active).length
 
-  /* ─── close menu on outside click ───── */
+  /* ── close menu on outside click ── */
   useEffect(() => {
     const handleClickOutside = () => setActiveMenu(null)
-    if (activeMenu) {
-      window.addEventListener('click', handleClickOutside)
-    }
+    if (activeMenu) window.addEventListener('click', handleClickOutside)
     return () => window.removeEventListener('click', handleClickOutside)
   }, [activeMenu])
 
-  /* ─── open modals ───── */
+  /* ── open modals ── */
   const openAdd = () => {
     setAddType(null)
-    setForm({ full_name: '', email: '', role: 'security', password: '', confirm_password: '' })
+    setForm({ full_name: '', email: '', role: 'security', gate_assignment: '', password: '', confirm_password: '' })
     setFormErrors({})
     setShowPassword(false)
     setShowConfirm(false)
     setModal('add')
   }
-
-  const openView = (user) => {
-    setSelectedUser(user)
-    setModal('view')
-  }
-
-  const openDelete = (user) => {
-    setSelectedUser(user)
-    setModal('delete')
-  }
-
-  const openToggle = (user) => {
-    setSelectedUser(user)
-    setModal('toggle')
-  }
-
+  const openView   = (user) => { setSelectedUser(user); setModal('view') }
+  const openDelete = (user) => { setSelectedUser(user); setModal('delete') }
+  const openToggle = (user) => { setSelectedUser(user); setModal('toggle') }
   const closeModal = () => {
-    setModal(null)
-    setSelectedUser(null)
-    setSubmitting(false)
-    setFormErrors({})
-    setAddType(null)
+    setModal(null); setSelectedUser(null)
+    setSubmitting(false); setFormErrors({}); setAddType(null)
   }
 
-  /* ─── form validation ───── */
-  const validateForm = (isAdmin = false) => {
+  /* ── form validation ── */
+  const validateForm = () => {
     const errors = {}
     if (!form.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!form.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errors.email = 'Invalid email format.'
-
-    // password only required for new user / admin
     if (modal === 'add') {
       if (!form.password) errors.password = 'Password is required.'
-      else {
-        const { score } = getStrength(form.password)
-        if (score < 5) errors.password = 'Password does not meet all requirements.'
-      }
+      else if (getStrength(form.password).score < 5) errors.password = 'Password does not meet all requirements.'
       if (!form.confirm_password) errors.confirm_password = 'Please confirm password.'
       else if (form.password !== form.confirm_password) errors.confirm_password = 'Passwords do not match.'
     }
     setFormErrors(errors)
     return Object.keys(errors).length === 0
   }
-
-  /* ─── handle add user ───── */
-  const onAddClick = () => {
-    if (!validateForm(addType === 'admin')) return
-    setModal('confirmAdd')
-  }
+  const onAddClick = () => { if (!validateForm()) return; setModal('confirmAdd') }
 
   const handleAddUser = async () => {
     setSubmitting(true)
     try {
-      await usersApi.createUser({
-        full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        role: form.role,
-        password: form.password,
-        confirm_password: form.confirm_password,
-      })
+      const payload = {
+        full_name: form.full_name.trim(), email: form.email.trim(),
+        role: form.role, password: form.password, confirm_password: form.confirm_password,
+      }
+      if (form.role === 'security' && form.gate_assignment) payload.gate_assignment = form.gate_assignment
+      await usersApi.createUser(payload)
       fetchUsers()
       showResult('User created successfully!')
     } catch (err) {
@@ -231,31 +197,20 @@ export default function UserManagement() {
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         if (data.confirm_password) errors.confirm_password = Array.isArray(data.confirm_password) ? data.confirm_password[0] : data.confirm_password
         if (data.non_field_errors) errors.general = Array.isArray(data.non_field_errors) ? data.non_field_errors.join(' ') : data.non_field_errors
-        setFormErrors(errors)
-        setModal('add')
-      } else {
-        showResult('Failed to create user', 'error')
-      }
-    } finally {
-      setSubmitting(false)
-    }
+        setFormErrors(errors); setModal('add')
+      } else { showResult('Failed to create user', 'error') }
+    } finally { setSubmitting(false) }
   }
 
-  /* ─── handle add admin (replace) ───── */
   const handleReplaceAdmin = async () => {
     setSubmitting(true)
     try {
       await usersApi.replaceAdmin({
-        full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        password: form.password,
-        confirm_password: form.confirm_password,
+        full_name: form.full_name.trim(), email: form.email.trim(),
+        password: form.password, confirm_password: form.confirm_password,
       })
       showResult('Admin replaced. Logging out…')
-      setTimeout(() => {
-        logout()
-        window.location.href = '/login'
-      }, 1500)
+      setTimeout(() => { logout(); window.location.href = '/login' }, 1500)
     } catch (err) {
       const data = err.response?.data
       if (data) {
@@ -263,72 +218,46 @@ export default function UserManagement() {
         if (data.full_name) errors.full_name = Array.isArray(data.full_name) ? data.full_name[0] : data.full_name
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
-        if (data.confirm_password) errors.confirm_password = Array.isArray(data.confirm_password) ? data.confirm_password[0] : data.confirm_password
-        setFormErrors(errors)
-        setModal('add')
-      } else {
-        showResult('Failed to replace admin', 'error')
-      }
+        setFormErrors(errors); setModal('add')
+      } else { showResult('Failed to replace admin', 'error') }
       setSubmitting(false)
     }
   }
 
-  /* ─── handle delete ───── */
   const handleDelete = async () => {
     setSubmitting(true)
-    try {
-      await usersApi.deleteUser(selectedUser.id)
-      fetchUsers()
-      showResult('User deleted successfully!')
-    } catch {
-      showResult('Failed to delete user', 'error')
-    } finally {
-      setSubmitting(false)
-    }
+    try { await usersApi.deleteUser(selectedUser.id); fetchUsers(); showResult('User deleted successfully!') }
+    catch { showResult('Failed to delete user', 'error') }
+    finally { setSubmitting(false) }
   }
 
-  /* ─── handle toggle ───── */
   const handleToggle = async () => {
     setSubmitting(true)
     try {
       await usersApi.toggleUserStatus(selectedUser.id)
       fetchUsers()
       showResult(`User ${selectedUser.is_active ? 'disabled' : 'enabled'} successfully!`)
-    } catch {
-      showResult('Failed to toggle user status', 'error')
-    } finally {
-      setSubmitting(false)
-    }
+    } catch { showResult('Failed to toggle user status', 'error') }
+    finally { setSubmitting(false) }
   }
 
-  /* ─── password strength for current form ───── */
-  const strength = getStrength(form.password)
+  const strength    = getStrength(form.password)
+  const formatDate  = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+  const roleLabel   = (role) => role === 'security' ? 'Security' : role === 'vehicle_owner' ? 'Vehicle Owner' : role
 
-  /* ─── format date ───── */
-  const formatDate = (iso) => {
-    if (!iso) return '—'
-    return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-  }
-
-  const roleLabel = (role) => {
-    if (role === 'security') return 'Security'
-    if (role === 'vehicle_owner') return 'Vehicle Owner'
-    return role
-  }
-
-  /* ─── render ─────────────────────────────────────────────── */
+  /* ─── render ─────────────────────────────────────────────────── */
   return (
     <AdminLayout>
-      {/* Header */}
+
+      {/* Page Header */}
       <div className="um-header">
         <div className="um-header-left">
           <h1>User Management</h1>
-          <p>Manage security personnel and vehicle owner accounts.</p>
+          <p>Manage system user accounts and access.</p>
         </div>
         <div className="um-header-actions">
-          <button id="add-user-btn" className="um-add-btn" onClick={openAdd}>
-            <UserPlus size={16} />
-            Add User
+          <button className="um-add-btn" onClick={openAdd}>
+            <UserPlus size={16} /> Add User
           </button>
         </div>
       </div>
@@ -337,34 +266,24 @@ export default function UserManagement() {
       <div className="um-stats-bar">
         <div className="um-stat-card">
           <div className="um-stat-icon total"><Users size={20} /></div>
-          <div className="um-stat-info">
-            <h4>Total Users</h4>
-            <span>{totalUsers}</span>
-          </div>
+          <div className="um-stat-info"><h4>Total Users</h4><span>{totalUsers}</span></div>
         </div>
         <div className="um-stat-card">
           <div className="um-stat-icon active-stat"><UserCheck size={20} /></div>
-          <div className="um-stat-info">
-            <h4>Active</h4>
-            <span>{activeUsers}</span>
-          </div>
+          <div className="um-stat-info"><h4>Active</h4><span>{activeUsers}</span></div>
         </div>
         <div className="um-stat-card">
           <div className="um-stat-icon disabled-stat"><UserX size={20} /></div>
-          <div className="um-stat-info">
-            <h4>Disabled</h4>
-            <span>{disabledUsers}</span>
-          </div>
+          <div className="um-stat-info"><h4>Disabled</h4><span>{disabledUsers}</span></div>
         </div>
       </div>
 
-      {/* Table & Toolbar */}
+      {/* Table */}
       <div className="um-table-container">
         <div className="um-table-toolbar">
           <div className="um-search-wrapper">
             <Search size={16} />
             <input
-              id="user-search"
               className="um-search-input"
               type="text"
               placeholder="Search by name…"
@@ -373,20 +292,12 @@ export default function UserManagement() {
             />
           </div>
           <div className="um-filter-group">
-            <select
-              className="um-form-select"
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-            >
+            <select className="um-form-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
               <option value="">All Roles</option>
               <option value="security">Security Personnel</option>
               <option value="vehicle_owner">Vehicle Owner</option>
             </select>
-            <select
-              className="um-form-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
+            <select className="um-form-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All Statuses</option>
               <option value="active">Active</option>
               <option value="disabled">Disabled</option>
@@ -395,10 +306,7 @@ export default function UserManagement() {
         </div>
 
         {loading ? (
-          <div className="um-loading">
-            <div className="um-spinner" />
-            <p>Loading users…</p>
-          </div>
+          <div className="um-loading"><div className="um-spinner" /><p>Loading users…</p></div>
         ) : users.length === 0 ? (
           <div className="um-empty">
             <Users size={48} />
@@ -414,11 +322,12 @@ export default function UserManagement() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>QR</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u, idx) => (
+              {users.map((u) => (
                 <tr key={u.id}>
                   <td>
                     <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
@@ -443,13 +352,21 @@ export default function UserManagement() {
                       {u.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </td>
+                  {/* QR — visible for all users */}
+                  <td>
+                    <button
+                      className="um-qr-btn"
+                      title={u.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'}
+                      onClick={() => openQrModal(u)}
+                    >
+                      <QrCode size={15} />
+                      <span>{u.role === 'security' ? 'Badge' : 'ID'}</span>
+                    </button>
+                  </td>
                   <td style={{ position: 'relative' }}>
                     <button
                       className="um-action-btn"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setActiveMenu(activeMenu === u.id ? null : u.id)
-                      }}
+                      onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === u.id ? null : u.id) }}
                     >
                       <MoreVertical size={16} />
                     </button>
@@ -459,7 +376,7 @@ export default function UserManagement() {
                           <Eye size={15} /> View Profile
                         </button>
                         {u.role === 'security' && (
-                          <button className="um-dropdown-item view" onClick={() => openGuardQr(u)}>
+                          <button className="um-dropdown-item view" onClick={() => openQrModal(u)}>
                             <QrCode size={15} /> QR Badge
                           </button>
                         )}
@@ -487,19 +404,11 @@ export default function UserManagement() {
               Showing {(page - 1) * 10 + 1} to {Math.min(page * 10, totalCount)} of {totalCount} users
             </span>
             <div className="um-pagination-controls">
-              <button
-                className="um-page-btn"
-                disabled={page === 1}
-                onClick={() => setPage(p => p - 1)}
-              >
+              <button className="um-page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
                 <ChevronLeft size={16} />
               </button>
               <span className="um-page-current">Page {page} of {totalPages}</span>
-              <button
-                className="um-page-btn"
-                disabled={page === totalPages}
-                onClick={() => setPage(p => p + 1)}
-              >
+              <button className="um-page-btn" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -507,9 +416,9 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* ────── MODALS ────── */}
+      {/* ── MODALS ── */}
 
-      {/* ADD USER MODAL */}
+      {/* ADD USER */}
       {modal === 'add' && (
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal" onClick={(e) => e.stopPropagation()}>
@@ -518,112 +427,78 @@ export default function UserManagement() {
               <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
             </div>
             <div className="um-modal-body">
-              {/* type selector */}
               {addType === null && (
                 <div className="um-user-type-selector">
-                  <div
-                    className="um-type-option"
-                    onClick={() => setAddType('user')}
-                  >
+                  <div className="um-type-option" onClick={() => setAddType('user')}>
                     <div className="um-type-option-icon"><UserPlus size={20} /></div>
                     <span className="um-type-option-label">Regular User</span>
                     <span className="um-type-option-desc">Security or Vehicle Owner</span>
                   </div>
-                  <div
-                    className="um-type-option"
-                    onClick={() => setAddType('admin')}
-                  >
+                  <div className="um-type-option" onClick={() => setAddType('admin')}>
                     <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
                     <span className="um-type-option-label">New Admin</span>
                     <span className="um-type-option-desc">Replaces current admin</span>
                   </div>
                 </div>
               )}
-
-              {/* admin warning */}
               {addType === 'admin' && (
                 <div className="um-admin-warning">
                   <AlertTriangle size={18} />
                   <div className="um-admin-warning-text">
-                    <strong>Warning:</strong> This will <strong>delete your current admin account</strong> and create a new one.
-                    You will be logged out after this action.
+                    <strong>Warning:</strong> This will <strong>delete your current admin account</strong> and create a new one. You will be logged out.
                   </div>
                 </div>
               )}
-
-              {/* form fields */}
               {addType !== null && (
                 <>
                   <div className="um-form-group">
-                    <label htmlFor="add-fullname">Full Name</label>
-                    <input
-                      id="add-fullname"
-                      className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
-                      value={form.full_name}
-                      onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                      placeholder="Enter full name"
-                    />
+                    <label>Full Name</label>
+                    <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
+                      value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Enter full name" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
-
                   <div className="um-form-group">
-                    <label htmlFor="add-email">Email</label>
-                    <input
-                      id="add-email"
-                      className={`um-form-input ${formErrors.email ? 'error' : ''}`}
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      placeholder="Enter email address"
-                    />
+                    <label>Email</label>
+                    <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
+                      type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Enter email address" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
-
                   {addType === 'user' && (
                     <div className="um-form-group">
-                      <label htmlFor="add-role">Role</label>
-                      <select
-                        id="add-role"
-                        className="um-form-select"
-                        value={form.role}
-                        onChange={(e) => setForm({ ...form, role: e.target.value })}
-                      >
+                      <label>Role</label>
+                      <select className="um-form-select" value={form.role}
+                        onChange={(e) => setForm({ ...form, role: e.target.value, gate_assignment: '' })}>
                         <option value="security">Security Personnel</option>
                         <option value="vehicle_owner">Vehicle Owner</option>
                       </select>
                     </div>
                   )}
-
+                  {addType === 'user' && form.role === 'security' && (
+                    <div className="um-form-group">
+                      <label>Gate Assignment</label>
+                      <select className="um-form-select" value={form.gate_assignment}
+                        onChange={(e) => setForm({ ...form, gate_assignment: e.target.value })}>
+                        <option value="">Unassigned (guard selects at kiosk)</option>
+                        <option value="gate1">Gate 1 — Main Entrance</option>
+                        <option value="gate4">Gate 4 — Side Entrance</option>
+                      </select>
+                    </div>
+                  )}
                   <div className="um-form-group">
-                    <label htmlFor="add-password">Password</label>
+                    <label>Password</label>
                     <div className="um-password-wrapper">
-                      <input
-                        id="add-password"
-                        className={`um-form-input ${formErrors.password ? 'error' : ''}`}
-                        type={showPassword ? 'text' : 'password'}
-                        value={form.password}
-                        onChange={(e) => setForm({ ...form, password: e.target.value })}
-                        placeholder="Enter password"
-                      />
-                      <button
-                        type="button"
-                        className="um-password-toggle"
-                        onClick={() => setShowPassword(!showPassword)}
-                        tabIndex={-1}
-                      >
+                      <input className={`um-form-input ${formErrors.password ? 'error' : ''}`}
+                        type={showPassword ? 'text' : 'password'} value={form.password}
+                        onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Enter password" />
+                      <button type="button" className="um-password-toggle" onClick={() => setShowPassword(!showPassword)} tabIndex={-1}>
                         {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     </div>
                     {formErrors.password && <div className="um-form-error">{formErrors.password}</div>}
-
                     {form.password && (
                       <div className="um-password-strength">
-                        <div className="um-strength-bar-bg">
-                          <div className={`um-strength-bar ${strength.level}`} />
-                        </div>
-                        <span className={`um-strength-label ${strength.level}`}>
-                          {STRENGTH_LABELS[strength.level] || ''}
-                        </span>
+                        <div className="um-strength-bar-bg"><div className={`um-strength-bar ${strength.level}`} /></div>
+                        <span className={`um-strength-label ${strength.level}`}>{STRENGTH_LABELS[strength.level] || ''}</span>
                         <div className="um-password-rules">
                           {PASSWORD_RULES.map((rule) => (
                             <div key={rule.key} className={`um-password-rule ${rule.test(form.password) ? 'met' : ''}`}>
@@ -635,30 +510,18 @@ export default function UserManagement() {
                       </div>
                     )}
                   </div>
-
                   <div className="um-form-group">
-                    <label htmlFor="add-confirm">Confirm Password</label>
+                    <label>Confirm Password</label>
                     <div className="um-password-wrapper">
-                      <input
-                        id="add-confirm"
-                        className={`um-form-input ${formErrors.confirm_password ? 'error' : ''}`}
-                        type={showConfirm ? 'text' : 'password'}
-                        value={form.confirm_password}
-                        onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
-                        placeholder="Re-enter password"
-                      />
-                      <button
-                        type="button"
-                        className="um-password-toggle"
-                        onClick={() => setShowConfirm(!showConfirm)}
-                        tabIndex={-1}
-                      >
+                      <input className={`um-form-input ${formErrors.confirm_password ? 'error' : ''}`}
+                        type={showConfirm ? 'text' : 'password'} value={form.confirm_password}
+                        onChange={(e) => setForm({ ...form, confirm_password: e.target.value })} placeholder="Re-enter password" />
+                      <button type="button" className="um-password-toggle" onClick={() => setShowConfirm(!showConfirm)} tabIndex={-1}>
                         {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     </div>
                     {formErrors.confirm_password && <div className="um-form-error">{formErrors.confirm_password}</div>}
                   </div>
-
                   {formErrors.general && <div className="um-form-error" style={{ marginBottom: 8 }}>{formErrors.general}</div>}
                 </>
               )}
@@ -668,13 +531,11 @@ export default function UserManagement() {
                 <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
                 {addType === 'admin' ? (
                   <button className="um-btn-warning" disabled={submitting} onClick={onAddClick}>
-                    <ShieldAlert size={16} />
-                    Continue
+                    <ShieldAlert size={16} /> Continue
                   </button>
                 ) : (
                   <button className="um-btn-primary" disabled={submitting} onClick={onAddClick}>
-                    <UserPlus size={16} />
-                    Continue
+                    <UserPlus size={16} /> Continue
                   </button>
                 )}
               </div>
@@ -683,7 +544,7 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* VIEW PROFILE MODAL */}
+      {/* VIEW PROFILE */}
       {modal === 'view' && selectedUser && (
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal" onClick={(e) => e.stopPropagation()}>
@@ -693,7 +554,7 @@ export default function UserManagement() {
             </div>
             <div className="um-modal-body">
               <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                <div style={{ position: 'relative', display: 'inline-block', marginBottom: 12 }}>
+                <div style={{ display: 'inline-block', marginBottom: 12 }}>
                   {selectedUser.photo_url ? (
                     <img
                       src={selectedUser.photo_url}
@@ -707,34 +568,6 @@ export default function UserManagement() {
                     >
                       {selectedUser.full_name.charAt(0).toUpperCase()}
                     </div>
-                  )}
-                  {selectedUser.role === 'security' && (
-                    <>
-                      <button
-                        title="Change photo"
-                        disabled={photoUploading}
-                        onClick={() => photoInputRef.current?.click()}
-                        style={{
-                          position: 'absolute', bottom: 0, right: 0,
-                          width: 24, height: 24, borderRadius: '50%',
-                          background: '#2A2B61', border: '2px solid #fff',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          cursor: 'pointer', padding: 0,
-                        }}
-                      >
-                        {photoUploading
-                          ? <div style={{ width: 10, height: 10, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-                          : <Camera size={12} color="#fff" />
-                        }
-                      </button>
-                      <input
-                        ref={photoInputRef}
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={e => handlePhotoUpload(e.target.files?.[0])}
-                      />
-                    </>
                   )}
                 </div>
                 <h3 style={{ margin: 0, color: '#1A1D2E', fontSize: 18 }}>{selectedUser.full_name}</h3>
@@ -750,8 +583,7 @@ export default function UserManagement() {
                 <div className="um-profile-item">
                   <span className="um-profile-label">Status</span>
                   <span className={`um-status-badge ${selectedUser.is_active ? 'active' : 'disabled'}`}>
-                    <span className="status-dot" />
-                    {selectedUser.is_active ? 'Active' : 'Disabled'}
+                    <span className="status-dot" />{selectedUser.is_active ? 'Active' : 'Disabled'}
                   </span>
                 </div>
                 <div className="um-profile-item">
@@ -760,20 +592,33 @@ export default function UserManagement() {
                 </div>
                 <div className="um-profile-item">
                   <span className="um-profile-label">User ID</span>
-                  <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61', letterSpacing: '0.5px' }}>
+                  <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61' }}>
                     {selectedUser.user_code || `#${selectedUser.id}`}
                   </span>
                 </div>
+                {selectedUser.role === 'security' && (
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">Gate Assignment</span>
+                    <span className="um-profile-value">
+                      {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
+                        : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
+                        : 'Unassigned'}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
             <div className="um-modal-footer">
               <button className="um-btn-secondary" onClick={closeModal}>Close</button>
+              <button className="um-btn-primary" onClick={() => { closeModal(); openQrModal(selectedUser) }}>
+                <QrCode size={15} /> View QR
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* DELETE CONFIRMATION */}
+      {/* DELETE */}
       {modal === 'delete' && selectedUser && (
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
@@ -785,24 +630,20 @@ export default function UserManagement() {
               <div className="um-confirm-body">
                 <div className="um-confirm-icon danger"><Trash2 size={24} /></div>
                 <h3>Are you sure?</h3>
-                <p>
-                  This will permanently delete <span className="um-confirm-name">{selectedUser.full_name}</span>.
-                  This action cannot be undone.
-                </p>
+                <p>Permanently delete <span className="um-confirm-name">{selectedUser.full_name}</span>. This cannot be undone.</p>
               </div>
             </div>
             <div className="um-modal-footer">
               <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
               <button className="um-btn-danger" disabled={submitting} onClick={handleDelete}>
-                <Trash2 size={16} />
-                {submitting ? 'Deleting…' : 'Delete User'}
+                <Trash2 size={16} /> {submitting ? 'Deleting…' : 'Delete User'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TOGGLE STATUS CONFIRMATION */}
+      {/* TOGGLE STATUS */}
       {modal === 'toggle' && selectedUser && (
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
@@ -818,9 +659,8 @@ export default function UserManagement() {
                 <h3>{selectedUser.is_active ? 'Disable this user?' : 'Enable this user?'}</h3>
                 <p>
                   {selectedUser.is_active
-                    ? <>User <span className="um-confirm-name">{selectedUser.full_name}</span> will no longer be able to log in.</>
-                    : <>User <span className="um-confirm-name">{selectedUser.full_name}</span> will be able to log in again.</>
-                  }
+                    ? <><span className="um-confirm-name">{selectedUser.full_name}</span> will no longer be able to log in.</>
+                    : <><span className="um-confirm-name">{selectedUser.full_name}</span> will be able to log in again.</>}
                 </p>
               </div>
             </div>
@@ -828,13 +668,11 @@ export default function UserManagement() {
               <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
               {selectedUser.is_active ? (
                 <button className="um-btn-warning" disabled={submitting} onClick={handleToggle}>
-                  <Ban size={16} />
-                  {submitting ? 'Disabling…' : 'Disable User'}
+                  <Ban size={16} /> {submitting ? 'Disabling…' : 'Disable User'}
                 </button>
               ) : (
                 <button className="um-btn-primary" disabled={submitting} onClick={handleToggle}>
-                  <CheckCircle size={16} />
-                  {submitting ? 'Enabling…' : 'Enable User'}
+                  <CheckCircle size={16} /> {submitting ? 'Enabling…' : 'Enable User'}
                 </button>
               )}
             </div>
@@ -842,13 +680,11 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* CONFIRM ADD MODAL */}
+      {/* CONFIRM ADD */}
       {modal === 'confirmAdd' && (
         <div className="um-modal-overlay">
           <div className="um-modal" style={{ maxWidth: 420 }}>
-            <div className="um-modal-header">
-              <h2>Confirm Creation</h2>
-            </div>
+            <div className="um-modal-header"><h2>Confirm Creation</h2></div>
             <div className="um-modal-body">
               <div className="um-confirm-body">
                 <div className="um-confirm-icon info"><UserPlus size={24} /></div>
@@ -861,6 +697,68 @@ export default function UserManagement() {
               <button className="um-btn-primary" disabled={submitting} onClick={addType === 'admin' ? handleReplaceAdmin : handleAddUser}>
                 {submitting ? 'Processing...' : 'Confirm'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR MODAL */}
+      {qrUser && (
+        <div className="um-modal-overlay" onClick={() => setQrUser(null)}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400, textAlign: 'center' }}>
+            <div className="um-modal-header">
+              <h2>
+                <QrCode size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+                {qrUser.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'}
+              </h2>
+              <button className="um-modal-close" onClick={() => setQrUser(null)}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '24px 20px' }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{qrUser.full_name}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                  {qrUser.user_code}
+                  {qrUser.role === 'security' && (
+                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'No gate assigned'}</>
+                  )}
+                  {qrUser.role !== 'security' && <> · Vehicle Owner</>}
+                </p>
+              </div>
+              {qrLoading ? (
+                <div style={{ width: 200, height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div className="um-spinner" />
+                </div>
+              ) : qrToken ? (
+                <>
+                  <div style={{ padding: 14, background: '#fff', border: '2px solid #E2E6EE', borderRadius: 14, boxShadow: '0 2px 12px rgba(42,43,97,0.08)' }}>
+                    <QRCodeSVG value={qrToken} size={190} level="M" />
+                  </div>
+                  {qrUser.role === 'security' ? (
+                    <>
+                      <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 320 }}>
+                        Token: {qrToken}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 11, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 10px' }}>
+                        Print this QR code as the guard's badge. Do not share digitally.
+                      </p>
+                    </>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: 11, color: '#5A5F72', background: '#F0F2F7', borderRadius: 6, padding: '5px 12px' }}>
+                      Scan to identify this vehicle owner — encodes their User ID.
+                    </p>
+                  )}
+                </>
+              ) : null}
+            </div>
+            <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
+              <button className="um-btn-secondary" onClick={() => setQrUser(null)}>Close</button>
+              {qrUser.role === 'security' && (
+                <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <RefreshCw size={14} />
+                  {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -888,48 +786,6 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* Guard QR Badge modal */}
-      {qrGuard && (
-        <div className="um-modal-overlay" onClick={() => setQrGuard(null)}>
-          <div className="um-modal" style={{ maxWidth: 340 }} onClick={e => e.stopPropagation()}>
-            <div className="um-modal-header">
-              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <QrCode size={18} /> Guard QR Badge
-              </h2>
-              <button className="um-close-btn" onClick={() => setQrGuard(null)}><X size={18} /></button>
-            </div>
-            <div className="um-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '20px 24px' }}>
-              {qrGuard.photo_url && (
-                <img src={qrGuard.photo_url} alt={qrGuard.full_name}
-                  style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE' }} />
-              )}
-              <div style={{ textAlign: 'center' }}>
-                <p style={{ margin: 0, fontWeight: 800, fontSize: 16, color: '#1A1D2E' }}>{qrGuard.full_name}</p>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#7C80A3', fontFamily: 'monospace' }}>{qrGuard.user_code}</p>
-              </div>
-              <div style={{ background: '#fff', padding: 12, borderRadius: 12, border: '1.5px solid #E2E6EE' }}>
-                <QRCodeSVG value={qrGuard.qr_payload} size={180} />
-              </div>
-              <p style={{ margin: 0, fontSize: 11, color: '#9CA3B0', textAlign: 'center' }}>
-                Print this badge and give it to the guard. They scan it at the gate station to log in instantly.
-              </p>
-            </div>
-            <div className="um-modal-footer" style={{ justifyContent: 'center' }}>
-              <button className="um-btn-secondary" onClick={() => setQrGuard(null)}>Close</button>
-              <button className="um-btn-primary" onClick={() => window.print()}>Print Badge</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {qrLoading && (
-        <div className="um-modal-overlay">
-          <div style={{ background: '#fff', borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-            <div className="um-spinner" />
-            <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>Generating QR badge…</p>
-          </div>
-        </div>
-      )}
     </AdminLayout>
   )
 }

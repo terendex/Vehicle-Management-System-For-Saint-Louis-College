@@ -92,4 +92,16 @@ export const usersApi = {
     })
     return data
   },
+
+  /** Get a guard's QR token (admin only). */
+  getGuardQR: async (id) => {
+    const { data } = await api.get(`/accounts/users/${id}/qr/`)
+    return data
+  },
+
+  /** Regenerate a guard's QR token, invalidating the old one (admin only). */
+  regenerateGuardQR: async (id) => {
+    const { data } = await api.post(`/accounts/users/${id}/regenerate-qr/`)
+    return data
+  },
 }

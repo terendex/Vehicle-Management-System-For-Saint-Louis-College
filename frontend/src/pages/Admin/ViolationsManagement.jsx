@@ -1,14 +1,14 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   AlertTriangle, CheckCircle, EyeOff, Filter,
-  RotateCcw, Search, Bell, BellOff, X, Plus,
-  Image, Upload, ZoomIn,
+  RotateCcw, Search, Bell, BellOff, X,
+  Image, ZoomIn, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
-  getAllViolations, releaseViolation, unreleaseViolation, resolveViolation, createViolation,
+  getAllViolations, releaseViolation, unreleaseViolation, resolveViolation,
 } from '../../api/violations'
 import './ViolationsManagement.css'
 
@@ -62,134 +62,6 @@ function FineTag({ amount }) {
   )
 }
 
-// ─── Issue Violation Modal ────────────────────────────────────────────────────
-function IssueViolationModal({ onClose, onCreated }) {
-  const [plate, setPlate]           = useState('')
-  const [type, setType]             = useState('no_sticker')
-  const [notes, setNotes]           = useState('')
-  const [evidence, setEvidence]     = useState(null)
-  const [preview, setPreview]       = useState(null)
-  const [loading, setLoading]       = useState(false)
-  const fileRef                     = useRef(null)
-
-  const handleFile = (file) => {
-    if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
-    setEvidence(file)
-    setPreview(URL.createObjectURL(file))
-  }
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    handleFile(e.dataTransfer.files?.[0])
-  }
-
-  const removeEvidence = () => {
-    if (preview) URL.revokeObjectURL(preview)
-    setEvidence(null)
-    setPreview(null)
-    if (fileRef.current) fileRef.current.value = ''
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!plate.trim()) { toast.error('Plate number is required.'); return }
-    setLoading(true)
-    try {
-      const { data } = await createViolation({
-        plate_number:   plate.trim().toUpperCase(),
-        violation_type: type,
-        notes,
-        ...(evidence ? { evidence } : {}),
-      })
-      toast.success(`Violation issued for ${data.plate_number || plate.trim().toUpperCase()}.`)
-      onCreated(data)
-      onClose()
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="vm-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="vm-modal">
-        <div className="vm-modal-head">
-          <span className="vm-modal-title"><AlertTriangle size={16} /> Issue Violation</span>
-          <button className="vm-modal-close" onClick={onClose}><X size={15} /></button>
-        </div>
-        <form onSubmit={handleSubmit}>
-          <div className="vm-modal-body">
-            <div className="vm-field">
-              <label className="vm-label">License Plate <span style={{ color: '#ef4444' }}>*</span></label>
-              <input
-                className="vm-input"
-                placeholder="e.g. ABC 123"
-                value={plate}
-                onChange={e => setPlate(e.target.value)}
-                required
-              />
-            </div>
-            <div className="vm-field">
-              <label className="vm-label">Violation Type</label>
-              <select className="vm-select" value={type} onChange={e => setType(e.target.value)}>
-                <option value="no_sticker">No Sticker</option>
-                <option value="expired_registration">Expired Registration</option>
-                <option value="unauthorized">Unauthorized Entry</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div className="vm-field">
-              <label className="vm-label">Notes</label>
-              <textarea
-                className="vm-textarea"
-                placeholder="Optional additional details…"
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                rows={3}
-              />
-            </div>
-            <div className="vm-field">
-              <label className="vm-label">Screenshot Evidence</label>
-              {preview ? (
-                <div className="vm-evidence-preview">
-                  <img src={preview} alt="evidence preview" className="vm-evidence-img" />
-                  <button type="button" className="vm-evidence-remove" onClick={removeEvidence}>
-                    <X size={12} /> Remove
-                  </button>
-                </div>
-              ) : (
-                <div
-                  className="vm-drop-zone"
-                  onDrop={handleDrop}
-                  onDragOver={e => e.preventDefault()}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  <Upload size={22} className="vm-drop-icon" />
-                  <p className="vm-drop-text">Drop image here or <span>click to browse</span></p>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    style={{ display: 'none' }}
-                    onChange={e => handleFile(e.target.files?.[0])}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="vm-modal-foot">
-            <button type="button" className="vm-btn-cancel" onClick={onClose}>Cancel</button>
-            <button type="submit" className="vm-btn-submit" disabled={loading}>
-              {loading ? 'Issuing…' : 'Issue Violation'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 // ─── Evidence Lightbox ─────────────────────────────────────────────────────────
 function EvidenceLightbox({ src, onClose }) {
   return (
@@ -214,8 +86,9 @@ export default function ViolationsManagement() {
   const [search, setSearch]               = useState('')
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
-  const [showIssueModal, setShowIssueModal] = useState(false)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
+  const [page, setPage]                   = useState(1)
+  const PAGE_SIZE = 10
 
   const fetchAll = () => {
     setLoading(true)
@@ -227,12 +100,8 @@ export default function ViolationsManagement() {
 
   useEffect(() => { fetchAll() }, [])
 
-  const handleViolationCreated = (newViolation) => {
-    setViolations(prev => [newViolation, ...prev])
-  }
-
   const filtered = useMemo(() => {
-    let list = violations
+    let list = [...violations]
 
     // Status filter
     if (filter === 'pending')  list = list.filter(v => !v.is_released && !v.is_resolved)
@@ -255,8 +124,17 @@ export default function ViolationsManagement() {
       )
     }
 
+    // LIFO — newest violations first
+    list.sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at))
+
     return list
   }, [violations, filter, datePeriod, search])
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1) }, [filter, datePeriod, search])
+
+  const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   // Summary stats
   const pendingCount    = violations.filter(v => !v.is_released && !v.is_resolved).length
@@ -309,12 +187,6 @@ export default function ViolationsManagement() {
       <div className="vm-page">
 
         {/* Modals */}
-        {showIssueModal && (
-          <IssueViolationModal
-            onClose={() => setShowIssueModal(false)}
-            onCreated={handleViolationCreated}
-          />
-        )}
         {lightboxSrc && <EvidenceLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
 
         {/* Header */}
@@ -325,10 +197,6 @@ export default function ViolationsManagement() {
               All vehicle violations — owners can see their records in the portal. Use <em>Notify</em> to officially flag a violation to the owner.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-          <button className="vm-issue-btn" onClick={() => setShowIssueModal(true)}>
-            <Plus size={14} /> Issue Violation
-          </button>
           <div className="vm-stats-row">
             <div className="vm-stat">
               <span className="vm-stat-num vm-stat-pending">{pendingCount}</span>
@@ -342,7 +210,6 @@ export default function ViolationsManagement() {
               <span className="vm-stat-num vm-stat-fine">₱{outstandingFine.toFixed(2)}</span>
               <span className="vm-stat-label">Outstanding</span>
             </div>
-          </div>
           </div>
         </div>
 
@@ -424,7 +291,7 @@ export default function ViolationsManagement() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((v) => (
+                {paginated.map((v) => (
                   <tr key={v.id} className={v.is_resolved ? 'vm-row-resolved' : v.is_released ? 'vm-row-notified' : ''}>
                     <td className="vm-plate">{v.plate_number}</td>
                     <td className="vm-owner">
@@ -505,6 +372,24 @@ export default function ViolationsManagement() {
             </table>
           )}
         </div>
+
+        {/* Pagination */}
+        {!loading && totalPages > 1 && (
+          <div className="vm-pagination">
+            <span className="vm-page-info">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <div className="vm-page-controls">
+              <button className="vm-page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+                <ChevronLeft size={15} />
+              </button>
+              <span className="vm-page-current">Page {page} of {totalPages}</span>
+              <button className="vm-page-btn" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
     </AdminLayout>

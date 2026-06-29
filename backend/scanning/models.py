@@ -80,6 +80,25 @@ class AccessLog(models.Model):
         ordering = ['-scanned_at']
 
 
+class GuardShift(models.Model):
+    guard = models.ForeignKey(
+        'accounts.User', on_delete=models.CASCADE, related_name='shifts',
+    )
+    gate = models.CharField(max_length=10)  # 'gate1' or 'gate4'
+    clocked_in_at = models.DateTimeField(auto_now_add=True)
+    clocked_out_at = models.DateTimeField(null=True, blank=True)
+    clocked_out_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='clocked_out_shifts',
+    )
+
+    class Meta:
+        ordering = ['-clocked_in_at']
+
+    def __str__(self):
+        return f"{self.guard.full_name} @ {self.gate} — {self.clocked_in_at.strftime('%Y-%m-%d %H:%M')}"
+
+
 class MLTrainingSample(models.Model):
     SOURCE_CHOICES = [
         ('scan',         'Live Scan'),

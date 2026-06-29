@@ -169,8 +169,15 @@
   border-radius: 14px;
   border: 1px solid #E2E6EE;
   box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
 }
+
+/* Round the table header corners so they follow the card border-radius */
+.um-table thead tr th:first-child { border-radius: 13px 0 0 0; }
+.um-table thead tr th:last-child  { border-radius: 0 13px 0 0; }
+.um-table tbody tr:last-child td:first-child { border-radius: 0 0 0 13px; }
+.um-table tbody tr:last-child td:last-child  { border-radius: 0 0 13px 0; }
 
 .um-table-toolbar {
   display: flex;
@@ -1098,3 +1105,27 @@
   font-size: 11px;
   color: #9ca3af;
 }
+
+/* ─── Inline QR button ──────────────────────────────────────────── */
+.um-qr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1.5px solid #D1D5DB;
+  border-radius: 7px;
+  background: #F9FAFB;
+  color: #4B5563;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.um-qr-btn:hover {
+  background: #EEF0FA;
+  border-color: #2A2B61;
+  color: #2A2B61;
+}
+

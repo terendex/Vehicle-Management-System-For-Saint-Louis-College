@@ -71,8 +71,10 @@
   animation: rc-fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.rc-section:nth-child(2) { animation-delay: 0.08s; }
-.rc-section:nth-child(3) { animation-delay: 0.16s; }
+.rc-section:nth-child(2) { animation-delay: 0.06s; }
+.rc-section:nth-child(3) { animation-delay: 0.12s; }
+.rc-section:nth-child(4) { animation-delay: 0.18s; }
+.rc-section:nth-child(5) { animation-delay: 0.24s; }
 
 @keyframes rc-fadeIn {
   from { opacity: 0; transform: translateY(12px); }
@@ -1109,3 +1111,104 @@
   background: #F0F2F7;
   color: #2A2B61;
 }
+
+/* ── Mode blocks (Event Mode / Open Campus) ──────────────────── */
+
+.rc-mode-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rc-mode-block--open {
+  border-left: 3px solid #7c3aed;
+  padding-left: 14px;
+}
+
+.rc-mode-desc {
+  font-size: 13px;
+  color: #5A5F72;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.rc-mode-active-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.rc-mode-active-badge--event {
+  background: #DCFCE7;
+  color: #15803D;
+  border: 1px solid #86EFAC;
+}
+
+.rc-mode-active-badge--open {
+  background: #EDE9FE;
+  color: #6D28D9;
+  border: 1px solid #C4B5FD;
+}
+
+/* ── Registration period row ─────────────────────────────────── */
+
+.rc-reg-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.rc-reg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rc-reg-sep {
+  font-size: 13px;
+  color: #9CA3AF;
+  font-weight: 600;
+  padding-bottom: 10px;
+}
+
+.rc-reg-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1.5px solid #FECACA;
+  background: #FEF2F2;
+  color: #DC2626;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  margin-bottom: 2px;
+  transition: all 0.15s;
+}
+
+.rc-reg-clear:hover {
+  background: #FEE2E2;
+}
+
+.rc-reg-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #1D4ED8;
+}
+
+.rc-reg-info svg { flex-shrink: 0; }

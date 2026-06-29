@@ -214,6 +214,10 @@ class SystemSettings(models.Model):
         null=True, blank=True,
         help_text="Last day vehicle registrations are accepted.",
     )
+    open_campus_mode     = models.BooleanField(
+        default=False,
+        help_text="When enabled, all vehicles are allowed entry regardless of registration or schedule rules.",
+    )
 
     class Meta:
         verbose_name        = "System Settings"

@@ -1,24 +1,25 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import useAuthStore from './stores/authStore'
+import { CameraProvider } from './context/CameraContext'
 import LoginPage from './pages/Login/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
 import AdminDashboard from './pages/Admin/AdminDashboard'
 import VehicleRegistration from './pages/Admin/VehicleRegistration'
 import UserManagement from './pages/Admin/UserManagement'
-import EntryManagement from './pages/Admin/EntryManagement'
+import OperationsCenter from './pages/Admin/OperationsCenter'
 import RuleConstraints from './pages/Admin/RuleConstraints'
 import AuditLog from './pages/Admin/AuditLog'
 import ParkingManagement from './pages/Admin/ParkingManagement'
 import DeviceManagement from './pages/Admin/DeviceManagement'
-import GuardMonitor from './pages/Admin/GuardMonitor'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
 import SecurityViolationsView from './pages/Security/SecurityViolationsView'
 import GuardQrLoginPage from './pages/Security/GuardQrLoginPage'
+import SecurityQRLogin from './pages/Security/SecurityQRLogin'
 import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
 import RegisterPage from './pages/Register/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPassword/ForgotPasswordPage'
@@ -32,6 +33,7 @@ export default function App() {
   }, [])
 
   return (
+    <CameraProvider>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
@@ -40,6 +42,7 @@ export default function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/security/qr-login" element={<SecurityQRLogin />} />
 
         {/* Role-specific dashboards */}
 
@@ -51,13 +54,12 @@ export default function App() {
           <Route path="/admin/rules" element={<RuleConstraints />} />
           <Route path="/admin/audit" element={<AuditLog />} />
           <Route path="/admin/devices" element={<DeviceManagement />} />
-          <Route path="/admin/guard-monitor" element={<GuardMonitor />} />
         </Route>
 
         {/* Admin + CDSO shared routes */}
         <Route element={<ProtectedRoute allowedRoles={['admin', 'cdso']} />}>
           <Route path="/admin/settings"    element={<SystemSettings />} />
-          <Route path="/admin/entries"     element={<EntryManagement />} />
+          <Route path="/admin/entries"     element={<OperationsCenter />} />
           <Route path="/admin/parking"     element={<ParkingManagement />} />
           <Route path="/admin/violations"  element={<ViolationsManagement />} />
         </Route>
@@ -86,5 +88,6 @@ export default function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
+    </CameraProvider>
   )
 }

@@ -1,0 +1,428 @@
+.gam-page {
+  padding: 28px 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.gam-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.gam-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1d2e;
+  margin: 0 0 4px;
+}
+
+.gam-subtitle {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.gam-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #fff;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gam-refresh-btn:hover:not(:disabled) { background: #f9fafb; }
+.gam-refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.gam-spin { animation: gam-spin 0.8s linear infinite; }
+@keyframes gam-spin { to { transform: rotate(360deg); } }
+
+/* ── Stats row ──────────────────────────────────────────── */
+.gam-stats-row {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.gam-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 160px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 18px;
+}
+
+.gam-stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.gam-stat-icon.blue  { background: #eff6ff; color: #2563eb; }
+.gam-stat-icon.green { background: #f0fdf4; color: #16a34a; }
+.gam-stat-icon.amber { background: #fffbeb; color: #d97706; }
+
+.gam-stat-val   { font-size: 22px; font-weight: 700; color: #111827; margin: 0 0 1px; }
+.gam-stat-label { font-size: 11px; color: #6b7280; margin: 0; font-weight: 500; }
+
+/* ── Guard grid ─────────────────────────────────────────── */
+.gam-guards-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* ── Guard card ─────────────────────────────────────────── */
+.gam-guard-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.gam-guard-card.active {
+  border-color: #bbf7d0;
+}
+
+.gam-guard-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fafafa;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.gam-guard-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gam-guard-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #4c1d95;
+  flex-shrink: 0;
+}
+
+.gam-guard-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.gam-guard-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.gam-gate-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #4c1d95;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.gam-guard-code {
+  font-size: 10.5px;
+  color: #9ca3af;
+  font-family: monospace;
+}
+
+.gam-guard-status-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.gam-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.gam-status-pill.active   { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+.gam-status-pill.inactive { background: #f3f4f6; border: 1px solid #e5e7eb; color: #9ca3af; }
+
+.gam-dot-blink {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: gam-blink 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes gam-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+.gam-guard-scan-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+/* ── Shift section ──────────────────────────────────────── */
+.gam-shift-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px;
+  background: #f9fafb;
+  border-bottom: 1px solid #f3f4f6;
+  flex-wrap: wrap;
+}
+
+.gam-section-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.gam-shifts-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gam-shift-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  font-size: 11px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.gam-shift-chip-gate {
+  font-weight: 700;
+  color: #4c1d95;
+}
+
+/* ── Mini stats ─────────────────────────────────────────── */
+.gam-mini-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border-bottom: 1px solid #f3f4f6;
+  flex-wrap: wrap;
+}
+
+.gam-mini-stat {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.gam-mini-stat.authorized { background: #f0fdf4; color: #166534; }
+.gam-mini-stat.denied     { background: #fef2f2; color: #991b1b; }
+.gam-mini-stat.exited     { background: #ede9fe; color: #4c1d95; }
+.gam-mini-stat.visitor    { background: #fffbeb; color: #92400e; }
+
+/* ── Scan list ──────────────────────────────────────────── */
+.gam-scan-list {
+  padding: 0;
+}
+
+.gam-scan-list-header {
+  display: grid;
+  grid-template-columns: 110px 1fr 90px 70px 90px;
+  gap: 8px;
+  padding: 7px 18px;
+  background: #f9fafb;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.gam-scan-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 90px 70px 90px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 18px;
+  border-bottom: 1px solid #f9fafb;
+  font-size: 12px;
+}
+.gam-scan-row:last-child { border-bottom: none; }
+.gam-scan-row:hover { background: #fafafa; }
+
+.gam-scan-owner {
+  color: #374151;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gam-scan-gate {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* ── Shared ─────────────────────────────────────────────── */
+.gam-log-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 18px 0;
+  margin: 0;
+}
+
+.gam-log-plate {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+
+.gam-log-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.gam-log-badge.authorized { background: #f0fdf4; color: #166534; }
+.gam-log-badge.denied     { background: #fef2f2; color: #991b1b; }
+.gam-log-badge.visitor    { background: #fffbeb; color: #92400e; }
+.gam-log-badge.exited     { background: #ede9fe; color: #4c1d95; }
+
+.gam-log-time {
+  font-size: 10.5px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+/* ── Shared card ────────────────────────────────────────── */
+.gam-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.gam-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fafafa;
+}
+
+.gam-card-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.gam-badge-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #fde68a;
+}
+
+/* ── Cross-gate flags ───────────────────────────────────── */
+.gam-flags-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.gam-flags-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.gam-flag-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #fef9c3;
+  background: #fffdf0;
+}
+.gam-flag-item:last-child { border-bottom: none; }
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .gam-page { padding: 16px; }
+  .gam-scan-list-header,
+  .gam-scan-row {
+    grid-template-columns: 90px 1fr 70px;
+  }
+  .gam-scan-list-header > :nth-child(4),
+  .gam-scan-list-header > :nth-child(5),
+  .gam-scan-row > :nth-child(4),
+  .gam-scan-row > :nth-child(5) { display: none; }
+}

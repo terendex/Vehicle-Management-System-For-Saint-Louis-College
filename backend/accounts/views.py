@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.utils import timezone
 from .models import User, AuditLog
 from .serializers import (
     UserSerializer,
@@ -668,4 +669,93 @@ class PasswordResetConfirmView(APIView):
         user.must_change_password = False
         user.save(update_fields=['password', 'must_change_password'])
 
-        return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
+        return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
+
+
+# ──────────────────────────────────────────────
+#  Guard QR Login & Shift Management
+# ──────────────────────────────────────────────
+
+class QRLoginView(APIView):
+    """Guard scans their QR badge — clocks out previous shift, creates new shift, issues JWT."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from scanning.models import GuardShift
+        from scanning.serializers import GuardShiftSerializer
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        token_str  = (request.data.get('qr_token') or '').strip()
+        gate_param = (request.data.get('gate')     or '').strip()
+
+        if not token_str:
+            return Response({'error': 'qr_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            guard = User.objects.get(qr_token=token_str, role='security', is_active=True)
+        except (User.DoesNotExist, ValueError):
+            return Response({'error': 'Invalid or unrecognized QR code.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        valid_gates = ('gate1', 'gate4')
+        gate = gate_param if gate_param in valid_gates else guard.gate_assignment
+        if not gate or gate not in valid_gates:
+            return Response(
+                {'error': 'Gate selection required. Please choose a gate before scanning.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+
+        # Clock out whoever is currently active at this gate (the previous guard)
+        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
+            clocked_out_at=now,
+            clocked_out_by=guard,
+        )
+
+        shift   = GuardShift.objects.create(guard=guard, gate=gate)
+        refresh = RefreshToken.for_user(guard)
+
+        return Response({
+            'access':  str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id':                   guard.id,
+                'user_code':            guard.user_code,
+                'full_name':            guard.full_name,
+                'email':                guard.email,
+                'role':                 guard.role,
+                'gate_assignment':      gate,   # shift gate, not profile default
+                'must_change_password': guard.must_change_password,
+            },
+            'shift': GuardShiftSerializer(shift).data,
+        })
+
+
+class GuardQRView(APIView):
+    """Admin only: return a guard's QR token for badge printing."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request, pk):
+        guard = get_object_or_404(User, pk=pk, role='security')
+        return Response({
+            'id':       guard.id,
+            'full_name': guard.full_name,
+            'qr_token': str(guard.qr_token),
+        })
+
+
+class RegenerateGuardQRView(APIView):
+    """Admin only: regenerate a guard's QR token (invalidates old badge)."""
+    permission_classes = [IsAdminRole]
+
+    def post(self, request, pk):
+        import uuid as _uuid
+        guard = get_object_or_404(User, pk=pk, role='security')
+        guard.qr_token = _uuid.uuid4()
+        guard.save(update_fields=['qr_token'])
+        log_action(request, AuditLog.Action.USER_UPDATED, target_user=guard,
+                   details=f'QR token regenerated for {guard.full_name}')
+        return Response({'qr_token': str(guard.qr_token)})
+
+
+

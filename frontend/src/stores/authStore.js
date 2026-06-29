@@ -170,6 +170,35 @@ const useAuthStore = create((set, get) => {
       window.location.href = '/login'
     },
 
+    /** Guard QR scan login — replaces the current session with the scanned guard's session. */
+    qrLogin: async (qr_token, gate) => {
+      set({ isLoading: true, error: null })
+      try {
+        const { qrLogin: qrLoginApi } = await import('../api/scanning')
+        const { data } = await qrLoginApi(qr_token, gate)
+
+        const user         = data.user
+        const accessToken  = data.access
+        const refreshToken = data.refresh
+
+        localStorage.setItem('access_token',  accessToken)
+        localStorage.setItem('refresh_token', refreshToken)
+        localStorage.setItem('user', JSON.stringify(user))
+
+        set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false, error: null })
+        _scheduleRefresh(accessToken, _doRefresh, get().logout)
+
+        return user
+      } catch (error) {
+        const message =
+          error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'QR scan failed. Please try again.'
+        set({ isLoading: false, error: message })
+        throw new Error(message)
+      }
+    },
+
     /** Called after a successful password change to clear the must_change_password flag in local state. */
     clearMustChangePassword: () => {
       set((state) => {

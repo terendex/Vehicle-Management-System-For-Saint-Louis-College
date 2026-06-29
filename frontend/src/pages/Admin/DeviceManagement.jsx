@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
 import { usersApi } from '../../api/users'
-import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
+import { useCameraContext } from '../../context/CameraContext'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -212,21 +212,19 @@ export default function DeviceManagement() {
   const [nextName, setNextName] = useState(null)
   const [modal,    setModal]    = useState(null)
 
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') || '' : ''
-
   const {
     cameras:        streamCams,
     addCamera:      connectCamera,
     removeCamera:   disconnectCamera,
     disconnectAll,
     registerCanvas,
-  } = useMultiRtspStream(token)
+  } = useCameraContext()
 
   // Match a DB camera to its stream instance by name
   const getStreamCam    = (dbCam) => streamCams.find(c => c.name === dbCam.name)
   const isConnected     = (dbCam) => !!getStreamCam(dbCam)
 
-  const handleConnect    = (cam) => connectCamera(cam.name, cam.rtsp_url)
+  const handleConnect    = (cam) => connectCamera(cam.name, cam.rtsp_url, cam.assignment)
   const handleDisconnect = (cam) => {
     const sc = getStreamCam(cam)
     if (sc) disconnectCamera(sc.id)
