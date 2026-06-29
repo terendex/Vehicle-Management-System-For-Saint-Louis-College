@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from accounts.views import QRLoginView
 
 urlpatterns = [
     path('',                        views.ScanView.as_view(),              name='scan'),
@@ -16,4 +17,9 @@ urlpatterns = [
     path('ml/stats/',               views.MLStatsView.as_view(),           name='ml-stats'),
     path('ml/retrain/',             views.TriggerRetrainView.as_view(),    name='ml-retrain'),
     path('test-rtsp/',              views.TestRtspView.as_view(),          name='test-rtsp'),
+    # Dual-gate system
+    path('manual-entry/',           views.ManualEntryView.as_view(),       name='manual-entry'),
+    path('qr-login/',               QRLoginView.as_view(),                 name='qr-login'),
+    path('current-shifts/',         views.CurrentShiftsView.as_view(),     name='current-shifts'),
+    path('shifts/',                 views.GuardShiftListView.as_view(),    name='guard-shifts'),
 ]

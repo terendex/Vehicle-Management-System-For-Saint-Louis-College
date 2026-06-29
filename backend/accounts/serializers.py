@@ -26,7 +26,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'guard_qr_secret']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'qr_token']
 
     def get_photo_url(self, obj):
         if not obj.photo:
@@ -43,7 +43,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'role', 'photo']
+        fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment']
 
     def validate_email(self, value):
         user = self.instance
@@ -58,7 +58,8 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'password', 'confirm_password', 'role']
+        fields = ['full_name', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
+        extra_kwargs = {'gate_assignment': {'required': False, 'allow_null': True, 'allow_blank': True}}
 
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
@@ -147,6 +148,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'role': self.user.role,
             'must_change_password': self.user.must_change_password,
             'photo_url': photo_url,
+            'gate_assignment': self.user.gate_assignment,
         }
         return data
 

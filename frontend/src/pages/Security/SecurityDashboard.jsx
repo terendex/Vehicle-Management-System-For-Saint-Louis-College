@@ -3,9 +3,11 @@ import './SecurityDashboard.css'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { usersApi } from '../../api/users'
 import { getAccessLogs } from '../../api/scanning'
+import { camerasApi } from '../../api/cameras'
+import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import {
   ScanLine, Clock, TrendingUp, ClipboardList,
-  CheckCircle, XCircle, RefreshCw
+  CheckCircle, XCircle, RefreshCw, Video, Wifi,
 } from 'lucide-react'
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
@@ -44,6 +46,85 @@ function ScanRow({ log }) {
         {log.status || 'unknown'}
       </span>
       <span className="sd-scan-time">{time}</span>
+    </div>
+  )
+}
+
+function CameraMonitor() {
+  const token = localStorage.getItem('access_token') || ''
+  const { cameras, activeCamId, setActiveCamId, activeCam, addCamera, registerCanvas } =
+    useMultiRtspStream(token)
+
+  useEffect(() => {
+    camerasApi.list({ assignment: 'entry' })
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url)))
+      .catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isLive = cameras.some(c => c.streamConnected)
+
+  return (
+    <div className="sd-cam-panel">
+      <div className="sd-cam-head">
+        <span className="sd-cam-label"><Video size={14} /> CCTV Monitor</span>
+        <span className={`sd-live-pill ${isLive ? 'live' : cameras.length === 0 ? 'none' : 'connecting'}`}>
+          <span className="sd-live-dot" />
+          {cameras.length === 0 ? 'No Cameras' : isLive ? 'Live' : 'Connecting…'}
+        </span>
+      </div>
+
+      <div className="sd-cam-viewport">
+        {cameras.length > 0 ? (
+          <>
+            {cameras.map((cam, idx) => (
+              <div
+                key={cam.id}
+                style={{
+                  display: activeCamId === cam.id ? 'block' : 'none',
+                  width: '100%',
+                  ...(idx > 0 ? { position: 'absolute', inset: 0 } : {}),
+                }}
+              >
+                <canvas
+                  ref={el => registerCanvas(cam.id, el)}
+                  style={{ width: '100%', display: 'block', background: '#000', minHeight: 300 }}
+                />
+              </div>
+            ))}
+            {activeCam && !activeCam.streamConnected && activeCam.wsActive && (
+              <div className="sd-cam-overlay">
+                <div className="sd-cam-spinner" />
+                <p>{activeCam.statusMsg || 'Connecting…'}</p>
+              </div>
+            )}
+            <div className="sd-cam-nametag">
+              <span className={`sd-cam-dot ${activeCam?.streamConnected ? 'live' : 'wait'}`} />
+              {activeCam?.name || 'Camera'}
+            </div>
+          </>
+        ) : (
+          <div className="sd-cam-empty">
+            <Wifi size={36} />
+            <p>No entry cameras configured.</p>
+            <span>Ask your administrator to add cameras.</span>
+          </div>
+        )}
+      </div>
+
+      {cameras.length > 1 && (
+        <div className="sd-cam-strip">
+          {cameras.map(cam => (
+            <button
+              key={cam.id}
+              className={`sd-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`}
+              onClick={() => setActiveCamId(cam.id)}
+            >
+              <span className={`sd-cam-dot ${cam.streamConnected ? 'live' : cam.wsActive ? 'wait' : 'off'}`} />
+              {cam.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -136,6 +217,8 @@ export default function SecurityDashboard() {
                 color="#D97706"
               />
             </div>
+
+            <CameraMonitor />
 
             <div className="sd-recent-card">
               <div className="sd-recent-head">

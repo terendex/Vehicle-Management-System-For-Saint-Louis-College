@@ -1036,6 +1036,34 @@
   color: #B91C1C;
 }
 
+/* ===== Violation history section ===== */
+
+.od-history-section {
+  margin-top: 20px;
+  border-top: 1px dashed #E2E6EE;
+  padding-top: 16px;
+}
+
+.od-history-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 20px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #059669;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.od-violations-table--history thead tr {
+  background: #F0FDF4;
+}
+
+.od-violations-table--history th {
+  color: #065F46;
+}
+
 /* ===== Parking card ===== */
 
 .od-parking-summary {

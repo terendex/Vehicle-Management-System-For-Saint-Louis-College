@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from .models import Violation
 from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
@@ -85,7 +86,11 @@ class GuardViolationsView(APIView):
 
 
 class MyViolationsView(APIView):
-    """Returns released violations for the authenticated vehicle owner."""
+    """Returns violations visible to the authenticated vehicle owner.
+    Owners see violations that have been released to them (notified)
+    as well as all resolved violations (history), regardless of release status.
+    Under-review violations that haven't been released yet remain hidden.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -105,7 +110,10 @@ class MyViolationsView(APIView):
         if not vehicle:
             return Response([])
 
+        # Show released violations (notified) + all resolved violations (history)
         violations = Violation.objects.filter(
             vehicle=vehicle,
+        ).filter(
+            Q(is_released=True) | Q(is_resolved=True)
         ).order_by('-issued_at')
         return Response(ViolationSerializer(violations, many=True, context={'request': request}).data)

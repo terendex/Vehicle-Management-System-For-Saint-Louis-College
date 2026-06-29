@@ -1,37 +1,78 @@
-import { NavLink, useNavigate, useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, useNavigate } from 'react-router-dom'
 import {
   ShieldCheck,
   ParkingCircle,
   AlertTriangle,
   LogOut,
-  QrCode,
-  DoorOpen
+  MapPin,
+  Clock,
+  DoorOpen,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
-import './AdminLayout.css' // Reusing the exact same layout styles
+import { getCurrentShifts } from '../../api/scanning'
+import './AdminLayout.css'
+import './SecurityLayout.css'
+
+const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
+
+function useCurrentShift(gate) {
+  const [shift, setShift] = useState(null)
+  useEffect(() => {
+    if (!gate) return
+    getCurrentShifts()
+      .then(r => setShift(r.data?.[gate] ?? null))
+      .catch(() => {})
+  }, [gate])
+  return shift
+}
+
+function shiftDuration(clockedInAt) {
+  if (!clockedInAt) return null
+  const mins = Math.floor((Date.now() - new Date(clockedInAt).getTime()) / 60000)
+  if (mins < 60) return `${mins}m`
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`
+}
 
 export default function SecurityLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
-  const { gate } = useParams()
+  const gate      = user?.gate_assignment
+  const gateLabel = GATE_LABELS[gate] || gate || 'Gate'
+  const shift     = useCurrentShift(gate)
+
+  const handleLogout = () => {
+    logout()
+    navigate('/guard-login')
+  }
 
   const entryPath = gate ? `/security/gate/${gate}/entries` : '/security/entries'
 
   const navItems = [
-    { name: gate ? `Entry – Gate ${gate}` : 'Entry Management', path: entryPath, icon: <ShieldCheck size={18} /> },
-    { name: 'Parking', path: '/security/parking', icon: <ParkingCircle size={18} /> },
+    { name: 'Entry Management',  path: entryPath,              icon: <ShieldCheck size={18} /> },
+    { name: 'Parking',           path: '/security/parking',    icon: <ParkingCircle size={18} /> },
     { name: 'Violations Issued', path: '/security/violations', icon: <AlertTriangle size={18} /> },
   ]
 
   return (
-    <div className="admin-layout">
+    <div className="admin-layout security-layout">
 
       {/* Sidebar */}
       <aside className="admin-sidebar">
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
-          <span className="brand-text">SLC Security</span>
+          <div>
+            <span className="brand-text">SLC Security</span>
+            {gate && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                <MapPin size={10} style={{ color: '#10b981', flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: '#10b981', fontWeight: 600, letterSpacing: 0.3 }}>
+                  {gateLabel}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         <nav className="sidebar-nav">
@@ -81,24 +122,18 @@ export default function SecurityLayout({ children, fillHeight = false }) {
             )}
             <div className="user-info">
               <span className="user-name">{user?.full_name || 'Security Guard'}</span>
-              <span className="user-role">{user?.user_code || 'Security Personnel'}</span>
+              {shift?.clocked_in_at ? (
+                <span className="user-role" style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <Clock size={9} />
+                  On duty · {shiftDuration(shift.clocked_in_at)}
+                </span>
+              ) : (
+                <span className="user-role">{gateLabel} · Security</span>
+              )}
             </div>
           </div>
           <div className="footer-actions">
-            <button
-              className="action-btn"
-              title="Guard QR Login Page"
-              onClick={() => navigate('/guard-login')}
-            >
-              <QrCode size={18} />
-            </button>
-            <button className="logout-btn" onClick={() => {
-              // Guards return to the QR login page rather than the main /login form
-              localStorage.removeItem('access_token')
-              localStorage.removeItem('refresh_token')
-              localStorage.removeItem('user')
-              window.location.href = '/guard-login'
-            }}>
+            <button className="logout-btn" onClick={handleLogout}>
               <LogOut size={16} />
               <span>Log Out</span>
             </button>

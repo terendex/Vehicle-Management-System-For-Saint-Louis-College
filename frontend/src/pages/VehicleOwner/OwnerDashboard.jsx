@@ -432,79 +432,125 @@ export default function OwnerDashboard() {
                 </div>
               ) : (
                 <>
-                  {(() => {
-                    const totalOutstanding = violations
-                      .filter(v => !v.is_resolved)
-                      .reduce((sum, v) => sum + parseFloat(v.fine_amount || 0), 0)
-                    return totalOutstanding > 0 ? (
-                      <div className="od-outstanding-banner">
-                        <AlertTriangle size={15} />
-                        <span>Outstanding fines: <strong>₱{totalOutstanding.toFixed(2)}</strong> — please settle at the CDSO office.</span>
-                      </div>
-                    ) : null
-                  })()}
-                  <div className="od-violations-table-wrap">
-                    <table className="od-violations-table">
-                      {evidenceLightbox && (
-                        <div
-                          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                  {evidenceLightbox && (
+                    <div
+                      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                      onClick={() => setEvidenceLightbox(null)}
+                    >
+                      <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+                        <img src={evidenceLightbox} alt="violation evidence" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 10, display: 'block', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }} />
+                        <button
                           onClick={() => setEvidenceLightbox(null)}
-                        >
-                          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
-                            <img src={evidenceLightbox} alt="violation evidence" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 10, display: 'block', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }} />
-                            <button
-                              onClick={() => setEvidenceLightbox(null)}
-                              style={{ position: 'absolute', top: -12, right: -12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}
-                            ><X size={14} /></button>
+                          style={{ position: 'absolute', top: -12, right: -12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}
+                        ><X size={14} /></button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Active violations ── */}
+                  {(() => {
+                    const active = violations.filter(v => !v.is_resolved)
+                    const totalOutstanding = active.reduce((sum, v) => sum + parseFloat(v.fine_amount || 0), 0)
+                    return (
+                      <>
+                        {totalOutstanding > 0 && (
+                          <div className="od-outstanding-banner">
+                            <AlertTriangle size={15} />
+                            <span>Outstanding fines: <strong>₱{totalOutstanding.toFixed(2)}</strong> — please settle at the CDSO office.</span>
                           </div>
+                        )}
+                        {active.length > 0 && (
+                          <div className="od-violations-table-wrap">
+                            <table className="od-violations-table">
+                              <thead>
+                                <tr>
+                                  <th>Violation</th>
+                                  <th>Notes</th>
+                                  <th>Fine</th>
+                                  <th>Evidence</th>
+                                  <th>Date Issued</th>
+                                  <th>Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {active.map(v => (
+                                  <tr key={v.id} className="od-viol-active">
+                                    <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                                    <td className="od-viol-notes">{v.notes || '—'}</td>
+                                    <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
+                                    <td>
+                                      {v.evidence_url ? (
+                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
+                                          <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                          <ZoomIn size={11} className="od-evidence-zoom" />
+                                        </button>
+                                      ) : (
+                                        <span className="od-no-evidence"><Image size={12} /></span>
+                                      )}
+                                    </td>
+                                    <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                                    <td>
+                                      <span className="od-viol-badge notified">Pending Payment</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+
+                  {/* ── Resolved history ── */}
+                  {(() => {
+                    const resolved = violations.filter(v => v.is_resolved)
+                    if (resolved.length === 0) return null
+                    return (
+                      <div className="od-history-section">
+                        <div className="od-history-label">
+                          <ShieldCheck size={13} /> Violation History — Resolved
                         </div>
-                      )}
-                      <thead>
-                        <tr>
-                          <th>Violation</th>
-                          <th>Notes</th>
-                          <th>Fine</th>
-                          <th>Evidence</th>
-                          <th>Date Issued</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {violations.map(v => {
-                          const badge = v.is_resolved
-                            ? { cls: 'resolved',   label: 'Resolved' }
-                            : v.is_released
-                            ? { cls: 'notified',   label: 'Pending Payment' }
-                            : { cls: 'review',     label: 'Under Review' }
-                          return (
-                            <tr key={v.id} className={v.is_resolved ? 'od-viol-resolved' : 'od-viol-active'}>
-                              <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
-                              <td className="od-viol-notes">{v.notes || '—'}</td>
-                              <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
-                              <td>
-                                {v.evidence_url ? (
-                                  <button
-                                    className="od-evidence-thumb-btn"
-                                    onClick={() => setEvidenceLightbox(v.evidence_url)}
-                                    title="View evidence"
-                                  >
-                                    <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
-                                    <ZoomIn size={11} className="od-evidence-zoom" />
-                                  </button>
-                                ) : (
-                                  <span className="od-no-evidence"><Image size={12} /></span>
-                                )}
-                              </td>
-                              <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
-                              <td>
-                                <span className={`od-viol-badge ${badge.cls}`}>{badge.label}</span>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                        <div className="od-violations-table-wrap">
+                          <table className="od-violations-table od-violations-table--history">
+                            <thead>
+                              <tr>
+                                <th>Violation</th>
+                                <th>Notes</th>
+                                <th>Fine</th>
+                                <th>Evidence</th>
+                                <th>Date Issued</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {resolved.map(v => (
+                                <tr key={v.id} className="od-viol-resolved">
+                                  <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                                  <td className="od-viol-notes">{v.notes || '—'}</td>
+                                  <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
+                                  <td>
+                                    {v.evidence_url ? (
+                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
+                                        <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                        <ZoomIn size={11} className="od-evidence-zoom" />
+                                      </button>
+                                    ) : (
+                                      <span className="od-no-evidence"><Image size={12} /></span>
+                                    )}
+                                  </td>
+                                  <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                                  <td>
+                                    <span className="od-viol-badge resolved">Resolved</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>
