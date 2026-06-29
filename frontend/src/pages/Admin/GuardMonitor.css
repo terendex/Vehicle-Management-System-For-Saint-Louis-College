@@ -180,6 +180,15 @@
   flex-shrink: 0;
 }
 
+.gm-guard-photo {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #E2E6EE;
+  flex-shrink: 0;
+}
+
 .gm-card.idle .gm-guard-avatar {
   background: #d1d5db;
   color: #6b7280;

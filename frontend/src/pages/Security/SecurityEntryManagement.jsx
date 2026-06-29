@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, DoorOpen,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -14,6 +14,34 @@ import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
 import './SecurityEntryManagement.css'
+
+// ─── OnDutyPanel ──────────────────────────────────────────────────────────────
+function OnDutyPanel({ guard, gate }) {
+  if (!guard) return null
+  const gateLabel = GATE_LABELS[gate] || (gate ? `Gate ${gate}` : 'Main Gate')
+  return (
+    <div className="em-on-duty">
+      <div className="em-on-duty-left">
+        {guard.photo_url ? (
+          <img src={guard.photo_url} alt={guard.full_name} className="em-on-duty-photo" />
+        ) : (
+          <div className="em-on-duty-avatar">
+            {guard.full_name ? guard.full_name.charAt(0).toUpperCase() : 'G'}
+          </div>
+        )}
+        <div className="em-on-duty-info">
+          <span className="em-on-duty-label">On Duty</span>
+          <span className="em-on-duty-name">{guard.full_name || 'Guard'}</span>
+          <span className="em-on-duty-code">{guard.user_code || '—'}</span>
+        </div>
+      </div>
+      <div className="em-on-duty-gate">
+        <DoorOpen size={13} />
+        <span>{gateLabel}</span>
+      </div>
+    </div>
+  )
+}
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
@@ -568,6 +596,9 @@ export default function SecurityEntryManagement() {
               )}
             </div>
           </div>
+
+          {/* On Duty guard panel — shown below camera card */}
+          <OnDutyPanel guard={user} gate={user?.gate_assignment} />
 
           {/* Right panel */}
           <div className="em-right">

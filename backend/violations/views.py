@@ -23,9 +23,9 @@ class ViolationViewSet(viewsets.ModelViewSet):
         if plate and 'vehicle' not in self.request.data:
             vehicle = get_object_or_404(Vehicle, plate_number=plate)
             fine = Violation.compute_fine(vehicle)
-            serializer.save(vehicle=vehicle, fine_amount=fine)
+            serializer.save(vehicle=vehicle, fine_amount=fine, issued_by=self.request.user)
         else:
-            serializer.save()
+            serializer.save(issued_by=self.request.user)
 
     def _notify_resolved(self, instance):
         try:
@@ -65,6 +65,24 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation.is_released = False
         violation.save(update_fields=['is_released'])
         return Response(ViolationSerializer(violation).data)
+
+
+class GuardViolationsView(APIView):
+    """Returns violations issued by the currently authenticated security guard."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.utils import timezone
+        date_str = request.query_params.get('date', '')
+        qs = Violation.objects.filter(issued_by=request.user).select_related('vehicle__user').order_by('-issued_at')
+        if date_str:
+            try:
+                from datetime import date as _date
+                d = _date.fromisoformat(date_str)
+                qs = qs.filter(issued_at__date=d)
+            except ValueError:
+                pass
+        return Response(ViolationSerializer(qs, many=True, context={'request': request}).data)
 
 
 class MyViolationsView(APIView):

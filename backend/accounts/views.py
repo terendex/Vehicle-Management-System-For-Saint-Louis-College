@@ -111,10 +111,13 @@ class UserDetailView(generics.RetrieveAPIView):
 
 
 class UserUpdateView(generics.UpdateAPIView):
-    """Edit user details (full_name, email, role)."""
+    """Edit user details (full_name, email, role, photo)."""
     queryset           = User.objects.all()
     serializer_class   = UserUpdateSerializer
     permission_classes = [IsAdminRole]
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), 'request': self.request}
 
     def perform_update(self, serializer):
         old_user = serializer.instance
@@ -124,7 +127,9 @@ class UserUpdateView(generics.UpdateAPIView):
             new_val = serializer.validated_data.get(field, old_val)
             if old_val != new_val:
                 changes.append(f"{field}: '{old_val}' → '{new_val}'")
-        
+        if 'photo' in serializer.validated_data:
+            changes.append('photo updated')
+
         user = serializer.save()
         log_action(self.request, AuditLog.Action.USER_UPDATED, target_user=user, details='; '.join(changes))
 
@@ -311,16 +316,13 @@ class DashboardStatsView(APIView):
 # ──────────────────────────────────────────────
 
 class AuditLogListView(generics.ListAPIView):
-    """List audit logs - admin sees all, security sees only their own actions."""
+    """List audit logs - admin only."""
     serializer_class   = AuditLogSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminRole]
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        if self.request.user.role == 'admin':
-            qs = AuditLog.objects.select_related('actor', 'target_user').all()
-        else:
-            qs = AuditLog.objects.select_related('actor', 'target_user').filter(actor=self.request.user)
+        qs = AuditLog.objects.select_related('actor', 'target_user').all()
 
         action = self.request.query_params.get('action', '').strip()
         if action:
@@ -440,6 +442,96 @@ class MyRegistrationView(APIView):
 # ──────────────────────────────────────────────
 #  Password Reset (unauthenticated)
 # ──────────────────────────────────────────────
+
+# ──────────────────────────────────────────────
+#  Guard QR Login (passwordless, for gate stations)
+# ──────────────────────────────────────────────
+
+class GuardQrLoginView(APIView):
+    """
+    Authenticate a security guard by scanning their QR badge.
+    QR format: SLC-GUARD:{user_code}:{guard_qr_secret}
+    Logs out any previously active guard session implicitly — the new JWT supersedes the old one.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        import uuid as _uuid
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        qr_data = (request.data.get('qr_data') or '').strip()
+        if not qr_data.startswith('SLC-GUARD:'):
+            return Response({'detail': 'Invalid QR code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            _, user_code, secret_str = qr_data.split(':', 2)
+            secret = _uuid.UUID(secret_str)
+        except (ValueError, AttributeError):
+            return Response({'detail': 'Malformed QR code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(user_code=user_code, guard_qr_secret=secret, role='security', is_active=True)
+        except User.DoesNotExist:
+            return Response({'detail': 'QR code not recognised or guard account is disabled.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        refresh = RefreshToken.for_user(user)
+        refresh['role'] = user.role
+        refresh['full_name'] = user.full_name
+        refresh['email'] = user.email
+        refresh['must_change_password'] = user.must_change_password
+
+        AuditLog.objects.create(
+            actor=user,
+            action=AuditLog.Action.SCAN,
+            details=f'Guard QR login: {user.full_name} ({user.user_code})',
+            ip_address=get_client_ip(request),
+        )
+
+        return Response({
+            'access':  str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id':                 user.id,
+                'user_code':          user.user_code,
+                'full_name':          user.full_name,
+                'email':              user.email,
+                'role':               user.role,
+                'must_change_password': user.must_change_password,
+                'photo_url': request.build_absolute_uri(user.photo.url) if user.photo else None,
+            },
+        })
+
+
+class GuardQrCodeView(APIView):
+    """
+    Generate (or retrieve) a guard's QR secret.
+    Admin: GET /accounts/guard-qr/{pk}/ — returns the QR payload string for that guard.
+    The guard themselves can also hit this endpoint to get their own code.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        import uuid as _uuid
+
+        if request.user.role == 'admin':
+            user = get_object_or_404(User, pk=pk, role='security')
+        elif request.user.pk == int(pk) and request.user.role == 'security':
+            user = request.user
+        else:
+            return Response({'detail': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not user.guard_qr_secret:
+            user.guard_qr_secret = _uuid.uuid4()
+            User.objects.filter(pk=user.pk).update(guard_qr_secret=user.guard_qr_secret)
+
+        qr_payload = f'SLC-GUARD:{user.user_code}:{user.guard_qr_secret}'
+        return Response({
+            'user_code':   user.user_code,
+            'full_name':   user.full_name,
+            'qr_payload':  qr_payload,
+            'photo_url':   request.build_absolute_uri(user.photo.url) if user.photo else None,
+        })
+
 
 class PasswordResetRequestView(APIView):
     """Step 1: accept an email, generate a token, send a reset link."""

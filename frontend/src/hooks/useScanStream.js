@@ -27,7 +27,7 @@ function getTrackColor(track) {
 // 0.4  → snappier, ~120ms.
 const LERP = 0.25;
 
-export function useScanStream(token, cameraOn) {
+export function useScanStream(token, cameraOn, gateId = 'main') {
   const [scanning, setScanning]               = useState(false);
   const [connected, setConnected]             = useState(false);
   const [results, setResults]                 = useState([]);
@@ -168,7 +168,7 @@ export function useScanStream(token, cameraOn) {
     setResults([]);
     startRenderLoop();
 
-    const socket = new WebSocket(`${WS_BASE}/ws/scan/live/?token=${token}`);
+    const socket = new WebSocket(`${WS_BASE}/ws/scan/live/?token=${token}&gate=${gateId}`);
     wsRef.current = socket;
 
     socket.onopen = () => setConnected(true);
@@ -285,7 +285,7 @@ export function useScanStream(token, cameraOn) {
       }
       stopRenderLoop();
     };
-  }, [cameraOn, token, startRenderLoop, stopRenderLoop]);
+  }, [cameraOn, token, gateId, startRenderLoop, stopRenderLoop]);
 
   return {
     scanning,

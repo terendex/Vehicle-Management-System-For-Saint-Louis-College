@@ -23,8 +23,14 @@ export const usersApi = {
     return data
   },
 
-  /** Update user details (full_name, email, role). */
+  /** Update user details (full_name, email, role, optional photo). */
   updateUser: async (id, userData) => {
+    if (userData.photo instanceof File) {
+      const fd = new FormData()
+      Object.entries(userData).forEach(([k, v]) => { if (v !== null && v !== undefined) fd.append(k, v) })
+      const { data } = await api.patch(`/accounts/users/${id}/update/`, fd)
+      return data
+    }
     const { data } = await api.patch(`/accounts/users/${id}/update/`, userData)
     return data
   },

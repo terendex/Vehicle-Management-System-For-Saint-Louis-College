@@ -113,6 +113,46 @@ const useAuthStore = create((set, get) => {
       }
     },
 
+    /**
+     * QR-based guard login: logs out any currently active guard session and logs in the new one.
+     * Called from the guard QR login page at the gate station.
+     */
+    guardQrLogin: async (qr_data) => {
+      set({ isLoading: true, error: null })
+      try {
+        const data = await authApi.guardQrLogin(qr_data)
+
+        const user = data.user
+        const accessToken = data.access
+        const refreshToken = data.refresh
+
+        // Silently expire the previous session by overwriting tokens
+        _clearTimer()
+        localStorage.setItem('access_token', accessToken)
+        localStorage.setItem('refresh_token', refreshToken)
+        localStorage.setItem('user', JSON.stringify(user))
+
+        set({
+          user,
+          accessToken,
+          refreshToken,
+          isAuthenticated: true,
+          isLoading: false,
+          error: null,
+        })
+
+        _scheduleRefresh(accessToken, _doRefresh, get().logout)
+
+        return user
+      } catch (error) {
+        const message =
+          error.response?.data?.detail ||
+          'QR login failed. Please try again or contact an administrator.'
+        set({ isLoading: false, error: message })
+        throw new Error(message)
+      }
+    },
+
     logout: () => {
       _clearTimer()
       localStorage.removeItem('access_token')

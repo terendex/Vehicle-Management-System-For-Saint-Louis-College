@@ -72,6 +72,10 @@ class User(AbstractUser):
     address    = models.TextField(null=True, blank=True)
     photo      = models.ImageField(upload_to='owners/', null=True, blank=True)
 
+    # Security-guard QR badge secret — a UUID printed on the guard's badge as a QR code.
+    # Format in QR: "SLC-GUARD:{user_code}:{guard_qr_secret}"
+    guard_qr_secret = models.UUIDField(null=True, blank=True, unique=True)
+
     # Override username to be nullable/blank, email is used for login
     username = models.CharField(max_length=150, blank=True, null=True)
 
