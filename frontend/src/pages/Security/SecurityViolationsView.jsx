@@ -1,23 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Webcam from 'react-webcam'
 import {
-  AlertTriangle, CheckCircle, RefreshCw, Camera,
-  Upload, X, ScanLine, CalendarDays
+  AlertTriangle, CheckCircle, RefreshCw, Camera, CameraOff,
+  ScanLine, CalendarDays, X
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getGuardViolations, createViolation } from '../../api/violations'
+import { scanPlate } from '../../api/scanning'
 import useAuthStore from '../../stores/authStore'
 import './SecurityViolationsView.css'
 
 const TYPE_LABELS = {
-  no_sticker:           'No Sticker',
   expired_registration: 'Expired Registration',
   unauthorized:         'Unauthorized',
   other:                'Other',
 }
 
 const TYPE_COLORS = {
-  no_sticker:           '#7C3AED',
   expired_registration: '#D97706',
   unauthorized:         '#DC2626',
   other:                '#6B7280',
@@ -59,103 +59,136 @@ function ViolationRow({ v }) {
   )
 }
 
-// ─── Issue Violation inline form ───────────────────────────────────────────────
+// ─── Issue Violation — two-step: scan plate → issue ───────────────────────────
 function IssueViolationForm({ onIssued }) {
-  const [plate, setPlate]       = useState('')
-  const [type, setType]         = useState('no_sticker')
-  const [notes, setNotes]       = useState('')
-  const [evidence, setEvidence] = useState(null)
-  const [preview, setPreview]   = useState(null)
-  const [loading, setLoading]   = useState(false)
-  const fileRef                 = useRef(null)
+  const [type, setType]       = useState('unauthorized')
+  const [cameraOn, setCameraOn] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [issuing, setIssuing]   = useState(false)
+  // After plate detected: { plate, preview, file }
+  const [scanned, setScanned]   = useState(null)
+  const webcamRef               = useRef(null)
 
-  const handleFile = (file) => {
-    if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
-    setEvidence(file)
-    setPreview(URL.createObjectURL(file))
+  const handleDetect = async () => {
+    if (!webcamRef.current) return
+    const dataUrl = webcamRef.current.getScreenshot()
+    if (!dataUrl) { toast.error('Failed to capture frame.'); return }
+    setDetecting(true)
+    try {
+      const blob = await (await fetch(dataUrl)).blob()
+      const file = new File([blob], `violation_${Date.now()}.jpg`, { type: 'image/jpeg' })
+      const res  = await scanPlate(file)
+      const results = res.data?.results ?? res.data ?? []
+      const plate = results[0]?.plate_number
+      if (!plate) { toast.error('No plate detected — adjust the camera and try again.'); return }
+      setCameraOn(false)
+      setScanned({ plate: plate.toUpperCase(), preview: dataUrl, file })
+    } catch {
+      toast.error('Scan failed. Try again.')
+    } finally {
+      setDetecting(false)
+    }
   }
 
-  const removeEvidence = () => {
-    if (preview) URL.revokeObjectURL(preview)
-    setEvidence(null); setPreview(null)
-    if (fileRef.current) fileRef.current.value = ''
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!plate.trim()) { toast.error('Plate number is required.'); return }
-    setLoading(true)
+  const handleIssue = async () => {
+    if (!scanned) return
+    setIssuing(true)
     try {
       await createViolation({
-        plate_number: plate.trim().toUpperCase(),
+        plate_number:   scanned.plate,
         violation_type: type,
-        notes,
-        ...(evidence ? { evidence } : {}),
+        notes:          `Gate scan violation`,
+        evidence:       scanned.file,
       })
-      toast.success(`Violation issued for ${plate.trim().toUpperCase()}.`)
-      setPlate(''); setNotes(''); removeEvidence()
+      toast.success(`Violation issued for ${scanned.plate}.`)
+      setScanned(null)
       onIssued()
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
     } finally {
-      setLoading(false)
+      setIssuing(false)
     }
   }
 
+  const reset = () => { setScanned(null); setCameraOn(false) }
+
   return (
-    <form className="sv-issue-form" onSubmit={handleSubmit}>
-      <div className="sv-form-row">
-        <div className="sv-field">
-          <label className="sv-label">License Plate *</label>
-          <input className="sv-input" value={plate} onChange={e => setPlate(e.target.value)}
-            placeholder="e.g. ABC 123" required />
-        </div>
-        <div className="sv-field">
-          <label className="sv-label">Violation Type</label>
-          <select className="sv-select" value={type} onChange={e => setType(e.target.value)}>
-            <option value="no_sticker">No Sticker</option>
-            <option value="expired_registration">Expired Registration</option>
-            <option value="unauthorized">Unauthorized Entry</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-      </div>
+    <div className="sv-issue-form">
 
-      <div className="sv-field">
-        <label className="sv-label">Notes</label>
-        <textarea className="sv-textarea" placeholder="Optional details…"
-          value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
-      </div>
+      {/* Step 1 — detect plate */}
+      {!scanned && (
+        <>
+          <div className="sv-cam-viewport">
+            {cameraOn ? (
+              <Webcam
+                ref={webcamRef}
+                audio={false}
+                screenshotFormat="image/jpeg"
+                screenshotQuality={0.95}
+                videoConstraints={{ facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }}
+                onUserMediaError={() => { toast.error('Could not access camera.'); setCameraOn(false) }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+            ) : (
+              <div className="sv-cam-off">
+                <Camera size={36} color="#9CA3AF" />
+                <p>Point the camera at the license plate</p>
+              </div>
+            )}
+          </div>
 
-      <div className="sv-field">
-        <label className="sv-label">Screenshot Evidence</label>
-        {preview ? (
-          <div className="sv-evidence-preview">
-            <img src={preview} alt="evidence" />
-            <button type="button" className="sv-remove-btn" onClick={removeEvidence}>
-              <X size={12} /> Remove
+          <div className="sv-cam-controls">
+            <button type="button" className="sv-cam-toggle-btn"
+              onClick={() => setCameraOn(v => !v)} disabled={detecting}>
+              {cameraOn ? <><CameraOff size={14} /> Stop</> : <><Camera size={14} /> Start Camera</>}
+            </button>
+            {cameraOn && (
+              <button type="button" className="sv-submit-btn" onClick={handleDetect}
+                disabled={detecting} style={{ flex: 1 }}>
+                {detecting
+                  ? <><div className="sv-spinner sv-spinner-sm" /> Detecting…</>
+                  : <><ScanLine size={15} /> Scan Plate</>}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Step 2 — confirm and issue */}
+      {scanned && (
+        <>
+          <div className="sv-cam-viewport">
+            <div className="sv-cam-result">
+              <img src={scanned.preview} alt="captured" className="sv-cam-result-img" />
+              <div className="sv-cam-result-badge">
+                <ScanLine size={13} /> {scanned.plate}
+              </div>
+            </div>
+          </div>
+
+          <div className="sv-field">
+            <label className="sv-label">Violation Type</label>
+            <select className="sv-select" value={type} onChange={e => setType(e.target.value)} disabled={issuing}>
+              <option value="unauthorized">Unauthorized Entry</option>
+              <option value="expired_registration">Expired Registration</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div className="sv-cam-controls">
+            <button type="button" className="sv-cam-toggle-btn" onClick={reset} disabled={issuing}>
+              <Camera size={14} /> Re-scan
+            </button>
+            <button type="button" className="sv-submit-btn" onClick={handleIssue}
+              disabled={issuing} style={{ flex: 1 }}>
+              {issuing
+                ? <><div className="sv-spinner sv-spinner-sm" /> Issuing…</>
+                : <><AlertTriangle size={15} /> Issue Violation</>}
             </button>
           </div>
-        ) : (
-          <div
-            className="sv-dropzone"
-            onClick={() => fileRef.current?.click()}
-            onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }}
-            onDragOver={e => e.preventDefault()}
-          >
-            <Upload size={20} />
-            <span>Drop image or <u>click to browse</u></span>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
-              onChange={e => handleFile(e.target.files?.[0])} />
-          </div>
-        )}
-      </div>
-
-      <button type="submit" className="sv-submit-btn" disabled={loading}>
-        <AlertTriangle size={15} />
-        {loading ? 'Issuing…' : 'Issue Violation'}
-      </button>
-    </form>
+        </>
+      )}
+    </div>
   )
 }
 

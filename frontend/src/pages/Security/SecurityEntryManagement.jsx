@@ -301,49 +301,56 @@ function OverrideModal({ plate, onClose, onOverridden }) {
   )
 }
 
-// ─── IssueViolationModal ──────────────────────────────────────────────────────
-function IssueViolationModal({ initialPlate = '', onClose }) {
-  const [plate, setPlate]       = useState(initialPlate)
-  const [type, setType]         = useState('no_sticker')
-  const [notes, setNotes]       = useState('')
-  const [evidence, setEvidence] = useState(null)
-  const [preview, setPreview]   = useState(null)
-  const [loading, setLoading]   = useState(false)
-  const fileRef                 = useRef(null)
+// ─── IssueViolationModal — two-step: scan plate → issue ──────────────────────
+function IssueViolationModal({ onClose }) {
+  const [type, setType]         = useState('unauthorized')
+  const [cameraOn, setCameraOn] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [issuing, setIssuing]   = useState(false)
+  const [scanned, setScanned]   = useState(null) // { plate, preview, file }
+  const webcamRef               = useRef(null)
 
-  const handleFile = (file) => {
-    if (!file || !file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
-    setEvidence(file)
-    setPreview(URL.createObjectURL(file))
+  const handleDetect = async () => {
+    if (!webcamRef.current) return
+    const dataUrl = webcamRef.current.getScreenshot()
+    if (!dataUrl) { toast.error('Failed to capture frame.'); return }
+    setDetecting(true)
+    try {
+      const blob = await (await fetch(dataUrl)).blob()
+      const file = new File([blob], `violation_${Date.now()}.jpg`, { type: 'image/jpeg' })
+      const res  = await scanPlate(file)
+      const results = res.data?.results ?? res.data ?? []
+      const plate = results[0]?.plate_number
+      if (!plate) { toast.error('No plate detected — adjust the camera and try again.'); return }
+      setCameraOn(false)
+      setScanned({ plate: plate.toUpperCase(), preview: dataUrl, file })
+    } catch {
+      toast.error('Scan failed. Try again.')
+    } finally {
+      setDetecting(false)
+    }
   }
 
-  const removeEvidence = () => {
-    if (preview) URL.revokeObjectURL(preview)
-    setEvidence(null); setPreview(null)
-    if (fileRef.current) fileRef.current.value = ''
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!plate.trim()) { toast.error('Plate number is required.'); return }
-    setLoading(true)
+  const handleIssue = async () => {
+    if (!scanned) return
+    setIssuing(true)
     try {
       await createViolation({
-        plate_number: plate.trim().toUpperCase(),
+        plate_number:   scanned.plate,
         violation_type: type,
-        notes,
-        ...(evidence ? { evidence } : {}),
+        notes:          `Gate scan violation`,
+        evidence:       scanned.file,
       })
-      toast.success(`Violation issued for ${plate.trim().toUpperCase()}.`)
+      toast.success(`Violation issued for ${scanned.plate}.`)
       onClose()
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
     } finally {
-      setLoading(false)
+      setIssuing(false)
     }
   }
 
-  const inputStyle = { width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit' }
+  const camViewport = { width: '100%', aspectRatio: '4/3', background: '#0d1117', borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }
 
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -352,55 +359,84 @@ function IssueViolationModal({ initialPlate = '', onClose }) {
           <span className="em-modal-title"><AlertTriangle size={17} /> Issue Violation</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="em-modal-body">
-            <div className="em-field">
-              <label className="em-label">License Plate *</label>
-              <input className="em-input" value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required />
-            </div>
-            <div className="em-field">
-              <label className="em-label">Violation Type</label>
-              <select className="em-select" value={type} onChange={e => setType(e.target.value)}>
-                <option value="no_sticker">No Sticker</option>
-                <option value="expired_registration">Expired Registration</option>
-                <option value="unauthorized">Unauthorized Entry</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div className="em-field">
-              <label className="em-label">Notes</label>
-              <textarea className="em-textarea" placeholder="Optional additional details…" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
-            </div>
-            <div className="em-field">
-              <label className="em-label">Screenshot Evidence</label>
-              {preview ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <img src={preview} alt="preview" style={{ maxWidth: '100%', maxHeight: 140, borderRadius: 8, border: '1.5px solid #E2E6EE', objectFit: 'contain' }} />
-                  <button type="button" onClick={removeEvidence} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 6, border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-                    <X size={11} /> Remove
-                  </button>
-                </div>
+
+        <div className="em-modal-body">
+          {/* Step 1 — detect plate */}
+          {!scanned && (
+            <div style={camViewport}>
+              {cameraOn ? (
+                <Webcam
+                  ref={webcamRef}
+                  audio={false}
+                  screenshotFormat="image/jpeg"
+                  screenshotQuality={0.95}
+                  videoConstraints={{ facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }}
+                  onUserMediaError={() => { toast.error('Could not access camera.'); setCameraOn(false) }}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />
               ) : (
-                <div
-                  onClick={() => fileRef.current?.click()}
-                  onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }}
-                  onDragOver={e => e.preventDefault()}
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: 16, border: '2px dashed #C7CAD9', borderRadius: 10, background: '#F8F9FC', cursor: 'pointer' }}
-                >
-                  <Upload size={20} style={{ color: '#9ca3af' }} />
-                  <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Drop image or <span style={{ color: '#2A2B61', fontWeight: 600, textDecoration: 'underline' }}>click to browse</span></p>
-                  <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleFile(e.target.files?.[0])} />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <Camera size={36} color="#9CA3AF" />
+                  <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Point the camera at the license plate</p>
                 </div>
               )}
             </div>
-          </div>
-          <div className="em-modal-foot">
-            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="em-btn em-btn-primary" disabled={loading} style={{ background: '#dc2626', borderColor: '#dc2626' }}>
-              {loading ? <><div className="em-spinner" /> Issuing…</> : 'Issue Violation'}
+          )}
+
+          {/* Step 2 — confirm */}
+          {scanned && (
+            <>
+              <div style={camViewport}>
+                <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                  <img src={scanned.preview} alt="captured" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', background: 'rgba(30,41,59,.85)', color: '#fff', padding: '5px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                    <ScanLine size={13} /> {scanned.plate}
+                  </div>
+                </div>
+              </div>
+              <div className="em-field">
+                <label className="em-label">Violation Type</label>
+                <select className="em-select" value={type} onChange={e => setType(e.target.value)} disabled={issuing}>
+                  <option value="unauthorized">Unauthorized Entry</option>
+                  <option value="expired_registration">Expired Registration</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="em-modal-foot">
+          <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Close</button>
+
+          {!scanned && (
+            <button type="button" className="em-btn em-btn-secondary"
+              onClick={() => setCameraOn(v => !v)} disabled={detecting}>
+              {cameraOn ? <><CameraOff size={14} /> Stop</> : <><Camera size={14} /> Start Camera</>}
             </button>
-          </div>
-        </form>
+          )}
+          {!scanned && cameraOn && (
+            <button type="button" className="em-btn em-btn-primary"
+              onClick={handleDetect} disabled={detecting}
+              style={{ background: '#2A2B61', borderColor: '#2A2B61' }}>
+              {detecting ? <><div className="em-spinner" /> Detecting…</> : <><ScanLine size={14} /> Scan Plate</>}
+            </button>
+          )}
+
+          {scanned && (
+            <button type="button" className="em-btn em-btn-secondary"
+              onClick={() => { setScanned(null); setCameraOn(false) }} disabled={issuing}>
+              <Camera size={14} /> Re-scan
+            </button>
+          )}
+          {scanned && (
+            <button type="button" className="em-btn em-btn-primary"
+              onClick={handleIssue} disabled={issuing}
+              style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+              {issuing ? <><div className="em-spinner" /> Issuing…</> : <><AlertTriangle size={14} /> Issue Violation</>}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -628,7 +664,6 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName }) {
 
       {showViolation && (
         <IssueViolationModal
-          initialPlate={result.plate_number || ''}
           onClose={() => setShowViolation(false)}
         />
       )}

@@ -382,3 +382,96 @@
 }
 
 .sv-submit-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Camera viewport */
+.sv-cam-viewport {
+  width: 100%;
+  aspect-ratio: 4/3;
+  background: #0d1117;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.sv-cam-off {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.sv-cam-off p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.sv-cam-result {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.sv-cam-result-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sv-cam-result-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22, 163, 74, 0.9);
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.sv-cam-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sv-cam-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border-radius: 9px;
+  border: 1.5px solid #D1D5DB;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background .15s;
+}
+
+.sv-cam-toggle-btn:hover:not(:disabled) { background: #F0F2F7; }
+.sv-cam-toggle-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.sv-spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: sv-spin .7s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}

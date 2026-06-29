@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import jsQR from 'jsqr'
 import { QrCode, User, ShieldCheck, AlertCircle, CheckCircle, Camera, CameraOff } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import slcLogo from '../../assets/slclogo.jpg'
 import './GuardQrLoginPage.css'
 
-// Uses BarcodeDetector (Chromium) to decode QR codes from the camera.
-// Falls back gracefully with a manual-paste field if not available.
-
-const SCAN_INTERVAL_MS = 500
+const SCAN_INTERVAL_MS = 250
 
 export default function GuardQrLoginPage() {
   const navigate     = useNavigate()
@@ -19,32 +17,18 @@ export default function GuardQrLoginPage() {
   const [success, setSuccess]     = useState(null)
   const [manualQr, setManualQr]   = useState('')
   const [scanning, setScanning]   = useState(false)
-  const [hasBarcodeApi, setHasBarcodeApi] = useState(false)
 
-  const videoRef     = useRef(null)
-  const streamRef    = useRef(null)
-  const intervalRef  = useRef(null)
-  const detectorRef  = useRef(null)
+  const videoRef      = useRef(null)
+  const canvasRef     = useRef(document.createElement('canvas'))
+  const streamRef     = useRef(null)
+  const intervalRef   = useRef(null)
   const processingRef = useRef(false)
 
-  // If a guard is already logged in, redirect to their gate
   useEffect(() => {
     if (isAuthenticated && user?.role === 'security') {
       navigate('/security/entries', { replace: true })
     }
   }, [isAuthenticated, user, navigate])
-
-  // Check BarcodeDetector API availability
-  useEffect(() => {
-    if ('BarcodeDetector' in window) {
-      BarcodeDetector.getSupportedFormats().then(formats => {
-        if (formats.includes('qr_code')) {
-          detectorRef.current = new BarcodeDetector({ formats: ['qr_code'] })
-          setHasBarcodeApi(true)
-        }
-      }).catch(() => {})
-    }
-  }, [])
 
   const handleQrData = useCallback(async (qr_data) => {
     if (processingRef.current) return
@@ -66,21 +50,42 @@ export default function GuardQrLoginPage() {
     }
   }, [guardQrLogin, navigate])
 
+  const startScanning = useCallback(() => {
+    setScanning(true)
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    intervalRef.current = setInterval(() => {
+      const video = videoRef.current
+      if (!video || processingRef.current) return
+      if (video.readyState < video.HAVE_ENOUGH_DATA) return
+      canvas.width  = video.videoWidth
+      canvas.height = video.videoHeight
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      })
+      if (code) handleQrData(code.data)
+    }, SCAN_INTERVAL_MS)
+  }, [handleQrData])
+
   const startCamera = async () => {
     setError('')
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Camera not available. Make sure the page is served over HTTPS.')
+      return
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }
       })
       streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
-      }
+      videoRef.current.srcObject = stream
+      videoRef.current.play().catch(e => console.error('[GuardQR] play() rejected:', e))
       setCameraOn(true)
       startScanning()
-    } catch {
-      setError('Could not access camera. Please allow camera permission and try again.')
+    } catch (err) {
+      setError(`Camera error: ${err.name} — ${err.message}`)
     }
   }
 
@@ -92,20 +97,6 @@ export default function GuardQrLoginPage() {
       streamRef.current = null
     }
     setCameraOn(false)
-  }
-
-  const startScanning = () => {
-    if (!detectorRef.current) return
-    setScanning(true)
-    intervalRef.current = setInterval(async () => {
-      if (!videoRef.current || processingRef.current) return
-      try {
-        const barcodes = await detectorRef.current.detect(videoRef.current)
-        if (barcodes.length > 0) {
-          handleQrData(barcodes[0].rawValue)
-        }
-      } catch { /* ignore decode errors */ }
-    }, SCAN_INTERVAL_MS)
   }
 
   const handleManualSubmit = (e) => {
@@ -146,40 +137,40 @@ export default function GuardQrLoginPage() {
             </div>
           ) : (
             <>
-              {/* Camera QR Scanner */}
-              {hasBarcodeApi && (
-                <div className="gqr-cam-section">
-                  <div className="gqr-viewport">
-                    {cameraOn ? (
-                      <>
-                        <video ref={videoRef} className="gqr-video" playsInline muted />
-                        <div className="gqr-scan-frame" />
-                        {scanning && <div className="gqr-scan-line" />}
-                        <div className="gqr-cam-badge">
-                          <span className="gqr-cam-dot" /> SCANNING
-                        </div>
-                      </>
-                    ) : (
-                      <div className="gqr-cam-off">
-                        <QrCode size={48} color="#9CA3AF" />
-                        <p>Camera is off</p>
+              {/* Camera QR Scanner — always shown */}
+              <div className="gqr-cam-section">
+                <div className="gqr-viewport">
+                  {/* video always in DOM so srcObject can be set before cameraOn state updates */}
+                  <video ref={videoRef} className="gqr-video" playsInline muted autoPlay />
+                  {!cameraOn && (
+                    <div className="gqr-cam-off" style={{ position: 'absolute', inset: 0 }}>
+                      <QrCode size={48} color="#9CA3AF" />
+                      <p>Camera is off</p>
+                    </div>
+                  )}
+                  {cameraOn && (
+                    <>
+                      <div className="gqr-scan-frame" />
+                      {scanning && <div className="gqr-scan-line" />}
+                      <div className="gqr-cam-badge">
+                        <span className="gqr-cam-dot" /> SCANNING
                       </div>
-                    )}
-                  </div>
-
-                  <button
-                    className={`gqr-btn ${cameraOn ? 'gqr-btn-danger' : 'gqr-btn-primary'}`}
-                    onClick={cameraOn ? stopCamera : startCamera}
-                    disabled={isLoading || !!success}
-                  >
-                    {cameraOn ? <><CameraOff size={16} /> Stop Camera</> : <><Camera size={16} /> Start Camera</>}
-                  </button>
+                    </>
+                  )}
                 </div>
-              )}
+
+                <button
+                  className={`gqr-btn ${cameraOn ? 'gqr-btn-danger' : 'gqr-btn-primary'}`}
+                  onClick={cameraOn ? stopCamera : startCamera}
+                  disabled={isLoading || !!success}
+                >
+                  {cameraOn ? <><CameraOff size={16} /> Stop Camera</> : <><Camera size={16} /> Start Camera</>}
+                </button>
+              </div>
 
               {/* Divider */}
               <div className="gqr-divider">
-                <span>{hasBarcodeApi ? 'or enter QR code manually' : 'Enter QR code payload'}</span>
+                <span>or enter QR code manually</span>
               </div>
 
               {/* Manual fallback */}
