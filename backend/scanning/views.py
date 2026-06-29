@@ -105,6 +105,8 @@ class ScanView(APIView):
                 'sample_id': ml_sample.get("sample_id") if ml_sample else None,
             })
 
+        gate_id = (request.data.get('gate_id') or request.query_params.get('gate_id') or 'main').strip()
+
         for plate_info in plates:
             plate = plate_info["plate_text"]
             bbox = plate_info["bbox"]
@@ -112,7 +114,7 @@ class ScanView(APIView):
             vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate).first()
 
             if not vehicle:
-                AccessLog.objects.create(plate_number=plate, status='unknown', scanned_by=request.user)
+                AccessLog.objects.create(plate_number=plate, status='unknown', gate_id=gate_id, scanned_by=request.user)
                 results.append({
                     'plate_number': plate,
                     'status': 'unknown',
@@ -130,6 +132,7 @@ class ScanView(APIView):
                 vehicle       = vehicle,
                 status        = entry['status'],
                 denied_reason = '' if entry['allowed'] else entry['message'],
+                gate_id       = gate_id,
                 scanned_by    = request.user,
                 snapshot      = request.FILES.get('image'),
             )
@@ -495,10 +498,12 @@ class GuardMonitorView(APIView):
             last_log  = recent.first()
             last_seen = last_log.scanned_at if last_log else None
 
+            photo_url = request.build_absolute_uri(guard.photo.url) if guard.photo else None
             result.append({
                 'id':        guard.id,
                 'full_name': guard.full_name,
                 'user_code': guard.user_code,
+                'photo_url': photo_url,
                 'last_seen': last_seen,
                 'is_active': last_seen is not None,
                 'stats': {

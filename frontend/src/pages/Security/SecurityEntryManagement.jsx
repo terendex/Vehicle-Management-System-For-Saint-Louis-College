@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import Webcam from 'react-webcam'
 import {
   Camera, CameraOff, ScanLine, Upload, RotateCcw,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Video, Plus,
-  Shield, Wifi, Zap
+  Shield, Wifi, Zap, User as UserIcon, DoorOpen
 } from 'lucide-react'
 import { toast } from "sonner"
 import { formatDistanceToNow } from 'date-fns'
@@ -17,6 +18,34 @@ import useAuthStore from '../../stores/authStore'
 import { useScanStream } from '../../hooks/useScanStream'
 import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
 import './SecurityEntryManagement.css'
+
+// ─── OnDutyPanel ──────────────────────────────────────────────────────────────
+function OnDutyPanel({ guard, gate }) {
+  if (!guard) return null
+  const gateLabel = gate ? `Gate ${gate}` : 'Main Gate'
+  return (
+    <div className="em-on-duty">
+      <div className="em-on-duty-left">
+        {guard.photo_url ? (
+          <img src={guard.photo_url} alt={guard.full_name} className="em-on-duty-photo" />
+        ) : (
+          <div className="em-on-duty-avatar">
+            {guard.full_name ? guard.full_name.charAt(0).toUpperCase() : 'G'}
+          </div>
+        )}
+        <div className="em-on-duty-info">
+          <span className="em-on-duty-label">On Duty</span>
+          <span className="em-on-duty-name">{guard.full_name || 'Guard'}</span>
+          <span className="em-on-duty-code">{guard.user_code || '—'}</span>
+        </div>
+      </div>
+      <div className="em-on-duty-gate">
+        <DoorOpen size={13} />
+        <span>{gateLabel}</span>
+      </div>
+    </div>
+  )
+}
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
@@ -629,6 +658,9 @@ function BBoxLegend() {
 // ─── SecurityEntryManagement (page) ──────────────────────────────────────────
 export default function SecurityEntryManagement() {
   const { user } = useAuthStore()
+  const { gate } = useParams()          // e.g. "1" from /security/gate/1/entries
+  const gateId = gate ? `gate${gate}` : 'main'  // stored as "gate1", "gate2", etc.
+
   // Use the same JWT access token as the admin page — no prompt needed
   const token = localStorage.getItem('access_token') || ''
 
@@ -699,7 +731,7 @@ const [webcams, setWebcams]           = useState([{ id: 1, name: 'Main Gate - Fr
     activeTracks,
     videoRef,
     canvasRef,
-  } = useScanStream(token, cameraOn)
+  } = useScanStream(token, cameraOn, gateId)
 
   const {
     cameras:         rtspCameras,
@@ -831,7 +863,7 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
   const handleUploadScan = async () => {
     if (!uploadFile) return
     try {
-      const res = await scanPlate(uploadFile.file)
+      const res = await scanPlate(uploadFile.file, gateId)
       const data = res.data?.results ?? res.data ?? []
       if (data.length) {
         setDisplayResult(data)
@@ -868,7 +900,10 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
         {/* Header */}
         <div className="em-header">
           <div>
-            <h1 className="em-title">Vehicle Entry Management</h1>
+            <h1 className="em-title">
+              Vehicle Entry Management
+              {gate && <span className="em-gate-badge">Gate {gate}</span>}
+            </h1>
             <p className="em-subtitle">
               Scan license plates — entry is decided automatically based on registration and schedule.
             </p>
@@ -1156,6 +1191,9 @@ getSystemSettings().then(r => setEventMode(!!r.data.event_mode_entry)).catch(() 
               )}
             </div>
           </div>
+
+          {/* On Duty guard panel — shown below camera card */}
+          <OnDutyPanel guard={user} gate={gate} />
 
           {/* Right panel */}
           <div className="em-right">
