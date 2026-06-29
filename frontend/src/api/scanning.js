@@ -1,9 +1,10 @@
 import api from './axios'
 
 // Scan a plate image — returns entry decision
-export const scanPlate = (imageBlob) => {
+export const scanPlate = (imageBlob, gateId = 'main') => {
   const formData = new FormData()
   formData.append('image', imageBlob, 'capture.jpg')
+  formData.append('gate_id', gateId)
   return api.post('/scan/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

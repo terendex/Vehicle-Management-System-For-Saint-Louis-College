@@ -21,6 +21,10 @@ class Violation(models.Model):
     is_resolved    = models.BooleanField(default=False)
     is_released    = models.BooleanField(default=False)
     issued_at      = models.DateTimeField(auto_now_add=True)
+    issued_by      = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='issued_violations',
+    )
     evidence       = models.ImageField(upload_to='violations/evidence/', blank=True, null=True)
 
     @classmethod

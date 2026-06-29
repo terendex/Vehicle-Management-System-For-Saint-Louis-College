@@ -7,6 +7,10 @@ export const violationsApi = {
   },
 }
 
+// Guard — violations issued by the current guard
+export const getGuardViolations = (date) =>
+  api.get('/violations/guard/', { params: date ? { date } : {} })
+
 // Admin/CDSO — full CRUD
 export const getAllViolations   = ()      => api.get('/violations/')
 export const releaseViolation   = (id)   => api.post(`/violations/${id}/release/`)

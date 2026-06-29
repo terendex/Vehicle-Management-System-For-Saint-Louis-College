@@ -33,9 +33,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     async def connect(self):
         logger.info("[WS] Connection attempt from %s", self.scope.get("REMOTE_ADDR", "unknown"))
+        qs = self.scope["query_string"].decode()
         token_key = (
-            self.scope["query_string"].decode().split("token=")[-1].split("&")[0]
-            if "token=" in self.scope["query_string"].decode()
+            qs.split("token=")[-1].split("&")[0]
+            if "token=" in qs
             else None
         )
         if not token_key:
@@ -47,6 +48,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("[WS] Invalid token")
             await self.close(code=4001, reason="Invalid token")
             return
+
+        # Read gate_id from query string, e.g. ?token=...&gate=gate1
+        self._gate_id = 'main'
+        for part in qs.split('&'):
+            if part.startswith('gate='):
+                self._gate_id = part[5:] or 'main'
+                break
 
         self._tracker = ProximityTracker()
         self._frame_counter = 0
@@ -432,10 +440,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             plate_number=plate_number
         ).first()
 
+        gate_id = getattr(self, '_gate_id', 'main')
+
         if not vehicle:
             AccessLog.objects.create(
                 plate_number=plate_number,
                 status="unknown",
+                gate_id=gate_id,
                 scanned_by=self._user,
             )
             return {
@@ -458,6 +469,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             vehicle=vehicle,
             status=entry["status"],
             denied_reason="" if entry["allowed"] else entry["message"],
+            gate_id=gate_id,
             scanned_by=self._user,
         )
         try:

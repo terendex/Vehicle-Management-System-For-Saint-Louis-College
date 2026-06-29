@@ -40,7 +40,11 @@ function GuardCard({ guard }) {
       {/* ── Header ── */}
       <div className="gm-card-head">
         <div className="gm-guard-info">
-          <div className="gm-guard-avatar">{guard.full_name.charAt(0).toUpperCase()}</div>
+          {guard.photo_url ? (
+            <img src={guard.photo_url} alt={guard.full_name} className="gm-guard-photo" />
+          ) : (
+            <div className="gm-guard-avatar">{guard.full_name.charAt(0).toUpperCase()}</div>
+          )}
           <div className="gm-guard-meta">
             <span className="gm-guard-name">{guard.full_name}</span>
             <span className="gm-guard-code">{guard.user_code || 'Security'}</span>

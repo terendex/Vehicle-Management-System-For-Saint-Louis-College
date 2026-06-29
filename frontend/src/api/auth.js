@@ -6,6 +6,16 @@ export const authApi = {
     return data
   },
 
+  guardQrLogin: async (qr_data) => {
+    const { data } = await api.post('/accounts/guard-qr-login/', { qr_data })
+    return data
+  },
+
+  getGuardQrCode: async (pk) => {
+    const { data } = await api.get(`/accounts/guard-qr/${pk}/`)
+    return data
+  },
+
   refreshToken: async (refresh) => {
     const { data } = await api.post('/auth/refresh/', { refresh })
     return data

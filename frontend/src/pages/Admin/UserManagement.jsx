@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
+import { authApi } from '../../api/auth'
 import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
-  Check, Circle, MoreVertical, ChevronLeft, ChevronRight
+  Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, Camera
 } from 'lucide-react'
 import './UserManagement.css'
 
@@ -59,6 +61,42 @@ export default function UserManagement() {
 
   // Add type selector: 'user' or 'admin'
   const [addType, setAddType] = useState(null) // null = show selector, 'user' | 'admin' = show form
+
+  // Guard QR badge modal
+  const [qrGuard, setQrGuard] = useState(null)   // { full_name, user_code, qr_payload, photo_url }
+  const [qrLoading, setQrLoading] = useState(false)
+
+  // Guard photo upload
+  const photoInputRef = useRef(null)
+  const [photoUploading, setPhotoUploading] = useState(false)
+
+  const openGuardQr = async (u) => {
+    setActiveMenu(null)
+    setQrLoading(true)
+    try {
+      const data = await authApi.getGuardQrCode(u.id)
+      setQrGuard(data)
+    } catch {
+      alert('Failed to load QR badge. Try again.')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const handlePhotoUpload = async (file) => {
+    if (!file || !selectedUser) return
+    setPhotoUploading(true)
+    try {
+      const updated = await usersApi.updateUser(selectedUser.id, { photo: file })
+      setSelectedUser(updated)
+      fetchUsers()
+    } catch {
+      showResult('Failed to upload photo', 'error')
+    } finally {
+      setPhotoUploading(false)
+      if (photoInputRef.current) photoInputRef.current.value = ''
+    }
+  }
 
   /* ─── result helper ───── */
   const showResult = (message, type = 'success') => {
@@ -420,6 +458,11 @@ export default function UserManagement() {
                         <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
                           <Eye size={15} /> View Profile
                         </button>
+                        {u.role === 'security' && (
+                          <button className="um-dropdown-item view" onClick={() => openGuardQr(u)}>
+                            <QrCode size={15} /> QR Badge
+                          </button>
+                        )}
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
                           onClick={() => { openToggle(u); setActiveMenu(null) }}
@@ -650,11 +693,49 @@ export default function UserManagement() {
             </div>
             <div className="um-modal-body">
               <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                <div
-                  className={`um-user-avatar ${selectedUser.role}`}
-                  style={{ width: 64, height: 64, fontSize: 26, margin: '0 auto 12px' }}
-                >
-                  {selectedUser.full_name.charAt(0).toUpperCase()}
+                <div style={{ position: 'relative', display: 'inline-block', marginBottom: 12 }}>
+                  {selectedUser.photo_url ? (
+                    <img
+                      src={selectedUser.photo_url}
+                      alt={selectedUser.full_name}
+                      style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE', display: 'block' }}
+                    />
+                  ) : (
+                    <div
+                      className={`um-user-avatar ${selectedUser.role}`}
+                      style={{ width: 72, height: 72, fontSize: 28, margin: 0 }}
+                    >
+                      {selectedUser.full_name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {selectedUser.role === 'security' && (
+                    <>
+                      <button
+                        title="Change photo"
+                        disabled={photoUploading}
+                        onClick={() => photoInputRef.current?.click()}
+                        style={{
+                          position: 'absolute', bottom: 0, right: 0,
+                          width: 24, height: 24, borderRadius: '50%',
+                          background: '#2A2B61', border: '2px solid #fff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', padding: 0,
+                        }}
+                      >
+                        {photoUploading
+                          ? <div style={{ width: 10, height: 10, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                          : <Camera size={12} color="#fff" />
+                        }
+                      </button>
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={e => handlePhotoUpload(e.target.files?.[0])}
+                      />
+                    </>
+                  )}
                 </div>
                 <h3 style={{ margin: 0, color: '#1A1D2E', fontSize: 18 }}>{selectedUser.full_name}</h3>
                 <span className={`um-role-badge ${selectedUser.role}`} style={{ marginTop: 8, display: 'inline-flex' }}>
@@ -803,6 +884,49 @@ export default function UserManagement() {
             <div className="um-modal-footer" style={{ justifyContent: 'center' }}>
               <button className="um-btn-primary" onClick={() => setResultModal(null)}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Guard QR Badge modal */}
+      {qrGuard && (
+        <div className="um-modal-overlay" onClick={() => setQrGuard(null)}>
+          <div className="um-modal" style={{ maxWidth: 340 }} onClick={e => e.stopPropagation()}>
+            <div className="um-modal-header">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <QrCode size={18} /> Guard QR Badge
+              </h2>
+              <button className="um-close-btn" onClick={() => setQrGuard(null)}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '20px 24px' }}>
+              {qrGuard.photo_url && (
+                <img src={qrGuard.photo_url} alt={qrGuard.full_name}
+                  style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE' }} />
+              )}
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ margin: 0, fontWeight: 800, fontSize: 16, color: '#1A1D2E' }}>{qrGuard.full_name}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#7C80A3', fontFamily: 'monospace' }}>{qrGuard.user_code}</p>
+              </div>
+              <div style={{ background: '#fff', padding: 12, borderRadius: 12, border: '1.5px solid #E2E6EE' }}>
+                <QRCodeSVG value={qrGuard.qr_payload} size={180} />
+              </div>
+              <p style={{ margin: 0, fontSize: 11, color: '#9CA3B0', textAlign: 'center' }}>
+                Print this badge and give it to the guard. They scan it at the gate station to log in instantly.
+              </p>
+            </div>
+            <div className="um-modal-footer" style={{ justifyContent: 'center' }}>
+              <button className="um-btn-secondary" onClick={() => setQrGuard(null)}>Close</button>
+              <button className="um-btn-primary" onClick={() => window.print()}>Print Badge</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {qrLoading && (
+        <div className="um-modal-overlay">
+          <div style={{ background: '#fff', borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <div className="um-spinner" />
+            <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>Generating QR badge…</p>
           </div>
         </div>
       )}
