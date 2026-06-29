@@ -13,6 +13,7 @@ import {
   Video,
   AlertTriangle,
   MonitorDot,
+  QrCode,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -37,6 +38,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
       { name: 'User Management',      path: '/admin/users',            icon: <Users size={18} /> },
       { name: 'Device Management',    path: '/admin/devices',          icon: <Video size={18} />       },
       { name: 'Guard Monitor',        path: '/admin/guard-monitor',    icon: <MonitorDot size={18} />  },
+      { name: 'Guard Station Login',  path: '/guard-login',            icon: <QrCode size={18} />      },
     ] : []),
     ...((isAdmin || isCdso) ? [
       { name: 'Entry Management', path: '/admin/entries',     icon: <ShieldCheck size={18} /> },

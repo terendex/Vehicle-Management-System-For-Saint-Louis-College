@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight, QrCode } from 'lucide-react'
+import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
@@ -180,21 +180,6 @@ export default function LoginPage() {
             >
               <Car size={18} />
               Apply for a Vehicle Pass
-              <ChevronRight size={16} className="register-cta-arrow" />
-            </button>
-
-            <div className="register-divider">
-              <span>Security guard?</span>
-            </div>
-
-            <button
-              type="button"
-              className="register-cta-btn"
-              style={{ background: '#1A1D2E', borderColor: '#1A1D2E' }}
-              onClick={() => navigate('/guard-login')}
-            >
-              <QrCode size={18} />
-              Guard Station Login
               <ChevronRight size={16} className="register-cta-arrow" />
             </button>
 
