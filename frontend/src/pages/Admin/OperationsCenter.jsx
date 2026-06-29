@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
-import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
+import { useCameraContext } from '../../context/CameraContext'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,73 +89,71 @@ function GatePanel({ gate, shift, logs }) {
   )
 }
 
-// ─── Guard Card ───────────────────────────────────────────────────────────────
-function GuardCard({ guard }) {
-  const { stats, recent_logs } = guard
+// ─── Guard Table ──────────────────────────────────────────────────────────────
+function GuardTable({ guards }) {
   return (
-    <div className={`oc-guard-card ${guard.is_active ? 'active' : ''}`}>
-      <div className="oc-guard-card-head">
-        <div className="oc-guard-avatar">{guard.full_name.charAt(0).toUpperCase()}</div>
-        <div className="oc-guard-info">
-          <span className="oc-guard-card-name">{guard.full_name}</span>
-          <span className="oc-guard-card-code">{guard.user_code || 'Security'}</span>
-        </div>
-        <span className={`oc-duty-pill ${guard.is_active ? 'active' : 'idle'}`}>
-          <span className="oc-duty-dot" />
-          {guard.is_active ? 'On Duty' : 'Off Duty'}
-        </span>
-      </div>
-
-      <div className="oc-guard-stats">
-        {[
-          { n: stats.total,      l: 'Total',    cls: 'total'      },
-          { n: stats.authorized, l: 'Auth',      cls: 'authorized' },
-          { n: stats.denied,     l: 'Denied',    cls: 'denied'     },
-          { n: stats.visitors,   l: 'Visitors',  cls: 'visitor'    },
-          { n: stats.exited,     l: 'Exits',     cls: 'exited'     },
-        ].map(({ n, l, cls }) => (
-          <div key={l} className={`oc-gstat ${cls}`}>
-            <span className={`oc-gstat-n${n > 0 ? ' nonzero' : ''}`}>{n}</span>
-            <span className="oc-gstat-l">{l}</span>
-          </div>
-        ))}
-      </div>
-
-      {recent_logs.length > 0 && (
-        <div className="oc-guard-log">
-          {recent_logs.slice(0, 4).map(log => {
-            const m = getMeta(log.status)
+    <div className="oc-guard-table-wrap">
+      <table className="oc-guard-table">
+        <thead>
+          <tr>
+            <th>Guard</th>
+            <th>Code</th>
+            <th>Gate</th>
+            <th>Status</th>
+            <th>Total</th>
+            <th>Auth</th>
+            <th>Denied</th>
+            <th>Visitors</th>
+            <th>Exits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {guards.map(g => {
+            const { stats } = g
             return (
-              <div key={log.id} className="oc-log-item compact">
-                <span className={`oc-log-dot ${m.cls}`} />
-                <span className="oc-log-plate">{log.plate_number || '—'}</span>
-                <span className={`oc-log-badge ${m.cls}`}>{m.label}</span>
-                <span className="oc-log-time">{timeAgo(log.scanned_at)}</span>
-              </div>
+              <tr key={g.id} className={g.is_active ? 'active' : ''}>
+                <td>
+                  <div className="oc-gt-guard">
+                    <div className="oc-guard-avatar sm">{g.full_name.charAt(0).toUpperCase()}</div>
+                    <span className="oc-gt-name">{g.full_name}</span>
+                  </div>
+                </td>
+                <td className="oc-gt-code">{g.user_code || '—'}</td>
+                <td className="oc-gt-gate">{GATE_LABELS[g.gate_assignment] ?? g.gate_assignment ?? '—'}</td>
+                <td>
+                  <span className={`oc-duty-pill ${g.is_active ? 'active' : 'idle'}`}>
+                    <span className="oc-duty-dot" />
+                    {g.is_active ? 'On Duty' : 'Off Duty'}
+                  </span>
+                </td>
+                <td className="oc-gt-n total">{stats.total}</td>
+                <td className={`oc-gt-n authorized${stats.authorized > 0 ? ' nonzero' : ''}`}>{stats.authorized}</td>
+                <td className={`oc-gt-n denied${stats.denied > 0 ? ' nonzero' : ''}`}>{stats.denied}</td>
+                <td className={`oc-gt-n visitor${stats.visitors > 0 ? ' nonzero' : ''}`}>{stats.visitors}</td>
+                <td className={`oc-gt-n exited${stats.exited > 0 ? ' nonzero' : ''}`}>{stats.exited}</td>
+              </tr>
             )
           })}
-        </div>
-      )}
+        </tbody>
+      </table>
     </div>
   )
 }
 
 // ─── Camera Monitor ───────────────────────────────────────────────────────────
 function CameraMonitor() {
-  const getToken = useCallback(() => localStorage.getItem('access_token') || '', [])
+  const { cameras: allCameras, addCamera, registerCanvas } = useCameraContext()
+  const [activeCamId, setActiveCamId] = useState(null)
+  const cameras = allCameras.filter(c => c.assignment === 'entry')
+  const activeCam = cameras.find(c => c.id === activeCamId) ?? cameras[0] ?? null
 
-  const {
-    cameras,
-    activeCamId,
-    setActiveCamId,
-    activeCam,
-    addCamera,
-    registerCanvas,
-  } = useMultiRtspStream(getToken())
+  useEffect(() => {
+    if (!activeCamId && cameras.length > 0) setActiveCamId(cameras[0].id)
+  }) // intentionally no deps — runs after every render until activeCamId is set
 
   useEffect(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url)))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -349,20 +347,16 @@ export default function OperationsCenter() {
         </div>
 
         {/* ── Guard activity ── */}
-        {guards.length > 0 && (
+        {guards.some(g => g.is_active) && (
           <div className="oc-section">
             <div className="oc-section-head">
               <Shield size={15} />
               <span>Guard Activity</span>
-              {guards.filter(g => g.is_active).length > 0 && (
-                <span className="oc-duty-count">
-                  {guards.filter(g => g.is_active).length} on duty
-                </span>
-              )}
+              <span className="oc-duty-count">
+                {guards.filter(g => g.is_active).length} on duty
+              </span>
             </div>
-            <div className="oc-guards-grid">
-              {guards.map(g => <GuardCard key={g.id} guard={g} />)}
-            </div>
+            <GuardTable guards={guards.filter(g => g.is_active)} />
           </div>
         )}
 

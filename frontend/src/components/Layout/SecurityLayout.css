@@ -1,0 +1,53 @@
+/* ================================================================
+   SECURITY LAYOUT OVERRIDES
+   Narrows the sidebar and tightens padding so guards get maximum
+   screen space for the camera + entry panels.
+   ================================================================ */
+
+/* Narrower sidebar */
+.security-layout .admin-sidebar {
+  width: 200px;
+  min-width: 200px;
+}
+
+/* Tighter content padding — normal pages */
+.security-layout .admin-content {
+  padding: 1rem 1.25rem;
+}
+
+/* Fill-height pages (entry management) — even tighter */
+.security-layout .admin-content--fill {
+  padding: 0.5rem 0.75rem;
+}
+
+/* Entry grid: left camera column gets more space, right panel a bit wider */
+.security-layout .admin-content--fill .em-grid {
+  grid-template-columns: 1fr 340px;
+  gap: 0.75rem;
+}
+
+/* Parking / audit pages: full width with scroll */
+.security-layout .pm-page,
+.security-layout .sal-page {
+  max-width: 100%;
+  padding: 1rem 1.25rem;
+}
+
+/* Reduce brand area height to reclaim vertical space */
+.security-layout .sidebar-brand {
+  height: 54px;
+  padding: 0 1rem;
+}
+
+.security-layout .sidebar-nav {
+  padding: 1rem 0.75rem;
+}
+
+.security-layout .nav-item {
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+.security-layout .sidebar-footer {
+  padding: 1rem;
+}

@@ -777,6 +777,7 @@ class SystemSettingsView(APIView):
             "scan_dedup_seconds": obj.scan_dedup_seconds,
             "event_mode_parking": obj.event_mode_parking,
             "event_mode_entry":   obj.event_mode_entry,
+            "open_campus_mode":   obj.open_campus_mode,
             "registration_start": obj.registration_start.isoformat() if obj.registration_start else None,
             "registration_end":   obj.registration_end.isoformat()   if obj.registration_end   else None,
         }
@@ -793,6 +794,7 @@ class SystemSettingsView(APIView):
         scan_dedup_seconds   = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
         event_mode_parking   = request.data.get("event_mode_parking", obj.event_mode_parking)
         event_mode_entry     = request.data.get("event_mode_entry",   obj.event_mode_entry)
+        open_campus_mode     = request.data.get("open_campus_mode",   obj.open_campus_mode)
         registration_start   = request.data.get("registration_start", obj.registration_start)
         registration_end     = request.data.get("registration_end",   obj.registration_end)
 
@@ -838,6 +840,7 @@ class SystemSettingsView(APIView):
         obj.scan_dedup_seconds = scan_dedup_seconds
         obj.event_mode_parking = bool(event_mode_parking)
         obj.event_mode_entry   = bool(event_mode_entry)
+        obj.open_campus_mode   = bool(open_campus_mode)
         obj.registration_start = registration_start
         obj.registration_end   = registration_end
         obj.save()
@@ -845,7 +848,7 @@ class SystemSettingsView(APIView):
         return Response(self._serialize(obj))
 
     def patch(self, request):
-        """Lightweight partial update — supports toggling event_mode_parking and/or event_mode_entry."""
+        """Lightweight partial update — supports toggling event_mode_parking, event_mode_entry, and open_campus_mode."""
         obj = SystemSettings.get()
         update_fields = []
         if 'event_mode_parking' in request.data:
@@ -854,6 +857,9 @@ class SystemSettingsView(APIView):
         if 'event_mode_entry' in request.data:
             obj.event_mode_entry = bool(request.data['event_mode_entry'])
             update_fields.append('event_mode_entry')
+        if 'open_campus_mode' in request.data:
+            obj.open_campus_mode = bool(request.data['open_campus_mode'])
+            update_fields.append('open_campus_mode')
         if update_fields:
             obj.save(update_fields=update_fields)
         return Response(self._serialize(obj))

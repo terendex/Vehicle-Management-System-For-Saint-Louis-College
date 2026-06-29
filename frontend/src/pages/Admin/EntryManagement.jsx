@@ -10,7 +10,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
 import useAuthStore from '../../stores/authStore'
 import { camerasApi } from '../../api/cameras'
-import { useMultiRtspStream } from '../../hooks/useMultiRtspStream'
+import { useCameraContext } from '../../context/CameraContext'
 import './EntryManagement.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -289,22 +289,15 @@ export default function EntryManagement() {
   const [offices, setOffices] = useState([])
   const plateCooldownRef = useRef(new Set())
 
-  const getToken = useCallback(() => {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('access_token') || ''
-    }
-    return ''
-  }, [])
+  const { cameras, results, addCamera, registerCanvas } = useCameraContext()
+  const [rtspActiveCamId, setRtspActiveCam] = useState(null)
+  const rtspCameras = cameras.filter(c => c.assignment === 'entry')
+  const rtspActiveCam = rtspCameras.find(c => c.id === rtspActiveCamId) ?? rtspCameras[0] ?? null
+  const rtspResults = results.filter(r => rtspCameras.some(c => c.id === r._camId))
 
-  const {
-    cameras:        rtspCameras,
-    activeCamId:    rtspActiveCamId,
-    setActiveCamId: setRtspActiveCam,
-    activeCam:      rtspActiveCam,
-    addCamera:      addRtspCamera,
-    results:        rtspResults,
-    registerCanvas: registerRtspCanvas,
-  } = useMultiRtspStream(getToken())
+  useEffect(() => {
+    if (!rtspActiveCamId && rtspCameras.length > 0) setRtspActiveCam(rtspCameras[0].id)
+  }) // intentionally no deps — runs after every render until activeCamId is set
 
   const handleScanSuccess = useCallback((results) => {
     if (!results || results.length === 0) return
@@ -335,10 +328,10 @@ export default function EntryManagement() {
     if (rtspResults?.length > 0) handleScanSuccess(rtspResults)
   }, [rtspResults, handleScanSuccess])
 
-  // Load entry cameras from Device Management
+  // Load entry cameras from Device Management — no-op if already connected
   useEffect(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addRtspCamera(c.name, c.rtsp_url)))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -392,7 +385,7 @@ export default function EntryManagement() {
                       style={{ display: rtspActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
                     >
                       <canvas
-                        ref={el => registerRtspCanvas(cam.id, el)}
+                        ref={el => registerCanvas(cam.id, el)}
                         style={{ width: '100%', display: 'block', background: '#000', minHeight: 300 }}
                       />
                     </div>

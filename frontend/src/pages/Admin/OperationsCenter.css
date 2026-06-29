@@ -349,28 +349,46 @@
   border-radius: 20px;
 }
 
-/* ── Guard cards grid ── */
-.oc-guards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-}
-.oc-guard-card {
+/* ── Guard table ── */
+.oc-guard-table-wrap {
   background: #fff;
   border: 1.5px solid #f0f1f5;
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
-.oc-guard-card.active { border-color: #d1fae5; }
-
-.oc-guard-card-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #f3f4f6;
+.oc-guard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
 }
+.oc-guard-table thead tr {
+  background: #f9fafb;
+  border-bottom: 1.5px solid #f0f1f5;
+}
+.oc-guard-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.oc-guard-table th:nth-child(n+5) { text-align: center; }
+.oc-guard-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #f9fafb;
+  color: #374151;
+  vertical-align: middle;
+}
+.oc-guard-table tbody tr:last-child td { border-bottom: none; }
+.oc-guard-table tbody tr:hover { background: #fafafa; }
+.oc-guard-table tbody tr.active { background: #f0fdf4; }
+.oc-guard-table tbody tr.active:hover { background: #dcfce7; }
+
+.oc-gt-guard { display: flex; align-items: center; gap: 9px; }
 .oc-guard-avatar {
   width: 34px; height: 34px;
   background: #EEF0FF;
@@ -379,15 +397,13 @@
   font-size: 15px; font-weight: 800; color: #2A2B61;
   flex-shrink: 0;
 }
-.oc-guard-info { flex: 1; min-width: 0; }
-.oc-guard-card-name {
-  font-size: 13px; font-weight: 700; color: #111827;
-  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.oc-guard-card-code { font-size: 10px; color: #9ca3af; }
+.oc-guard-avatar.sm { width: 28px; height: 28px; font-size: 12px; }
+.oc-gt-name { font-weight: 600; color: #111827; white-space: nowrap; }
+.oc-gt-code { font-size: 11px; color: #9ca3af; font-family: monospace; white-space: nowrap; }
+.oc-gt-gate { font-size: 12px; color: #6b7280; font-weight: 500; }
 
 .oc-duty-pill {
-  display: flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 4px;
   font-size: 10px; font-weight: 700;
   padding: 3px 8px; border-radius: 20px; flex-shrink: 0;
 }
@@ -396,28 +412,12 @@
 .oc-duty-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .oc-duty-pill.active .oc-duty-dot { animation: oc-blink 1.6s ease-in-out infinite; }
 
-.oc-guard-stats {
-  display: flex;
-  border-bottom: 1px solid #f3f4f6;
-}
-.oc-gstat {
-  flex: 1;
-  display: flex; flex-direction: column; align-items: center;
-  padding: 10px 4px;
-  border-right: 1px solid #f3f4f6;
-}
-.oc-gstat:last-child { border-right: none; }
-.oc-gstat-n { font-size: 17px; font-weight: 800; color: #d1d5db; line-height: 1; }
-.oc-gstat-l { font-size: 9px; color: #c4c9d4; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.3px; }
-
-/* only color the numbers when non-zero */
-.oc-gstat.total      .oc-gstat-n { color: #111827; }
-.oc-gstat.authorized .oc-gstat-n.nonzero { color: #059669; }
-.oc-gstat.denied     .oc-gstat-n.nonzero { color: #dc2626; }
-.oc-gstat.visitor    .oc-gstat-n.nonzero { color: #d97706; }
-.oc-gstat.exited     .oc-gstat-n.nonzero { color: #6366f1; }
-
-.oc-guard-log { padding: 2px 0; }
+.oc-gt-n { font-weight: 700; text-align: center; color: #d1d5db; }
+.oc-gt-n.total                  { color: #111827; }
+.oc-gt-n.authorized.nonzero     { color: #059669; }
+.oc-gt-n.denied.nonzero         { color: #dc2626; }
+.oc-gt-n.visitor.nonzero        { color: #d97706; }
+.oc-gt-n.exited.nonzero         { color: #6366f1; }
 
 /* ── Bottom row ── */
 .oc-bottom-row {
@@ -516,5 +516,5 @@
   .oc-stats-row    { grid-template-columns: repeat(2, 1fr); }
   .oc-gates-col    { flex-direction: column; }
   .oc-bottom-row   { grid-template-columns: 1fr; }
-  .oc-guards-grid  { grid-template-columns: 1fr; }
+  .oc-guard-table-wrap { overflow-x: auto; }
 }

@@ -152,7 +152,8 @@ export default function SecurityParkingView() {
   const [showOverride,  setShowOverride]  = useState(false)
   const [showViolation, setShowViolation] = useState(false)
 
-  const selZone = zones.find(z => z.id === selId) ?? null
+  const selZone   = zones.find(z => z.id === selId) ?? null
+  const camRunning = false
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
