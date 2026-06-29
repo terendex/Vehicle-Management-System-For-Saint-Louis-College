@@ -9,10 +9,20 @@ from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 
 
+class IsStaffRole(permissions.BasePermission):
+    """Allow access only to admin, cdso, or security roles."""
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ('admin', 'cdso', 'security')
+        )
+
+
 class ViolationViewSet(viewsets.ModelViewSet):
     queryset           = Violation.objects.select_related('vehicle__user').all()
     serializer_class   = ViolationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsStaffRole]
 
     def get_serializer_context(self):
         return {**super().get_serializer_context(), 'request': self.request}
@@ -69,7 +79,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
 
 class GuardViolationsView(APIView):
     """Returns violations issued by the currently authenticated security guard."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsStaffRole]
 
     def get(self, request):
         from django.utils import timezone
