@@ -15,7 +15,9 @@ Django==4.2.30
 django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
-easyocr==1.7.2
+paddlepaddle-gpu==2.6.2.post120
+paddleocr==2.10.0
+albumentations==1.4.24
 filelock==3.19.1
 fonttools==4.59.2
 fsspec==2026.4.0

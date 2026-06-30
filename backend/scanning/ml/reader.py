@@ -5,9 +5,9 @@
 
   Two-stage pipeline:
     1. YOLO — locates the license plate region (bounding box)
-    2. EasyOCR — reads the text from the cropped plate region
+    2. PaddleOCR — reads the text from the cropped plate region
 
-  If no trained YOLO model is found, falls back to running EasyOCR
+  If no trained YOLO model is found, falls back to running PaddleOCR
   on the full preprocessed frame (legacy behaviour).
 ──────────────────────────────────────────────────────────────────────
 """
@@ -15,15 +15,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
-
 import cv2
 import numpy as np
 
-if TYPE_CHECKING:
-    import easyocr
+# cudnn64_8.dll (required by paddlepaddle-gpu 2.6.x) lives alongside the
+# PyTorch CUDA libs which ship cudnn64_9.dll copied as cudnn64_8.dll.
+_TORCH_LIB = Path(r"C:\Users\axel jonas tangalin\AppData\Local\Programs\Python\Python39\Lib\site-packages\torch\lib")
+if _TORCH_LIB.exists():
+    os.environ['PATH'] = str(_TORCH_LIB) + os.pathsep + os.environ.get('PATH', '')
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
 from .detection import detect_plates, is_gpu_available
@@ -156,12 +158,12 @@ def _correct_plate_chars(text: str) -> str:
 
 # ── Lazy singletons ─────────────────────────────────────────────────
 
-_ocr_reader = None  # easyocr.Reader, lazy-loaded
+_ocr_reader = None  # PaddleOCR instance, lazy-loaded
 _ocr_load_failures = 0
 _OCR_MAX_RETRIES = 3
 
-# EasyOCR's Reader.readtext() is not thread-safe under concurrent calls on the
-# same Reader instance.  Serialise all readtext() calls across camera streams.
+# PaddleOCR's ocr() is not thread-safe under concurrent calls on the
+# same instance.  Serialise all ocr() calls across camera streams.
 _OCR_LOCK = threading.Lock()
 
 _yolo_model = None
@@ -175,27 +177,27 @@ _OCR_EARLY_EXIT_CONF = 0.60
 
 
 def _get_ocr():
-    """Lazy-load EasyOCR with up to _OCR_MAX_RETRIES attempts."""
+    """Lazy-load PaddleOCR with up to _OCR_MAX_RETRIES attempts."""
     global _ocr_reader, _ocr_load_failures
     if _ocr_reader is not None:
         return _ocr_reader
     if _ocr_load_failures >= _OCR_MAX_RETRIES:
         log.error(
-            "[OCR] EasyOCR failed to load after %d attempts — OCR is disabled. "
+            "[OCR] PaddleOCR failed to load after %d attempts — OCR is disabled. "
             "Restart the server to retry.",
             _OCR_MAX_RETRIES,
         )
         return None
     try:
-        import easyocr
+        from paddleocr import PaddleOCR
         _use_gpu = is_gpu_available()
-        _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
-        log.info("[OCR] EasyOCR loaded OK (gpu=%s)", _use_gpu)
+        _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=_use_gpu, show_log=False)
+        log.info("[OCR] PaddleOCR loaded OK (gpu=%s)", _use_gpu)
         _ocr_load_failures = 0
     except Exception as exc:
         _ocr_load_failures += 1
         log.error(
-            "[OCR] EasyOCR load failed (attempt %d/%d): %s",
+            "[OCR] PaddleOCR load failed (attempt %d/%d): %s",
             _ocr_load_failures, _OCR_MAX_RETRIES, exc,
         )
     return _ocr_reader
@@ -221,7 +223,7 @@ def _get_yolo():
             _yolo_model = None
     else:
         log.info(
-            "ℹ️  No YOLO weights found at %s — using EasyOCR-only fallback.",
+            "ℹ️  No YOLO weights found at %s — using PaddleOCR-only fallback.",
             WEIGHTS_PATH,
         )
     return _yolo_model
@@ -426,7 +428,7 @@ def _to_bw(img: np.ndarray) -> np.ndarray:
 
 def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] | tuple[None, None]:
     """
-    Run EasyOCR on a cropped plate image.
+    Run PaddleOCR on a cropped plate image.
 
     Converts the crop to black-and-white first, then scans.
     Falls back to inverted B&W if the normal pass finds nothing.
@@ -439,7 +441,7 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         scale = MIN_WIDTH / max(w_crop, 1)
         new_w = MIN_WIDTH
         new_h = max(int(h_crop * scale), 80)
-        crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
         # Sharpen after upscale to restore edge crispness lost during interpolation
         kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
         crop = cv2.filter2D(crop, -1, kernel)
@@ -448,7 +450,7 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     deskewed = _deskew_plate(crop, aspect_ratio)
     ocr = _get_ocr()
 
-    # Convert to B&W variants fed to EasyOCR
+    # Convert to B&W variants fed to PaddleOCR
     bw     = _to_bw(deskewed)
     bw_inv = cv2.bitwise_not(bw)
     _gray  = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
@@ -474,13 +476,17 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     def _run_ocr(img: np.ndarray, label: str):
         if img is None or img.size == 0:
             return
-        allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
+        # PaddleOCR requires a 3-channel BGR image
+        img_input = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if len(img.shape) == 2 else img
         with _OCR_LOCK:
-            raw = ocr.readtext(
-                img, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0,
-                allowlist=allowlist, adjust_contrast=0.7, min_size=15,
-            )
-        log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
+            raw_result = ocr.ocr(img_input, cls=True)
+        page = raw_result[0] if raw_result else None
+        if not page:
+            log.info("[OCR-CROP] %s: PaddleOCR found 0 text regions", label)
+            return
+        # Normalise to (bbox, text, conf) tuples that combine_multiline_text expects
+        raw = [(item[0], item[1][0], item[1][1]) for item in page if item and len(item) == 2]
+        log.info("[OCR-CROP] %s: PaddleOCR found %d text regions", label, len(raw))
         combined_text, avg_conf = combine_multiline_text(raw)
         if combined_text:
             text_clean = normalize_plate(combined_text)
@@ -497,7 +503,19 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     candidates: list[tuple[float, str]] = []
     fallback:   list[tuple[float, str]] = []
 
-    _variants = [(bw, "bw"), (bw_inv, "bw_inv"), (clahe_sharp, "clahe"), (adaptive, "adaptive"), (bilateral_bw, "bilateral"), (gamma_bw, "gamma")]
+    # Color and grayscale first — PaddleOCR's detector works on gradient information
+    # that binary thresholding can destroy; color/grayscale variants tend to outperform
+    # pure binary for plate OCR in practice.
+    _variants = [
+        (deskewed,    "color"),
+        (clahe_sharp, "clahe"),
+        (_gray,       "gray"),
+        (bw,          "bw"),
+        (bw_inv,      "bw_inv"),
+        (adaptive,    "adaptive"),
+        (bilateral_bw,"bilateral"),
+        (gamma_bw,    "gamma"),
+    ]
     for img_v, label in _variants:
         for text, conf, valid in _run_ocr(img_v, label):
             if valid and conf > 0.08:
@@ -566,19 +584,24 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     else:
         gray = crop
-    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    scale = 400 / max(bw.shape[1], 1)
-    up = cv2.resize(bw, (int(bw.shape[1] * scale), int(bw.shape[0] * scale)), interpolation=cv2.INTER_CUBIC)
+    cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    gray = cl.apply(gray)
+    scale = 640 / max(gray.shape[1], 1)
+    up = cv2.resize(gray, (int(gray.shape[1] * scale), int(gray.shape[0] * scale)), interpolation=cv2.INTER_LANCZOS4)
+    up_bgr = cv2.cvtColor(up, cv2.COLOR_GRAY2BGR)
     try:
         ocr = _get_ocr()
         with _OCR_LOCK:
-            raw = ocr.readtext(up, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0, adjust_contrast=0.7, min_size=15)
-        log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(raw))
+            raw_result = ocr.ocr(up_bgr, cls=True)
+        page = raw_result[0] if raw_result else None
+        log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(page) if page else 0)
+        if not page:
+            return None, 0.0
         candidates: list[tuple[float, str]] = []
-        for item in raw:
-            if len(item) != 3:
+        for item in page:
+            if not item or len(item) != 2:
                 continue
-            _, text, confidence = item
+            _, (text, confidence) = item
             text_c = normalize_plate(str(text).strip())
             if not text_c:
                 continue

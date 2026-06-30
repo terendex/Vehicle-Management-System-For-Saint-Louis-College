@@ -38,6 +38,7 @@ export function CameraProvider({ children }) {
   const trackMap  = useRef({})
   const smoothMap = useRef({})
   const rafMap    = useRef({})
+  const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
 
   // url → camId: tracks all known cameras by URL, used for dedup + reconnection
   // Using a Map instead of a Set so we can look up existing camId by URL
@@ -137,7 +138,7 @@ export function CameraProvider({ children }) {
   }, [])
 
   // ── Open WebSocket for a camera ───────────────────────────────────────────
-  const _connect = useCallback((camId, rtspUrl) => {
+  const _connect = useCallback((camId, rtspUrl, detect = false) => {
     const token = localStorage.getItem('access_token') || ''
     if (!token) return
 
@@ -149,7 +150,8 @@ export function CameraProvider({ children }) {
       delete wsMap.current[camId]
     }
 
-    const ws = new WebSocket(`${WS_BASE}/ws/scan/rtsp/?token=${token}`)
+    const detectParam = detect ? '&detect=1' : ''
+    const ws = new WebSocket(`${WS_BASE}/ws/scan/rtsp/?token=${token}${detectParam}`)
     wsMap.current[camId] = ws
     startRenderLoop(camId)
 
@@ -185,7 +187,7 @@ export function CameraProvider({ children }) {
           // Auto-reconnect after delay if camera is still tracked
           setTimeout(() => {
             if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
-              connectRef.current?.(camId, rtspUrl)
+              connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
             }
           }, RECONNECT_DELAY_MS)
           return
@@ -222,7 +224,7 @@ export function CameraProvider({ children }) {
       if (urlToIdMap.current[rtspUrl] === camId) {
         setTimeout(() => {
           if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
-            connectRef.current?.(camId, rtspUrl)
+            connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
           }
         }, RECONNECT_DELAY_MS)
       }
@@ -248,23 +250,31 @@ export function CameraProvider({ children }) {
   }, [stopRenderLoop])
 
   // ── Add camera ────────────────────────────────────────────────────────────
-  // Safe to call multiple times for the same URL (e.g. when navigating between
-  // pages that all want the same entry cameras).  If the camera is already
-  // tracked but its WebSocket died, we reconnect it automatically.
-  const addCamera = useCallback((name, url, assignment = '') => {
+  // detect=true   → backend runs plate-scan ML (Entry Management / Security)
+  // detect=false  → view-only, no ML (Device Management, Operations Center)
+  //
+  // Safe to call multiple times for the same URL.  If the camera is already
+  // tracked but disconnected, we reconnect it.  If a scan page calls with
+  // detect=true and the existing connection has detect=false, we upgrade it
+  // so ML starts running for that camera.
+  const addCamera = useCallback((name, url, assignment = '', { detect = false } = {}) => {
     const trimUrl = (url || '').trim()
     if (!trimUrl.startsWith('rtsp://')) { toast.error('URL must start with rtsp://'); return null }
 
     const existingId = urlToIdMap.current[trimUrl]
     if (existingId !== undefined) {
-      // Camera already known — reconnect if the WebSocket is gone or closed
-      const ws = wsMap.current[existingId]
+      const ws             = wsMap.current[existingId]
+      const currentDetect  = detectMap.current[existingId] ?? false
       const needsReconnect = !ws
         || ws.readyState === WebSocket.CLOSED
         || ws.readyState === WebSocket.CLOSING
-      if (needsReconnect) {
+      // Upgrade a view-only connection to scan mode when Entry Management arrives
+      const needsUpgrade = detect && !currentDetect && ws && ws.readyState === WebSocket.OPEN
+
+      if (needsReconnect || needsUpgrade) {
+        detectMap.current[existingId] = detect
         startRenderLoop(existingId)
-        _connect(existingId, trimUrl)
+        _connect(existingId, trimUrl, detect)
       }
       return existingId
     }
@@ -272,6 +282,7 @@ export function CameraProvider({ children }) {
     // Brand-new camera
     const id  = genId()
     urlToIdMap.current[trimUrl] = id
+    detectMap.current[id]       = detect
     const cam = {
       id,
       name: (name || '').trim() || `Camera ${id}`,
@@ -282,7 +293,7 @@ export function CameraProvider({ children }) {
       statusMsg: '',
     }
     setCameras(p => [...p, cam])
-    _connect(id, trimUrl)
+    _connect(id, trimUrl, detect)
     return id
   }, [_connect, startRenderLoop])
 
@@ -306,11 +317,12 @@ export function CameraProvider({ children }) {
       }
     })
     Object.keys(rafMap.current).forEach(id => cancelAnimationFrame(rafMap.current[id]))
-    wsMap.current     = {}
-    rafMap.current    = {}
-    frameMap.current  = {}
-    trackMap.current  = {}
-    smoothMap.current = {}
+    wsMap.current      = {}
+    rafMap.current     = {}
+    frameMap.current   = {}
+    trackMap.current   = {}
+    smoothMap.current  = {}
+    detectMap.current  = {}
     urlToIdMap.current = {}
     setCameras([])
     setResults([])

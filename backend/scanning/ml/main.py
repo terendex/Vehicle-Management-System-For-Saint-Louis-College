@@ -258,25 +258,29 @@ def run_ocr_on_buffer(track: TrackedObject) -> tuple[str, float]:
 
 
 def run_ocr_standalone(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str], float]:
-    """Standalone OCR using EasyOCR."""
+    """Standalone OCR using PaddleOCR."""
     try:
-        import easyocr
+        from paddleocr import PaddleOCR
         try:
             import torch as _torch
             _use_gpu = _torch.cuda.is_available()
         except ImportError:
             _use_gpu = False
-        ocr = easyocr.Reader(["en"], gpu=_use_gpu)
+        ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=_use_gpu, show_log=False)
         h, w = crop.shape[:2]
         if w < 320:
             scale = 320 / max(w, 1)
             crop = cv2.resize(crop, (320, max(int(h * scale), 20)), interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        results = ocr.readtext(gray, text_threshold=0.3)
-        if not results:
+        img_bgr = crop if len(crop.shape) == 3 else cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        raw = ocr.ocr(img_bgr, cls=True)
+        page = raw[0] if raw else []
+        if not page:
             return None, 0.0
         best_text, best_conf = None, 0.0
-        for (bbox, text, conf) in results:
+        for item in page:
+            if not item or len(item) != 2:
+                continue
+            text, conf = item[1][0], item[1][1]
             if conf > best_conf:
                 best_text, best_conf = text, conf
         return best_text, best_conf

@@ -130,7 +130,7 @@ def extract_plate_candidates(text: str) -> list[str]:
 
 def combine_multiline_text(text_results: list) -> tuple[str, float]:
     """
-    Sorts and groups EasyOCR text regions to handle two-row (motorcycle) or multi-region plates.
+    Sorts and groups PaddleOCR text regions to handle two-row (motorcycle) or multi-region plates.
     Each item in text_results is: (bbox, text, conf)
     where bbox is list of 4 points: [[x0, y0], [x1, y1], [x2, y2], [x3, y3]]
     """
