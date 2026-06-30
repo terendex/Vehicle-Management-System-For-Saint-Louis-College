@@ -1,6 +1,6 @@
 from django.utils import timezone
 from django.db.models import Q
-from .models import SCHEDULE_DAYS, VisitorPass, AccessLog
+from .models import VisitorPass, AccessLog
 from vehicles.models import RuleConstraint, Vehicle, SystemSettings
 from accounts.models import User
 
@@ -8,6 +8,29 @@ DAY_TO_WEEKDAY = {
     'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3,
     'fri': 4, 'sat': 5, 'sun': 6,
 }
+
+DAY_NAME_TO_WEEKDAY = {
+    'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+    'Friday': 4, 'Saturday': 5, 'Sunday': 6,
+}
+
+# Legacy fallback: schedule code → weekday numbers, used only when user.campus_days is empty
+_SCHEDULE_DAYS_FALLBACK = {
+    'MWF':  [0, 2, 4],
+    'TTHS': [1, 3, 5],
+    'ANY':  [0, 1, 2, 3, 4, 5, 6],
+    'ALL':  [0, 1, 2, 3, 4, 5, 6],
+    'MIXED': [0, 1, 2, 3, 4, 5, 6],
+}
+
+
+def _allowed_weekdays(user) -> list[int]:
+    """Return the weekday integers (Mon=0…Sun=6) this user is permitted."""
+    campus_days = user.campus_days or []
+    if campus_days:
+        return [DAY_NAME_TO_WEEKDAY[d] for d in campus_days if d in DAY_NAME_TO_WEEKDAY]
+    # Legacy: user created before campus_days was stored; fall back to schedule code
+    return _SCHEDULE_DAYS_FALLBACK.get(user.schedule or 'ANY', [])
 
 def _time_to_minutes(t):
     if not t:
@@ -77,12 +100,13 @@ def check_entry(vehicle) -> dict:
 
     # ── STUDENT ───────────────────────────────────────────────────────
     if owner_type == User.OwnerType.STUDENT:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
-        allowed_days = SCHEDULE_DAYS.get(user.schedule, [])
-        if today_weekday not in allowed_days:
-            day_name = timezone.localdate().strftime('%A')
+        rule         = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
+        allowed_days = _allowed_weekdays(user)
+        if allowed_days and today_weekday not in allowed_days:
+            day_name      = timezone.localdate().strftime('%A')
+            day_list      = ', '.join(user.campus_days) if user.campus_days else (user.schedule or 'unknown')
             return _result('wrong_day', False,
-                f'Student is on {user.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                f'Student is not scheduled on campus today ({day_name}). Campus days: {day_list}.',
                 rule.name if rule else None)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
@@ -92,12 +116,13 @@ def check_entry(vehicle) -> dict:
 
     # ── FETCHER ───────────────────────────────────────────────────────
     if owner_type == User.OwnerType.FETCHER:
-        rule = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
-        allowed_days = SCHEDULE_DAYS.get(user.schedule, [])
-        if today_weekday not in allowed_days:
-            day_name = timezone.localdate().strftime('%A')
+        rule         = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
+        allowed_days = _allowed_weekdays(user)
+        if allowed_days and today_weekday not in allowed_days:
+            day_name  = timezone.localdate().strftime('%A')
+            day_list  = ', '.join(user.campus_days) if user.campus_days else (user.schedule or 'unknown')
             return _result('wrong_day', False,
-                f'Fetcher is on {user.schedule} schedule. Today ({day_name}) is not an allowed day.',
+                f'Fetcher is not scheduled on campus today ({day_name}). Campus days: {day_list}.',
                 rule.name if rule else None)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
