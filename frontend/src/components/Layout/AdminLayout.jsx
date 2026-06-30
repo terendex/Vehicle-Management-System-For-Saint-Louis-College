@@ -1,9 +1,9 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Car,
   Users,
-  ShieldCheck,
   FileSliders,
   ClipboardList,
   ParkingCircle,
@@ -13,41 +13,95 @@ import {
   AlertTriangle,
   TowerControl,
   HelpCircle,
+  ChevronDown,
+  Briefcase,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './AdminLayout.css'
 
+function buildNavGroups(isAdmin, isCdso) {
+  const groups = []
+
+  if (isAdmin) {
+    groups.push({
+      id: 'dashboard', type: 'link', name: 'Dashboard',
+      path: '/admin', icon: <LayoutDashboard size={18} />, end: true,
+    })
+    groups.push({
+      id: 'management', type: 'group', name: 'Management',
+      icon: <Briefcase size={18} />,
+      children: [
+        { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} />   },
+        { name: 'User Management',      path: '/admin/users',    icon: <Users size={18} /> },
+        { name: 'Device Management',    path: '/admin/devices',  icon: <Video size={18} /> },
+      ],
+    })
+  }
+
+  if (isAdmin || isCdso) {
+    groups.push({
+      id: 'operations', type: 'group', name: 'Operations',
+      icon: <TowerControl size={18} />,
+      children: [
+        ...(isAdmin ? [{ name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> }] : []),
+        { name: 'Parking',    path: '/admin/parking',    icon: <ParkingCircle size={18} /> },
+        { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
+      ],
+    })
+  }
+
+  if (isAdmin || isCdso) {
+    groups.push({
+      id: 'system', type: 'group', name: 'System',
+      icon: <Settings2 size={18} />,
+      children: [
+        ...(isAdmin ? [
+          { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
+          { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
+        ] : []),
+        { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
+      ],
+    })
+  }
+
+  return groups
+}
+
+function getGroupForPath(groups, pathname) {
+  for (const g of groups) {
+    if (g.type === 'group' && g.children.some(c => pathname === c.path || pathname.startsWith(c.path + '/'))) {
+      return g.id
+    }
+  }
+  return null
+}
+
 export default function AdminLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const isAdmin = user?.role === 'admin'
+  const isCdso  = user?.role === 'cdso'
+
+  const navGroups = buildNavGroups(isAdmin, isCdso)
+
+  const [openGroup, setOpenGroup] = useState(() => getGroupForPath(navGroups, location.pathname))
+
+  useEffect(() => {
+    const activeId = getGroupForPath(navGroups, location.pathname)
+    if (activeId) setOpenGroup(activeId)
+  }, [location.pathname])
+
+  const toggleGroup = (id) => {
+    setOpenGroup(prev => prev === id ? null : id)
+  }
 
   const handleLogout = () => {
     logout()
     navigate('/login')
   }
-
-  const isAdmin = user?.role === 'admin'
-  const isCdso  = user?.role === 'cdso'
-
-  const navItems = [
-    ...(isAdmin ? [
-      { name: 'Dashboard',            path: '/admin',                  icon: <LayoutDashboard size={18} /> },
-      { name: 'Vehicle Registration', path: '/admin/vehicles',         icon: <Car size={18} /> },
-      { name: 'User Management',      path: '/admin/users',            icon: <Users size={18} /> },
-      { name: 'Device Management',    path: '/admin/devices',          icon: <Video size={18} />          },
-      { name: 'Operations Center',    path: '/admin/entries',          icon: <TowerControl size={18} />   },
-    ] : []),
-    ...((isAdmin || isCdso) ? [
-      { name: 'Parking',    path: '/admin/parking',    icon: <ParkingCircle size={18} /> },
-      { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
-    ] : []),
-    ...(isAdmin ? [
-      { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} /> },
-      { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
-    ] : []),
-    { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
-  ]
 
   return (
     <div className="admin-layout">
@@ -60,18 +114,55 @@ export default function AdminLayout({ children, fillHeight = false }) {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-              end={item.path === '/admin'}
-            >
-              {item.icon}
-              <span>{item.name}</span>
-            </NavLink>
-          ))}
+          {navGroups.map((item) => {
+            if (item.type === 'link') {
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  end={item.end}
+                  className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                >
+                  {item.icon}
+                  <span>{item.name}</span>
+                </NavLink>
+              )
+            }
+
+            const isOpen = openGroup === item.id
+            const hasActive = item.children.some(
+              c => location.pathname === c.path || location.pathname.startsWith(c.path + '/')
+            )
+
+            return (
+              <div key={item.id} className="nav-group">
+                <button
+                  className={`nav-group-header${hasActive ? ' has-active' : ''}`}
+                  onClick={() => toggleGroup(item.id)}
+                >
+                  <span className="nav-group-header-left">
+                    {item.icon}
+                    <span>{item.name}</span>
+                  </span>
+                  <ChevronDown size={14} className={`nav-group-chevron${isOpen ? ' open' : ''}`} />
+                </button>
+                <div className={`nav-group-children${isOpen ? ' open' : ''}`}>
+                  {item.children.map((child) => (
+                    <NavLink
+                      key={child.path}
+                      to={child.path}
+                      className={({ isActive }) => `nav-item nav-child${isActive ? ' active' : ''}`}
+                    >
+                      {child.icon}
+                      <span>{child.name}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </nav>
+
         <div className="sidebar-footer">
           <div className="user-profile">
             <div className="user-avatar">
@@ -96,8 +187,6 @@ export default function AdminLayout({ children, fillHeight = false }) {
 
       {/* Main Column */}
       <main className="admin-main">
-
-        {/* Dynamic Page Content */}
         <div className={`admin-content${fillHeight ? ' admin-content--fill' : ''}`}>
           {children}
         </div>

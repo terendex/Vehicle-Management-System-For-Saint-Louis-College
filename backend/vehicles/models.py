@@ -232,6 +232,26 @@ class SystemSettings(models.Model):
         return "System Settings"
 
 
+class RegistrationPeriod(models.Model):
+    """One row per registration window. Only one row may be active at a time."""
+    label      = models.CharField(max_length=150)
+    start_date = models.DateField()
+    end_date   = models.DateField()
+    is_active  = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def get_active(cls):
+        return cls.objects.filter(is_active=True).first()
+
+    def __str__(self):
+        status = 'Active' if self.is_active else 'Archived'
+        return f"{self.label} ({status})"
+
+
 class ParkingNotice(models.Model):
     """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
     title      = models.CharField(max_length=200)

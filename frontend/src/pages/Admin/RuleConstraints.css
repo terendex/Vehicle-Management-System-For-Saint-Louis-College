@@ -1212,3 +1212,182 @@
 }
 
 .rc-reg-info svg { flex-shrink: 0; }
+
+/* ── Registration period table ───────────────────────────────── */
+
+.rc-btn-sm {
+  padding: 5px 12px !important;
+  font-size: 12px !important;
+  gap: 5px !important;
+}
+
+.rc-period-form {
+  background: #F8FAFC;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.rc-period-form-fields {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.rc-period-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.rc-input-error { border-color: #EF4444 !important; }
+
+.rc-field-error {
+  font-size: 11px;
+  color: #DC2626;
+  margin-top: 2px;
+}
+
+.rc-period-table-wrap {
+  overflow-x: auto;
+}
+
+.rc-period-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rc-period-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6B7280;
+  border-bottom: 1.5px solid #E5E7EB;
+  background: #F9FAFB;
+}
+
+.rc-period-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #F3F4F6;
+  color: #374151;
+  vertical-align: middle;
+}
+
+.rc-period-table tr:last-child td { border-bottom: none; }
+
+.rc-period-row--active td { background: #F0FDF4; }
+
+.rc-period-label {
+  font-weight: 600;
+  color: #1A1D2E;
+}
+
+.rc-period-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rc-period-badge--active {
+  background: #DCFCE7;
+  color: #16A34A;
+}
+
+.rc-period-badge--archived {
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+/* ── Centered Confirmation Modal ────────────────────────────────── */
+
+.rc-confirm-modal {
+  position: relative;
+  background: #fff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.rc-confirm-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 6px;
+}
+.rc-confirm-close:hover { background: #F0F2F7; }
+
+.rc-confirm-icon         { margin-bottom: 4px; }
+.rc-confirm-icon--warn   { color: #d97706; }
+.rc-confirm-icon--info   { color: #2563eb; }
+
+.rc-confirm-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0;
+}
+
+.rc-confirm-body {
+  font-size: 13.5px;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.rc-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  justify-content: center;
+}
+
+.rc-confirm-btn {
+  padding: 8px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.rc-confirm-btn--primary {
+  background: #2A2B61;
+  color: #fff;
+}
+.rc-confirm-btn--primary:hover { background: #1e1f4a; }
+.rc-confirm-btn--danger {
+  background: #7c3aed;
+  color: #fff;
+}
+.rc-confirm-btn--danger:hover { background: #6d28d9; }
+.rc-confirm-btn--warning {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #c2410c;
+}
+.rc-confirm-btn--warning:hover { background: #ffedd5; }

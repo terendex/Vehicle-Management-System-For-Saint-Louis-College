@@ -26,6 +26,14 @@ export default function SecurityQRLogin() {
   const videoRef  = useRef(null)
   const streamRef = useRef(null)
 
+  // Trap back-button navigation — hard replace beats React Router's popstate handler
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href)
+    const handlePop = () => window.location.replace('/security/qr-login')
+    window.addEventListener('popstate', handlePop)
+    return () => window.removeEventListener('popstate', handlePop)
+  }, [])
+
   useEffect(() => {
     if (selectedGate && !useCamera) inputRef.current?.focus()
   }, [selectedGate, useCamera])

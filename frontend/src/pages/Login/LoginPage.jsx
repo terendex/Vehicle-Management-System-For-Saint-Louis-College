@@ -19,7 +19,6 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.role === 'admin') navigate('/admin')
-      else if (user.role === 'security') navigate('/security')
       else if (user.role === 'vehicle_owner') navigate('/owner')
     }
   }, [isAuthenticated, user, navigate])
@@ -43,7 +42,6 @@ export default function LoginPage() {
     try {
       const u = await login(email, password)
       if (u.role === 'admin') navigate('/admin')
-      else if (u.role === 'security') navigate('/security')
       else if (u.role === 'vehicle_owner') navigate('/owner')
       else navigate('/')
     } catch {
@@ -185,10 +183,6 @@ export default function LoginPage() {
 
             <div className="terms-row">
               <a href="#" className="terms-link">Policy</a>
-              <span className="terms-divider">·</span>
-              <button type="button" className="terms-link" style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }} onClick={() => navigate('/security/qr-login')}>
-                Guard Login
-              </button>
             </div>
           </form>
         </div>
