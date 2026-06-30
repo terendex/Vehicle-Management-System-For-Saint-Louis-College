@@ -19,7 +19,6 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.role === 'admin') navigate('/admin')
-      else if (user.role === 'security') navigate('/security')
       else if (user.role === 'vehicle_owner') navigate('/owner')
     }
   }, [isAuthenticated, user, navigate])
@@ -43,7 +42,6 @@ export default function LoginPage() {
     try {
       const u = await login(email, password)
       if (u.role === 'admin') navigate('/admin')
-      else if (u.role === 'security') navigate('/security')
       else if (u.role === 'vehicle_owner') navigate('/owner')
       else navigate('/')
     } catch {

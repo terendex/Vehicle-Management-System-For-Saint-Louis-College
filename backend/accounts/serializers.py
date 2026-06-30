@@ -338,13 +338,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         email = attrs.get(self.username_field, '')
         password = attrs.get('password', '')
 
-        # Check for disabled account before SimpleJWT swallows it into a generic error
+        # Check for disabled account or security role before SimpleJWT swallows it
         try:
             user = User.objects.get(**{self.username_field: email})
-            if user.check_password(password) and not user.is_active:
-                raise AuthenticationFailed(
-                    'Your account has been disabled. Please contact the administrator.'
-                )
+            if user.check_password(password):
+                if not user.is_active:
+                    raise AuthenticationFailed(
+                        'Your account has been disabled. Please contact the administrator.'
+                    )
+                if user.role == 'security':
+                    raise AuthenticationFailed(
+                        'Security personnel must log in using a QR badge at the gate terminal.'
+                    )
         except User.DoesNotExist:
             pass
 

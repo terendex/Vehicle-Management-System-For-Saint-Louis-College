@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ParkingCircle, Bike, Car, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
+  AlertTriangle, CheckCircle,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
@@ -53,6 +55,8 @@ export default function ParkingManagement() {
   const [showNew,      setShowNew]      = useState(false)
   const [newZone,      setNewZone]      = useState({ name: '', vehicle_category: 'motorcycle' })
   const [addingZone,   setAddingZone]   = useState(false)
+  const [confirmModal, setConfirmModal] = useState(null) // { type: 'deleteZone' }
+  const [resultModal,  setResultModal]  = useState(null) // { type: 'success'|'error', message }
   // Live-view RTSP cameras panel
   const [showCamPanel, setShowCamPanel] = useState(false)
 
@@ -131,19 +135,29 @@ export default function ParkingManagement() {
       setShowNew(false)
       setNewZone({ name: '', vehicle_category: 'motorcycle' })
       setMode('edit')
-    } catch { alert('Failed to create zone.') }
-    finally { setAddingZone(false) }
+    } catch {
+      setShowNew(false)
+      setResultModal({ type: 'error', message: 'Failed to create zone. Please try again.' })
+    } finally { setAddingZone(false) }
   }
 
-  const handleDeleteZone = async () => {
-    if (!selZone || !confirm(`Delete zone "${selZone.name}" and all its spaces?`)) return
+  const handleDeleteZone = () => {
+    if (!selZone) return
+    setConfirmModal({ type: 'deleteZone' })
+  }
+
+  const executeDeleteZone = async () => {
+    setConfirmModal(null)
     try {
       await zoneApi.remove(selZone.id)
       const rest = zones.filter(z => z.id !== selZone.id)
       setZones(rest)
       setSelId(rest[0]?.id ?? null)
       setMode('live')
-    } catch { alert('Failed to delete zone.') }
+      setResultModal({ type: 'success', message: `Zone "${selZone.name}" has been deleted.` })
+    } catch {
+      setResultModal({ type: 'error', message: 'Failed to delete zone. Please try again.' })
+    }
   }
 
   // ── Image upload ────────────────────────────────────────────────
@@ -153,7 +167,7 @@ export default function ParkingManagement() {
     try {
       const z = await zoneApi.uploadImage(selId, f)
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
-    } catch { alert('Image upload failed.') }
+    } catch { toast.error('Image upload failed.') }
     finally { e.target.value = '' }
   }
 
@@ -242,7 +256,7 @@ export default function ParkingManagement() {
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: saved } : z))
       setDrafts(saved.map(s => ({ ...s, _id: s.id })))
       setMode('live')
-    } catch { alert('Save failed.') }
+    } catch { setResultModal({ type: 'error', message: 'Failed to save layout. Please try again.' }) }
     finally { setSaving(false) }
   }
 
@@ -259,7 +273,7 @@ export default function ParkingManagement() {
       const u = await zoneApi.markOccupied(spaceOp.space.id, spaceOpPlate)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))
       setSpaceOp(null)
-    } catch { alert('Failed.') }
+    } catch { toast.error('Failed to mark space as occupied.') }
   }
 
   const confirmFree = async () => {
@@ -267,7 +281,7 @@ export default function ParkingManagement() {
       const u = await zoneApi.markFree(spaceOp.space.id)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))
       setSpaceOp(null)
-    } catch { alert('Failed.') }
+    } catch { toast.error('Failed to free space.') }
   }
 
   // ── Derived ─────────────────────────────────────────────────────
@@ -707,6 +721,41 @@ export default function ParkingManagement() {
           </div>
         </div>
       )}
+      {/* ── Confirmation Modal ── */}
+      {confirmModal?.type === 'deleteZone' && (
+        <div className="pm-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="pm-modal pm-modal--centered" onClick={e => e.stopPropagation()}>
+            <button className="pm-modal-close" onClick={() => setConfirmModal(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="pm-modal-warn-icon" />
+            <h2 className="pm-modal-center-title">Delete Zone?</h2>
+            <p className="pm-modal-center-body">
+              This will permanently delete <strong>{selZone?.name}</strong> and all its spaces. This cannot be undone.
+            </p>
+            <div className="pm-modal-center-actions">
+              <button className="pm-btn pm-btn--outline" onClick={() => setConfirmModal(null)}>Cancel</button>
+              <button className="pm-btn pm-btn--danger" onClick={executeDeleteZone}>Delete Zone</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Result Modal ── */}
+      {resultModal && (
+        <div className="pm-overlay" onClick={() => setResultModal(null)}>
+          <div className="pm-modal pm-modal--centered" onClick={e => e.stopPropagation()}>
+            <button className="pm-modal-close" onClick={() => setResultModal(null)}><X size={16} /></button>
+            {resultModal.type === 'success'
+              ? <CheckCircle size={32} className="pm-modal-success-icon" />
+              : <AlertTriangle size={32} className="pm-modal-error-icon" />}
+            <h2 className="pm-modal-center-title">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
+            <p className="pm-modal-center-body">{resultModal.message}</p>
+            <div className="pm-modal-center-actions">
+              <button className="pm-btn pm-btn--primary" onClick={() => setResultModal(null)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </AdminLayout>
   )
 }

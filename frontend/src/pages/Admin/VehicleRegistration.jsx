@@ -3,7 +3,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -55,6 +55,7 @@ export default function VehicleRegistration() {
   const orValid = orNumber.trim().length >= 6
 
   const [resultModal, setResultModal] = useState(null)
+  const [showAcceptConfirm, setShowAcceptConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [isQRModalOpen, setIsQRModalOpen] = useState(false)
   const [qrDisplayData, setQrDisplayData] = useState(null)
@@ -516,7 +517,7 @@ export default function VehicleRegistration() {
                     </button>
                     <button
                       className="btn-success"
-                      onClick={confirmAccept}
+                      onClick={() => setShowAcceptConfirm(true)}
                       disabled={submitting || !canAccept}
                       title={!orValid ? 'Enter a valid OR number to enable' : hasAddedDays && !specialCaseReason.trim() ? 'Provide a reason for the added days' : ''}
                     >
@@ -565,6 +566,33 @@ export default function VehicleRegistration() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Accept Confirmation */}
+      {showAcceptConfirm && selectedReg && (
+        <div className="modal-overlay">
+          <div className="modal-content confirm-modal">
+            <button className="modal-close-btn" style={{ position: 'absolute', top: 12, right: 12 }} onClick={() => setShowAcceptConfirm(false)}><X size={18} /></button>
+            <div className="confirm-icon success" style={{ marginBottom: 8 }}>
+              <Check size={24} />
+            </div>
+            <h2 className="confirm-title">Accept Registration?</h2>
+            <p className="confirm-message">
+              You are accepting <strong>{selectedReg.full_name}</strong>'s registration for plate <strong>{selectedReg.plate_number}</strong> with OR No. <strong>{orNumber}</strong>.
+              {daysOverride.length > 0 && <> Campus days: <strong>{daysOverride.join(', ')}</strong>.</>}
+            </p>
+            <div className="confirm-actions" style={{ gap: 10 }}>
+              <button className="btn-outline" onClick={() => setShowAcceptConfirm(false)} disabled={submitting}>Cancel</button>
+              <button
+                className="btn-success"
+                disabled={submitting}
+                onClick={() => { setShowAcceptConfirm(false); confirmAccept() }}
+              >
+                {submitting ? 'Processing…' : <><Check size={15} /> Yes, Accept</>}
+              </button>
+            </div>
           </div>
         </div>
       )}

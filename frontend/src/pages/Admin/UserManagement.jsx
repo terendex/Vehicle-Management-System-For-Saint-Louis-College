@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
@@ -7,7 +8,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
   Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
-  Shield, Car, Info,
+  Shield, Car, Info, LogIn,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
@@ -58,6 +59,7 @@ const EMPTY_ADMIN = { full_name: '', email: '', password: '', confirm_password: 
 /* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
   const { logout } = useAuthStore()
+  const navigate = useNavigate()
 
   /* ── users state ── */
   const [users, setUsers]             = useState([])
@@ -74,6 +76,7 @@ export default function UserManagement() {
   const [submitting, setSubmitting]   = useState(false)
   const [activeMenu, setActiveMenu]   = useState(null)
   const [addType, setAddType]         = useState(null)   // 'guard' | 'owner' | 'admin'
+  const [showGateConfirm, setShowGateConfirm] = useState(false)
   const [formErrors, setFormErrors]   = useState({})
 
   /* ── per-type form state ── */
@@ -432,6 +435,9 @@ export default function UserManagement() {
           <p>Manage system user accounts and access.</p>
         </div>
         <div className="um-header-actions">
+          <button className="um-gate-login-btn" onClick={() => setShowGateConfirm(true)}>
+            <LogIn size={16} /> Gate Login
+          </button>
           <button className="um-add-btn" onClick={openAdd}>
             <UserPlus size={16} /> Add User
           </button>
@@ -715,7 +721,7 @@ export default function UserManagement() {
                       <label>Vehicle Color</label>
                       <input className="um-form-input"
                         value={ownerForm.vehicle_color}
-                        onChange={e => setOwnerForm({ ...ownerForm, vehicle_color: e.target.value })}
+                        onChange={e => setOwnerForm({ ...ownerForm, vehicle_color: e.target.value.toUpperCase() })}
                         placeholder="e.g. White" />
                     </div>
                     {ownerForm.vehicle_type === 'Tricycle' && (
@@ -735,7 +741,7 @@ export default function UserManagement() {
                       <label>Last Name <span className="um-required">*</span></label>
                       <input className={`um-form-input ${formErrors.last_name ? 'error' : ''}`}
                         value={ownerForm.last_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, last_name: e.target.value })}
+                        onChange={e => setOwnerForm({ ...ownerForm, last_name: e.target.value.toUpperCase() })}
                         placeholder="e.g. Dela Cruz" />
                       {formErrors.last_name && <div className="um-form-error">{formErrors.last_name}</div>}
                     </div>
@@ -743,7 +749,7 @@ export default function UserManagement() {
                       <label>First Name <span className="um-required">*</span></label>
                       <input className={`um-form-input ${formErrors.first_name ? 'error' : ''}`}
                         value={ownerForm.first_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, first_name: e.target.value })}
+                        onChange={e => setOwnerForm({ ...ownerForm, first_name: e.target.value.toUpperCase() })}
                         placeholder="e.g. Juan" />
                       {formErrors.first_name && <div className="um-form-error">{formErrors.first_name}</div>}
                     </div>
@@ -751,7 +757,7 @@ export default function UserManagement() {
                       <label>Middle Name <span className="um-optional">(optional)</span></label>
                       <input className="um-form-input"
                         value={ownerForm.middle_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, middle_name: e.target.value })}
+                        onChange={e => setOwnerForm({ ...ownerForm, middle_name: e.target.value.toUpperCase() })}
                         placeholder="e.g. Santos" />
                     </div>
 
@@ -1277,12 +1283,45 @@ export default function UserManagement() {
             <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
               <button className="um-btn-secondary" onClick={() => setQrUser(null)}>Close</button>
               {qrUser.role === 'security' && (
-                <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <RefreshCw size={14} />
-                  {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <RefreshCw size={14} />
+                    {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
+                  </button>
+                  <button className="um-btn-primary" onClick={() => setShowGateConfirm(true)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <LogIn size={14} /> Go to Gate Login
+                  </button>
+                </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GATE LOGIN CONFIRM */}
+      {showGateConfirm && (
+        <div className="um-modal-overlay" onClick={() => setShowGateConfirm(false)}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="um-modal-header">
+              <h2>Open Gate Login?</h2>
+              <button className="um-modal-close" onClick={() => setShowGateConfirm(false)}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body">
+              <div className="um-confirm-body">
+                <div className="um-confirm-icon warning">
+                  <LogIn size={24} />
+                </div>
+                <h3>You will be logged out</h3>
+                <p>This will end your admin session and open the security gate login screen for guard clock-in.</p>
+              </div>
+            </div>
+            <div className="um-modal-footer">
+              <button className="um-btn-secondary" onClick={() => setShowGateConfirm(false)}>Cancel</button>
+              <button className="um-btn-primary" onClick={() => logout('/security/qr-login')}>
+                <LogIn size={16} /> Proceed
+              </button>
             </div>
           </div>
         </div>
