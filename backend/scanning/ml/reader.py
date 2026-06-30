@@ -161,6 +161,7 @@ def _correct_plate_chars(text: str) -> str:
 _ocr_reader = None  # PaddleOCR instance, lazy-loaded
 _ocr_load_failures = 0
 _OCR_MAX_RETRIES = 3
+_ocr_disabled_logged = False  # log the "disabled" message only once
 
 # PaddleOCR's ocr() is not thread-safe under concurrent calls on the
 # same instance.  Serialise all ocr() calls across camera streams.
@@ -178,15 +179,17 @@ _OCR_EARLY_EXIT_CONF = 0.60
 
 def _get_ocr():
     """Lazy-load PaddleOCR with up to _OCR_MAX_RETRIES attempts."""
-    global _ocr_reader, _ocr_load_failures
+    global _ocr_reader, _ocr_load_failures, _ocr_disabled_logged
     if _ocr_reader is not None:
         return _ocr_reader
     if _ocr_load_failures >= _OCR_MAX_RETRIES:
-        log.error(
-            "[OCR] PaddleOCR failed to load after %d attempts — OCR is disabled. "
-            "Restart the server to retry.",
-            _OCR_MAX_RETRIES,
-        )
+        if not _ocr_disabled_logged:
+            _ocr_disabled_logged = True
+            log.error(
+                "[OCR] PaddleOCR failed to load after %d attempts — OCR is disabled. "
+                "Restart the server to retry.",
+                _OCR_MAX_RETRIES,
+            )
         return None
     try:
         from paddleocr import PaddleOCR
@@ -449,6 +452,8 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
 
     deskewed = _deskew_plate(crop, aspect_ratio)
     ocr = _get_ocr()
+    if ocr is None:
+        return None, None
 
     # Convert to B&W variants fed to PaddleOCR
     bw     = _to_bw(deskewed)
