@@ -20,4 +20,12 @@ export const camerasApi = {
   remove: async (id) => {
     await api.delete(`/vehicles/cameras/${id}/`)
   },
+  ping: async (id) => {
+    const { data } = await api.post(`/vehicles/cameras/${id}/ping/`)
+    return data
+  },
+  ptz: async (id, command, speed = 0.5) => {
+    const { data } = await api.post(`/vehicles/cameras/${id}/ptz/`, { command, speed })
+    return data
+  },
 }

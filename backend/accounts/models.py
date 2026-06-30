@@ -38,10 +38,11 @@ class User(AbstractUser):
         VISITOR  = 'visitor',  'Visitor'
 
     class Schedule(models.TextChoices):
-        MWF  = 'MWF',  'Monday-Wednesday-Friday'
-        TTHS = 'TTHS', 'Tuesday-Thursday-Saturday'
-        ANY  = 'ANY',  'Any Day'
-        ALL  = 'ALL',  'All Days'
+        MWF   = 'MWF',   'Monday-Wednesday-Friday'
+        TTHS  = 'TTHS',  'Tuesday-Thursday-Saturday'
+        MIXED = 'MIXED', 'Custom / Mixed Days'
+        ANY   = 'ANY',   'Any Day'
+        ALL   = 'ALL',   'All Days'
 
     # Role-prefixed human-readable ID, e.g. SLC-ADM-000001
     _ROLE_PREFIX = {
@@ -66,11 +67,12 @@ class User(AbstractUser):
     qr_token = models.UUIDField(default=uuid.uuid4, unique=True)
 
     # Owner profile fields — only populated for vehicle_owner role
-    owner_type = models.CharField(max_length=20, choices=OwnerType.choices, null=True, blank=True)
-    schedule   = models.CharField(max_length=10, choices=Schedule.choices, null=True, blank=True)
-    contact    = models.CharField(max_length=50, null=True, blank=True)
-    address    = models.TextField(null=True, blank=True)
-    photo      = models.ImageField(upload_to='owners/', null=True, blank=True)
+    owner_type  = models.CharField(max_length=20, choices=OwnerType.choices, null=True, blank=True)
+    schedule    = models.CharField(max_length=10, choices=Schedule.choices, null=True, blank=True)
+    campus_days = models.JSONField(default=list)  # e.g. ["Monday", "Tuesday", "Wednesday"]
+    contact     = models.CharField(max_length=50, null=True, blank=True)
+    address     = models.TextField(null=True, blank=True)
+    photo       = models.ImageField(upload_to='owners/', null=True, blank=True)
 
     # Security-guard QR badge secret — a UUID printed on the guard's badge as a QR code.
     # Format in QR: "SLC-GUARD:{user_code}:{guard_qr_secret}"
