@@ -24,6 +24,7 @@ import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
 import RegisterPage from './pages/Register/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPassword/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPassword/ResetPasswordPage'
+import PolicyPage from './pages/Policy/PolicyPage'
 
 export default function App() {
   const initAutoLogout = useAuthStore((s) => s.initAutoLogout)
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/policy" element={<PolicyPage />} />
         <Route path="/security/qr-login" element={<SecurityQRLogin />} />
 
         {/* Role-specific dashboards */}

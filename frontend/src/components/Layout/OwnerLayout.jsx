@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { HelpCircle, LogOut } from 'lucide-react'
+import { Shield, LogOut } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './OwnerLayout.css'
@@ -28,8 +28,8 @@ export default function OwnerLayout({ children }) {
           <span className="user-greeting">
             {user?.full_name ? `Hi, ${user.full_name}` : 'Vehicle Owner'}
           </span>
-          <button className="action-btn" title="Help">
-            <HelpCircle size={18} />
+          <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+            <Shield size={18} />
           </button>
           <button className="logout-btn" onClick={handleLogout}>
             <LogOut size={16} />
@@ -41,6 +41,16 @@ export default function OwnerLayout({ children }) {
       <main className="owner-main">
         {children}
       </main>
+
+      <footer className="owner-footer">
+        <span className="owner-footer-copy">
+          &copy; {new Date().getFullYear()} Saint Louis College
+        </span>
+        <button className="owner-footer-policy-btn" onClick={() => navigate('/policy')}>
+          <Shield size={12} />
+          Privacy Policy &amp; Terms
+        </button>
+      </footer>
     </div>
   )
 }
