@@ -11,6 +11,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
+    allowedHosts: ['preconcurrently-inorganic-nicolle.ngrok-free.dev'],
     proxy: {
       // MJPEG streaming endpoint — no timeout, no buffering
       '/api/vehicles/parking-zones': {
