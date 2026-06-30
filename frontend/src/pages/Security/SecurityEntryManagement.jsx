@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -297,14 +297,32 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cou
                   </span>
                 </div>
               )}
+              {result.organizer_event && (
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Organizer</span>
+                  <span className="em-violation-pill" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8' }}>
+                    <Star size={10} /> {result.organizer_event.name}
+                  </span>
+                </div>
+              )}
             </div>
           )}
-          {isVisitor && owner?.full_name && (
+          {isVisitor && (owner?.full_name || result.organizer_event) && (
             <div className="em-result-rows">
-              <div className="em-result-row">
-                <span className="em-result-row-label">Owner</span>
-                <span className="em-result-row-value">{owner.full_name}</span>
-              </div>
+              {owner?.full_name && (
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Owner</span>
+                  <span className="em-result-row-value">{owner.full_name}</span>
+                </div>
+              )}
+              {result.organizer_event && (
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Organizer</span>
+                  <span className="em-violation-pill" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8' }}>
+                    <Star size={10} /> {result.organizer_event.name}
+                  </span>
+                </div>
+              )}
             </div>
           )}
           {countdown != null && (

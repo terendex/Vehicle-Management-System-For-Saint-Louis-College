@@ -530,15 +530,22 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             except Exception:
                 pass
 
+        try:
+            from .entry_logic import get_organizer_event
+            organizer_event = get_organizer_event(plate_number)
+        except Exception:
+            organizer_event = None
+
         return {
-            "status":         entry["status"],
-            "allowed":        entry["allowed"],
-            "message":        entry["message"],
-            "constraint":     entry.get("constraint"),
-            "vehicle":        VehicleSerializer(vehicle).data,
-            "registration":   registration_data,
-            "has_violations": has_violations,
-            "already_inside": already_inside,
+            "status":          entry["status"],
+            "allowed":         entry["allowed"],
+            "message":         entry["message"],
+            "constraint":      entry.get("constraint"),
+            "vehicle":         VehicleSerializer(vehicle).data,
+            "registration":    registration_data,
+            "has_violations":  has_violations,
+            "already_inside":  already_inside,
+            "organizer_event": organizer_event,
         }
 
     def _record_ml_sample(self, raw_bytes, results):
