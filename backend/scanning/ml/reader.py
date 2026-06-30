@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -158,6 +159,10 @@ def _correct_plate_chars(text: str) -> str:
 _ocr_reader = None  # easyocr.Reader, lazy-loaded
 _ocr_load_failures = 0
 _OCR_MAX_RETRIES = 3
+
+# EasyOCR's Reader.readtext() is not thread-safe under concurrent calls on the
+# same Reader instance.  Serialise all readtext() calls across camera streams.
+_OCR_LOCK = threading.Lock()
 
 _yolo_model = None
 _yolo_loaded = False
@@ -470,10 +475,11 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         if img is None or img.size == 0:
             return
         allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
-        raw = ocr.readtext(
-            img, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0,
-            allowlist=allowlist, adjust_contrast=0.7, min_size=15,
-        )
+        with _OCR_LOCK:
+            raw = ocr.readtext(
+                img, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0,
+                allowlist=allowlist, adjust_contrast=0.7, min_size=15,
+            )
         log.info("[OCR-CROP] %s: EasyOCR found %d text regions", label, len(raw))
         combined_text, avg_conf = combine_multiline_text(raw)
         if combined_text:
@@ -565,7 +571,8 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
     up = cv2.resize(bw, (int(bw.shape[1] * scale), int(bw.shape[0] * scale)), interpolation=cv2.INTER_CUBIC)
     try:
         ocr = _get_ocr()
-        raw = ocr.readtext(up, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0, adjust_contrast=0.7, min_size=15)
+        with _OCR_LOCK:
+            raw = ocr.readtext(up, text_threshold=0.10, link_threshold=0.10, low_text=0.04, mag_ratio=2.0, adjust_contrast=0.7, min_size=15)
         log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(raw))
         candidates: list[tuple[float, str]] = []
         for item in raw:

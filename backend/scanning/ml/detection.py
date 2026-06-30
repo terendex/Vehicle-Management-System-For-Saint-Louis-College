@@ -14,6 +14,7 @@ rather than returning empty results silently.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import cv2
@@ -61,6 +62,13 @@ _model              = None   # vehicle/motorcycle model (weights/best.pt)
 _plate_model        = None   # dedicated plate detector (runs/plate_detector/weights/best.pt)
 _load_attempted     = False
 _plate_load_attempted = False
+
+# Serialises concurrent model.predict() calls from multiple camera streams.
+# Ultralytics YOLO predict() is not thread-safe when the same model object is
+# called from multiple threads simultaneously — internal inference buffers get
+# corrupted, producing garbage results or crashes.  GPU inference is also
+# serialised by CUDA, so this lock adds no throughput cost.
+_INFER_LOCK = threading.Lock()
 
 
 def _validate_model_classes(model) -> bool:
@@ -331,83 +339,88 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
     gpu   = is_gpu_available()
     imgsz = 1280 if gpu else 960
 
+    # Preprocessing is pure NumPy/OpenCV — fully thread-safe, runs outside the lock.
     img_proc = _preprocess_adaptive(img)
     all_dets: list[dict] = []
 
-    # ── Pass 1: main model → vehicles & motorcycles only (plates handled by plate_detector) ──
-    if model is not None:
-        res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
-                            half=gpu, imgsz=imgsz)
-        all_dets.extend(
-            d for d in _parse_boxes(res, img, w, h, model)
-            if d["class_name"] != "license_plate"
-        )
+    # All model.predict() calls are serialised by _INFER_LOCK.
+    # Ultralytics YOLO and PyTorch share internal inference buffers on the same
+    # model object; concurrent calls from different camera threads corrupt those
+    # buffers.  GPU inference is serialised by CUDA anyway, so this lock adds no
+    # throughput penalty in practice.
+    with _INFER_LOCK:
+        # ── Pass 1: main model → vehicles & motorcycles only ──────────────────
+        if model is not None:
+            res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
+                                half=gpu, imgsz=imgsz)
+            all_dets.extend(
+                d for d in _parse_boxes(res, img, w, h, model)
+                if d["class_name"] != "license_plate"
+            )
 
-    # ── Pass 2: dedicated plate detector → license plates only ────────────────────
-    active_plate_model = plate_model if plate_model is not None else model
-    if active_plate_model is not None:
-        plate_res = active_plate_model.predict(
-            img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
-            half=gpu, imgsz=640,   # plate_detector was trained at 640
-        )
-        plate_dets = _parse_boxes(plate_res, img, w, h, active_plate_model)
-        # Only keep license_plate detections from this model
-        all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
+        # ── Pass 2: dedicated plate detector → license plates only ────────────
+        active_plate_model = plate_model if plate_model is not None else model
+        if active_plate_model is not None:
+            plate_res = active_plate_model.predict(
+                img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
+                half=gpu, imgsz=640,
+            )
+            plate_dets = _parse_boxes(plate_res, img, w, h, active_plate_model)
+            all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
 
-    # GPU: tiled pass for high-res frames (main model handles large scenes)
-    if gpu and model is not None and (w > 1280 or h > 960):
-        tile, overlap = 640, 0.2
-        stride = int(tile * (1 - overlap))
-        for y0 in range(0, h, stride):
-            for x0 in range(0, w, stride):
-                x2t, y2t = min(x0 + tile, w), min(y0 + tile, h)
-                patch = img_proc[y0:y2t, x0:x2t]
-                ph, pw = patch.shape[:2]
-                if pw < 64 or ph < 64:
-                    continue
-                tile_res = model.predict(patch, conf=conf, verbose=False,
-                                         max_det=50, half=True, imgsz=640)
-                all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
-                                             offset_x=x0, offset_y=y0))
+        # ── GPU: tiled pass for high-res frames ───────────────────────────────
+        if gpu and model is not None and (w > 1280 or h > 960):
+            tile, overlap = 640, 0.2
+            stride = int(tile * (1 - overlap))
+            for y0 in range(0, h, stride):
+                for x0 in range(0, w, stride):
+                    x2t, y2t = min(x0 + tile, w), min(y0 + tile, h)
+                    patch = img_proc[y0:y2t, x0:x2t]
+                    ph, pw = patch.shape[:2]
+                    if pw < 64 or ph < 64:
+                        continue
+                    tile_res = model.predict(patch, conf=conf, verbose=False,
+                                             max_det=50, half=True, imgsz=640)
+                    all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
+                                                 offset_x=x0, offset_y=y0))
 
-    # ── Rotation fallback ─────────────────────────────────────────────────────────
-    # Fires when no plate found at 0°. Uses the plate_detector if available.
-    rot_model = active_plate_model
-    if try_rotation and not any(d["class_name"] == "license_plate" for d in all_dets):
-        center = (w // 2, h // 2)
-        for angle in [20, -20, 40, -40, 60, -60]:
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img_rot = cv2.warpAffine(img, M, (w, h),
-                                     flags=cv2.INTER_LINEAR,
-                                     borderMode=cv2.BORDER_REFLECT_101)
-            rot_res = rot_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
-                                        verbose=False, max_det=100,
-                                        half=gpu, imgsz=640)
-            rot_dets = _parse_boxes(rot_res, img_rot, w, h, rot_model)
+        # ── Rotation fallback ─────────────────────────────────────────────────
+        rot_model = active_plate_model
+        if try_rotation and not any(d["class_name"] == "license_plate" for d in all_dets):
+            center = (w // 2, h // 2)
+            for angle in [20, -20, 40, -40, 60, -60]:
+                M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                img_rot = cv2.warpAffine(img, M, (w, h),
+                                         flags=cv2.INTER_LINEAR,
+                                         borderMode=cv2.BORDER_REFLECT_101)
+                rot_res = rot_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
+                                            verbose=False, max_det=100,
+                                            half=gpu, imgsz=640)
+                rot_dets = _parse_boxes(rot_res, img_rot, w, h, rot_model)
 
-            if rot_dets:
-                M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
-                for d in rot_dets:
-                    bx = d["_xyxy"]
-                    corners = np.array([
-                        [bx[0], bx[1], 1], [bx[2], bx[1], 1],
-                        [bx[2], bx[3], 1], [bx[0], bx[3], 1],
-                    ], dtype=np.float32)
-                    t = (M_inv @ corners.T).T
-                    nx1 = max(0, int(t[:, 0].min()))
-                    ny1 = max(0, int(t[:, 1].min()))
-                    nx2 = min(w, int(t[:, 0].max()))
-                    ny2 = min(h, int(t[:, 1].max()))
-                    d["bbox"] = {
-                        "x": nx1 / w, "y": ny1 / h,
-                        "width": (nx2 - nx1) / w,
-                        "height": (ny2 - ny1) / h,
-                    }
-                    d["_xyxy"] = (nx1, ny1, nx2, ny2)
+                if rot_dets:
+                    M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
+                    for d in rot_dets:
+                        bx = d["_xyxy"]
+                        corners = np.array([
+                            [bx[0], bx[1], 1], [bx[2], bx[1], 1],
+                            [bx[2], bx[3], 1], [bx[0], bx[3], 1],
+                        ], dtype=np.float32)
+                        t = (M_inv @ corners.T).T
+                        nx1 = max(0, int(t[:, 0].min()))
+                        ny1 = max(0, int(t[:, 1].min()))
+                        nx2 = min(w, int(t[:, 0].max()))
+                        ny2 = min(h, int(t[:, 1].max()))
+                        d["bbox"] = {
+                            "x": nx1 / w, "y": ny1 / h,
+                            "width": (nx2 - nx1) / w,
+                            "height": (ny2 - ny1) / h,
+                        }
+                        d["_xyxy"] = (nx1, ny1, nx2, ny2)
 
-                all_dets.extend(rot_dets)
-                if any(d["class_name"] == "license_plate" for d in rot_dets):
-                    break
+                    all_dets.extend(rot_dets)
+                    if any(d["class_name"] == "license_plate" for d in rot_dets):
+                        break
 
     all_dets = _nms(all_dets)
 

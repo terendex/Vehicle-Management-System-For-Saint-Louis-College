@@ -93,6 +93,18 @@ export const usersApi = {
     return data
   },
 
+  /** Admin creates a security guard (name + gate only, no email/password). */
+  createGuard: async (data) => {
+    const { data: res } = await api.post('/accounts/admin/create-guard/', data)
+    return res
+  },
+
+  /** Admin creates a vehicle owner with all registration fields (password emailed). */
+  createOwner: async (data) => {
+    const { data: res } = await api.post('/accounts/admin/create-owner/', data)
+    return res
+  },
+
   /** Get a guard's QR token (admin only). */
   getGuardQR: async (id) => {
     const { data } = await api.get(`/accounts/users/${id}/qr/`)

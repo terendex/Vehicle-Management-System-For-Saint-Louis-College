@@ -4,6 +4,13 @@ import { CheckCircle, AlertTriangle, Car, Info, Banknote, User, Users, ChevronRi
 
 import { registrationApi } from '../../api/registration'
 
+function formatRegDate(iso) {
+  if (!iso) return null
+  try {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+  } catch { return iso }
+}
+
 // Auto-formats plate as the user types. Only inserts a space for the common
 // 2-3 letter prefix + digit patterns (e.g. ABC1234 → ABC 1234, AB1234 → AB 1234).
 // Other formats (N123BC, 123ABC, 1234) are left as-is since they have no standard separator.
@@ -85,6 +92,7 @@ export default function RegisterPage() {
   const [registrantType, setRegistrantType] = useState(null)
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState(null)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
@@ -319,9 +327,12 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
+      else if (['last_name', 'first_name', 'middle_name', 'vehicle_color'].includes(name))
+        formatted = formatted.toUpperCase()
       setFormData((prev) => ({ ...prev, [name]: formatted }))
       const errorMsg = validateField(name, formatted)
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
+      setSubmitError(null)
     }
   }
 
@@ -337,12 +348,14 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault()
 
+    setSubmitError(null)
+
     if (!registrantType) {
-      alert('Please select your registrant type.')
+      setSubmitError('Please select your registrant type.')
       return
     }
     if (regStatus && !regStatus.is_open) {
-      alert('Registration is currently closed. Please try again during the registration window.')
+      setSubmitError('Registration is currently closed. Please try again during the registration window.')
       return
     }
 
@@ -355,27 +368,27 @@ export default function RegisterPage() {
     })
     if (Object.keys(newErrors).length > 0) {
       setFormErrors(prev => ({ ...prev, ...newErrors }))
-      alert('Please fix the format errors highlighted in the form before submitting.')
+      setSubmitError('Please fix the format errors highlighted in the form before submitting.')
       return
     }
 
     if (!formData.privacy_consent) {
-      alert('You must agree to the Data Privacy Consent.')
+      setSubmitError('You must agree to the Data Privacy Consent before submitting.')
       return
     }
     if (registrantType === 'student' && formData.campus_days.length === 0) {
-      alert('Please select at least one campus day.')
+      setSubmitError('Please select at least one campus day.')
       return
     }
     if (registrantType === 'student' && formData.student_level !== 'sped' && formData.campus_days.length > 3) {
-      alert('You may only select up to 3 campus days.')
+      setSubmitError('You may only select up to 3 campus days.')
       return
     }
 
     if (registrantType === 'student' && scheduleSlots) {
       const fullDays = formData.campus_days.filter(d => scheduleSlots[d]?.available === 0)
       if (fullDays.length > 0) {
-        alert(`The following day(s) are full: ${fullDays.join(', ')}. Please deselect them and try again.`)
+        setSubmitError(`The following day(s) are full: ${fullDays.join(', ')}. Please deselect them and try again.`)
         return
       }
     }
@@ -415,7 +428,7 @@ export default function RegisterPage() {
       // Show payment instructions popup before success screen
       setShowPaymentPopup(true)
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to submit registration. Please try again.')
+      setSubmitError(err.response?.data?.error || 'Failed to submit registration. Please try again.')
       console.error(err)
     } finally {
       setSubmitting(false)
@@ -480,9 +493,16 @@ export default function RegisterPage() {
                     <span>{regStatus.is_open ? 'Registration is currently open' : 'Registration is currently closed'}</span>
                   </div>
                   <div className="reg-window-dates">
-                    {regStatus.is_open
-                      ? <>Window: <span className="reg-window-range">{regStatus.open_date} – {regStatus.close_date}</span></>
-                      : <>Next window opens approximately on <span className="reg-window-range">{regStatus.open_date}</span>. Submissions are not accepted outside the registration period.</>}
+                    {(() => {
+                      const start = formatRegDate(regStatus.open_date)
+                      const end   = formatRegDate(regStatus.close_date)
+                      const range = start && end
+                        ? <span className="reg-window-range">{start} – {end}</span>
+                        : <span className="reg-window-range reg-window-range--tentative">June 1 <em>(tentative)</em> – October 31 <em>(tentative)</em></span>
+                      return regStatus.is_open
+                        ? <>Window: {range}</>
+                        : <>Registration window: {range}. Submissions are not accepted outside the registration period.</>
+                    })()}
                   </div>
                 </div>
               </div>
@@ -1304,6 +1324,13 @@ export default function RegisterPage() {
             </div>
 
             </>}
+
+            {submitError && (
+              <div className="reg-submit-error">
+                <AlertTriangle size={15} />
+                {submitError}
+              </div>
+            )}
 
             <div className="form-actions">
               <button

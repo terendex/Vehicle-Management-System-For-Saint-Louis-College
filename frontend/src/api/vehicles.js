@@ -15,3 +15,8 @@ export const updateSystemSettings = (data) => api.put('/vehicles/system-settings
 export const getNotices       = ()        => api.get('/vehicles/notices/')
 export const createNotice     = (data)    => api.post('/vehicles/notices/', data)
 export const deactivateNotice = (id)      => api.delete(`/vehicles/notices/${id}/`)
+
+export const getRegistrationPeriods    = ()        => api.get('/vehicles/registration-periods/')
+export const createRegistrationPeriod  = (data)    => api.post('/vehicles/registration-periods/', data)
+export const activateRegistrationPeriod = (id)     => api.post(`/vehicles/registration-periods/${id}/activate/`)
+export const deactivateRegistrationPeriod = (id)   => api.delete(`/vehicles/registration-periods/${id}/activate/`)

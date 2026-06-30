@@ -2,11 +2,15 @@ import { useState, useEffect } from 'react'
 import {
   CalendarDays, Clock, Pencil, X, Settings2,
   Loader2, User, Car, Users, ChevronRight,
-  DoorOpen, CalendarRange, Globe,
+  CalendarRange, Globe, Plus, CheckCircle, Archive, AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
-import { getRuleConstraints, updateRuleConstraint, getSystemSettings, updateSystemSettings } from '../../api/vehicles'
+import {
+  getRuleConstraints, updateRuleConstraint, getSystemSettings,
+  getRegistrationPeriods, createRegistrationPeriod,
+  activateRegistrationPeriod, deactivateRegistrationPeriod,
+} from '../../api/vehicles'
 import api from '../../api/axios'
 import './RuleConstraints.css'
 
@@ -177,11 +181,21 @@ export default function RuleConstraints() {
   const [loading,     setLoading]     = useState(true)
   const [editingType, setEditingType] = useState(null)
 
-  // System settings state
-  const SS_DEFAULTS = { event_mode_entry: false, open_campus_mode: false, registration_start: '', registration_end: '' }
+  // System settings (open campus mode only now)
+  const SS_DEFAULTS = { open_campus_mode: false }
   const [ss,        setSs]        = useState(SS_DEFAULTS)
-  const [ssSaved,   setSsSaved]   = useState(SS_DEFAULTS)
   const [ssLoading, setSsLoading] = useState(true)
+
+  // Registration periods
+  const [periods,        setPeriods]        = useState([])
+  const [periodsLoading, setPeriodsLoading] = useState(true)
+  const [showAddPeriod,  setShowAddPeriod]  = useState(false)
+  const EMPTY_PERIOD = { label: '', start_date: '', end_date: '' }
+  const [periodForm,     setPeriodForm]     = useState(EMPTY_PERIOD)
+  const [periodErrors,   setPeriodErrors]   = useState({})
+  const [savingPeriod,   setSavingPeriod]   = useState(false)
+  const [togglingId,     setTogglingId]     = useState(null)
+  const [confirmAction,  setConfirmAction]  = useState(null) // { type, id?, period? }
 
   useEffect(() => {
     let cancelled = false
@@ -199,17 +213,15 @@ export default function RuleConstraints() {
     getSystemSettings()
       .then(({ data }) => {
         if (cancelled) return
-        const normalized = {
-          event_mode_entry:   data.event_mode_entry   ?? false,
-          open_campus_mode:   data.open_campus_mode   ?? false,
-          registration_start: data.registration_start ?? '',
-          registration_end:   data.registration_end   ?? '',
-        }
-        setSs(normalized)
-        setSsSaved(normalized)
+        setSs({ open_campus_mode: data.open_campus_mode ?? false })
         setSsLoading(false)
       })
       .catch(() => { if (!cancelled) setSsLoading(false) })
+
+    getRegistrationPeriods()
+      .then(({ data }) => { if (!cancelled) setPeriods(data) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPeriodsLoading(false) })
 
     return () => { cancelled = true }
   }, [])
@@ -230,11 +242,8 @@ export default function RuleConstraints() {
     const next = !ss[field]
     try {
       const { data } = await api.patch('/vehicles/system-settings/', { [field]: next })
-      const updated = { [field]: data[field] }
-      setSs(f => ({ ...f, ...updated }))
-      setSsSaved(f => ({ ...f, ...updated }))
+      setSs(f => ({ ...f, [field]: data[field] }))
       const labels = {
-        event_mode_entry: next ? 'Event Mode enabled.' : 'Event Mode disabled.',
         open_campus_mode: next ? 'Open Campus Mode ENABLED — all vehicles will be allowed.' : 'Open Campus Mode disabled.',
       }
       toast[next ? 'success' : 'info'](labels[field])
@@ -243,23 +252,56 @@ export default function RuleConstraints() {
     }
   }
 
-  const regDirty =
-    ss.registration_start !== (ssSaved.registration_start ?? '') ||
-    ss.registration_end   !== (ssSaved.registration_end   ?? '')
+  const handleAddPeriod = async () => {
+    const errors = {}
+    if (!periodForm.label.trim())      errors.label      = 'Label is required.'
+    if (!periodForm.start_date)        errors.start_date = 'Start date is required.'
+    if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
+    if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
+      errors.end_date = 'End date must be on or after start date.'
+    setPeriodErrors(errors)
+    if (Object.keys(errors).length) return
 
-  const saveRegPeriod = async () => {
+    setSavingPeriod(true)
     try {
-      const { data } = await updateSystemSettings({
-        ...ssSaved,
-        registration_start: ss.registration_start || null,
-        registration_end:   ss.registration_end   || null,
-      })
-      const updated = { registration_start: data.registration_start ?? '', registration_end: data.registration_end ?? '' }
-      setSs(f => ({ ...f, ...updated }))
-      setSsSaved(f => ({ ...f, ...updated }))
-      toast.success('Registration period saved.')
+      const { data } = await createRegistrationPeriod(periodForm)
+      setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
+      setPeriodForm(EMPTY_PERIOD)
+      setPeriodErrors({})
+      setShowAddPeriod(false)
+      toast.success('Registration period created and set as active.')
+    } catch (err) {
+      const d = err.response?.data
+      if (d && typeof d === 'object') setPeriodErrors(d)
+      else toast.error('Failed to create registration period.')
+    } finally {
+      setSavingPeriod(false)
+    }
+  }
+
+  const handleActivatePeriod = async (id) => {
+    setTogglingId(id)
+    try {
+      const { data } = await activateRegistrationPeriod(id)
+      setPeriods(prev => prev.map(p => ({ ...p, is_active: p.id === data.id })))
+      toast.success('Registration period activated.')
     } catch {
-      toast.error('Failed to save registration period.')
+      toast.error('Failed to activate period.')
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const handleDeactivatePeriod = async (id) => {
+    setTogglingId(id)
+    try {
+      await deactivateRegistrationPeriod(id)
+      setPeriods(prev => prev.map(p => p.id === id ? { ...p, is_active: false } : p))
+      toast.info('Registration period deactivated. No active period — registrations closed.')
+    } catch {
+      toast.error('Failed to deactivate period.')
+    } finally {
+      setTogglingId(null)
     }
   }
 
@@ -301,7 +343,7 @@ export default function RuleConstraints() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <ModeToggle
                     active={ss.open_campus_mode}
-                    onToggle={() => toggleMode('open_campus_mode')}
+                    onToggle={() => setConfirmAction({ type: 'toggleCampusMode' })}
                     activeLabel="Open Campus ON"
                     inactiveLabel="Open Campus OFF"
                     activeColor="#7c3aed"
@@ -317,46 +359,6 @@ export default function RuleConstraints() {
           </div>
         </div>
 
-        {/* ── Event Mode ───────────────────────────────────────── */}
-        <div className="rc-section">
-          <div className="rc-section-head">
-            <span className="rc-section-label">
-              <DoorOpen size={17} />
-              Entry Gate Event Mode
-            </span>
-            {ss.event_mode_entry && (
-              <span className="rc-mode-active-badge rc-mode-active-badge--event">ACTIVE</span>
-            )}
-          </div>
-          <div className="rc-section-body">
-            {ssLoading ? (
-              <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
-            ) : (
-              <div className="rc-mode-block">
-                <p className="rc-mode-desc">
-                  When enabled, denied scans at the entry gate are <strong>auto-approved</strong> and logged for audit.
-                  Registration and schedule rules still apply — only the scan denial is overridden.
-                  Guards can always manually override parking regardless of this setting.
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                  <ModeToggle
-                    active={ss.event_mode_entry}
-                    onToggle={() => toggleMode('event_mode_entry')}
-                    activeLabel="Event Mode ON"
-                    inactiveLabel="Event Mode OFF"
-                    activeColor="#16a34a"
-                  />
-                  <span style={{ fontSize: 12, color: ss.event_mode_entry ? '#15803d' : '#9ca3af', fontWeight: 600 }}>
-                    {ss.event_mode_entry
-                      ? 'All denied entry scans are auto-overridden and logged.'
-                      : 'Normal entry restrictions apply.'}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* ── Registration Period ───────────────────────────────── */}
         <div className="rc-section">
           <div className="rc-section-head">
@@ -364,62 +366,116 @@ export default function RuleConstraints() {
               <CalendarRange size={17} />
               Vehicle Registration Period
             </span>
+            <button className="rc-btn rc-btn-primary rc-btn-sm" onClick={() => { setShowAddPeriod(v => !v); setPeriodForm(EMPTY_PERIOD); setPeriodErrors({}) }}>
+              <Plus size={14} /> New Period
+            </button>
           </div>
           <div className="rc-section-body">
-            {ssLoading ? (
-              <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
-            ) : (
-              <>
-                <p className="rc-mode-desc">
-                  Set the date range during which vehicle registrations are accepted.
-                  Leave blank to allow registrations at any time.
-                </p>
-                <div className="rc-reg-row">
+            {/* Add form */}
+            {showAddPeriod && (
+              <div className="rc-period-form">
+                <div className="rc-period-form-fields">
+                  <div className="rc-reg-field" style={{ flex: 2 }}>
+                    <label className="rc-field-label">Label <span style={{ color: '#ef4444' }}>*</span></label>
+                    <input
+                      className={`rc-field-input ${periodErrors.label ? 'rc-input-error' : ''}`}
+                      placeholder="e.g. S.Y. 2025–2026 First Semester"
+                      value={periodForm.label}
+                      onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
+                    />
+                    {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
+                  </div>
                   <div className="rc-reg-field">
-                    <label className="rc-field-label">Start date</label>
+                    <label className="rc-field-label">Start date <span style={{ color: '#ef4444' }}>*</span></label>
                     <input
                       type="date"
-                      className="rc-field-input"
-                      value={ss.registration_start || ''}
-                      onChange={e => setSs(f => ({ ...f, registration_start: e.target.value }))}
+                      className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
+                      value={periodForm.start_date}
+                      onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
                     />
+                    {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
                   </div>
-                  <span className="rc-reg-sep">to</span>
                   <div className="rc-reg-field">
-                    <label className="rc-field-label">End date</label>
+                    <label className="rc-field-label">End date <span style={{ color: '#ef4444' }}>*</span></label>
                     <input
                       type="date"
-                      className="rc-field-input"
-                      value={ss.registration_end || ''}
-                      min={ss.registration_start || undefined}
-                      onChange={e => setSs(f => ({ ...f, registration_end: e.target.value }))}
+                      className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
+                      value={periodForm.end_date}
+                      min={periodForm.start_date || undefined}
+                      onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
                     />
+                    {periodErrors.end_date && <span className="rc-field-error">{periodErrors.end_date}</span>}
                   </div>
-                  {(ss.registration_start || ss.registration_end) && (
-                    <button
-                      className="rc-reg-clear"
-                      onClick={() => setSs(f => ({ ...f, registration_start: '', registration_end: '' }))}
-                      title="Clear dates"
-                    >
-                      <X size={13} /> Clear
-                    </button>
-                  )}
-                  {regDirty && (
-                    <button className="rc-btn rc-btn-primary" onClick={saveRegPeriod} style={{ marginLeft: 'auto' }}>
-                      Save Period
-                    </button>
-                  )}
                 </div>
-                {ss.registration_start && ss.registration_end && (
-                  <div className="rc-reg-info">
-                    <CalendarRange size={13} />
-                    Registration open from{' '}
-                    <strong>{new Date(ss.registration_start + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</strong>
-                    {' '}to{' '}
-                    <strong>{new Date(ss.registration_end + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</strong>.
-                  </div>
-                )}
-              </>
+                <div className="rc-period-form-actions">
+                  <button className="rc-btn rc-btn-secondary" onClick={() => setShowAddPeriod(false)}>Cancel</button>
+                  <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleAddPeriod}>
+                    {savingPeriod ? <Loader2 size={14} className="rc-spin" /> : <Plus size={14} />}
+                    {savingPeriod ? 'Saving…' : 'Save & Activate'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Periods table */}
+            {periodsLoading ? (
+              <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
+            ) : periods.length === 0 ? (
+              <p className="rc-mode-desc" style={{ color: '#9ca3af', fontStyle: 'italic' }}>
+                No registration periods yet. Click "New Period" to create one.
+              </p>
+            ) : (
+              <div className="rc-period-table-wrap">
+                <table className="rc-period-table">
+                  <thead>
+                    <tr>
+                      <th>Label</th>
+                      <th>Start</th>
+                      <th>End</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {periods.map(p => {
+                      const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+                      return (
+                        <tr key={p.id} className={p.is_active ? 'rc-period-row--active' : ''}>
+                          <td className="rc-period-label">{p.label}</td>
+                          <td>{fmt(p.start_date)}</td>
+                          <td>{fmt(p.end_date)}</td>
+                          <td>
+                            {p.is_active
+                              ? <span className="rc-period-badge rc-period-badge--active"><CheckCircle size={11} /> Active</span>
+                              : <span className="rc-period-badge rc-period-badge--archived"><Archive size={11} /> Archived</span>}
+                          </td>
+                          <td>
+                            {p.is_active ? (
+                              <button
+                                className="rc-btn rc-btn-secondary rc-btn-sm"
+                                disabled={togglingId === p.id}
+                                onClick={() => setConfirmAction({ type: 'deactivatePeriod', id: p.id, period: p })}
+                              >
+                                {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <Archive size={12} />}
+                                Deactivate
+                              </button>
+                            ) : (
+                              <button
+                                className="rc-btn rc-btn-primary rc-btn-sm"
+                                disabled={togglingId === p.id}
+                                onClick={() => setConfirmAction({ type: 'activatePeriod', id: p.id, period: p })}
+                              >
+                                {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <CheckCircle size={12} />}
+                                Set Active
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -489,6 +545,52 @@ export default function RuleConstraints() {
           onClose={() => setEditingType(null)}
         />
       )}
+
+      {/* ── Confirmation Modal ── */}
+      {confirmAction && (() => {
+        const isCampus    = confirmAction.type === 'toggleCampusMode'
+        const isActivate  = confirmAction.type === 'activatePeriod'
+        const isDeactivate = confirmAction.type === 'deactivatePeriod'
+        const enabling = isCampus && !ss.open_campus_mode
+
+        const config = isCampus ? {
+          title:   enabling ? 'Enable Open Campus Mode?' : 'Disable Open Campus Mode?',
+          body:    enabling
+            ? 'All vehicles will be allowed to enter regardless of registration, schedule, or entry constraints.'
+            : 'Normal entry restrictions will apply again.',
+          confirm: enabling ? 'Enable' : 'Disable',
+          cls:     enabling ? 'rc-confirm-btn rc-confirm-btn--danger' : 'rc-confirm-btn rc-confirm-btn--primary',
+          onConfirm: () => { setConfirmAction(null); toggleMode('open_campus_mode') },
+        } : isActivate ? {
+          title:   'Set as Active Period?',
+          body:    `"${confirmAction.period.label}" will become the active registration period. The current active period (if any) will be archived.`,
+          confirm: 'Set Active',
+          cls:     'rc-confirm-btn rc-confirm-btn--primary',
+          onConfirm: () => { setConfirmAction(null); handleActivatePeriod(confirmAction.id) },
+        } : {
+          title:   'Deactivate Period?',
+          body:    `"${confirmAction.period.label}" will be archived. No registration period will be active — new vehicle registrations will be closed.`,
+          confirm: 'Deactivate',
+          cls:     'rc-confirm-btn rc-confirm-btn--warning',
+          onConfirm: () => { setConfirmAction(null); handleDeactivatePeriod(confirmAction.id) },
+        }
+
+        return (
+          <div className="rc-overlay" onClick={() => setConfirmAction(null)}>
+            <div className="rc-confirm-modal" onClick={e => e.stopPropagation()}>
+              <button className="rc-confirm-close" onClick={() => setConfirmAction(null)}><X size={16} /></button>
+              <AlertTriangle size={32} className={`rc-confirm-icon ${enabling || isDeactivate ? 'rc-confirm-icon--warn' : 'rc-confirm-icon--info'}`} />
+              <h2 className="rc-confirm-title">{config.title}</h2>
+              <p className="rc-confirm-body">{config.body}</p>
+              <div className="rc-confirm-actions">
+                <button className="rc-btn rc-btn-secondary" onClick={() => setConfirmAction(null)}>Cancel</button>
+                <button className={config.cls} onClick={config.onConfirm}>{config.confirm}</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
     </AdminLayout>
   )
 }

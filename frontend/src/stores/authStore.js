@@ -153,7 +153,7 @@ const useAuthStore = create((set, get) => {
       }
     },
 
-    logout: () => {
+    logout: (redirectTo = '/login') => {
       _clearTimer()
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
@@ -167,7 +167,7 @@ const useAuthStore = create((set, get) => {
         error: null,
       })
 
-      window.location.href = '/login'
+      window.location.href = redirectTo
     },
 
     /** Guard QR scan login — replaces the current session with the scanned guard's session. */

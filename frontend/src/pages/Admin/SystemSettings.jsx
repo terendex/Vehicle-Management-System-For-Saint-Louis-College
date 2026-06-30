@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
@@ -18,6 +18,7 @@ export default function SystemSettings() {
   const [noticeForm, setNoticeForm]         = useState({ title: '', body: '' })
   const [broadcasting, setBroadcasting]     = useState(false)
   const [removingId, setRemovingId]         = useState(null)
+  const [confirmDeactivate, setConfirmDeactivate] = useState(null) // { id, title }
 
   useEffect(() => {
     getSystemSettings()
@@ -276,7 +277,7 @@ export default function SystemSettings() {
                       className="ss-notice-remove"
                       title="Deactivate notice"
                       disabled={removingId === n.id}
-                      onClick={() => handleDeactivate(n.id)}
+                      onClick={() => setConfirmDeactivate({ id: n.id, title: n.title })}
                     >
                       {removingId === n.id ? <Loader2 size={14} className="ss-spinner" /> : <X size={14} />}
                     </button>
@@ -303,6 +304,30 @@ export default function SystemSettings() {
         )}
 
       </div>
+
+      {/* ── Confirm Deactivate Notice Modal ─── */}
+      {confirmDeactivate && (
+        <div className="ss-overlay" onClick={() => setConfirmDeactivate(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setConfirmDeactivate(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Remove Notice?</h2>
+            <p className="ss-modal-body">
+              This will deactivate <strong>"{confirmDeactivate.title}"</strong> and hide it from all owners. This cannot be undone.
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setConfirmDeactivate(null)}>Cancel</button>
+              <button
+                className="ss-modal-btn ss-modal-btn-danger"
+                onClick={() => { const id = confirmDeactivate.id; setConfirmDeactivate(null); handleDeactivate(id) }}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </AdminLayout>
   )
 }
