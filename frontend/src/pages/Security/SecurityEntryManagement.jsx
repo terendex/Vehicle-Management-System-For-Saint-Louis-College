@@ -394,7 +394,7 @@ export default function SecurityEntryManagement() {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

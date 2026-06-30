@@ -699,7 +699,7 @@ class _StreamWorker:
                         self._push({'type': 'status', 'connected': False,
                                     'message': 'Stream dropped. Reconnecting…'})
                         break
-                    ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     if ok:
                         self._push({'type': 'frame',
                                     'image_b64': _b64.b64encode(buf.tobytes()).decode()})
@@ -753,9 +753,10 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
     async def connect(self):
+        qs = self.scope["query_string"].decode()
         token_key = (
-            self.scope["query_string"].decode().split("token=")[-1].split("&")[0]
-            if "token=" in self.scope["query_string"].decode()
+            qs.split("token=")[-1].split("&")[0]
+            if "token=" in qs
             else None
         )
         if not token_key:
@@ -765,6 +766,11 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         if self._user is None:
             await self.close(code=4001, reason="Invalid token")
             return
+
+        # detect=1 in the query string enables plate-scan ML.
+        # Omit or set detect=0 for view-only connections (Device Management,
+        # Operations Center) so they never run detection or OCR.
+        self._scan_enabled = "detect=1" in qs
 
         # Shared scan state (mirrors ScanLiveConsumer.__init__ block)
         self._tracker               = ProximityTracker()
@@ -776,12 +782,13 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_w            = 1280
         self._last_img_h            = 720
         self._stream_task           = None
+        self._detect_tasks: set     = set()   # tracked so we can cancel on disconnect
         self._dedup_seconds         = _DEFAULT_DEDUP_SECONDS
         self._loop                  = asyncio.get_running_loop()
         self._worker_sid            = str(id(self))
 
         await self.accept()
-        logger.info("[RTSP] Connected: user=%s", self._user)
+        logger.info("[RTSP] Connected: user=%s scan=%s", self._user, self._scan_enabled)
         await self.send_json({"type": "connected", "message": "RTSP consumer ready."})
 
     async def disconnect(self, code):
@@ -814,6 +821,13 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     # ── stream management ──────────────────────────────────────────────────────
 
     async def _cancel_stream(self):
+        # Cancel all in-flight detection/OCR tasks first so they don't keep
+        # logging after the stream stops (executor threads finish on their own
+        # but the async wrappers — and their log calls — are stopped here).
+        for t in list(getattr(self, '_detect_tasks', ())):
+            t.cancel()
+        self._detect_tasks = set()
+
         if self._stream_task and not self._stream_task.done():
             self._stream_task.cancel()
             try:
@@ -851,10 +865,12 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                         })
                         sent_connected = True
                     await self.send_json({"type": "frame", "image_b64": msg["image_b64"]})
-                    if not self._detection_in_progress:
+                    if self._scan_enabled and not self._detection_in_progress:
                         self._detection_in_progress = True
                         jpeg_bytes = _b64.b64decode(msg["image_b64"])
-                        asyncio.create_task(self._detect_and_scan(jpeg_bytes))
+                        task = asyncio.create_task(self._detect_and_scan(jpeg_bytes))
+                        self._detect_tasks.add(task)
+                        task.add_done_callback(self._detect_tasks.discard)
 
                 elif msg_type == "status":
                     await self.send_json(msg)

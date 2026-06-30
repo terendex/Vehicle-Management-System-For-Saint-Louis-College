@@ -1,7 +1,7 @@
 """
 ocr_bridge.py — Async OCR handler for real-time video pipeline
 
-Decouples EasyOCR from the main detection loop. Runs OCR in a thread pool
+Decouples PaddleOCR from the main detection loop. Runs OCR in a thread pool
 only when needed (new tracks or periodic refresh) to maintain high FPS.
 """
 

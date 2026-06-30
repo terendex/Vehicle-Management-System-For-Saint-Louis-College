@@ -328,10 +328,10 @@ export default function EntryManagement() {
     if (rtspResults?.length > 0) handleScanSuccess(rtspResults)
   }, [rtspResults, handleScanSuccess])
 
-  // Load entry cameras from Device Management — no-op if already connected
+  // Load entry cameras — detect=true enables plate-scan ML for this page
   useEffect(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
