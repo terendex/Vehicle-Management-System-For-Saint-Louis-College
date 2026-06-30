@@ -37,6 +37,10 @@ urlpatterns = [
     # System-wide settings (admin / CDSO)
     path('system-settings/', views.SystemSettingsView.as_view(), name='system-settings'),
 
+    # Events (admin / CDSO)
+    path('events/',           views.EventListCreateView.as_view(), name='event-list'),
+    path('events/<int:pk>/',  views.EventDetailView.as_view(),     name='event-detail'),
+
     # Parking notices (admin/CDSO broadcast, owner read)
     path('notices/',          views.ParkingNoticeView.as_view(),       name='parking-notices'),
     path('notices/<int:pk>/', views.ParkingNoticeDetailView.as_view(), name='parking-notice-detail'),

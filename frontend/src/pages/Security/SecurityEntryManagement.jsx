@@ -216,7 +216,7 @@ function OverrideModal({ plate, onClose, onOverridden }) {
 }
 
 // ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, guardName }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, guardName, countdown, onDismiss }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
 
@@ -307,6 +307,25 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName }) {
               </div>
             </div>
           )}
+          {countdown != null && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              marginTop: 10, padding: '7px 11px',
+              background: '#fff7ed', border: '1px solid #fed7aa',
+              borderRadius: 8, fontSize: 12, color: '#9a3412',
+            }}>
+              <span><AlertTriangle size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Details clearing in <strong>{countdown}s</strong>
+              </span>
+              <button
+                onClick={onDismiss}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9a3412', padding: '0 2px', display: 'flex', alignItems: 'center' }}
+                title="Dismiss now"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
             {isVisitor && (
               <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
@@ -348,6 +367,40 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
+  const [resultCountdown, setResultCountdown] = useState(null)
+
+  const dismissTimerRef  = useRef(null)
+  const warningTimerRef  = useRef(null)
+  const countdownIntervalRef = useRef(null)
+
+  const clearResultTimers = () => {
+    clearTimeout(dismissTimerRef.current)
+    clearTimeout(warningTimerRef.current)
+    clearInterval(countdownIntervalRef.current)
+    setResultCountdown(null)
+  }
+
+  const startResultCooldown = () => {
+    clearResultTimers()
+    warningTimerRef.current = setTimeout(() => {
+      setResultCountdown(5)
+      countdownIntervalRef.current = setInterval(() => {
+        setResultCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownIntervalRef.current)
+            return null
+          }
+          return prev - 1
+        })
+      }, 1000)
+    }, 25000)
+    dismissTimerRef.current = setTimeout(() => {
+      setResult(null)
+      setResultCountdown(null)
+    }, 30000)
+  }
+
+  useEffect(() => () => clearResultTimers(), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -371,6 +424,7 @@ export default function SecurityEntryManagement() {
       scanCooldown.current.add(r.plate_number)
       setTimeout(() => scanCooldown.current.delete(r.plate_number), 3000)
       setResult(r)
+      startResultCooldown()
       const m = getMeta(r.status)
       if (r.allowed) {
         toast.success(`Entry approved: ${r.plate_number}`)
@@ -406,11 +460,13 @@ export default function SecurityEntryManagement() {
     const plate = plateInput.trim().toUpperCase()
     if (!plate) return
     setLoading(true)
+    clearResultTimers()
     setResult(null)
     setExitResult(null)
     try {
       const res = await manualEntry({ plate_number: plate })
       setResult(res.data)
+      startResultCooldown()
       const m = getMeta(res.data.status)
       if (res.data.allowed) {
         toast.success(`Entry approved: ${plate}`)
@@ -575,6 +631,8 @@ export default function SecurityEntryManagement() {
               onPassCreated={refreshLogs}
               onOverride={refreshLogs}
               guardName={user?.full_name}
+              countdown={resultCountdown}
+              onDismiss={() => { clearResultTimers(); setResult(null) }}
             />
 
             {/* Recent scans */}
