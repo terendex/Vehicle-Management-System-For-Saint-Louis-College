@@ -476,10 +476,8 @@
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   box-shadow: 0 2px 8px rgba(42, 43, 97, 0.15);
-  position: relative;
-  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -487,45 +485,21 @@
   letter-spacing: 0.3px;
 }
 
-.btn-submit::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: #1A1D2E;
-  transform: scaleY(0);
-  transform-origin: bottom;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 0;
-}
-
-.btn-submit span,
-.btn-submit svg {
-  position: relative;
-  z-index: 1;
-}
-
-.btn-submit:hover:not(:disabled)::before {
-  transform: scaleY(1);
-}
-
 .btn-submit:hover:not(:disabled) {
-  color: #FFFFFF;
-  box-shadow: 0 6px 20px rgba(42, 43, 97, 0.25);
-  transform: translateY(-1px);
+  background: #1e1f50;
+  box-shadow: 0 6px 20px rgba(42, 43, 97, 0.3);
+  transform: translateY(-2px);
 }
 
 .btn-submit:active:not(:disabled) {
-  transform: scale(0.98) translateY(0);
+  background: #161740;
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(42, 43, 97, 0.2);
 }
 
 .btn-submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
-}
-
-.btn-submit:disabled:hover::before {
-  transform: scaleY(0);
 }
 
 /* ===== Day Picker (Encircle 3 days) ===== */
