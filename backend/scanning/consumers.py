@@ -571,10 +571,170 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             return None
 
 
+# ── Shared RTSP stream worker ──────────────────────────────────────────────────
+#
+# Only ONE cv2.VideoCapture is opened per RTSP URL regardless of how many
+# WebSocket consumers (admin, security, etc.) are watching the same camera.
+# Each consumer subscribes to an asyncio.Queue; the worker thread broadcasts
+# encoded JPEG frames to every live subscriber.
+
+class _StreamWorker:
+    """Manages a single RTSP capture thread shared across multiple consumers."""
+
+    FRAME_INTERVAL = 1.0 / 20   # 20 fps cap for network/CPU budget
+    MAX_RETRIES    = 5
+    RETRY_DELAY    = 2.0
+
+    def __init__(self, rtsp_url: str):
+        self.rtsp_url   = rtsp_url
+        self._subs: dict[str, tuple['asyncio.Queue', 'asyncio.AbstractEventLoop']] = {}
+        self._lock      = threading.Lock()
+        self._ref_count = 0
+        self._thread: threading.Thread | None = None
+        self._stop      = threading.Event()
+
+    def subscribe(self, sid: str, loop: 'asyncio.AbstractEventLoop') -> 'asyncio.Queue':
+        q: asyncio.Queue = asyncio.Queue(maxsize=3)
+        with self._lock:
+            self._subs[sid] = (q, loop)
+            self._ref_count += 1
+            if self._ref_count == 1:
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._run, daemon=True,
+                                                name=f'rtsp-worker-{sid[:6]}')
+                self._thread.start()
+        return q
+
+    def unsubscribe(self, sid: str):
+        with self._lock:
+            self._subs.pop(sid, None)
+            self._ref_count -= 1
+            last = self._ref_count == 0
+        if last:
+            self._stop.set()
+            with _STREAM_POOL_LOCK:
+                if _STREAM_POOL.get(self.rtsp_url) is self:
+                    del _STREAM_POOL[self.rtsp_url]
+
+    def _push(self, msg: dict):
+        with self._lock:
+            items = list(self._subs.values())
+        for q, loop in items:
+            def _put(q=q, msg=msg):
+                try:
+                    q.put_nowait(msg)
+                except asyncio.QueueFull:
+                    try:  q.get_nowait()
+                    except Exception: pass
+                    try:  q.put_nowait(msg)
+                    except Exception: pass
+            loop.call_soon_threadsafe(_put)
+
+    def _run(self):
+        import cv2, base64 as _b64, time as _t
+        retry = 0
+        while not self._stop.is_set() and retry <= self.MAX_RETRIES:
+            self._push({'type': 'status', 'connected': False,
+                        'message': f'Connecting… (attempt {retry+1}/{self.MAX_RETRIES+1})'})
+
+            cap = RtspStreamConsumer._open_cap(self.rtsp_url)
+            if not cap or not cap.isOpened():
+                if cap: cap.release()
+                retry += 1
+                _t.sleep(self.RETRY_DELAY)
+                continue
+
+            retry = 0
+            self._push({'type': 'status', 'connected': True, 'message': 'Stream connected.'})
+            logger.info('[StreamWorker] Opened %s', self.rtsp_url)
+
+            # Drain thread so grab() never blocks the broadcast loop
+            latest       = {'data': None, 'ok': False}
+            drain_stop   = threading.Event()
+            cap_released = threading.Event()
+
+            def _drain():
+                errs, grabs = 0, 0
+                try:
+                    while not drain_stop.is_set():
+                        try:
+                            if not cap.grab():
+                                errs += 1
+                                if errs > 20: latest['ok'] = False; break
+                                _t.sleep(0.02); continue
+                            errs = 0; grabs += 1
+                            if grabs % 2 == 0:
+                                ok, frm = cap.retrieve()
+                                if ok and frm is not None:
+                                    latest['data'] = frm; latest['ok'] = True
+                        except Exception:
+                            errs += 1
+                            if errs > 20: break
+                            _t.sleep(0.02)
+                finally:
+                    try: cap.release()
+                    except Exception: pass
+                    cap_released.set()
+
+            dt = threading.Thread(target=_drain, daemon=True)
+            dt.start()
+
+            # Wait up to 15 s for the first frame
+            for _ in range(300):
+                if latest['ok'] or cap_released.is_set(): break
+                _t.sleep(0.05)
+            else:
+                self._push({'type': 'status', 'connected': False,
+                            'message': 'Stream timed out (no frames received).'})
+                drain_stop.set()
+                cap_released.wait(35)
+                retry += 1
+                continue
+
+            try:
+                while not self._stop.is_set() and not cap_released.is_set():
+                    t0 = _t.monotonic()
+                    frm = latest['data']
+                    if not latest['ok'] or frm is None:
+                        self._push({'type': 'status', 'connected': False,
+                                    'message': 'Stream dropped. Reconnecting…'})
+                        break
+                    ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if ok:
+                        self._push({'type': 'frame',
+                                    'image_b64': _b64.b64encode(buf.tobytes()).decode()})
+                    wait = self.FRAME_INTERVAL - (_t.monotonic() - t0)
+                    if wait > 0: _t.sleep(wait)
+            finally:
+                drain_stop.set()
+                cap_released.wait(35)
+
+        if retry > self.MAX_RETRIES:
+            self._push({'type': 'error',
+                        'message': 'Cannot connect to RTSP stream. '
+                                   'Check the URL and ensure the backend has network access to the camera.'})
+        logger.info('[StreamWorker] Stopped for %s', self.rtsp_url)
+
+
+_STREAM_POOL: dict[str, _StreamWorker] = {}
+_STREAM_POOL_LOCK = threading.Lock()
+
+
+def _get_worker(rtsp_url: str) -> _StreamWorker:
+    with _STREAM_POOL_LOCK:
+        if rtsp_url not in _STREAM_POOL:
+            _STREAM_POOL[rtsp_url] = _StreamWorker(rtsp_url)
+        return _STREAM_POOL[rtsp_url]
+
+
 class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     """
     WebSocket consumer: reads an RTSP IP-camera stream server-side (OpenCV + FFmpeg),
     pushes JPEG frames + plate-scan results back to the browser.
+
+    Multiple consumers pointing at the same RTSP URL share ONE VideoCapture via
+    _StreamWorker — the camera only receives a single connection regardless of how
+    many browser tabs/users are watching.
 
     Client → Server:
         {"type": "start",  "rtsp_url": "rtsp://..."}
@@ -589,10 +749,6 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         {"type": "result",     "results": [...]}
         {"type": "error",      "message": "..."}
     """
-
-    FRAME_RATE  = 20    # fps to send to the frontend (20 = 50ms per frame)
-    MAX_RETRIES = 5     # reconnect attempts before giving up
-    RETRY_DELAY = 2.0   # seconds between reconnect attempts
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
@@ -621,6 +777,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_h            = 720
         self._stream_task           = None
         self._dedup_seconds         = _DEFAULT_DEDUP_SECONDS
+        self._loop                  = asyncio.get_running_loop()
+        self._worker_sid            = str(id(self))
 
         await self.accept()
         logger.info("[RTSP] Connected: user=%s", self._user)
@@ -647,7 +805,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             self._pending_ocr   = {}
             self._plate_cache   = {}
             self._frame_counter = 0
-            self._stream_task   = asyncio.create_task(self._capture_loop(rtsp_url))
+            self._stream_task   = asyncio.create_task(self._consume_stream(rtsp_url))
 
         elif msg_type == "stop":
             await self._cancel_stream()
@@ -664,172 +822,56 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 pass
         self._stream_task = None
 
-    async def _capture_loop(self, rtsp_url: str):
-        import cv2
-        import threading
-        loop     = asyncio.get_running_loop()
-        retry    = 0
-        interval = 1.0 / self.FRAME_RATE
-
-        while True:
-            # ── open RTSP capture ─────────────────────────────────────────────
-            await self.send_json({
-                "type": "status", "connected": False,
-                "message": f"Connecting… (attempt {retry + 1}/{self.MAX_RETRIES + 1})",
-            })
-
-            cap = await loop.run_in_executor(None, self._open_cap, rtsp_url)
-            if cap is None or not cap.isOpened():
-                if cap is not None:
-                    await loop.run_in_executor(None, cap.release)
-                retry += 1
-                if retry > self.MAX_RETRIES:
-                    await self.send_json({
-                        "type": "error",
-                        "message": "Cannot connect to RTSP stream. Check the URL and ensure the backend has network access to the camera.",
-                    })
-                    return
-                await asyncio.sleep(self.RETRY_DELAY)
-                continue
-
-            retry = 0
-            logger.info("[RTSP] Stream opened: %s", rtsp_url)
-            await self.send_json({"type": "status", "connected": True, "message": "Stream connected."})
-
-            # ── start background drain thread ─────────────────────────────────
-            # The drain thread owns the cap object exclusively.  It calls
-            # cap.grab() in a loop to keep the RTSP buffer current, decodes
-            # every 2nd grab via cap.retrieve(), and — critically — calls
-            # cap.release() itself before exiting.
-            #
-            # WHY the drain thread must own cap.release():
-            #   cap.grab() can block for up to the full OpenCV interrupt timeout
-            #   (~30 s) on a stalled RTSP stream.  If the main async task calls
-            #   cap.release() from another thread while cap.grab() is still
-            #   running, FFmpeg's H.264 frame-threading pool hits an internal
-            #   lock assertion ("fctx->async_lock failed") and crashes.
-            #   By having the drain thread call cap.release() after cap.grab()
-            #   returns naturally, that race is eliminated entirely.
-            latest_frame = {"data": None, "ok": False}
-            drain_stop   = threading.Event()   # set to ask the thread to exit
-            cap_released = threading.Event()   # set by thread after cap.release()
-
-            def _drain():
-                _grab_count = 0
-                _consecutive_errors = 0
+    async def _consume_stream(self, rtsp_url: str):
+        """Subscribe to the shared _StreamWorker for this URL and process frames."""
+        import base64 as _b64
+        worker = _get_worker(rtsp_url)
+        q = worker.subscribe(self._worker_sid, self._loop)
+        # Track whether we've told the frontend the stream is connected.
+        # A late-joining subscriber won't receive the worker's initial status
+        # broadcast, so we synthesise it on the first frame we see.
+        sent_connected = False
+        try:
+            while True:
                 try:
-                    while not drain_stop.is_set():
-                        try:
-                            ret = cap.grab()
-                        except Exception:
-                            _consecutive_errors += 1
-                            if _consecutive_errors > 20:
-                                latest_frame["ok"] = False
-                                break
-                            import time as _t; _t.sleep(0.02)
-                            continue
-                        if not ret:
-                            _consecutive_errors += 1
-                            if _consecutive_errors > 20:
-                                latest_frame["ok"] = False
-                                break
-                            import time as _t; _t.sleep(0.02)
-                            continue
-                        _consecutive_errors = 0
-                        _grab_count += 1
-                        if _grab_count % 2 == 0:
-                            try:
-                                ret2, frm = cap.retrieve()
-                                if ret2 and frm is not None:
-                                    latest_frame["data"] = frm
-                                    latest_frame["ok"]   = True
-                            except Exception:
-                                pass  # single corrupt frame — keep draining
-                finally:
-                    # Always release the cap from THIS thread so the main task
-                    # never calls release() concurrently with an in-flight grab().
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    cap_released.set()
+                    msg = await asyncio.wait_for(q.get(), timeout=45.0)
+                except asyncio.TimeoutError:
+                    logger.warning("[RTSP] No frames for 45 s — still waiting")
+                    continue
 
-            drain_thread = threading.Thread(target=_drain, daemon=True)
-            drain_thread.start()
+                msg_type = msg.get("type")
 
-            # ── wait for first frame (up to 15 s) ──────────────────────────────
-            # 15 s gives slow or initially-corrupted streams time to deliver a
-            # valid I-frame before we decide to reconnect.
-            for _ in range(300):   # 300 × 0.05 s = 15 s
-                if latest_frame["ok"] or cap_released.is_set():
-                    break
-                await asyncio.sleep(0.05)
-            else:
-                # Timed out — no frames in 15 s
-                logger.warning("[RTSP] No frames in 15 s — reconnecting")
-                await self.send_json({"type": "status", "connected": False,
-                                      "message": "Stream timed out (no frames received)."})
-                drain_stop.set()
-                # Wait for the drain thread to finish its current grab() and
-                # release the cap.  No separate cap.release() call needed here.
-                await loop.run_in_executor(None, cap_released.wait, 35)
-                retry += 1
-                if retry > self.MAX_RETRIES:
-                    await self.send_json({"type": "error",
-                                          "message": "Stream error — too many retries."})
+                if msg_type == "frame":
+                    if not sent_connected:
+                        # Subscriber joined after the worker was already streaming;
+                        # synthesise the connected status so the UI badge updates.
+                        await self.send_json({
+                            "type": "status", "connected": True,
+                            "message": "Stream connected.",
+                        })
+                        sent_connected = True
+                    await self.send_json({"type": "frame", "image_b64": msg["image_b64"]})
+                    if not self._detection_in_progress:
+                        self._detection_in_progress = True
+                        jpeg_bytes = _b64.b64decode(msg["image_b64"])
+                        asyncio.create_task(self._detect_and_scan(jpeg_bytes))
+
+                elif msg_type == "status":
+                    await self.send_json(msg)
+                    if msg.get("connected"):
+                        sent_connected = True
+
+                elif msg_type == "error":
+                    await self.send_json(msg)
+                    # Close the WebSocket so the frontend knows to reconnect;
+                    # simply returning would leave the WS open with no stream.
                     await self.close()
                     return
-                continue
 
-            # ── frame send loop ───────────────────────────────────────────────
-            try:
-                while True:
-                    t0 = loop.time()
-
-                    # Get the frame the drain thread prepared (always the latest)
-                    frame = latest_frame["data"]
-                    if not latest_frame["ok"] or frame is None:
-                        # Drain thread lost the stream
-                        logger.warning("[RTSP] Stream read failed — reconnecting")
-                        await self.send_json({
-                            "type": "status", "connected": False,
-                            "message": "Stream dropped. Reconnecting…",
-                        })
-                        break  # exit inner loop → retry connect
-
-                    jpeg_bytes = await loop.run_in_executor(None, self._encode_frame, frame)
-                    if jpeg_bytes:
-                        await self.send_json({
-                            "type":      "frame",
-                            "image_b64": base64.b64encode(jpeg_bytes).decode("utf-8"),
-                        })
-                        if not self._detection_in_progress:
-                            self._detection_in_progress = True
-                            asyncio.create_task(self._detect_and_scan(jpeg_bytes))
-
-                    # Pace ourselves to FRAME_RATE; sleep the remainder
-                    elapsed = loop.time() - t0
-                    wait    = max(0.0, interval - elapsed)
-                    if wait > 0.001:
-                        await asyncio.sleep(wait)
-
-            except asyncio.CancelledError:
-                logger.info("[RTSP] Capture task cancelled.")
-                raise
-            except Exception as exc:
-                logger.error("[RTSP] Capture error: %s", exc)
-                retry += 1
-                if retry > self.MAX_RETRIES:
-                    await self.send_json({"type": "error", "message": "Stream error — too many retries."})
-                    await self.close()   # tell the frontend the WS is done
-                    return
-                await asyncio.sleep(self.RETRY_DELAY)
-            finally:
-                drain_stop.set()
-                # The drain thread will call cap.release() itself once cap.grab()
-                # returns.  We just wait for that signal (up to 35 s to survive
-                # the OpenCV 30 s interrupt timeout on a fully stalled stream).
-                await loop.run_in_executor(None, cap_released.wait, 35)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            worker.unsubscribe(self._worker_sid)
 
     # ── detection + scan pipeline ──────────────────────────────────────────────
 

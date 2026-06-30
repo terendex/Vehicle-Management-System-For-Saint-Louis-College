@@ -202,11 +202,15 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             user=user,
         )
 
-        days_set = set(campus_days)
-        if days_set == {'Monday', 'Wednesday', 'Friday'}:
+        days_set  = set(campus_days)
+        mwf_days  = {'Monday', 'Wednesday', 'Friday'}
+        tths_days = {'Tuesday', 'Thursday', 'Saturday'}
+        if days_set == mwf_days:
             schedule = 'MWF'
-        elif days_set == {'Tuesday', 'Thursday', 'Saturday'}:
+        elif days_set == tths_days:
             schedule = 'TTHS'
+        elif days_set:
+            schedule = 'MIXED'
         else:
             schedule = 'ANY'
 

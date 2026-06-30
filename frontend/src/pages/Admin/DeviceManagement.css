@@ -265,7 +265,7 @@
   gap: 6px;
 }
 
-.view-btn, .delete-btn {
+.view-btn, .delete-btn, .dm-ping-btn {
   background: none;
   border: 1.5px solid #E2E6EE;
   border-radius: 8px;
@@ -279,6 +279,11 @@
 .view-btn:hover { background: #EEF0FF; border-color: #2A2B61; }
 .delete-btn { color: #DC2626; }
 .delete-btn:hover { background: #FEF2F2; border-color: #DC2626; }
+.dm-ping-btn { color: #5A5F72; }
+.dm-ping-btn:hover { background: #EEF0FF; border-color: #2A2B61; color: #2A2B61; }
+.dm-ping-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.dm-ping-btn.dm-ping-ok  { color: #059669; border-color: #A7F3D0; background: #ECFDF5; }
+.dm-ping-btn.dm-ping-fail { color: #DC2626; border-color: #FCA5A5; background: #FEF2F2; }
 
 /* --- Badges --- */
 .dm-badge {
@@ -412,7 +417,8 @@
   50%       { opacity: 0.35; }
 }
 
-.dm-feed-disconnect {
+.dm-feed-disconnect,
+.dm-feed-ptz-toggle {
   background: none;
   border: none;
   cursor: pointer;
@@ -424,6 +430,8 @@
   transition: color 0.15s, background 0.15s;
 }
 .dm-feed-disconnect:hover { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+.dm-feed-ptz-toggle:hover { color: #93c5fd; background: rgba(147, 197, 253, 0.1); }
+.dm-feed-ptz-toggle--on  { color: #60a5fa; background: rgba(96, 165, 250, 0.18); }
 
 .dm-feed-viewport {
   position: relative;
@@ -750,3 +758,94 @@
   line-height: 1.6;
   margin: 0;
 }
+
+/* ── PTZ Control Panel ────────────────────────────────────────────────────── */
+
+.dm-ptz-overlay {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.dm-ptz-panel {
+  background: rgba(8, 10, 22, 0.86);
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+.dm-ptz-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #60a5fa;
+  opacity: 0.8;
+}
+
+/* D-pad grid: 3×3 with only 5 active cells */
+.dm-ptz-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: repeat(3, 34px);
+  gap: 3px;
+}
+
+.dm-ptz-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 9px;
+  color: #cbd5e1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  user-select: none;
+  touch-action: none;
+}
+.dm-ptz-btn:hover  { background: rgba(96, 165, 250, 0.22); color: #93c5fd; border-color: rgba(96, 165, 250, 0.4); }
+.dm-ptz-btn:active { background: rgba(96, 165, 250, 0.38); }
+
+/* Grid placements */
+.dm-ptz-up     { grid-area: 1 / 2; }
+.dm-ptz-left   { grid-area: 2 / 1; }
+.dm-ptz-center { grid-area: 2 / 2; }
+.dm-ptz-right  { grid-area: 2 / 3; }
+.dm-ptz-down   { grid-area: 3 / 2; }
+
+/* Home button distinct style */
+.dm-ptz-center { background: rgba(96, 165, 250, 0.12); border-color: rgba(96, 165, 250, 0.3); color: #60a5fa; }
+.dm-ptz-center:hover { background: rgba(96, 165, 250, 0.28); }
+
+/* Zoom row */
+.dm-ptz-zoom {
+  display: flex;
+  gap: 3px;
+}
+
+.dm-ptz-zoom-btn {
+  width: 34px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #94a3b8;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  user-select: none;
+  touch-action: none;
+}
+.dm-ptz-zoom-btn:hover  { background: rgba(96, 165, 250, 0.22); color: #93c5fd; border-color: rgba(96, 165, 250, 0.4); }
+.dm-ptz-zoom-btn:active { background: rgba(96, 165, 250, 0.38); }
