@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
-  ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video,
+  ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
+  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -207,10 +208,12 @@ function DeleteModal({ camera, onClose, onDeleted, onAuditLog }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function DeviceManagement() {
-  const [cameras,  setCameras]  = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [nextName, setNextName] = useState(null)
-  const [modal,    setModal]    = useState(null)
+  const [cameras,    setCameras]    = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [nextName,   setNextName]   = useState(null)
+  const [modal,      setModal]      = useState(null)
+  const [pingStates, setPingStates] = useState({})
+  const [ptzActive,  setPtzActive]  = useState({})
 
   const {
     cameras:        streamCams,
@@ -248,6 +251,33 @@ export default function DeviceManagement() {
   const logAuditEvent = useCallback((payload) => {
     usersApi.createAuditLog(payload).catch(() => {})
   }, [])
+
+  const handlePing = async (cam) => {
+    setPingStates(p => ({ ...p, [cam.id]: 'testing' }))
+    try {
+      const result = await camerasApi.ping(cam.id)
+      setPingStates(p => ({ ...p, [cam.id]: result.reachable ? 'ok' : 'fail' }))
+    } catch {
+      setPingStates(p => ({ ...p, [cam.id]: 'fail' }))
+    }
+    setTimeout(() => setPingStates(p => ({ ...p, [cam.id]: undefined })), 4000)
+  }
+
+  const handlePtzStart = useCallback(async (sc, command) => {
+    const dbCam = cameras.find(c => c.name === sc.name)
+    if (!dbCam) return
+    try {
+      await camerasApi.ptz(dbCam.id, command, 0.5)
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'PTZ not supported by this camera')
+    }
+  }, [cameras])
+
+  const handlePtzStop = useCallback(async (sc) => {
+    const dbCam = cameras.find(c => c.name === sc.name)
+    if (!dbCam) return
+    camerasApi.ptz(dbCam.id, 'stop', 0).catch(() => {})
+  }, [cameras])
 
   const entryCams   = cameras.filter(c => c.assignment === 'entry')
   const parkingCams = cameras.filter(c => c.assignment === 'parking')
@@ -360,6 +390,25 @@ export default function DeviceManagement() {
                         </td>
                         <td>
                           <div className="dm-row-actions">
+                            {(() => {
+                              const ps = pingStates[cam.id]
+                              return (
+                                <button
+                                  className={`dm-ping-btn${ps === 'ok' ? ' dm-ping-ok' : ps === 'fail' ? ' dm-ping-fail' : ''}`}
+                                  title={ps === 'ok' ? 'Reachable' : ps === 'fail' ? 'Unreachable' : 'Test Connection'}
+                                  onClick={() => handlePing(cam)}
+                                  disabled={ps === 'testing'}
+                                >
+                                  {ps === 'testing'
+                                    ? <Loader2 size={15} className="dm-spin" />
+                                    : ps === 'ok'
+                                    ? <Wifi size={15} />
+                                    : ps === 'fail'
+                                    ? <WifiOff size={15} />
+                                    : <Activity size={15} />}
+                                </button>
+                              )
+                            })()}
                             <button className="view-btn" title="Edit" onClick={() => setModal({ type: 'edit', camera: cam })}>
                               <Pencil size={15} />
                             </button>
@@ -416,6 +465,13 @@ export default function DeviceManagement() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {dbCam && <AssignmentBadge value={dbCam.assignment} />}
                         <button
+                          className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
+                          onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
+                          title="PTZ Controls"
+                        >
+                          <Move size={13} />
+                        </button>
+                        <button
                           className="dm-feed-disconnect"
                           onClick={() => disconnectCamera(sc.id)}
                           title="Disconnect"
@@ -442,6 +498,50 @@ export default function DeviceManagement() {
                               <span>Disconnected</span>
                             </>
                           )}
+                        </div>
+                      )}
+                      {ptzActive[sc.id] && (
+                        <div className="dm-ptz-overlay">
+                          <div className="dm-ptz-panel">
+                            <span className="dm-ptz-label">PTZ</span>
+                            <div className="dm-ptz-dpad">
+                              <button className="dm-ptz-btn dm-ptz-up"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'up') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ChevronUp size={15} />
+                              </button>
+                              <button className="dm-ptz-btn dm-ptz-left"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'left') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ChevronLeft size={15} />
+                              </button>
+                              <button className="dm-ptz-btn dm-ptz-center" onClick={() => handlePtzStart(sc, 'home')} title="Go Home">
+                                <Home size={12} />
+                              </button>
+                              <button className="dm-ptz-btn dm-ptz-right"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'right') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ChevronRight size={15} />
+                              </button>
+                              <button className="dm-ptz-btn dm-ptz-down"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'down') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ChevronDown size={15} />
+                              </button>
+                            </div>
+                            <div className="dm-ptz-zoom">
+                              <button className="dm-ptz-zoom-btn" title="Zoom In"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'zoom_in') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ZoomIn size={13} />
+                              </button>
+                              <button className="dm-ptz-zoom-btn" title="Zoom Out"
+                                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); handlePtzStart(sc, 'zoom_out') }}
+                                onPointerUp={() => handlePtzStop(sc)} onPointerCancel={() => handlePtzStop(sc)}>
+                                <ZoomOut size={13} />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>

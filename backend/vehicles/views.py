@@ -163,6 +163,132 @@ class ParkingZoneViewSet(viewsets.ModelViewSet):
         return Response(parking_camera.status_dict())
 
 
+# ── PTZ helpers (ONVIF ContinuousMove / Stop / GotoHomePosition) ─────────────
+
+def _ptz_soap(endpoint, body_xml, username, password):
+    import requests as _rq, base64, hashlib, os, datetime
+    nonce_raw = os.urandom(16)
+    nonce_b64 = base64.b64encode(nonce_raw).decode()
+    created   = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    digest    = base64.b64encode(
+        hashlib.sha1(nonce_raw + created.encode() + password.encode()).digest()
+    ).decode()
+    envelope = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+        '<s:Header>'
+        '<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"'
+        ' xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'
+        '<wsse:UsernameToken>'
+        f'<wsse:Username>{username}</wsse:Username>'
+        '<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd#PasswordDigest">'
+        f'{digest}</wsse:Password>'
+        '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">'
+        f'{nonce_b64}</wsse:Nonce>'
+        f'<wsu:Created>{created}</wsu:Created>'
+        '</wsse:UsernameToken></wsse:Security></s:Header>'
+        f'<s:Body>{body_xml}</s:Body></s:Envelope>'
+    )
+    data = envelope.encode('utf-8')
+    # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras
+    for ct in ['application/soap+xml; charset=utf-8', 'text/xml; charset=utf-8']:
+        try:
+            r = _rq.post(endpoint, data=data,
+                         headers={'Content-Type': ct},
+                         timeout=5, auth=(username, password))
+            if r.status_code < 500:
+                return r
+        except Exception:
+            pass
+    raise Exception(f'SOAP request failed for {endpoint}')
+
+
+def _ptz_get_token(base_url, username, password):
+    from xml.etree import ElementTree as ET
+    # Try common ONVIF media service paths — cameras vary on capitalisation
+    for path in ['/onvif/media_service', '/onvif/Media', '/onvif/media',
+                 '/onvif/device_service', '/onvif/']:
+        try:
+            resp = _ptz_soap(f'{base_url}{path}',
+                             '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>',
+                             username, password)
+            for el in ET.fromstring(resp.text).iter():
+                t = el.get('token')
+                if t:
+                    return t
+        except Exception:
+            continue
+    return 'Profile_1'
+
+
+def _ptz_send(base_url, username, password, body_xml):
+    # Try common PTZ service paths
+    for path in ['/onvif/PTZ_service', '/onvif/ptz_service', '/onvif/PTZ',
+                 '/onvif/ptz', '/onvif/']:
+        try:
+            r = _ptz_soap(f'{base_url}{path}', body_xml, username, password)
+            if r.status_code < 400:
+                return
+        except Exception:
+            continue
+    raise Exception('No PTZ service path responded successfully')
+
+
+def _ptz_move(base_url, username, password, token, pan, tilt, zoom):
+    _ptz_send(base_url, username, password,
+        '<tptz:ContinuousMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
+        f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
+        '<tptz:Velocity>'
+        f'<tt:PanTilt xmlns:tt="http://www.onvif.org/ver10/schema" x="{pan:.2f}" y="{tilt:.2f}"/>'
+        f'<tt:Zoom xmlns:tt="http://www.onvif.org/ver10/schema" x="{zoom:.2f}"/>'
+        '</tptz:Velocity></tptz:ContinuousMove>'
+    )
+
+
+def _ptz_stop(base_url, username, password, token):
+    _ptz_send(base_url, username, password,
+        '<tptz:Stop xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
+        f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
+        '<tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom>'
+        '</tptz:Stop>'
+    )
+
+
+def _ptz_home(base_url, username, password, token):
+    _ptz_send(base_url, username, password,
+        '<tptz:GotoHomePosition xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
+        f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
+        '</tptz:GotoHomePosition>'
+    )
+
+
+def _try_cgi_ptz(base_url, username, password, command, speed_int):
+    """CGI fallback for cameras that use HTTP but not ONVIF (Dahua/Hi3510 style)."""
+    import requests as _rq
+    dahua_code = {
+        'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
+        'zoom_in': 'ZoomTele', 'zoom_out': 'ZoomWide', 'stop': 'Stop', 'home': 'GotoPreset',
+    }.get(command, 'Stop')
+    hi3510_act = {
+        'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right',
+        'zoom_in': 'zoomadd', 'zoom_out': 'zoomdec', 'stop': 'stop', 'home': 'poscall',
+    }.get(command, 'stop')
+    errors = []
+    for url in [
+        f'{base_url}/cgi-bin/ptz.cgi?action=start&channel=1&code={dahua_code}&arg1=0&arg2={speed_int}&arg3=0',
+        f'{base_url}/cgi-bin/ptzctrl.cgi?ptzcmd&{hi3510_act}&{speed_int}',
+        f'{base_url}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={hi3510_act}&-speed={speed_int}',
+    ]:
+        try:
+            r = _rq.get(url, auth=(username, password), timeout=3)
+            if r.status_code < 400:
+                return
+            errors.append(f'{r.status_code}')
+        except Exception as e:
+            errors.append(str(e))
+    raise Exception('CGI PTZ failed: ' + '; '.join(errors))
+
+
 class CameraViewSet(viewsets.ModelViewSet):
     queryset           = Camera.objects.all()
     serializer_class   = CameraSerializer
@@ -186,6 +312,64 @@ class CameraViewSet(viewsets.ModelViewSet):
     def next_name(self, request):
         n = self._next_cam_number()
         return Response({'cam_number': n, 'name': f'Cam {n}'})
+
+    @action(detail=True, methods=['post'], url_path='ping')
+    def ping(self, request, pk=None):
+        import socket
+        cam = self.get_object()
+        try:
+            with socket.create_connection((cam.ip, 554), timeout=3):
+                return Response({'reachable': True, 'ip': cam.ip})
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            return Response({'reachable': False, 'ip': cam.ip})
+
+    @action(detail=True, methods=['post'], url_path='ptz')
+    def ptz(self, request, pk=None):
+        import socket
+        cam     = self.get_object()
+        command = (request.data.get('command') or 'stop').strip()
+        speed   = min(max(float(request.data.get('speed', 0.5)), 0.1), 1.0)
+
+        vel_map = {
+            'up':       ( 0.0,   speed,  0.0),
+            'down':     ( 0.0,  -speed,  0.0),
+            'left':     (-speed,  0.0,   0.0),
+            'right':    ( speed,  0.0,   0.0),
+            'zoom_in':  ( 0.0,   0.0,   speed),
+            'zoom_out': ( 0.0,   0.0,  -speed),
+        }
+
+        speed_int = max(1, round(speed * 10))  # CGI uses integer speeds 1-10
+        last_err  = 'No HTTP port reachable on the camera'
+        for port in [80, 8080, 8000, 8899]:
+            try:
+                with socket.create_connection((cam.ip, port), timeout=1.5):
+                    pass
+            except OSError:
+                continue
+            base = f'http://{cam.ip}' if port == 80 else f'http://{cam.ip}:{port}'
+            # Try ONVIF first, then CGI fallback
+            onvif_err = None
+            try:
+                token = _ptz_get_token(base, cam.device_id, cam.password)
+                if command == 'stop':
+                    _ptz_stop(base, cam.device_id, cam.password, token)
+                elif command == 'home':
+                    _ptz_home(base, cam.device_id, cam.password, token)
+                elif command in vel_map:
+                    pan, tilt, zoom = vel_map[command]
+                    _ptz_move(base, cam.device_id, cam.password, token, pan, tilt, zoom)
+                return Response({'ok': True, 'command': command, 'method': 'onvif'})
+            except Exception as exc:
+                onvif_err = str(exc)
+            try:
+                _try_cgi_ptz(base, cam.device_id, cam.password, command, speed_int)
+                return Response({'ok': True, 'command': command, 'method': 'cgi'})
+            except Exception as exc:
+                last_err = f'onvif: {onvif_err} | cgi: {exc}'
+                continue
+
+        return Response({'ok': False, 'error': f'PTZ unavailable: {last_err}'}, status=400)
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -343,8 +527,9 @@ class AcceptRegistrationView(APIView):
 
         # Create user with a secure temporary password
         temp_password = _generate_temp_password()
-        owner_type = User.OwnerType.STUDENT if registration.registrant_type == 'student' else User.OwnerType.EMPLOYEE
-        schedule   = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
+        owner_type  = User.OwnerType.STUDENT if registration.registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
+        campus_days = registration.campus_days or []
         user = User.objects.create_user(
             email=registration.email,
             full_name=registration.full_name,
@@ -353,6 +538,7 @@ class AcceptRegistrationView(APIView):
             must_change_password=True,
             owner_type=owner_type,
             schedule=schedule,
+            campus_days=campus_days,
             contact=registration.contact_number,
             address=registration.address,
         )
@@ -411,6 +597,12 @@ class AcceptRegistrationView(APIView):
         registration.status = VehicleRegistration.Status.ACCEPTED
         registration.reviewed_at = timezone.now()
         registration.save()
+
+        # Sync final campus_days / schedule onto the user account so entry_logic
+        # can check actual days rather than a fixed MWF/TTHS group.
+        user.campus_days = registration.campus_days or []
+        user.schedule    = registration.schedule or user.schedule
+        user.save(update_fields=['campus_days', 'schedule'])
 
         # Refresh user to get generated user_code
         user.refresh_from_db()
@@ -513,8 +705,9 @@ class CdsoDirectRegisterView(APIView):
 
         # Build user profile fields
         temp_password = _generate_temp_password()
-        owner_type = User.OwnerType.STUDENT if registrant_type == 'student' else User.OwnerType.EMPLOYEE
-        schedule   = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
+        owner_type  = User.OwnerType.STUDENT if registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        schedule    = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
+        campus_days = registration.campus_days or []
 
         user = User.objects.create_user(
             email=registration.email,
@@ -524,6 +717,7 @@ class CdsoDirectRegisterView(APIView):
             must_change_password=True,
             owner_type=owner_type,
             schedule=schedule,
+            campus_days=campus_days,
             contact=registration.contact_number,
             address=registration.address,
         )
@@ -671,16 +865,16 @@ class PublicOpenRegistrationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Derive schedule group from majority of selected days
+            # Derive schedule group from selected days
             mwf_days  = {'Monday', 'Wednesday', 'Friday'}
             tths_days = {'Tuesday', 'Thursday', 'Saturday'}
             days_set  = set(campus_days)
-            mwf_n  = len(days_set & mwf_days)
-            tths_n = len(days_set & tths_days)
-            if mwf_n >= tths_n and mwf_n > 0:
+            if days_set == mwf_days:
                 data['schedule'] = 'MWF'
-            elif tths_n > 0:
+            elif days_set == tths_days:
                 data['schedule'] = 'TTHS'
+            elif days_set:
+                data['schedule'] = 'MIXED'
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
