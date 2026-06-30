@@ -24,6 +24,12 @@ _SCHEDULE_DAYS_FALLBACK = {
 }
 
 
+_SCHEDULE_TO_DAY_NAMES = {
+    'MWF':  ['Monday', 'Wednesday', 'Friday'],
+    'TTHS': ['Tuesday', 'Thursday', 'Saturday'],
+}
+
+
 def _allowed_weekdays(user) -> list[int]:
     """Return the weekday integers (Mon=0…Sun=6) this user is permitted."""
     campus_days = user.campus_days or []
@@ -31,6 +37,18 @@ def _allowed_weekdays(user) -> list[int]:
         return [DAY_NAME_TO_WEEKDAY[d] for d in campus_days if d in DAY_NAME_TO_WEEKDAY]
     # Legacy: user created before campus_days was stored; fall back to schedule code
     return _SCHEDULE_DAYS_FALLBACK.get(user.schedule or 'ANY', [])
+
+
+def _registered_days_display(user) -> str:
+    """Human-readable list of the user's registered campus days (for violation messages)."""
+    campus_days = user.campus_days or []
+    if campus_days:
+        return ', '.join(campus_days)
+    # Legacy users without campus_days — expand schedule code to full day names
+    schedule = user.schedule or ''
+    if schedule in _SCHEDULE_TO_DAY_NAMES:
+        return ', '.join(_SCHEDULE_TO_DAY_NAMES[schedule])
+    return schedule or 'Not specified'
 
 def _time_to_minutes(t):
     if not t:
@@ -103,10 +121,11 @@ def check_entry(vehicle) -> dict:
         rule         = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
         allowed_days = _allowed_weekdays(user)
         if allowed_days and today_weekday not in allowed_days:
-            day_name      = timezone.localdate().strftime('%A')
-            day_list      = ', '.join(user.campus_days) if user.campus_days else (user.schedule or 'unknown')
+            day_name = timezone.localdate().strftime('%A')
+            day_list = _registered_days_display(user)
             return _result('wrong_day', False,
-                f'Student is not scheduled on campus today ({day_name}). Campus days: {day_list}.',
+                f'Not allowed on campus today ({day_name}). '
+                f'Registered days: {day_list}.',
                 rule.name if rule else None)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
@@ -119,10 +138,11 @@ def check_entry(vehicle) -> dict:
         rule         = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
         allowed_days = _allowed_weekdays(user)
         if allowed_days and today_weekday not in allowed_days:
-            day_name  = timezone.localdate().strftime('%A')
-            day_list  = ', '.join(user.campus_days) if user.campus_days else (user.schedule or 'unknown')
+            day_name = timezone.localdate().strftime('%A')
+            day_list = _registered_days_display(user)
             return _result('wrong_day', False,
-                f'Fetcher is not scheduled on campus today ({day_name}). Campus days: {day_list}.',
+                f'Not allowed on campus today ({day_name}). '
+                f'Registered days: {day_list}.',
                 rule.name if rule else None)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
