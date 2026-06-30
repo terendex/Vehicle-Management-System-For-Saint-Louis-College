@@ -139,18 +139,18 @@ def _get_yolo():
         _model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
         log.info("[DETECT] Warm-up complete — model ready.")
 
-        # Pre-load plate detector and EasyOCR so first real frame is fast
+        # Pre-load plate detector and PaddleOCR so first real frame is fast
         try:
             _get_plate_yolo()
         except Exception as _pe:
             log.warning("[DETECT] Plate-detector pre-load skipped: %s", _pe)
         try:
             from .reader import _get_ocr
-            log.info("[DETECT] Pre-loading EasyOCR…")
+            log.info("[DETECT] Pre-loading PaddleOCR…")
             _get_ocr()
-            log.info("[DETECT] EasyOCR pre-loaded.")
+            log.info("[DETECT] PaddleOCR pre-loaded.")
         except Exception as _ocr_exc:
-            log.warning("[DETECT] EasyOCR pre-load skipped: %s", _ocr_exc)
+            log.warning("[DETECT] PaddleOCR pre-load skipped: %s", _ocr_exc)
 
     except ImportError:
         log.error("[DETECT] ultralytics is not installed — cannot load YOLO model")

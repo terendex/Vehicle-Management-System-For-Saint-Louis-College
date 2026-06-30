@@ -44,13 +44,13 @@ def _get_ocr_reader():
     global _ocr_reader
     if _ocr_reader is None:
         try:
-            import easyocr
+            from paddleocr import PaddleOCR
             try:
                 import torch as _torch
                 _use_gpu = _torch.cuda.is_available()
             except ImportError:
                 _use_gpu = False
-            _ocr_reader = easyocr.Reader(["en"], gpu=_use_gpu)
+            _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=_use_gpu, show_log=False)
         except ImportError:
             pass
     return _ocr_reader
@@ -108,11 +108,16 @@ def run_ocr(crop: np.ndarray) -> tuple[Optional[str], float]:
         if gray.shape[1] < 400:
             scale = 400 / max(gray.shape[1], 1)
             gray = cv2.resize(gray, (400, int(gray.shape[0] * scale)), interpolation=cv2.INTER_CUBIC)
-        results = ocr.readtext(gray, text_threshold=0.3)
-        if not results:
+        img_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) if len(gray.shape) == 2 else gray
+        raw = ocr.ocr(img_bgr, cls=True)
+        page = raw[0] if raw else []
+        if not page:
             return None, 0.0
         best_text, best_conf = None, 0.0
-        for (_, text, conf) in results:
+        for item in page:
+            if not item or len(item) != 2:
+                continue
+            text, conf = item[1][0], item[1][1]
             if conf > best_conf:
                 best_text, best_conf = text, conf
         return best_text, best_conf
