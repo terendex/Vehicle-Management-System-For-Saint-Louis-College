@@ -353,7 +353,6 @@ git push origin feat/your-feature
 | Role | Email | Password |
 |---|---|---|
 | Admin | admin@slc.edu.ph | Admin123! |
-| Security | guard@slc.edu.ph | guard123 |
 
 ---
 
