@@ -663,10 +663,9 @@ class _StreamWorker:
                                 if errs > 20: latest['ok'] = False; break
                                 _t.sleep(0.02); continue
                             errs = 0; grabs += 1
-                            if grabs % 2 == 0:
-                                ok, frm = cap.retrieve()
-                                if ok and frm is not None:
-                                    latest['data'] = frm; latest['ok'] = True
+                            ok, frm = cap.retrieve()
+                            if ok and frm is not None:
+                                latest['data'] = frm; latest['ok'] = True
                         except Exception:
                             errs += 1
                             if errs > 20: break

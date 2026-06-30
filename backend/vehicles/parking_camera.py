@@ -21,6 +21,8 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+_OPEN_CAP_LOCK = threading.Lock()
+
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 FREE_THR   = 20  # consecutive frames without vehicle    → mark free
 
@@ -111,11 +113,20 @@ class ParkingCameraThread(threading.Thread):
 
     def _open_cap(self) -> cv2.VideoCapture:
         import os
-        # Force TCP transport — V380/most IP cameras are more reliable over TCP than default UDP.
-        # timeout=5 s so connect failures don't block the thread forever.
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
-        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        with _OPEN_CAP_LOCK:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp"
+                "|buffer_size;2097152"
+                "|stimeout;5000000"
+                "|timeout;5000000"
+                "|threads;1"
+                "|err_detect;ignore_err"
+                "|fflags;discardcorrupt"
+            )
+            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
         return cap
 
     def _process_frame(self, frame: np.ndarray) -> None:
