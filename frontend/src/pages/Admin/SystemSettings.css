@@ -459,3 +459,90 @@
 }
 
 .ss-notice-remove:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Confirmation modal ─────────────────────────────────────────── */
+
+.ss-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.ss-modal {
+  position: relative;
+  background: #fff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.ss-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 6px;
+}
+.ss-modal-close:hover { background: #F0F2F7; }
+
+.ss-modal-icon-warn { color: #d97706; margin-bottom: 4px; }
+
+.ss-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0;
+}
+
+.ss-modal-body {
+  font-size: 13.5px;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.ss-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.ss-modal-btn {
+  padding: 8px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.ss-modal-btn-ghost {
+  background: #fff;
+  border-color: #E2E6EE;
+  color: #374151;
+}
+.ss-modal-btn-ghost:hover { background: #F0F2F7; }
+.ss-modal-btn-danger {
+  background: #dc2626;
+  color: #fff;
+}
+.ss-modal-btn-danger:hover { background: #b91c1c; }

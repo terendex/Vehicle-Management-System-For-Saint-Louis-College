@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   AlertTriangle, CheckCircle, EyeOff, Filter,
   RotateCcw, Search, Bell, BellOff, X,
-  Image, ZoomIn, ChevronLeft, ChevronRight,
+  Image, ZoomIn, ChevronLeft, ChevronRight, Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
@@ -87,6 +87,8 @@ export default function ViolationsManagement() {
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
+  const [confirmAction, setConfirmAction] = useState(null) // { type, violation }
+  const [resultModal, setResultModal]     = useState(null) // { type: 'success'|'error', message }
   const [page, setPage]                   = useState(1)
   const PAGE_SIZE = 10
 
@@ -136,47 +138,31 @@ export default function ViolationsManagement() {
   const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paginated   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  // Summary stats
-  const pendingCount    = violations.filter(v => !v.is_released && !v.is_resolved).length
-  const notifiedCount   = violations.filter(v =>  v.is_released && !v.is_resolved).length
-  const outstandingFine = violations
-    .filter(v => !v.is_resolved)
-    .reduce((sum, v) => sum + parseFloat(v.fine_amount || 0), 0)
 
-  const handleNotify = async (v) => {
+  const executeAction = async () => {
+    if (!confirmAction) return
+    const { type, violation: v } = confirmAction
+    setConfirmAction(null)
     setActionLoading(v.id)
     try {
-      const { data } = await releaseViolation(v.id)
+      let data
+      if (type === 'notify')   ({ data } = await releaseViolation(v.id))
+      if (type === 'unnotify') ({ data } = await unreleaseViolation(v.id))
+      if (type === 'resolve')  ({ data } = await resolveViolation(v.id))
       setViolations(prev => prev.map(x => x.id === v.id ? data : x))
-      toast.success(`${v.plate_number} has been notified of this violation.`)
+      const msgs = {
+        notify:   `${v.plate_number} has been notified of this violation.`,
+        unnotify: 'Violation notification withdrawn.',
+        resolve:  'Violation marked as resolved.',
+      }
+      setResultModal({ type: 'success', message: msgs[type] })
     } catch {
-      toast.error('Failed to notify owner.')
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const handleUnnotify = async (v) => {
-    setActionLoading(v.id)
-    try {
-      const { data } = await unreleaseViolation(v.id)
-      setViolations(prev => prev.map(x => x.id === v.id ? data : x))
-      toast.success('Violation notification withdrawn.')
-    } catch {
-      toast.error('Failed to withdraw notification.')
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const handleResolve = async (v) => {
-    setActionLoading(v.id)
-    try {
-      const { data } = await resolveViolation(v.id)
-      setViolations(prev => prev.map(x => x.id === v.id ? data : x))
-      toast.success('Violation marked as resolved.')
-    } catch {
-      toast.error('Failed to resolve violation.')
+      const msgs = {
+        notify:   'Failed to notify owner.',
+        unnotify: 'Failed to withdraw notification.',
+        resolve:  'Failed to resolve violation.',
+      }
+      setResultModal({ type: 'error', message: msgs[type] })
     } finally {
       setActionLoading(null)
     }
@@ -197,20 +183,6 @@ export default function ViolationsManagement() {
               All vehicle violations — owners can see their records in the portal. Use <em>Notify</em> to officially flag a violation to the owner.
             </p>
           </div>
-          <div className="vm-stats-row">
-            <div className="vm-stat">
-              <span className="vm-stat-num vm-stat-pending">{pendingCount}</span>
-              <span className="vm-stat-label">Pending</span>
-            </div>
-            <div className="vm-stat">
-              <span className="vm-stat-num vm-stat-notified">{notifiedCount}</span>
-              <span className="vm-stat-label">Notified</span>
-            </div>
-            <div className="vm-stat">
-              <span className="vm-stat-num vm-stat-fine">₱{outstandingFine.toFixed(2)}</span>
-              <span className="vm-stat-label">Outstanding</span>
-            </div>
-          </div>
         </div>
 
         {/* Toolbar */}
@@ -224,8 +196,8 @@ export default function ViolationsManagement() {
                 onClick={() => setFilter(opt.value)}
               >
                 {opt.label}
-                {opt.value === 'pending' && pendingCount > 0 && (
-                  <span className="vm-badge">{pendingCount}</span>
+                {opt.value === 'pending' && violations.filter(v => !v.is_released && !v.is_resolved).length > 0 && (
+                  <span className="vm-badge">{violations.filter(v => !v.is_released && !v.is_resolved).length}</span>
                 )}
               </button>
             ))}
@@ -339,25 +311,25 @@ export default function ViolationsManagement() {
                               <button
                                 className="vm-btn vm-btn-release"
                                 disabled={actionLoading === v.id}
-                                onClick={() => handleNotify(v)}
+                                onClick={() => setConfirmAction({ type: 'notify', violation: v })}
                                 title="Officially notify owner"
                               >
-                                <Bell size={13} /> Notify
+                                {actionLoading === v.id ? <Loader2 size={13} className="vm-spin" /> : <Bell size={13} />} Notify
                               </button>
                             ) : (
                               <button
                                 className="vm-btn vm-btn-hide"
                                 disabled={actionLoading === v.id}
-                                onClick={() => handleUnnotify(v)}
+                                onClick={() => setConfirmAction({ type: 'unnotify', violation: v })}
                                 title="Withdraw notification"
                               >
-                                <BellOff size={13} /> Unnotify
+                                {actionLoading === v.id ? <Loader2 size={13} className="vm-spin" /> : <BellOff size={13} />} Unnotify
                               </button>
                             )}
                             <button
                               className="vm-btn vm-btn-resolve"
                               disabled={actionLoading === v.id}
-                              onClick={() => handleResolve(v)}
+                              onClick={() => setConfirmAction({ type: 'resolve', violation: v })}
                               title="Mark resolved"
                             >
                               <CheckCircle size={13} /> Resolve
@@ -392,6 +364,48 @@ export default function ViolationsManagement() {
         )}
 
       </div>
+
+      {/* Confirmation Modal */}
+      {confirmAction && (() => {
+        const { type, violation: v } = confirmAction
+        const config = {
+          notify:   { title: 'Notify Owner?',             body: `This will officially flag the violation for plate ${v.plate_number} and notify the owner.`,     confirm: 'Notify',    cls: 'vm-modal-btn-primary' },
+          unnotify: { title: 'Withdraw Notification?',    body: `This will retract the notification for plate ${v.plate_number}. The owner will no longer see this as flagged.`, confirm: 'Withdraw', cls: 'vm-modal-btn-warning' },
+          resolve:  { title: 'Mark as Resolved?',         body: `This will mark the violation for plate ${v.plate_number} as resolved. This action cannot be undone.`,           confirm: 'Resolve',   cls: 'vm-modal-btn-danger'  },
+        }[type]
+        return (
+          <div className="vm-overlay" onClick={() => setConfirmAction(null)}>
+            <div className="vm-modal" onClick={e => e.stopPropagation()}>
+              <button className="vm-modal-close" onClick={() => setConfirmAction(null)}><X size={16} /></button>
+              <AlertTriangle size={32} className="vm-modal-icon vm-modal-icon-warn" />
+              <h2 className="vm-modal-title">{config.title}</h2>
+              <p className="vm-modal-body">{config.body}</p>
+              <div className="vm-modal-actions">
+                <button className="vm-modal-btn vm-modal-btn-ghost" onClick={() => setConfirmAction(null)}>Cancel</button>
+                <button className={`vm-modal-btn ${config.cls}`} onClick={executeAction}>{config.confirm}</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Result Modal */}
+      {resultModal && (
+        <div className="vm-overlay" onClick={() => setResultModal(null)}>
+          <div className="vm-modal" onClick={e => e.stopPropagation()}>
+            <button className="vm-modal-close" onClick={() => setResultModal(null)}><X size={16} /></button>
+            {resultModal.type === 'success'
+              ? <CheckCircle size={32} className="vm-modal-icon vm-modal-icon-success" />
+              : <AlertTriangle size={32} className="vm-modal-icon vm-modal-icon-error" />}
+            <h2 className="vm-modal-title">{resultModal.type === 'success' ? 'Success' : 'Error'}</h2>
+            <p className="vm-modal-body">{resultModal.message}</p>
+            <div className="vm-modal-actions">
+              <button className="vm-modal-btn vm-modal-btn-primary" onClick={() => setResultModal(null)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </AdminLayout>
   )
 }

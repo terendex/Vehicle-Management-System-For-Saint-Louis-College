@@ -41,5 +41,9 @@ urlpatterns = [
     path('notices/',          views.ParkingNoticeView.as_view(),       name='parking-notices'),
     path('notices/<int:pk>/', views.ParkingNoticeDetailView.as_view(), name='parking-notice-detail'),
 
+    # Registration period management (admin/CDSO)
+    path('registration-periods/',              views.RegistrationPeriodListCreateView.as_view(),  name='registration-periods'),
+    path('registration-periods/<int:pk>/activate/', views.RegistrationPeriodActivateView.as_view(), name='registration-period-activate'),
+
     path('', include(router.urls)),
 ]

@@ -10,7 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rest_framework import status as drf_status
-from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
 from . import parking_camera
 
@@ -586,17 +586,20 @@ SCHEDULE_SLOT_LIMIT      = 100  # per day
 
 
 def _registration_window():
-    now = timezone.localtime(timezone.now())
-    m, d = now.month, now.day
-    is_open = (
-        (REGISTRATION_OPEN_MONTH, REGISTRATION_OPEN_DAY)
-        <= (m, d)
-        <= (REGISTRATION_CLOSE_MONTH, REGISTRATION_CLOSE_DAY)
-    )
+    period = RegistrationPeriod.get_active()
+    if period:
+        today = timezone.localdate()
+        is_open = period.start_date <= today <= period.end_date
+        return {
+            "is_open": is_open,
+            "open_date":  period.start_date.isoformat(),
+            "close_date": period.end_date.isoformat(),
+            "slot_limit": SCHEDULE_SLOT_LIMIT,
+        }
     return {
-        "is_open": is_open,
-        "open_date": f"June 1 (tentative)",
-        "close_date": f"October 31 (tentative)",
+        "is_open":    False,
+        "open_date":  None,
+        "close_date": None,
         "slot_limit": SCHEDULE_SLOT_LIMIT,
     }
 
@@ -940,3 +943,75 @@ class ParkingNoticeDetailView(APIView):
         notice.is_active = False
         notice.save(update_fields=['is_active'])
         return Response({'message': 'Notice deactivated.'}, status=200)
+
+
+# ──────────────────────────────────────────────
+# Registration Period management (Admin/CDSO)
+# ──────────────────────────────────────────────
+
+def _serialize_period(p):
+    return {
+        'id':         p.id,
+        'label':      p.label,
+        'start_date': p.start_date.isoformat(),
+        'end_date':   p.end_date.isoformat(),
+        'is_active':  p.is_active,
+        'created_at': p.created_at.isoformat(),
+    }
+
+
+class RegistrationPeriodListCreateView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated()]
+        return [IsAdminOrCdso()]
+
+    def get(self, request):
+        return Response([_serialize_period(p) for p in RegistrationPeriod.objects.all()])
+
+    def post(self, request):
+        from datetime import datetime as _dt
+        label      = (request.data.get('label') or '').strip()
+        start_raw  = request.data.get('start_date')
+        end_raw    = request.data.get('end_date')
+        errors = {}
+        if not label:
+            errors['label'] = 'Label is required.'
+
+        start = end = None
+        try:
+            start = _dt.strptime(str(start_raw), '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            errors['start_date'] = 'Required. Use YYYY-MM-DD.'
+        try:
+            end = _dt.strptime(str(end_raw), '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            errors['end_date'] = 'Required. Use YYYY-MM-DD.'
+
+        if errors:
+            return Response(errors, status=400)
+        if end < start:
+            return Response({'end_date': 'End date must be on or after start date.'}, status=400)
+
+        RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
+        period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
+        return Response(_serialize_period(period), status=201)
+
+
+class RegistrationPeriodActivateView(APIView):
+    permission_classes = [IsAdminOrCdso]
+
+    def post(self, request, pk):
+        """Set this period as the active one (deactivates all others)."""
+        period = get_object_or_404(RegistrationPeriod, pk=pk)
+        RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
+        period.is_active = True
+        period.save(update_fields=['is_active'])
+        return Response(_serialize_period(period))
+
+    def delete(self, request, pk):
+        """Deactivate without deleting — archives the period."""
+        period = get_object_or_404(RegistrationPeriod, pk=pk)
+        period.is_active = False
+        period.save(update_fields=['is_active'])
+        return Response(_serialize_period(period))
