@@ -15,6 +15,7 @@ import ParkingManagement from './pages/Admin/ParkingManagement'
 import DeviceManagement from './pages/Admin/DeviceManagement'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
+import Events from './pages/Admin/Events'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
 import SecurityAuditLogPage from './pages/Security/SecurityAuditLogPage'
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/admin/entries"     element={<OperationsCenter />} />
           <Route path="/admin/parking"     element={<ParkingManagement />} />
           <Route path="/admin/violations"  element={<ViolationsManagement />} />
+          <Route path="/admin/events"      element={<Events />} />
         </Route>
 
         {/* CDSO Routes — landing redirects to settings */}

@@ -252,6 +252,25 @@ class RegistrationPeriod(models.Model):
         return f"{self.label} ({status})"
 
 
+class Event(models.Model):
+    """A campus event. Organizer plates are noted temporarily; activating closes parts of parking."""
+    name             = models.CharField(max_length=200)
+    date             = models.DateField()
+    is_active        = models.BooleanField(default=False)
+    organizer_plates = models.JSONField(default=list, blank=True)
+    created_by       = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='events_created',
+    )
+    created_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return self.name
+
+
 class ParkingNotice(models.Model):
     """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
     title      = models.CharField(max_length=200)
