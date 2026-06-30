@@ -1,7 +1,7 @@
 from django.utils import timezone
 from django.db.models import Q
 from .models import VisitorPass, AccessLog
-from vehicles.models import RuleConstraint, Vehicle, SystemSettings
+from vehicles.models import RuleConstraint, Vehicle, SystemSettings, Event
 from accounts.models import User
 
 DAY_TO_WEEKDAY = {
@@ -78,6 +78,18 @@ def _is_within_days(rule, today_weekday=None):
     if not today_key:
         return False
     return today_key in rule.days
+
+def get_organizer_event(plate_number: str):
+    """Return the first active event listing this plate as an organizer, or None."""
+    plate_upper = plate_number.strip().upper()
+    event = Event.objects.filter(
+        is_active=True,
+        organizer_plates__contains=[plate_upper],
+    ).first()
+    if event:
+        return {'id': event.id, 'name': event.name, 'date': event.date.isoformat()}
+    return None
+
 
 def check_entry(vehicle) -> dict:
     # Open Campus Mode — bypass all rules, allow everything
