@@ -10,7 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rest_framework import status as drf_status
-from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
 from . import parking_camera
 
@@ -1060,6 +1060,103 @@ class SystemSettingsView(APIView):
         if update_fields:
             obj.save(update_fields=update_fields)
         return Response(self._serialize(obj))
+
+
+# ──────────────────────────────────────────────
+# Events (Admin/CDSO manage campus events + organizer plates)
+# ──────────────────────────────────────────────
+
+class EventListCreateView(APIView):
+    permission_classes = [IsAdminOrCdso]
+
+    def _serialize(self, ev):
+        return {
+            'id':               ev.id,
+            'name':             ev.name,
+            'date':             ev.date.isoformat(),
+            'is_active':        ev.is_active,
+            'organizer_plates': ev.organizer_plates,
+            'created_at':       ev.created_at.isoformat(),
+            'created_by_name':  ev.created_by.full_name if ev.created_by else None,
+        }
+
+    def get(self, request):
+        events = Event.objects.select_related('created_by').all()
+        return Response([self._serialize(e) for e in events])
+
+    def post(self, request):
+        name             = (request.data.get('name') or '').strip()
+        date_str         = request.data.get('date')
+        organizer_plates = request.data.get('organizer_plates', [])
+
+        if not name:
+            return Response({'name': 'Name is required.'}, status=400)
+        if not date_str:
+            return Response({'date': 'Date is required.'}, status=400)
+
+        try:
+            from datetime import datetime as _dt
+            date_obj = _dt.strptime(str(date_str), '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'date': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+
+        plates = [p.strip().upper() for p in (organizer_plates or []) if p.strip()]
+        ev = Event.objects.create(
+            name=name, date=date_obj, organizer_plates=plates, created_by=request.user,
+        )
+        return Response(self._serialize(ev), status=201)
+
+
+class EventDetailView(APIView):
+    permission_classes = [IsAdminOrCdso]
+
+    def _serialize(self, ev):
+        return {
+            'id':               ev.id,
+            'name':             ev.name,
+            'date':             ev.date.isoformat(),
+            'is_active':        ev.is_active,
+            'organizer_plates': ev.organizer_plates,
+            'created_at':       ev.created_at.isoformat(),
+            'created_by_name':  ev.created_by.full_name if ev.created_by else None,
+        }
+
+    def patch(self, request, pk):
+        try:
+            ev = Event.objects.select_related('created_by').get(pk=pk)
+        except Event.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+
+        if 'name' in request.data:
+            name = (request.data['name'] or '').strip()
+            if not name:
+                return Response({'name': 'Name cannot be empty.'}, status=400)
+            ev.name = name
+
+        if 'date' in request.data:
+            try:
+                from datetime import datetime as _dt
+                ev.date = _dt.strptime(str(request.data['date']), '%Y-%m-%d').date()
+            except ValueError:
+                return Response({'date': 'Invalid date format.'}, status=400)
+
+        if 'is_active' in request.data:
+            ev.is_active = bool(request.data['is_active'])
+
+        if 'organizer_plates' in request.data:
+            plates = [p.strip().upper() for p in (request.data['organizer_plates'] or []) if p.strip()]
+            ev.organizer_plates = plates
+
+        ev.save()
+        return Response(self._serialize(ev))
+
+    def delete(self, request, pk):
+        try:
+            ev = Event.objects.get(pk=pk)
+        except Event.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+        ev.delete()
+        return Response(status=204)
 
 
 # ──────────────────────────────────────────────

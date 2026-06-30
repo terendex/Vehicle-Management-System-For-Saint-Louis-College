@@ -472,6 +472,32 @@ python -m celery -A config worker -l info
 
 > `--pool=solo` is required on Windows to avoid `billiard` semaphore errors. On Linux, omit it — the default prefork pool works fine.
 
+### Terminal 4 — ngrok (optional, for external access)
+
+Use ngrok to expose the app to the internet — useful for testing on other devices or sharing a live demo.
+
+**One-time setup:**
+```bash
+winget install ngrok.ngrok          # install ngrok (Windows)
+ngrok config add-authtoken <token>  # paste your token from ngrok.com/dashboard
+```
+
+**Start the tunnel** (run while Vite is running on port 5173):
+```bash
+ngrok http --domain=preconcurrently-inorganic-nicolle.ngrok-free.dev 5173
+```
+
+**After starting the tunnel, update `backend/.env`:**
+```
+ALLOWED_HOSTS=localhost,127.0.0.1,preconcurrently-inorganic-nicolle.ngrok-free.dev
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://preconcurrently-inorganic-nicolle.ngrok-free.dev
+FRONTEND_URL=https://preconcurrently-inorganic-nicolle.ngrok-free.dev
+```
+
+Then restart Daphne. The public URL will proxy all API and WebSocket traffic through Vite to the local Django backend — no extra config needed.
+
+> The `--domain` flag requires a reserved static domain (free ngrok account). Omit it to get a random URL each session, and update `backend/.env` each time.
+
 ---
 
 ## API Endpoints
