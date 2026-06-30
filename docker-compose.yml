@@ -24,6 +24,9 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       # 'backend' is the Docker service hostname the Vite proxy sends as Host header
       - ALLOWED_HOSTS=localhost,127.0.0.1,backend
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       - redis
 
@@ -40,6 +43,9 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       - redis
 
