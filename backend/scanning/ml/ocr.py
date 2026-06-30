@@ -2,7 +2,7 @@
 ocr.py — OCR processing with majority voting for license plate recognition.
 
 Features:
-- EasyOCR with multiple image variants for better accuracy
+- PaddleOCR with multiple image variants for better accuracy
 - Majority voting across buffered plate crops
 - Low-confidence result filtering
 - Real-time processing optimization
@@ -34,16 +34,16 @@ def _gpu_available() -> bool:
 
 
 def _get_ocr():
-    """Lazy-load EasyOCR reader — uses GPU when CUDA is available."""
+    """Lazy-load PaddleOCR reader — uses GPU when CUDA is available."""
     global _ocr_reader
     if _ocr_reader is None:
         try:
-            import easyocr
+            from paddleocr import PaddleOCR
             use_gpu = _gpu_available()
-            _ocr_reader = easyocr.Reader(["en"], gpu=use_gpu)
-            log.info("[OCR] EasyOCR loaded (gpu=%s)", use_gpu)
+            _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=use_gpu, show_log=False)
+            log.info("[OCR] PaddleOCR loaded (gpu=%s)", use_gpu)
         except ImportError:
-            log.error("[OCR] easyocr not installed")
+            log.error("[OCR] paddleocr not installed")
     return _ocr_reader
 
 
@@ -182,7 +182,7 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
     """
     ocr = _get_ocr()
     if ocr is None:
-        log.error("[OCR] EasyOCR not available")
+        log.error("[OCR] PaddleOCR not available")
         return None, 0.0
 
     h, w = crop.shape[:2]
@@ -194,29 +194,23 @@ def run_ocr(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[Optional[str],
         log.info("[OCR] Upscaled to %dx%d", crop.shape[1], crop.shape[0])
 
     deskewed = _deskew(crop, aspect_ratio)
-    
+
     if len(deskewed.shape) == 3:
         gray = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY)
     else:
         gray = deskewed
-    
+
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     variants = [
         ("binary", cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)),
     ]
-    
+
     results = []
-    allowlist = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
     for label, img_v in variants:
         try:
-            text_results = ocr.readtext(
-                img_v, 
-                text_threshold=0.15, 
-                link_threshold=0.15, 
-                low_text=0.05, 
-                mag_ratio=1.5,
-                allowlist=allowlist
-            )
+            raw = ocr.ocr(img_v, cls=True)
+            page = raw[0] if raw else []
+            text_results = [(item[0], item[1][0], item[1][1]) for item in page if item and len(item) == 2]
             combined_text, avg_conf = combine_multiline_text(text_results)
             if combined_text and avg_conf > 0.15:
                 results.append((combined_text, avg_conf))
