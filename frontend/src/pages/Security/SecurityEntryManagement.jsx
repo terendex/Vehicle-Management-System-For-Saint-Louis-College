@@ -10,6 +10,7 @@ import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, logExit,
 } from '../../api/scanning'
+import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
@@ -215,8 +216,73 @@ function OverrideModal({ plate, onClose, onOverridden }) {
   )
 }
 
+// ─── CircleCountdown ───────────────────────────────────────────────────────────
+function CircleCountdown({ duration = 10, onDismiss }) {
+  const R = 18
+  const circumference = +(2 * Math.PI * R).toFixed(2) // 113.1
+  const [progress, setProgress] = useState(0) // 0 → 1
+  const rafRef  = useRef(null)
+  const startRef = useRef(null)
+
+  useEffect(() => {
+    startRef.current = performance.now()
+    const tick = (now) => {
+      const t = Math.min((now - startRef.current) / (duration * 1000), 1)
+      setProgress(t)
+      if (t < 1) rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [duration])
+
+  // green (#22c55e) → yellow (#f59e0b) → red (#ef4444)
+  let r, g, b
+  if (progress < 0.5) {
+    const p = progress * 2
+    r = Math.round(34  + (245 - 34)  * p)
+    g = Math.round(197 + (158 - 197) * p)
+    b = Math.round(94  + (11  - 94)  * p)
+  } else {
+    const p = (progress - 0.5) * 2
+    r = Math.round(245 + (239 - 245) * p)
+    g = Math.round(158 + (68  - 158) * p)
+    b = Math.round(11  + (68  - 11)  * p)
+  }
+  const color = `rgb(${r},${g},${b})`
+  const secsLeft = Math.ceil(duration * (1 - progress))
+
+  return (
+    <div
+      title="Cooldown — click to dismiss"
+      onClick={onDismiss}
+      style={{ position: 'relative', width: 44, height: 44, cursor: 'pointer', flexShrink: 0 }}
+    >
+      <svg width="44" height="44" style={{ transform: 'rotate(-90deg)', display: 'block' }}>
+        <circle cx="22" cy="22" r={R} fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="3.5" />
+        <circle
+          cx="22" cy="22" r={R}
+          fill="none"
+          stroke={color}
+          strokeWidth="3.5"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * progress}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 11, fontWeight: 700, color,
+        pointerEvents: 'none',
+      }}>
+        {secsLeft > 0 ? secsLeft : ''}
+      </div>
+    </div>
+  )
+}
+
 // ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, guardName, countdown, onDismiss }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
 
@@ -244,7 +310,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cou
   return (
     <>
       <div className={`em-card em-result ${cls}`}>
-        <div className={`em-result-banner ${cls}`}>
+        <div className={`em-result-banner ${cls}`} style={{ position: 'relative' }}>
+          {cooldownActive && (
+            <div style={{ position: 'absolute', top: 8, right: 8 }}>
+              <CircleCountdown key={cooldownKey} duration={dedupSeconds} onDismiss={onDismiss} />
+            </div>
+          )}
           <div className="em-result-icon"><Icon size={20} /></div>
           <div className="em-result-text">
             <p className="em-result-status">{label}</p>
@@ -325,25 +396,6 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cou
               )}
             </div>
           )}
-          {countdown != null && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              marginTop: 10, padding: '7px 11px',
-              background: '#fff7ed', border: '1px solid #fed7aa',
-              borderRadius: 8, fontSize: 12, color: '#9a3412',
-            }}>
-              <span><AlertTriangle size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                Details clearing in <strong>{countdown}s</strong>
-              </span>
-              <button
-                onClick={onDismiss}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9a3412', padding: '0 2px', display: 'flex', alignItems: 'center' }}
-                title="Dismiss now"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
             {isVisitor && (
               <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
@@ -385,40 +437,28 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [resultCountdown, setResultCountdown] = useState(null)
+  const [cooldownKey, setCooldownKey]       = useState(0)
+  const [cooldownActive, setCooldownActive] = useState(false)
+  const [dedupSeconds, setDedupSeconds]     = useState(10)
 
-  const dismissTimerRef  = useRef(null)
-  const warningTimerRef  = useRef(null)
-  const countdownIntervalRef = useRef(null)
+  const dismissTimerRef = useRef(null)
 
   const clearResultTimers = () => {
     clearTimeout(dismissTimerRef.current)
-    clearTimeout(warningTimerRef.current)
-    clearInterval(countdownIntervalRef.current)
-    setResultCountdown(null)
+    setCooldownActive(false)
   }
 
-  const startResultCooldown = () => {
-    clearResultTimers()
-    warningTimerRef.current = setTimeout(() => {
-      setResultCountdown(5)
-      countdownIntervalRef.current = setInterval(() => {
-        setResultCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(countdownIntervalRef.current)
-            return null
-          }
-          return prev - 1
-        })
-      }, 1000)
-    }, 25000)
+  const startResultCooldown = (secs = dedupSeconds) => {
+    clearTimeout(dismissTimerRef.current)
+    setCooldownKey(k => k + 1)
+    setCooldownActive(true)
     dismissTimerRef.current = setTimeout(() => {
       setResult(null)
-      setResultCountdown(null)
-    }, 30000)
+      setCooldownActive(false)
+    }, secs * 1000)
   }
 
-  useEffect(() => () => clearResultTimers(), []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => clearTimeout(dismissTimerRef.current), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -440,7 +480,7 @@ export default function SecurityEntryManagement() {
     rtspResults.forEach(r => {
       if (!r.plate_number || scanCooldown.current.has(r.plate_number)) return
       scanCooldown.current.add(r.plate_number)
-      setTimeout(() => scanCooldown.current.delete(r.plate_number), 3000)
+      setTimeout(() => scanCooldown.current.delete(r.plate_number), dedupSeconds * 1000)
       setResult(r)
       startResultCooldown()
       const m = getMeta(r.status)
@@ -467,6 +507,9 @@ export default function SecurityEntryManagement() {
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
     camerasApi.list({ assignment: 'entry' })
       .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
+      .catch(() => {})
+    getSystemSettings()
+      .then(({ data }) => { if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds) })
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -564,6 +607,36 @@ export default function SecurityEntryManagement() {
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
                     {rtspActiveCam?.name || 'Camera'}
                   </div>
+                  {(() => {
+                    const s = rtspActiveCam?.mlStatus?.stage
+                    const m = rtspActiveCam?.mlStatus?.message
+                    if (!s || s === 'idle') return null
+                    if (s === 'ready') return (
+                      <div style={{
+                        position: 'absolute', bottom: 10, left: 10,
+                        background: 'rgba(16,185,129,0.18)', color: '#10b981',
+                        border: '1px solid rgba(16,185,129,0.35)',
+                        padding: '4px 9px', borderRadius: 7, fontSize: 11,
+                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
+                        pointerEvents: 'none', backdropFilter: 'blur(4px)',
+                      }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0 }} />
+                        Detection Ready
+                      </div>
+                    )
+                    return (
+                      <div style={{
+                        position: 'absolute', bottom: 10, left: 10,
+                        background: 'rgba(0,0,0,0.78)', color: '#fff',
+                        padding: '5px 10px', borderRadius: 7, fontSize: 11,
+                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
+                        pointerEvents: 'none', backdropFilter: 'blur(4px)',
+                      }}>
+                        <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.2)', flexShrink: 0 }} />
+                        {m || 'Initializing…'}
+                      </div>
+                    )
+                  })()}
                 </div>
               ) : (
                 <div className="em-cam-off">
@@ -649,7 +722,9 @@ export default function SecurityEntryManagement() {
               onPassCreated={refreshLogs}
               onOverride={refreshLogs}
               guardName={user?.full_name}
-              countdown={resultCountdown}
+              cooldownKey={cooldownKey}
+              cooldownActive={cooldownActive}
+              dedupSeconds={dedupSeconds}
               onDismiss={() => { clearResultTimers(); setResult(null) }}
             />
 
