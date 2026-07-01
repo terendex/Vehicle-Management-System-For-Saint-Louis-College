@@ -27,6 +27,7 @@ _OPEN_CAP_LOCK = threading.Lock()
 
 FRAME_RATE_LIMIT_MS = 100
 _DEFAULT_DEDUP_SECONDS = 10  # fallback used if DB is unavailable at connect time
+CAMERA_ENTRY_COOLDOWN_SECONDS = 60  # breathing space: camera won't exit a vehicle within this window after entry
 
 # Per-track OCR accumulation settings
 _OCR_LOCK_CONF    = 0.50   # lock immediately if any single read reaches this
@@ -71,6 +72,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         # plate_text → (processed_at_timestamp, cached_result_dict)
         self._plate_cache: dict[str, tuple[float, dict]] = {}
+        # plates currently being processed — prevents concurrent duplicate DB writes
+        self._plates_in_flight: set[str] = set()
 
         self._fps = 0.0
         self._fps_counter = 0
@@ -346,6 +349,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             logger.info("[WS] Plate %s in dedup window — skipping DB write", plate_text)
             await self.send_json({"type": "result", "results": [cached[1]]})
             return
+        _in_flight = getattr(self, '_plates_in_flight', None)
+        if _in_flight is not None and plate_text in _in_flight:
+            logger.info("[WS] Plate %s already in-flight — skipping finalize", plate_text)
+            return
+        if _in_flight is not None:
+            _in_flight.add(plate_text)
         try:
             await sync_to_async(self._save_to_db)(
                 track_id, plate_text, 0.0, conf, None, None
@@ -361,6 +370,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         except Exception as db_exc:
             logger.error("[WS] DB error for plate %s: %s", plate_text, db_exc)
             self._plate_cache[plate_text] = (time.time(), {"plate_number": plate_text, "error": True})
+        finally:
+            if _in_flight is not None:
+                _in_flight.discard(plate_text)
 
     # ── process tracks that already have plate text ────────────────────────────
 
@@ -397,6 +409,11 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             except Exception as exc:
                 logger.error("[WS] DB save failed for %s: %s", plate_number, exc)
 
+            _in_flight = getattr(self, '_plates_in_flight', None)
+            if _in_flight is not None and plate_number in _in_flight:
+                continue  # another coroutine is already processing this plate
+            if _in_flight is not None:
+                _in_flight.add(plate_number)
             try:
                 enriched = await sync_to_async(
                     self._check_vehicle, thread_sensitive=True
@@ -413,6 +430,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 logger.error("[WS] Vehicle check failed for %s: %s", plate_number, exc)
                 # Cache the failure so we don't retry every frame and spam the log
                 self._plate_cache[plate_number] = (time.time(), {"plate_number": plate_number, "error": True})
+            finally:
+                if _in_flight is not None:
+                    _in_flight.discard(plate_number)
 
         if fresh_results:
             # Only record ML sample for plates that were genuinely processed this call
@@ -464,6 +484,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
+        from .views import _inside_state, _in_exit_cooldown, _already_inside, _auto_log_violation
         close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
@@ -492,10 +513,89 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "has_violations": False,
             }
 
+        inside_status, last_entry = _inside_state(plate_number)
+
+        if inside_status == 'duplicate':
+            return {
+                "status":         "duplicate",
+                "allowed":        False,
+                "message":        "Duplicate scan — already processed within grace period.",
+                "vehicle":        VehicleSerializer(vehicle).data,
+                "has_violations": False,
+                "already_inside": True,
+            }
+
+        if inside_status == 'inside':
+            seconds_since_entry = (timezone.now() - last_entry.scanned_at).total_seconds()
+            if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
+                # Within the 1-minute breathing space — ignore
+                return {
+                    "status":         "duplicate",
+                    "allowed":        False,
+                    "message":        "Within 1-minute entry window.",
+                    "vehicle":        VehicleSerializer(vehicle).data,
+                    "has_violations": False,
+                    "already_inside": True,
+                }
+            from django.db import transaction as _tx
+            exit_log = None
+            with _tx.atomic():
+                locked_entry = AccessLog.objects.select_for_update().filter(
+                    pk=last_entry.pk
+                ).first()
+                if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                    return {
+                        "status":         "duplicate",
+                        "allowed":        False,
+                        "message":        "Duplicate scan — already processed.",
+                        "vehicle":        VehicleSerializer(vehicle).data,
+                        "has_violations": False,
+                        "already_inside": False,
+                    }
+                exit_log = AccessLog.objects.create(
+                    plate_number=plate_number,
+                    vehicle=vehicle,
+                    status=AccessLog.Status.EXITED,
+                    gate_id=gate_id,
+                    scanned_by=self._user,
+                    paired_entry=locked_entry,
+                )
+            delta = exit_log.scanned_at - last_entry.scanned_at
+            duration_minutes = int(delta.total_seconds() / 60)
+            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            try:
+                AuditLog.objects.create(
+                    actor=self._user,
+                    action="scan",
+                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | Duration: {duration_minutes} min",
+                )
+            except Exception:
+                pass
+            return {
+                "status":           "exited",
+                "allowed":          False,
+                "message":          f"{owner_name} — Exit recorded. Duration: {duration_minutes} min.",
+                "vehicle":          VehicleSerializer(vehicle).data,
+                "has_violations":   False,
+                "already_inside":   False,
+                "duration_minutes": duration_minutes,
+            }
+
+        if _in_exit_cooldown(plate_number):
+            return {
+                "status":         "duplicate",
+                "allowed":        False,
+                "message":        "Exit cooldown — entry suppressed for 1 minute after exit.",
+                "vehicle":        VehicleSerializer(vehicle).data,
+                "has_violations": False,
+                "already_inside": False,
+            }
+
         entry = check_entry(vehicle)
         has_violations = Violation.objects.filter(
             vehicle=vehicle, is_resolved=False
         ).exists()
+        already_inside = _already_inside(plate_number)
 
         AccessLog.objects.create(
             plate_number=plate_number,
@@ -516,16 +616,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         if not entry["allowed"]:
             try:
-                from .views import _auto_log_violation
                 _auto_log_violation(vehicle, entry["message"])
             except Exception:
                 pass
-
-        try:
-            from .views import _already_inside
-            already_inside = _already_inside(plate_number)
-        except Exception:
-            already_inside = False
 
         # Fetch registration details for non-visitor plates
         registration_data = None
@@ -813,6 +906,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._pending_ocr: dict     = {}
         self._ocr_state: dict       = {}
         self._plate_cache: dict     = {}
+        self._plates_in_flight: set = set()  # prevents concurrent duplicate DB writes
         self._detection_in_progress = False
         self._last_img_w            = 1280
         self._last_img_h            = 720
