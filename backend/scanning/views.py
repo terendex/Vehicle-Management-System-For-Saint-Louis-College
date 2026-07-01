@@ -7,7 +7,7 @@ from rest_framework import permissions
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
-from vehicles.models import Vehicle
+from vehicles.models import Vehicle, SupplierPlate
 from violations.models import Violation
 from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
@@ -114,6 +114,26 @@ class ScanView(APIView):
             vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate).first()
 
             if not vehicle:
+                supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
+                    plate_number=plate, supplier__is_active=True
+                ).first()
+                if supplier_plate:
+                    AccessLog.objects.create(
+                        plate_number=plate, status=AccessLog.Status.AUTHORIZED,
+                        gate_id=gate_id, scanned_by=request.user,
+                    )
+                    results.append({
+                        'plate_number':  plate,
+                        'status':        'authorized',
+                        'allowed':       True,
+                        'message':       f'Supplier vehicle — {supplier_plate.supplier.company_name}. Entry permitted.',
+                        'is_supplier':   True,
+                        'supplier_name': supplier_plate.supplier.company_name,
+                        'bbox':          bbox,
+                        'sample_id':     ml_sample.get("sample_id") if ml_sample else None,
+                    })
+                    continue
+
                 AccessLog.objects.create(plate_number=plate, status='unknown', gate_id=gate_id, scanned_by=request.user)
                 results.append({
                     'plate_number': plate,
@@ -641,6 +661,24 @@ class ManualEntryView(APIView):
         vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate_number).first()
 
         if not vehicle:
+            supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
+                plate_number=plate_number, supplier__is_active=True
+            ).first()
+            if supplier_plate:
+                AccessLog.objects.create(
+                    plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
+                    gate_id=gate_id, scanned_by=request.user,
+                )
+                return Response({
+                    'plate_number':  plate_number,
+                    'status':        'authorized',
+                    'allowed':       True,
+                    'message':       f'Supplier vehicle — {supplier_plate.supplier.company_name}. Entry permitted.',
+                    'is_supplier':   True,
+                    'supplier_name': supplier_plate.supplier.company_name,
+                    'gate_id':       gate_id,
+                })
+
             AccessLog.objects.create(
                 plate_number=plate_number,
                 status=AccessLog.Status.UNKNOWN,

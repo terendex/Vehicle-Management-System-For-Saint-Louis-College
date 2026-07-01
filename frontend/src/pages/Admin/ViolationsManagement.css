@@ -813,3 +813,97 @@
 /* ── Spinner ────────────────────────────────────────────────────── */
 @keyframes vm-spin { to { transform: rotate(360deg); } }
 .vm-spin { animation: vm-spin 0.8s linear infinite; }
+
+/* ── Offense badges ─────────────────────────────────────────────── */
+.vm-offense-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.vm-offense-1 { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; }
+.vm-offense-2 { background: #FFEDD5; color: #C2410C; border: 1px solid #FED7AA; }
+.vm-offense-3 { background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; }
+
+.vm-type-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/* ── Row states ──────────────────────────────────────────────────── */
+.vm-row-fee td { background: #FFF5F5 !important; }
+.vm-row-warning td { background: #FFFBEB !important; }
+
+/* ── Status badges (new) ─────────────────────────────────────────── */
+.vm-status-warning { color: #B45309; background: #FEF3C7; border-color: #FDE68A; }
+.vm-status-fee {
+  color: #B91C1C;
+  background: #FEE2E2;
+  border-color: #FECACA;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.vm-status-fee em { font-style: normal; font-size: 10px; opacity: 0.8; }
+
+/* ── Action buttons (new) ────────────────────────────────────────── */
+.vm-btn-report {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.vm-btn-report:hover { background: #dbeafe; }
+
+.vm-btn-clear {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+.vm-btn-clear:hover { background: #dcfce7; }
+
+/* ── Header stats ────────────────────────────────────────────────── */
+.vm-header-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.vm-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.vm-stat-fee  { background: #FEE2E2; color: #B91C1C; border: 1.5px solid #FECACA; }
+.vm-stat-warn { background: #FEF3C7; color: #92400E; border: 1.5px solid #FDE68A; }
+
+/* ── Badge colours ───────────────────────────────────────────────── */
+.vm-badge-red    { background: #dc2626; color: #fff; }
+.vm-badge-yellow { background: #D97706; color: #fff; }
+
+/* ── Fine zero ───────────────────────────────────────────────────── */
+.vm-fine-zero { background: #F0F2F7; color: #9CA3AF; border-color: #E2E6EE; }
+
+/* ── OR Input ────────────────────────────────────────────────────── */
+.vm-or-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: monospace;
+  margin-bottom: 16px;
+  outline: none;
+  box-sizing: border-box;
+}
+.vm-or-input:focus { border-color: #2A2B61; }

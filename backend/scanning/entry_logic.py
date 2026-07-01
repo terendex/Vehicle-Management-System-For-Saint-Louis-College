@@ -98,6 +98,16 @@ def check_entry(vehicle) -> dict:
         owner_name = vehicle.user.full_name if vehicle.user else vehicle.plate_number
         return _result('authorized', True, f'Open Campus Mode active — {owner_name}. Entry granted.', None)
 
+    # Block entry if there is an active fee-imposed violation (3rd offense, unpaid)
+    from violations.models import Violation
+    if Violation.objects.filter(vehicle=vehicle, status=Violation.Status.FEE_IMPOSED).exists():
+        return _result(
+            'denied', False,
+            'Entry denied — outstanding violation fee (₱150). '
+            'Please report to the CDSO office to settle.',
+            None,
+        )
+
     user = vehicle.user
 
     if not user:

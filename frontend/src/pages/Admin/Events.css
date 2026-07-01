@@ -700,3 +700,128 @@
 @keyframes ev-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ── Pending badge ───────────────────────────────────────────────── */
+
+.ev-pending-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #FFF7ED;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+  letter-spacing: 0.4px;
+}
+
+/* ── Archived card state ─────────────────────────────────────────── */
+
+.ev-card--archived {
+  background: #F9FAFB;
+  border-color: #E2E6EE;
+  opacity: 0.85;
+}
+
+.ev-card--archived .ev-card-name {
+  color: #6B7280;
+}
+
+.ev-archived-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #F3F4F6;
+  color: #6B7280;
+  border: 1px solid #D1D5DB;
+  letter-spacing: 0.4px;
+}
+
+/* ── Reschedule button ───────────────────────────────────────────── */
+
+.ev-reschedule-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1.5px solid #D1D5DB;
+  background: #F9FAFB;
+  color: #374151;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.ev-reschedule-btn:hover { background: #F0F2F7; border-color: #9CA3AF; }
+
+/* ── Inline reschedule row ───────────────────────────────────────── */
+
+.ev-reschedule-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 1.25rem;
+  border-top: 1px solid #F0F2F7;
+  background: #F9FAFB;
+  flex-wrap: wrap;
+}
+
+.ev-reschedule-icon { color: #6B7280; flex-shrink: 0; }
+
+.ev-reschedule-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.ev-reschedule-input {
+  width: auto;
+  flex: none;
+  padding: 6px 10px;
+  font-size: 0.88rem;
+}
+
+/* ── Small button variant ────────────────────────────────────────── */
+
+.ev-btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  gap: 5px;
+}
+
+/* ── Archived section ────────────────────────────────────────────── */
+
+.ev-archived-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.ev-archived-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1.5px dashed #D1D5DB;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  align-self: flex-start;
+}
+.ev-archived-toggle:hover { background: #F3F4F6; border-color: #9CA3AF; color: #374151; }
+
+.ev-events-list--archived {
+  opacity: 0.9;
+}

@@ -49,5 +49,11 @@ urlpatterns = [
     path('registration-periods/',              views.RegistrationPeriodListCreateView.as_view(),  name='registration-periods'),
     path('registration-periods/<int:pk>/activate/', views.RegistrationPeriodActivateView.as_view(), name='registration-period-activate'),
 
+    # Supplier management (admin only)
+    path('suppliers/',                             views.SupplierListCreateView.as_view(), name='supplier-list'),
+    path('suppliers/<int:pk>/',                    views.SupplierDetailView.as_view(),     name='supplier-detail'),
+    path('suppliers/<int:pk>/plates/',             views.SupplierPlateView.as_view(),      name='supplier-plate-add'),
+    path('suppliers/<int:pk>/plates/<int:plate_pk>/', views.SupplierPlateView.as_view(),   name='supplier-plate-delete'),
+
     path('', include(router.urls)),
 ]

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice, Supplier, SupplierPlate
 from accounts.models import User
 
 
@@ -110,3 +110,20 @@ class CameraSerializer(serializers.ModelSerializer):
         fields = ['id', 'cam_number', 'name', 'ip', 'device_id', 'password',
                   'rtsp_url', 'assignment', 'gate_id', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']
+
+
+class SupplierPlateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = SupplierPlate
+        fields = ['id', 'plate_number', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class SupplierSerializer(serializers.ModelSerializer):
+    plates      = SupplierPlateSerializer(many=True, read_only=True)
+    plate_count = serializers.IntegerField(source='plates.count', read_only=True)
+
+    class Meta:
+        model  = Supplier
+        fields = ['id', 'company_name', 'is_active', 'plate_count', 'plates', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'plate_count', 'created_at', 'updated_at']

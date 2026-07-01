@@ -21,3 +21,8 @@ export const createViolation = (data) => {
   Object.entries(data).forEach(([k, v]) => { if (v !== null && v !== undefined) fd.append(k, v) })
   return api.post('/violations/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
+
+// CDSO workflow for 3rd-offense violations
+export const issueCDSOReport  = (id)              => api.post(`/violations/${id}/issue-report/`)
+export const clearViolation   = (id, officialReceipt) =>
+  api.post(`/violations/${id}/clear/`, { official_receipt: officialReceipt })

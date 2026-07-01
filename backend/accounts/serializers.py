@@ -22,11 +22,12 @@ def validate_password_strength(password):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    photo_url = serializers.SerializerMethodField()
+    photo_url       = serializers.SerializerMethodField()
+    registrant_type = serializers.SerializerMethodField()
 
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'qr_token']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'qr_token', 'registrant_type']
 
     def get_photo_url(self, obj):
         if not obj.photo:
@@ -35,6 +36,10 @@ class UserSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.photo.url)
         return obj.photo.url
+
+    def get_registrant_type(self, obj):
+        reg = obj.registrations.first()
+        return reg.registrant_type if reg else None
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):

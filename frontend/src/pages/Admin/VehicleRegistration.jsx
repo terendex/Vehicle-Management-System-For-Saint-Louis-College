@@ -444,7 +444,7 @@ export default function VehicleRegistration() {
                       className={`form-input${orValid ? ' input-valid' : ''}`}
                       value={orNumber}
                       onChange={(e) => setOrNumber(e.target.value)}
-                      placeholder="e.g. OR-2026-000123"
+                      placeholder="e.g. 1380093"
                       disabled={submitting}
                     />
                     <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
