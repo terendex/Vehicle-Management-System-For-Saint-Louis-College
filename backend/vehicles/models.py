@@ -258,6 +258,7 @@ class Event(models.Model):
     name             = models.CharField(max_length=200)
     date             = models.DateField()
     is_active        = models.BooleanField(default=False)
+    archived         = models.BooleanField(default=False)
     organizer_plates = models.JSONField(default=list, blank=True)
     created_by       = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
@@ -311,6 +312,33 @@ class ParkingSpace(models.Model):
         status = f"({self.occupied_by})" if self.is_occupied else "(free)"
         cat = self.zone.get_vehicle_category_display() if self.zone else '?'
         return f"{cat} Space {self.space_number} {status}"
+
+
+class Supplier(models.Model):
+    """A supplier company whose vehicles are automatically permitted entry."""
+    company_name = models.CharField(max_length=200, unique=True)
+    is_active    = models.BooleanField(default=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['company_name']
+
+    def __str__(self):
+        return self.company_name
+
+
+class SupplierPlate(models.Model):
+    """A license plate registered under a supplier."""
+    supplier     = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name='plates')
+    plate_number = models.CharField(max_length=20, unique=True, db_index=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['plate_number']
+
+    def __str__(self):
+        return f"{self.plate_number} ({self.supplier.company_name})"
 
 
 class Camera(models.Model):

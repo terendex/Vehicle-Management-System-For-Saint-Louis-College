@@ -69,7 +69,7 @@ export default function UserManagement() {
   const [page, setPage]               = useState(1)
   const [totalPages, setTotalPages]   = useState(1)
   const [totalCount, setTotalCount]   = useState(0)
-  const [roleFilter, setRoleFilter]   = useState('')
+  const [activeTab, setActiveTab]     = useState('all')
   const [statusFilter, setStatusFilter] = useState('')
   const [modal, setModal]             = useState(null)
   const [selectedUser, setSelectedUser] = useState(null)
@@ -173,11 +173,19 @@ export default function UserManagement() {
     setAddType(null)
   }
 
+  const TABS = [
+    { key: 'all',            label: 'All Users',               role: '',              registrantType: '' },
+    { key: 'security',       label: 'Security Personnel',      role: 'security',      registrantType: '' },
+    { key: 'owner_employee', label: 'Vehicle Owner — Employee', role: 'vehicle_owner', registrantType: 'employee' },
+    { key: 'owner_student',  label: 'Vehicle Owner — Student',  role: 'vehicle_owner', registrantType: 'student' },
+  ]
+
   /* ── fetch users ── */
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await usersApi.getUsers(search, page, roleFilter, statusFilter)
+      const tab = TABS.find(t => t.key === activeTab) || TABS[0]
+      const data = await usersApi.getUsers(search, page, tab.role, statusFilter, tab.registrantType)
       if (data && data.results) {
         setUsers(data.results)
         setTotalCount(data.count)
@@ -192,9 +200,9 @@ export default function UserManagement() {
     } finally {
       setLoading(false)
     }
-  }, [search, page, roleFilter, statusFilter])
+  }, [search, page, activeTab, statusFilter])
 
-  useEffect(() => { setPage(1) }, [search, roleFilter, statusFilter])
+  useEffect(() => { setPage(1) }, [search, activeTab, statusFilter])
   useEffect(() => {
     const timer = setTimeout(fetchUsers, 300)
     return () => clearTimeout(timer)
@@ -421,7 +429,25 @@ export default function UserManagement() {
 
   const adminStrength = getStrength(adminForm.password)
   const formatDate    = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
-  const roleLabel     = (role) => role === 'security' ? 'Security' : role === 'vehicle_owner' ? 'Vehicle Owner' : role
+  const roleLabel     = (user) => {
+    if (user.role === 'security') return 'Security Personnel'
+    if (user.role === 'vehicle_owner') {
+      if (user.registrant_type === 'student')  return 'Student Owner'
+      if (user.registrant_type === 'employee') return 'Employee Owner'
+      if (user.registrant_type === 'fetcher')  return 'Fetcher'
+      return 'Vehicle Owner'
+    }
+    return user.role
+  }
+  const roleBadgeClass = (user) => {
+    if (user.role === 'security') return 'security'
+    if (user.role === 'vehicle_owner') {
+      if (user.registrant_type === 'student')  return 'owner_student'
+      if (user.registrant_type === 'employee') return 'owner_employee'
+      if (user.registrant_type === 'fetcher')  return 'owner_fetcher'
+    }
+    return 'vehicle_owner'
+  }
 
   /* ─── render ─────────────────────────────────────────────────── */
   return (
@@ -461,6 +487,19 @@ export default function UserManagement() {
 
       {/* Table */}
       <div className="um-table-container">
+        {/* Role tabs */}
+        <div className="um-role-tabs">
+          {TABS.map(tab => (
+            <button
+              key={tab.key}
+              className={`um-role-tab ${activeTab === tab.key ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div className="um-table-toolbar">
           <div className="um-search-wrapper">
             <Search size={16} />
@@ -473,11 +512,6 @@ export default function UserManagement() {
             />
           </div>
           <div className="um-filter-group">
-            <select className="um-form-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-              <option value="">All Roles</option>
-              <option value="security">Security Personnel</option>
-              <option value="vehicle_owner">Vehicle Owner</option>
-            </select>
             <select className="um-form-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All Statuses</option>
               <option value="active">Active</option>
@@ -517,7 +551,7 @@ export default function UserManagement() {
                   </td>
                   <td>
                     <div className="um-user-cell">
-                      <div className={`um-user-avatar ${u.role}`}>
+                      <div className={`um-user-avatar ${roleBadgeClass(u)}`}>
                         {u.full_name.charAt(0).toUpperCase()}
                       </div>
                       <span className="um-user-name">{u.full_name}</span>
@@ -525,7 +559,7 @@ export default function UserManagement() {
                   </td>
                   <td>{u.email || '—'}</td>
                   <td>
-                    <span className={`um-role-badge ${u.role}`}>{roleLabel(u.role)}</span>
+                    <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
                   </td>
                   <td>
                     <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
@@ -1083,7 +1117,7 @@ export default function UserManagement() {
                     />
                   ) : (
                     <div
-                      className={`um-user-avatar ${selectedUser.role}`}
+                      className={`um-user-avatar ${roleBadgeClass(selectedUser)}`}
                       style={{ width: 72, height: 72, fontSize: 28, margin: 0 }}
                     >
                       {selectedUser.full_name.charAt(0).toUpperCase()}
@@ -1091,8 +1125,8 @@ export default function UserManagement() {
                   )}
                 </div>
                 <h3 style={{ margin: 0, color: '#1A1D2E', fontSize: 18 }}>{selectedUser.full_name}</h3>
-                <span className={`um-role-badge ${selectedUser.role}`} style={{ marginTop: 8, display: 'inline-flex' }}>
-                  {roleLabel(selectedUser.role)}
+                <span className={`um-role-badge ${roleBadgeClass(selectedUser)}`} style={{ marginTop: 8, display: 'inline-flex' }}>
+                  {roleLabel(selectedUser)}
                 </span>
               </div>
               <div className="um-profile-grid">

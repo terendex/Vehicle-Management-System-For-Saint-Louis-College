@@ -35,11 +35,16 @@ function pwStrength(pw) {
 const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
 
 const VIOLATION_TYPE_LABELS = {
-  no_sticker: 'No Sticker',
+  unauthorized_entry:   'Unauthorized Entry',
+  double_parking:       'Double Parking',
+  time_exceed:          'Time Exceed',
+  no_sticker:           'No Sticker',
   expired_registration: 'Expired Registration',
-  unauthorized: 'Unauthorized Entry',
-  other: 'Other',
+  unauthorized:         'Unauthorized (Legacy)',
+  other:                'Other',
 }
+
+const OFFENSE_LABELS = { 1: '1st offense', 2: '2nd offense', 3: '3rd offense' }
 
 const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle']
 const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().includes(m.toLowerCase()))
@@ -449,11 +454,21 @@ export default function OwnerDashboard() {
 
                   {/* ── Active violations ── */}
                   {(() => {
-                    const active = violations.filter(v => !v.is_resolved)
+                    const active = violations.filter(v => !v.is_resolved && v.status !== 'cleared')
+                    const hasFee = active.some(v => v.status === 'fee_imposed')
                     const totalOutstanding = active.reduce((sum, v) => sum + parseFloat(v.fine_amount || 0), 0)
                     return (
                       <>
-                        {totalOutstanding > 0 && (
+                        {hasFee && (
+                          <div className="od-outstanding-banner od-outstanding-banner--blocked">
+                            <AlertTriangle size={15} />
+                            <span>
+                              <strong>Entry Denied.</strong> You have an outstanding ₱{totalOutstanding.toFixed(2)} violation fee.
+                              Report to the <strong>CDSO office</strong> to process payment and restore access.
+                            </span>
+                          </div>
+                        )}
+                        {!hasFee && totalOutstanding > 0 && (
                           <div className="od-outstanding-banner">
                             <AlertTriangle size={15} />
                             <span>Outstanding fines: <strong>₱{totalOutstanding.toFixed(2)}</strong> — please settle at the CDSO office.</span>
@@ -465,6 +480,7 @@ export default function OwnerDashboard() {
                               <thead>
                                 <tr>
                                   <th>Violation</th>
+                                  <th>Offense</th>
                                   <th>Notes</th>
                                   <th>Fine</th>
                                   <th>Evidence</th>
@@ -474,10 +490,18 @@ export default function OwnerDashboard() {
                               </thead>
                               <tbody>
                                 {active.map(v => (
-                                  <tr key={v.id} className="od-viol-active">
+                                  <tr key={v.id} className={`od-viol-active${v.status === 'fee_imposed' ? ' od-viol-fee' : ''}`}>
                                     <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                                    <td className="od-viol-offense">
+                                      {v.offense_number
+                                        ? <span className={`od-offense-badge od-offense-${v.offense_number}`}>{OFFENSE_LABELS[v.offense_number] || `${v.offense_number}th offense`}</span>
+                                        : '—'
+                                      }
+                                    </td>
                                     <td className="od-viol-notes">{v.notes || '—'}</td>
-                                    <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
+                                    <td className="od-viol-fine">
+                                      {parseFloat(v.fine_amount) > 0 ? `₱${parseFloat(v.fine_amount).toFixed(2)}` : <span style={{ color: '#9CA3AF' }}>₱0</span>}
+                                    </td>
                                     <td>
                                       {v.evidence_url ? (
                                         <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
@@ -490,7 +514,12 @@ export default function OwnerDashboard() {
                                     </td>
                                     <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                                     <td>
-                                      <span className="od-viol-badge notified">Pending Payment</span>
+                                      {v.status === 'fee_imposed'
+                                        ? <span className="od-viol-badge od-viol-badge--fee">Entry Denied · Pay ₱150</span>
+                                        : v.status === 'warning'
+                                        ? <span className="od-viol-badge od-viol-badge--warning">Warning</span>
+                                        : <span className="od-viol-badge notified">Active</span>
+                                      }
                                     </td>
                                   </tr>
                                 ))}
@@ -502,9 +531,9 @@ export default function OwnerDashboard() {
                     )
                   })()}
 
-                  {/* ── Resolved history ── */}
+                  {/* ── Resolved / Cleared history ── */}
                   {(() => {
-                    const resolved = violations.filter(v => v.is_resolved)
+                    const resolved = violations.filter(v => v.is_resolved || v.status === 'cleared')
                     if (resolved.length === 0) return null
                     return (
                       <div className="od-history-section">

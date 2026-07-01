@@ -2,11 +2,12 @@ import api from './axios'
 
 export const usersApi = {
   /** List all non-admin users. Optional search by name, role, status. Paginated. */
-  getUsers: async (search = '', page = 1, role = '', status = '') => {
+  getUsers: async (search = '', page = 1, role = '', status = '', registrantType = '') => {
     const params = { page }
     if (search) params.search = search
     if (role) params.role = role
     if (status) params.status = status
+    if (registrantType) params.registrant_type = registrantType
     const { data } = await api.get('/accounts/users/', { params })
     return data
   },

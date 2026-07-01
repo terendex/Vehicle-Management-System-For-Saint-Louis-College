@@ -1,0 +1,490 @@
+/* ============================================================
+   SUPPLIER MANAGEMENT PAGE
+   Palette: SLC Navy #2A2B61 · Background #F0F2F7
+            Card #FFFFFF · Border #E2E6EE · Text #1A1D2E / #5A5F72
+   ============================================================ */
+
+.sp-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  min-height: 100%;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+
+.sp-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.sp-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #1A1D2E;
+  margin: 0 0 3px;
+}
+
+.sp-subtitle {
+  font-size: 0.85rem;
+  color: #5A5F72;
+  margin: 0;
+  max-width: 520px;
+}
+
+/* ── Loading / Empty ─────────────────────────────────────────── */
+
+.sp-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #5A5F72;
+  font-size: 0.9rem;
+  padding: 2rem 0;
+}
+
+.sp-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4rem 0;
+  color: #5A5F72;
+  text-align: center;
+}
+
+.sp-empty-icon {
+  color: #C5C9D9;
+  margin-bottom: 4px;
+}
+
+.sp-empty-state p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.sp-empty-hint {
+  font-size: 0.82rem !important;
+  color: #8B90A7;
+}
+
+/* ── List ───────────────────────────────────────────────────── */
+
+.sp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── Supplier Card ──────────────────────────────────────────── */
+
+.sp-card {
+  background: #fff;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.sp-card--active {
+  border-color: #2A2B61;
+}
+
+.sp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.sp-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sp-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sp-card-icon {
+  color: #2A2B61;
+  flex-shrink: 0;
+}
+
+.sp-card-name {
+  font-size: 0.97rem;
+  font-weight: 700;
+  color: #1A1D2E;
+}
+
+.sp-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: #7C80A3;
+}
+
+.sp-inactive-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #8B90A7;
+  background: #F0F2F7;
+  border: 1px solid #D5D9E8;
+  border-radius: 20px;
+  padding: 1px 8px;
+}
+
+/* ── Card Actions ────────────────────────────────────────────── */
+
+.sp-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sp-status-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1.5px solid #D5D9E8;
+  background: #fff;
+  color: #5A5F72;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sp-status-btn--on {
+  border-color: #2A2B61;
+  background: #ECEDF8;
+  color: #2A2B61;
+}
+
+.sp-status-btn:hover:not(:disabled) {
+  background: #F5F6FC;
+}
+
+.sp-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1.5px solid #E2E6EE;
+  background: #fff;
+  color: #5A5F72;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sp-expand-btn:hover {
+  background: #F0F2F7;
+}
+
+.sp-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1.5px solid #FFD6D6;
+  background: #FFF5F5;
+  color: #D9534F;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sp-delete-btn:hover:not(:disabled) {
+  background: #FFE5E5;
+}
+
+/* ── Plates Section ──────────────────────────────────────────── */
+
+.sp-plates-section {
+  border-top: 1px solid #E2E6EE;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #FAFBFD;
+}
+
+.sp-plates-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #2A2B61;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sp-plate-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sp-text-input {
+  flex: 1;
+  padding: 7px 11px;
+  border: 1.5px solid #D5D9E8;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #1A1D2E;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.sp-text-input:focus {
+  border-color: #2A2B61;
+}
+
+.sp-plate-field {
+  max-width: 240px;
+  text-transform: uppercase;
+}
+
+.sp-add-plate-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1.5px solid #2A2B61;
+  background: #2A2B61;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.sp-add-plate-btn:hover:not(:disabled) {
+  background: #1e1f47;
+}
+
+.sp-add-plate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sp-no-plates {
+  font-size: 0.82rem;
+  color: #8B90A7;
+  margin: 0;
+}
+
+.sp-plate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sp-plate-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  background: #ECEDF8;
+  border: 1px solid #C8CAE8;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #2A2B61;
+  letter-spacing: 0.04em;
+}
+
+.sp-plate-tag button {
+  display: flex;
+  align-items: center;
+  padding: 1px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #6366A8;
+  border-radius: 50%;
+  transition: color 0.12s;
+}
+
+.sp-plate-tag button:hover:not(:disabled) {
+  color: #D9534F;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+
+.sp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: all 0.15s;
+}
+
+.sp-btn-primary {
+  background: #2A2B61;
+  color: #fff;
+  border-color: #2A2B61;
+}
+
+.sp-btn-primary:hover:not(:disabled) {
+  background: #1e1f47;
+}
+
+.sp-btn-ghost {
+  background: #fff;
+  color: #5A5F72;
+  border-color: #D5D9E8;
+}
+
+.sp-btn-ghost:hover:not(:disabled) {
+  background: #F0F2F7;
+}
+
+.sp-btn-danger {
+  background: #D9534F;
+  color: #fff;
+  border-color: #D9534F;
+}
+
+.sp-btn-danger:hover:not(:disabled) {
+  background: #c0392b;
+}
+
+.sp-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────── */
+
+.sp-spinner {
+  animation: sp-spin 0.7s linear infinite;
+}
+
+@keyframes sp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Overlay / Modal ─────────────────────────────────────────── */
+
+.sp-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.sp-modal {
+  background: #fff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.18);
+  overflow: hidden;
+}
+
+.sp-modal--sm {
+  max-width: 360px;
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.sp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #E2E6EE;
+}
+
+.sp-modal-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1A1D2E;
+  margin: 0;
+}
+
+.sp-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: #8B90A7;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+
+.sp-modal-close:hover {
+  background: #F0F2F7;
+}
+
+.sp-modal-form {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sp-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.sp-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sp-modal-body {
+  font-size: 0.88rem;
+  color: #5A5F72;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sp-warn-icon {
+  color: #D9534F;
+}

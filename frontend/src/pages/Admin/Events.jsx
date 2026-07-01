@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
-  ParkingCircle, Tag, Check,
+  ParkingCircle, Tag, Check, Archive, CalendarClock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -145,12 +145,15 @@ function AddEventModal({ onClose, onCreated }) {
 
 // ── Single event card ─────────────────────────────────────────────────
 function EventCard({ event, onUpdated, onDeleted }) {
-  const [expanded, setExpanded]     = useState(false)
-  const [plateInput, setPlateInput] = useState('')
-  const [toggling, setToggling]     = useState(false)
-  const [deleting, setDeleting]     = useState(false)
-  const [confirmDel, setConfirmDel] = useState(false)
-  const [saving, setSaving]         = useState(false)
+  const [expanded, setExpanded]         = useState(false)
+  const [plateInput, setPlateInput]     = useState('')
+  const [toggling, setToggling]         = useState(false)
+  const [deleting, setDeleting]         = useState(false)
+  const [confirmDel, setConfirmDel]     = useState(false)
+  const [saving, setSaving]             = useState(false)
+  const [rescheduling, setRescheduling] = useState(false)
+  const [newDate, setNewDate]           = useState(event.date)
+  const [reschedSaving, setReschedSaving] = useState(false)
   const plateRef = useRef(null)
 
   const localPlates = event.organizer_plates ?? []
@@ -165,6 +168,22 @@ function EventCard({ event, onUpdated, onDeleted }) {
       toast.error('Failed to update event.')
     } finally {
       setToggling(false)
+    }
+  }
+
+  const handleReschedule = async () => {
+    if (!newDate) return
+    setReschedSaving(true)
+    try {
+      const { data } = await patchEvent(event.id, { date: newDate })
+      onUpdated(data)
+      setRescheduling(false)
+      toast.success('Event rescheduled.')
+    } catch (err) {
+      const msg = err.response?.data?.date || 'Failed to reschedule event.'
+      toast.error(msg)
+    } finally {
+      setReschedSaving(false)
     }
   }
 
@@ -214,13 +233,21 @@ function EventCard({ event, onUpdated, onDeleted }) {
   const fmtDate = (d) =>
     new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
 
+  const cardClass = [
+    'ev-card',
+    event.archived  ? ' ev-card--archived' : '',
+    event.is_active ? ' ev-card--active'   : '',
+  ].join('')
+
   return (
-    <div className={`ev-card${event.is_active ? ' ev-card--active' : ''}`}>
+    <div className={cardClass}>
       <div className="ev-card-head">
         <div className="ev-card-meta">
           <div className="ev-card-name-row">
             <span className="ev-card-name">{event.name}</span>
-            {event.is_active && <span className="ev-active-badge">Active</span>}
+            {event.archived  && <span className="ev-archived-badge"><Archive size={11} /> Archived</span>}
+            {event.is_active && !event.archived && <span className="ev-active-badge">Active</span>}
+            {!event.is_active && !event.archived && <span className="ev-pending-badge">Pending</span>}
           </div>
           <div className="ev-card-sub">
             <CalendarDays size={13} />
@@ -232,18 +259,39 @@ function EventCard({ event, onUpdated, onDeleted }) {
         </div>
 
         <div className="ev-card-actions">
-          <button
-            className={`ev-status-btn${event.is_active ? ' ev-status-btn--on' : ''}`}
-            onClick={handleToggleActive}
-            disabled={toggling}
-            title={event.is_active ? 'Deactivate' : 'Activate'}
-          >
-            {toggling
-              ? <Loader2 size={13} className="ev-spinner" />
-              : event.is_active ? <ToggleRight size={15} /> : <ToggleLeft size={15} />
-            }
-            {event.is_active ? 'Deactivate' : 'Activate'}
-          </button>
+          {event.archived ? (
+            <button
+              className="ev-reschedule-btn"
+              onClick={() => { setRescheduling(true); setNewDate('') }}
+              title="Reschedule event"
+            >
+              <CalendarClock size={14} />
+              Reschedule
+            </button>
+          ) : (
+            <>
+              <button
+                className={`ev-status-btn${event.is_active ? ' ev-status-btn--on' : ''}`}
+                onClick={handleToggleActive}
+                disabled={toggling}
+                title={event.is_active ? 'Deactivate' : 'Activate'}
+              >
+                {toggling
+                  ? <Loader2 size={13} className="ev-spinner" />
+                  : event.is_active ? <ToggleRight size={15} /> : <ToggleLeft size={15} />
+                }
+                {event.is_active ? 'Deactivate' : 'Activate'}
+              </button>
+
+              <button
+                className="ev-reschedule-btn"
+                onClick={() => { setRescheduling(true); setNewDate(event.date) }}
+                title="Reschedule event"
+              >
+                <CalendarClock size={14} />
+              </button>
+            </>
+          )}
 
           <button
             className="ev-expand-btn"
@@ -263,6 +311,34 @@ function EventCard({ event, onUpdated, onDeleted }) {
           </button>
         </div>
       </div>
+
+      {rescheduling && (
+        <div className="ev-reschedule-row">
+          <CalendarClock size={14} className="ev-reschedule-icon" />
+          <span className="ev-reschedule-label">New date:</span>
+          <input
+            type="date"
+            className="ev-text-input ev-reschedule-input"
+            value={newDate}
+            onChange={e => setNewDate(e.target.value)}
+          />
+          <button
+            className="ev-btn ev-btn-primary ev-btn-sm"
+            onClick={handleReschedule}
+            disabled={!newDate || reschedSaving}
+          >
+            {reschedSaving ? <Loader2 size={13} className="ev-spinner" /> : <Check size={13} />}
+            Confirm
+          </button>
+          <button
+            className="ev-btn ev-btn-ghost ev-btn-sm"
+            onClick={() => setRescheduling(false)}
+            disabled={reschedSaving}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {expanded && (
         <div className="ev-plates-section">
@@ -381,12 +457,13 @@ function ZoneCapacityRow({ zone, onSaved }) {
 
 // ── Main page ─────────────────────────────────────────────────────────
 export default function Events() {
-  const [settings, setSettings]       = useState(null)
-  const [modeLoading, setModeLoading] = useState({ parking: false, entry: false })
-  const [zones, setZones]             = useState([])
-  const [events, setEvents]           = useState([])
-  const [pageLoading, setPageLoading] = useState(true)
-  const [showAdd, setShowAdd]         = useState(false)
+  const [settings, setSettings]           = useState(null)
+  const [modeLoading, setModeLoading]     = useState({ parking: false, entry: false })
+  const [zones, setZones]                 = useState([])
+  const [events, setEvents]               = useState([])
+  const [pageLoading, setPageLoading]     = useState(true)
+  const [showAdd, setShowAdd]             = useState(false)
+  const [showArchived, setShowArchived]   = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -514,23 +591,57 @@ export default function Events() {
                 </p>
               </div>
 
-              {events.length === 0 ? (
-                <div className="ev-empty-state">
-                  <CalendarDays size={36} className="ev-empty-icon" />
-                  <p>No events yet. Add one to get started.</p>
-                </div>
-              ) : (
-                <div className="ev-events-list">
-                  {events.map(ev => (
-                    <EventCard
-                      key={ev.id}
-                      event={ev}
-                      onUpdated={handleEventUpdated}
-                      onDeleted={handleEventDeleted}
-                    />
-                  ))}
-                </div>
-              )}
+              {(() => {
+                const upcoming = events.filter(e => !e.archived)
+                const archived = events.filter(e => e.archived)
+                return (
+                  <>
+                    {upcoming.length === 0 ? (
+                      <div className="ev-empty-state">
+                        <CalendarDays size={36} className="ev-empty-icon" />
+                        <p>No upcoming events. Add one to get started.</p>
+                      </div>
+                    ) : (
+                      <div className="ev-events-list">
+                        {upcoming.map(ev => (
+                          <EventCard
+                            key={ev.id}
+                            event={ev}
+                            onUpdated={handleEventUpdated}
+                            onDeleted={handleEventDeleted}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {archived.length > 0 && (
+                      <div className="ev-archived-section">
+                        <button
+                          className="ev-archived-toggle"
+                          onClick={() => setShowArchived(p => !p)}
+                        >
+                          <Archive size={14} />
+                          Archived Events ({archived.length})
+                          {showArchived ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+
+                        {showArchived && (
+                          <div className="ev-events-list ev-events-list--archived">
+                            {archived.map(ev => (
+                              <EventCard
+                                key={ev.id}
+                                event={ev}
+                                onUpdated={handleEventUpdated}
+                                onDeleted={handleEventDeleted}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </section>
           </>
         )}

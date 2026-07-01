@@ -1,29 +1,37 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   AlertTriangle, CheckCircle, EyeOff, Filter,
-  RotateCcw, Search, Bell, BellOff, X,
+  RotateCcw, Search, Bell, X,
   Image, ZoomIn, ChevronLeft, ChevronRight, Loader2,
+  FileText, ShieldOff, ClipboardCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
-  getAllViolations, releaseViolation, unreleaseViolation, resolveViolation,
+  getAllViolations, releaseViolation, resolveViolation,
+  issueCDSOReport, clearViolation,
 } from '../../api/violations'
 import './ViolationsManagement.css'
 
 const TYPE_LABELS = {
+  unauthorized_entry:   'Unauthorized Entry',
+  double_parking:       'Double Parking',
+  time_exceed:          'Time Exceed',
   no_sticker:           'No Sticker',
   expired_registration: 'Expired Registration',
-  unauthorized:         'Unauthorized Entry',
+  unauthorized:         'Unauthorized (Legacy)',
   other:                'Other',
 }
 
+const OFFENSE_LABELS = { 1: '1st', 2: '2nd', 3: '3rd' }
+
 const FILTER_OPTIONS = [
   { value: 'all',        label: 'All' },
-  { value: 'pending',    label: 'Pending' },
-  { value: 'notified',   label: 'Notified' },
-  { value: 'resolved',   label: 'Resolved' },
+  { value: 'warning',    label: 'Warnings' },
+  { value: 'fee',        label: 'Fee Imposed' },
+  { value: 'pending',    label: 'Pending (Legacy)' },
+  { value: 'resolved',   label: 'Cleared / Resolved' },
 ]
 
 const DATE_PERIODS = [
@@ -55,11 +63,15 @@ function fmtDate(ts) {
 }
 
 function FineTag({ amount }) {
-  return (
-    <span className="vm-fine-tag">
-      ₱{parseFloat(amount).toFixed(2)}
-    </span>
-  )
+  const n = parseFloat(amount)
+  if (!n) return <span className="vm-fine-tag vm-fine-zero">₱0</span>
+  return <span className="vm-fine-tag">₱{n.toFixed(2)}</span>
+}
+
+function OffenseBadge({ num }) {
+  if (!num) return null
+  const cls = num === 3 ? 'vm-offense-3' : num === 2 ? 'vm-offense-2' : 'vm-offense-1'
+  return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`}</span>
 }
 
 // ─── Evidence Lightbox ─────────────────────────────────────────────────────────
@@ -79,6 +91,41 @@ function EvidenceLightbox({ src, onClose }) {
   )
 }
 
+// ─── OR Entry Modal ────────────────────────────────────────────────────────────
+function ORModal({ violation, onClose, onConfirm }) {
+  const [or, setOr] = useState('')
+  return (
+    <div className="vm-overlay" onClick={onClose}>
+      <div className="vm-modal" onClick={e => e.stopPropagation()}>
+        <button className="vm-modal-close" onClick={onClose}><X size={16} /></button>
+        <ClipboardCheck size={32} className="vm-modal-icon vm-modal-icon-success" />
+        <h2 className="vm-modal-title">Clear Violation</h2>
+        <p className="vm-modal-body">
+          Enter the Official Receipt (OR) number issued by Accounting for plate <strong>{violation.plate_number}</strong>.
+          This will lift the entry block and reset the warning cycle.
+        </p>
+        <input
+          className="vm-or-input"
+          placeholder="Official Receipt number…"
+          value={or}
+          onChange={e => setOr(e.target.value)}
+          autoFocus
+        />
+        <div className="vm-modal-actions">
+          <button className="vm-modal-btn vm-modal-btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="vm-modal-btn vm-modal-btn-primary"
+            disabled={!or.trim()}
+            onClick={() => onConfirm(or.trim())}
+          >
+            Clear Violation
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ViolationsManagement() {
   const [violations, setViolations]       = useState([])
   const [loading, setLoading]             = useState(true)
@@ -87,8 +134,9 @@ export default function ViolationsManagement() {
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
-  const [confirmAction, setConfirmAction] = useState(null) // { type, violation }
-  const [resultModal, setResultModal]     = useState(null) // { type: 'success'|'error', message }
+  const [confirmAction, setConfirmAction] = useState(null)
+  const [orModal, setOrModal]             = useState(null)   // violation waiting for OR
+  const [resultModal, setResultModal]     = useState(null)
   const [page, setPage]                   = useState(1)
   const PAGE_SIZE = 10
 
@@ -105,18 +153,16 @@ export default function ViolationsManagement() {
   const filtered = useMemo(() => {
     let list = [...violations]
 
-    // Status filter
-    if (filter === 'pending')  list = list.filter(v => !v.is_released && !v.is_resolved)
-    if (filter === 'notified') list = list.filter(v =>  v.is_released && !v.is_resolved)
-    if (filter === 'resolved') list = list.filter(v =>  v.is_resolved)
+    if (filter === 'warning')  list = list.filter(v => v.status === 'warning')
+    if (filter === 'fee')      list = list.filter(v => v.status === 'fee_imposed')
+    if (filter === 'pending')  list = list.filter(v => !v.is_released && !v.is_resolved && !v.offense_number)
+    if (filter === 'resolved') list = list.filter(v => v.is_resolved || v.status === 'cleared')
 
-    // Date period filter
     if (datePeriod !== 'all') {
       const cutoff = getPeriodStart(datePeriod)
       list = list.filter(v => new Date(v.issued_at) >= cutoff)
     }
 
-    // Search filter
     const q = search.trim().toLowerCase()
     if (q) {
       list = list.filter(v =>
@@ -126,18 +172,17 @@ export default function ViolationsManagement() {
       )
     }
 
-    // LIFO — newest violations first
     list.sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at))
-
     return list
   }, [violations, filter, datePeriod, search])
 
-  // Reset to page 1 whenever filters change
   useEffect(() => { setPage(1) }, [filter, datePeriod, search])
 
-  const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paginated   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
+  const feeCount     = violations.filter(v => v.status === 'fee_imposed').length
+  const warningCount = violations.filter(v => v.status === 'warning').length
 
   const executeAction = async () => {
     if (!confirmAction) return
@@ -146,21 +191,21 @@ export default function ViolationsManagement() {
     setActionLoading(v.id)
     try {
       let data
-      if (type === 'notify')   ({ data } = await releaseViolation(v.id))
-      if (type === 'unnotify') ({ data } = await unreleaseViolation(v.id))
-      if (type === 'resolve')  ({ data } = await resolveViolation(v.id))
+      if (type === 'notify')        ({ data } = await releaseViolation(v.id))
+      if (type === 'resolve')       ({ data } = await resolveViolation(v.id))
+      if (type === 'issue_report')  ({ data } = await issueCDSOReport(v.id))
       setViolations(prev => prev.map(x => x.id === v.id ? data : x))
       const msgs = {
-        notify:   `${v.plate_number} has been notified of this violation.`,
-        unnotify: 'Violation notification withdrawn.',
-        resolve:  'Violation marked as resolved.',
+        notify:        `Owner of ${v.plate_number} notified and sent an email.`,
+        resolve:       'Violation marked as resolved.',
+        issue_report:  `CDSO report issued for ${v.plate_number}. Owner may now pay at Accounting.`,
       }
       setResultModal({ type: 'success', message: msgs[type] })
     } catch {
       const msgs = {
-        notify:   'Failed to notify owner.',
-        unnotify: 'Failed to withdraw notification.',
-        resolve:  'Failed to resolve violation.',
+        notify:       'Failed to notify owner.',
+        resolve:      'Failed to resolve violation.',
+        issue_report: 'Failed to issue CDSO report.',
       }
       setResultModal({ type: 'error', message: msgs[type] })
     } finally {
@@ -168,24 +213,136 @@ export default function ViolationsManagement() {
     }
   }
 
+  const executeClear = async (violation, orNumber) => {
+    setOrModal(null)
+    setActionLoading(violation.id)
+    try {
+      const { data } = await clearViolation(violation.id, orNumber)
+      setViolations(prev => prev.map(x => x.id === violation.id ? data : x))
+      setResultModal({ type: 'success', message: `Violation cleared. Entry access restored for ${violation.plate_number}. Warning cycle reset.` })
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Failed to clear violation.'
+      setResultModal({ type: 'error', message: msg })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  function rowClass(v) {
+    if (v.status === 'cleared' || v.is_resolved) return 'vm-row-resolved'
+    if (v.status === 'fee_imposed') return 'vm-row-fee'
+    if (v.status === 'warning') return 'vm-row-warning'
+    if (v.is_released) return 'vm-row-notified'
+    return ''
+  }
+
+  function StatusBadge({ v }) {
+    if (v.status === 'cleared' || (v.is_resolved && !v.offense_number))
+      return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Cleared</span>
+    if (v.status === 'fee_imposed') {
+      const sub = v.cdso_report_issued ? '· Report Issued' : '· Awaiting Report'
+      return <span className="vm-status vm-status-fee"><ShieldOff size={12} /> Fee Imposed <em>{sub}</em></span>
+    }
+    if (v.status === 'warning')
+      return <span className="vm-status vm-status-warning"><AlertTriangle size={12} /> Warning</span>
+    if (v.is_resolved)
+      return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Resolved</span>
+    if (v.is_released)
+      return <span className="vm-status vm-status-released"><Bell size={12} /> Notified</span>
+    return <span className="vm-status vm-status-pending"><EyeOff size={12} /> Pending</span>
+  }
+
+  function ActionButtons({ v }) {
+    const busy = actionLoading === v.id
+    // New-style offense violations
+    if (v.offense_number) {
+      if (v.status === 'cleared' || v.is_resolved) return null
+      if (v.status === 'fee_imposed') {
+        return (
+          <div className="vm-actions">
+            {!v.cdso_report_issued && (
+              <button
+                className="vm-btn vm-btn-report"
+                disabled={busy}
+                onClick={() => setConfirmAction({ type: 'issue_report', violation: v })}
+                title="Issue CDSO report so owner can pay at Accounting"
+              >
+                {busy ? <Loader2 size={13} className="vm-spin" /> : <FileText size={13} />} Issue Report
+              </button>
+            )}
+            {v.cdso_report_issued && (
+              <button
+                className="vm-btn vm-btn-clear"
+                disabled={busy}
+                onClick={() => setOrModal(v)}
+                title="Enter OR number to clear violation and restore entry"
+              >
+                {busy ? <Loader2 size={13} className="vm-spin" /> : <ClipboardCheck size={13} />} Clear (OR)
+              </button>
+            )}
+          </div>
+        )
+      }
+      // Warning — no action needed (auto-notified)
+      return null
+    }
+
+    // Legacy violations
+    if (v.is_resolved) return null
+    return (
+      <div className="vm-actions">
+        {!v.is_released && (
+          <button
+            className="vm-btn vm-btn-release"
+            disabled={busy}
+            onClick={() => setConfirmAction({ type: 'notify', violation: v })}
+            title="Officially notify owner and send email"
+          >
+            {busy ? <Loader2 size={13} className="vm-spin" /> : <Bell size={13} />} Notify
+          </button>
+        )}
+        <button
+          className="vm-btn vm-btn-resolve"
+          disabled={busy}
+          onClick={() => setConfirmAction({ type: 'resolve', violation: v })}
+          title="Mark resolved"
+        >
+          <CheckCircle size={13} /> Resolve
+        </button>
+      </div>
+    )
+  }
+
   return (
     <AdminLayout>
       <div className="vm-page">
 
-        {/* Modals */}
         {lightboxSrc && <EvidenceLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
 
-        {/* Header */}
         <div className="vm-header">
           <div>
             <h1 className="vm-title">Violations</h1>
             <p className="vm-subtitle">
-              All vehicle violations — owners can see their records in the portal. Use <em>Notify</em> to officially flag a violation to the owner.
+              3-offense escalation: Warning → Warning → Fee (₱150) + Entry Denied.
+              CDSO issues report, owner pays at Accounting, CDSO enters OR to clear.
             </p>
           </div>
+          {(feeCount > 0 || warningCount > 0) && (
+            <div className="vm-header-stats">
+              {feeCount > 0 && (
+                <span className="vm-stat-chip vm-stat-fee">
+                  <ShieldOff size={13} /> {feeCount} Fee Imposed
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="vm-stat-chip vm-stat-warn">
+                  <AlertTriangle size={13} /> {warningCount} Active Warnings
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Toolbar */}
         <div className="vm-toolbar">
           <div className="vm-filters">
             <Filter size={14} className="vm-filter-icon" />
@@ -196,8 +353,11 @@ export default function ViolationsManagement() {
                 onClick={() => setFilter(opt.value)}
               >
                 {opt.label}
-                {opt.value === 'pending' && violations.filter(v => !v.is_released && !v.is_resolved).length > 0 && (
-                  <span className="vm-badge">{violations.filter(v => !v.is_released && !v.is_resolved).length}</span>
+                {opt.value === 'fee' && feeCount > 0 && (
+                  <span className="vm-badge vm-badge-red">{feeCount}</span>
+                )}
+                {opt.value === 'warning' && warningCount > 0 && (
+                  <span className="vm-badge vm-badge-yellow">{warningCount}</span>
                 )}
               </button>
             ))}
@@ -241,7 +401,6 @@ export default function ViolationsManagement() {
           </div>
         </div>
 
-        {/* Table */}
         <div className="vm-card">
           {loading ? (
             <div className="vm-empty">Loading violations…</div>
@@ -253,7 +412,7 @@ export default function ViolationsManagement() {
                 <tr>
                   <th>Plate</th>
                   <th>Owner</th>
-                  <th>Type</th>
+                  <th>Type / Offense</th>
                   <th>Fine</th>
                   <th>Notes</th>
                   <th>Evidence</th>
@@ -264,7 +423,7 @@ export default function ViolationsManagement() {
               </thead>
               <tbody>
                 {paginated.map((v) => (
-                  <tr key={v.id} className={v.is_resolved ? 'vm-row-resolved' : v.is_released ? 'vm-row-notified' : ''}>
+                  <tr key={v.id} className={rowClass(v)}>
                     <td className="vm-plate">{v.plate_number}</td>
                     <td className="vm-owner">
                       <span>{v.owner_name || '—'}</span>
@@ -273,9 +432,12 @@ export default function ViolationsManagement() {
                       )}
                     </td>
                     <td>
-                      <span className={`vm-type-pill vm-type-${v.violation_type}`}>
-                        {TYPE_LABELS[v.violation_type] ?? v.violation_type}
-                      </span>
+                      <div className="vm-type-cell">
+                        <span className={`vm-type-pill vm-type-${v.violation_type}`}>
+                          {TYPE_LABELS[v.violation_type] ?? v.violation_type}
+                        </span>
+                        <OffenseBadge num={v.offense_number} />
+                      </div>
                     </td>
                     <td><FineTag amount={v.fine_amount} /></td>
                     <td className="vm-notes">{v.notes || '—'}</td>
@@ -294,50 +456,8 @@ export default function ViolationsManagement() {
                       )}
                     </td>
                     <td className="vm-time" title={fmtDate(v.issued_at)}>{timeAgo(v.issued_at)}</td>
-                    <td>
-                      {v.is_resolved ? (
-                        <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Resolved</span>
-                      ) : v.is_released ? (
-                        <span className="vm-status vm-status-released"><Bell size={12} /> Notified</span>
-                      ) : (
-                        <span className="vm-status vm-status-pending"><EyeOff size={12} /> Pending</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="vm-actions">
-                        {!v.is_resolved && (
-                          <>
-                            {!v.is_released ? (
-                              <button
-                                className="vm-btn vm-btn-release"
-                                disabled={actionLoading === v.id}
-                                onClick={() => setConfirmAction({ type: 'notify', violation: v })}
-                                title="Officially notify owner"
-                              >
-                                {actionLoading === v.id ? <Loader2 size={13} className="vm-spin" /> : <Bell size={13} />} Notify
-                              </button>
-                            ) : (
-                              <button
-                                className="vm-btn vm-btn-hide"
-                                disabled={actionLoading === v.id}
-                                onClick={() => setConfirmAction({ type: 'unnotify', violation: v })}
-                                title="Withdraw notification"
-                              >
-                                {actionLoading === v.id ? <Loader2 size={13} className="vm-spin" /> : <BellOff size={13} />} Unnotify
-                              </button>
-                            )}
-                            <button
-                              className="vm-btn vm-btn-resolve"
-                              disabled={actionLoading === v.id}
-                              onClick={() => setConfirmAction({ type: 'resolve', violation: v })}
-                              title="Mark resolved"
-                            >
-                              <CheckCircle size={13} /> Resolve
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
+                    <td><StatusBadge v={v} /></td>
+                    <td><ActionButtons v={v} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -345,7 +465,6 @@ export default function ViolationsManagement() {
           )}
         </div>
 
-        {/* Pagination */}
         {!loading && totalPages > 1 && (
           <div className="vm-pagination">
             <span className="vm-page-info">
@@ -365,13 +484,34 @@ export default function ViolationsManagement() {
 
       </div>
 
+      {/* OR Entry Modal */}
+      {orModal && (
+        <ORModal
+          violation={orModal}
+          onClose={() => setOrModal(null)}
+          onConfirm={(or) => executeClear(orModal, or)}
+        />
+      )}
+
       {/* Confirmation Modal */}
       {confirmAction && (() => {
         const { type, violation: v } = confirmAction
         const config = {
-          notify:   { title: 'Notify Owner?',             body: `This will officially flag the violation for plate ${v.plate_number} and notify the owner.`,     confirm: 'Notify',    cls: 'vm-modal-btn-primary' },
-          unnotify: { title: 'Withdraw Notification?',    body: `This will retract the notification for plate ${v.plate_number}. The owner will no longer see this as flagged.`, confirm: 'Withdraw', cls: 'vm-modal-btn-warning' },
-          resolve:  { title: 'Mark as Resolved?',         body: `This will mark the violation for plate ${v.plate_number} as resolved. This action cannot be undone.`,           confirm: 'Resolve',   cls: 'vm-modal-btn-danger'  },
+          notify: {
+            title: 'Notify Owner?',
+            body: `This will officially flag the violation for plate ${v.plate_number} and send a notification email to the owner.`,
+            confirm: 'Notify & Email', cls: 'vm-modal-btn-primary',
+          },
+          resolve: {
+            title: 'Mark as Resolved?',
+            body: `This will mark the violation for plate ${v.plate_number} as resolved. This action cannot be undone.`,
+            confirm: 'Resolve', cls: 'vm-modal-btn-danger',
+          },
+          issue_report: {
+            title: 'Issue CDSO Report?',
+            body: `This marks that you have issued the official violation report to ${v.plate_number}. The owner may then proceed to Accounting to pay the ₱150 fee.`,
+            confirm: 'Issue Report', cls: 'vm-modal-btn-primary',
+          },
         }[type]
         return (
           <div className="vm-overlay" onClick={() => setConfirmAction(null)}>

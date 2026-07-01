@@ -22,4 +22,10 @@ app.conf.beat_schedule = {
         "task":     "vehicles.purge_old_records",
         "schedule": crontab(hour=2, minute=0),
     },
+    # Activate events whose date is today; archive events whose date has passed.
+    # Runs at 00:01 server time every day.
+    "auto-manage-events-daily": {
+        "task":     "vehicles.auto_manage_events",
+        "schedule": crontab(hour=0, minute=1),
+    },
 }

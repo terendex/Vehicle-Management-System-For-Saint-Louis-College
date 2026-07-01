@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import date, timedelta
 
 from celery import shared_task
 from django.utils import timezone
@@ -27,3 +27,17 @@ def purge_old_records():
         deleted_logs, deleted_violations, cfg.retention_years,
     )
     return {"deleted_logs": deleted_logs, "deleted_violations": deleted_violations}
+
+
+@shared_task(name="vehicles.auto_manage_events")
+def auto_manage_events():
+    """Activate events whose date is today; archive events whose date has passed."""
+    from .models import Event
+
+    today = date.today()
+
+    activated = Event.objects.filter(date=today, is_active=False, archived=False).update(is_active=True)
+    archived  = Event.objects.filter(date__lt=today, archived=False).update(is_active=False, archived=True)
+
+    log.info("[auto_manage_events] Activated %d, archived %d events (today=%s)", activated, archived, today)
+    return {"activated": activated, "archived": archived}

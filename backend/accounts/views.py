@@ -87,21 +87,25 @@ class UserListView(generics.ListAPIView):
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = User.objects.exclude(role='admin').order_by('-id')
+        qs = User.objects.exclude(role='admin').prefetch_related('registrations').order_by('-id')
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(full_name__icontains=search)
-            
+
         role = self.request.query_params.get('role', '').strip()
         if role in ['security', 'vehicle_owner']:
             qs = qs.filter(role=role)
-            
+
+        registrant_type = self.request.query_params.get('registrant_type', '').strip()
+        if registrant_type in ['student', 'employee', 'fetcher']:
+            qs = qs.filter(registrations__registrant_type=registrant_type).distinct()
+
         status_param = self.request.query_params.get('status', '').strip()
         if status_param == 'active':
             qs = qs.filter(is_active=True)
         elif status_param == 'disabled':
             qs = qs.filter(is_active=False)
-            
+
         return qs
 
 

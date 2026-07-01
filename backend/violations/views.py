@@ -1,10 +1,12 @@
+from decimal import Decimal
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status as http_status
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
-from .models import Violation
+from .models import Violation, NEW_STYLE_TYPES, FEE_ESCALATING_TYPES, FEE_THIRD_OFFENSE
 from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 
@@ -19,6 +21,15 @@ class IsStaffRole(permissions.BasePermission):
         )
 
 
+class IsCDSOOrAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ('admin', 'cdso')
+        )
+
+
 class ViolationViewSet(viewsets.ModelViewSet):
     queryset           = Violation.objects.select_related('vehicle__user').all()
     serializer_class   = ViolationSerializer
@@ -28,14 +39,48 @@ class ViolationViewSet(viewsets.ModelViewSet):
         return {**super().get_serializer_context(), 'request': self.request}
 
     def perform_create(self, serializer):
-        """Allow passing plate_number instead of vehicle FK."""
         plate = self.request.data.get('plate_number', '').strip().upper()
         if plate and 'vehicle' not in self.request.data:
             vehicle = get_object_or_404(Vehicle, plate_number=plate)
-            fine = Violation.compute_fine(vehicle)
-            serializer.save(vehicle=vehicle, fine_amount=fine, issued_by=self.request.user)
         else:
-            serializer.save(issued_by=self.request.user)
+            vehicle = serializer.validated_data.get('vehicle')
+
+        vtype = serializer.validated_data.get('violation_type', '')
+
+        if vtype in NEW_STYLE_TYPES:
+            offense_num  = Violation.compute_offense_number(vehicle, vtype)
+            is_fee_event = offense_num == 3 and vtype in FEE_ESCALATING_TYPES
+            fine         = FEE_THIRD_OFFENSE if is_fee_event else Decimal('0.00')
+            viol_status  = Violation.Status.FEE_IMPOSED if is_fee_event else Violation.Status.WARNING
+            reg_blocked  = is_fee_event
+
+            instance = serializer.save(
+                vehicle              = vehicle,
+                offense_number       = offense_num,
+                fine_amount          = fine,
+                status               = viol_status,
+                registration_blocked = reg_blocked,
+                is_released          = True,   # always visible to owner immediately
+                issued_by            = self.request.user,
+            )
+            self._notify_new_offense(instance)
+        else:
+            # Legacy violation types — fine set by caller or computed
+            if plate and 'vehicle' not in self.request.data:
+                fine = Violation.compute_fine(vehicle)
+                serializer.save(vehicle=vehicle, fine_amount=fine, issued_by=self.request.user)
+            else:
+                serializer.save(issued_by=self.request.user)
+
+    def _notify_new_offense(self, instance):
+        try:
+            from .email_utils import send_violation_warning_email, send_fee_imposed_email
+            if instance.offense_number in (1, 2):
+                send_violation_warning_email(instance)
+            elif instance.offense_number == 3 and instance.status == Violation.Status.FEE_IMPOSED:
+                send_fee_imposed_email(instance)
+        except Exception:
+            pass
 
     def _notify_resolved(self, instance):
         try:
@@ -60,13 +105,22 @@ class ViolationViewSet(viewsets.ModelViewSet):
             self._notify_resolved(instance)
         return response
 
+    # ── Legacy release/unrelease actions ──────────────────────────────────────
+
     @action(detail=True, methods=['post'], url_path='release')
     def release(self, request, pk=None):
-        """CDSO/admin releases a violation so the owner can see it."""
+        """CDSO/admin releases a violation so the owner can see it, and sends them an email."""
         violation = self.get_object()
+        was_released = violation.is_released
         violation.is_released = True
         violation.save(update_fields=['is_released'])
-        return Response(ViolationSerializer(violation).data)
+        if not was_released:
+            try:
+                from .email_utils import send_violation_notified_email
+                send_violation_notified_email(violation)
+            except Exception:
+                pass
+        return Response(ViolationSerializer(violation, context={'request': request}).data)
 
     @action(detail=True, methods=['post'], url_path='unrelease')
     def unrelease(self, request, pk=None):
@@ -74,7 +128,51 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation = self.get_object()
         violation.is_released = False
         violation.save(update_fields=['is_released'])
-        return Response(ViolationSerializer(violation).data)
+        return Response(ViolationSerializer(violation, context={'request': request}).data)
+
+    # ── New CDSO workflow actions ──────────────────────────────────────────────
+
+    @action(detail=True, methods=['post'], url_path='issue-report',
+            permission_classes=[IsCDSOOrAdmin])
+    def issue_cdso_report(self, request, pk=None):
+        """CDSO marks that they've issued the official violation report to the owner."""
+        violation = self.get_object()
+        if violation.status != Violation.Status.FEE_IMPOSED:
+            return Response(
+                {'detail': 'Report can only be issued for fee-imposed violations.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        violation.cdso_report_issued = True
+        violation.save(update_fields=['cdso_report_issued'])
+        return Response(ViolationSerializer(violation, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='clear',
+            permission_classes=[IsCDSOOrAdmin])
+    def clear_violation(self, request, pk=None):
+        """
+        CDSO clears a fee-imposed violation after the owner presents the Official Receipt.
+        Requires `official_receipt` in the request body.
+        Sets status=cleared, is_resolved=True, stores the OR number.
+        The warning cycle resets for this violation type; registration_blocked stays True.
+        """
+        violation = self.get_object()
+        if violation.status != Violation.Status.FEE_IMPOSED:
+            return Response(
+                {'detail': 'Only fee-imposed violations can be cleared through this action.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        or_number = request.data.get('official_receipt', '').strip()
+        if not or_number:
+            return Response(
+                {'detail': 'official_receipt is required to clear this violation.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        violation.official_receipt  = or_number
+        violation.status            = Violation.Status.CLEARED
+        violation.is_resolved       = True
+        violation.save(update_fields=['official_receipt', 'status', 'is_resolved'])
+        self._notify_resolved(violation)
+        return Response(ViolationSerializer(violation, context={'request': request}).data)
 
 
 class GuardViolationsView(APIView):
@@ -96,11 +194,7 @@ class GuardViolationsView(APIView):
 
 
 class MyViolationsView(APIView):
-    """Returns violations visible to the authenticated vehicle owner.
-    Owners see violations that have been released to them (notified)
-    as well as all resolved violations (history), regardless of release status.
-    Under-review violations that haven't been released yet remain hidden.
-    """
+    """Returns violations visible to the authenticated vehicle owner."""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -112,7 +206,6 @@ class MyViolationsView(APIView):
         except VehicleRegistration.DoesNotExist:
             return Response([])
 
-        # Prefer FK link; fall back to plate lookup for legacy records
         vehicle = (
             reg.vehicle
             or Vehicle.objects.filter(plate_number=reg.plate_number).first()
@@ -120,7 +213,8 @@ class MyViolationsView(APIView):
         if not vehicle:
             return Response([])
 
-        # Show released violations (notified) + all resolved violations (history)
+        # New-style: always visible (is_released=True on create)
+        # Legacy: show released + all resolved
         violations = Violation.objects.filter(
             vehicle=vehicle,
         ).filter(

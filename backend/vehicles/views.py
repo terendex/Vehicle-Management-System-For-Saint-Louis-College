@@ -1096,6 +1096,7 @@ class EventListCreateView(APIView):
             'name':             ev.name,
             'date':             ev.date.isoformat(),
             'is_active':        ev.is_active,
+            'archived':         ev.archived,
             'organizer_plates': ev.organizer_plates,
             'created_at':       ev.created_at.isoformat(),
             'created_by_name':  ev.created_by.full_name if ev.created_by else None,
@@ -1137,6 +1138,7 @@ class EventDetailView(APIView):
             'name':             ev.name,
             'date':             ev.date.isoformat(),
             'is_active':        ev.is_active,
+            'archived':         ev.archived,
             'organizer_plates': ev.organizer_plates,
             'created_at':       ev.created_at.isoformat(),
             'created_by_name':  ev.created_by.full_name if ev.created_by else None,
@@ -1156,8 +1158,13 @@ class EventDetailView(APIView):
 
         if 'date' in request.data:
             try:
-                from datetime import datetime as _dt
-                ev.date = _dt.strptime(str(request.data['date']), '%Y-%m-%d').date()
+                from datetime import datetime as _dt, date as _date
+                new_date = _dt.strptime(str(request.data['date']), '%Y-%m-%d').date()
+                ev.date = new_date
+                today = _date.today()
+                # Rescheduling unarchives the event; activation follows the new date
+                ev.archived  = False
+                ev.is_active = (new_date == today)
             except ValueError:
                 return Response({'date': 'Invalid date format.'}, status=400)
 
@@ -1327,3 +1334,69 @@ class RegistrationPeriodActivateView(APIView):
         period.is_active = False
         period.save(update_fields=['is_active'])
         return Response(_serialize_period(period))
+
+
+# ──────────────────────────────────────────────
+# Supplier Management (Admin only)
+# ──────────────────────────────────────────────
+
+from .models import Supplier, SupplierPlate
+from .serializers import SupplierSerializer, SupplierPlateSerializer
+
+
+class SupplierListCreateView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        suppliers = Supplier.objects.prefetch_related('plates').all()
+        return Response(SupplierSerializer(suppliers, many=True).data)
+
+    def post(self, request):
+        company_name = (request.data.get('company_name') or '').strip()
+        if not company_name:
+            return Response({'company_name': 'Company name is required.'}, status=400)
+        if Supplier.objects.filter(company_name__iexact=company_name).exists():
+            return Response({'company_name': 'A supplier with this name already exists.'}, status=400)
+        supplier = Supplier.objects.create(company_name=company_name)
+        return Response(SupplierSerializer(supplier).data, status=201)
+
+
+class SupplierDetailView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def patch(self, request, pk):
+        supplier = get_object_or_404(Supplier, pk=pk)
+        if 'company_name' in request.data:
+            name = (request.data['company_name'] or '').strip()
+            if not name:
+                return Response({'company_name': 'Company name cannot be empty.'}, status=400)
+            supplier.company_name = name
+        if 'is_active' in request.data:
+            supplier.is_active = bool(request.data['is_active'])
+        supplier.save()
+        return Response(SupplierSerializer(supplier).data)
+
+    def delete(self, request, pk):
+        supplier = get_object_or_404(Supplier, pk=pk)
+        supplier.delete()
+        return Response(status=204)
+
+
+class SupplierPlateView(APIView):
+    """Add or remove a plate for a specific supplier."""
+    permission_classes = [IsAdminRole]
+
+    def post(self, request, pk):
+        supplier = get_object_or_404(Supplier, pk=pk)
+        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        if not plate_number:
+            return Response({'plate_number': 'Plate number is required.'}, status=400)
+        if SupplierPlate.objects.filter(plate_number=plate_number).exists():
+            return Response({'plate_number': 'This plate is already registered to a supplier.'}, status=400)
+        sp = SupplierPlate.objects.create(supplier=supplier, plate_number=plate_number)
+        return Response(SupplierPlateSerializer(sp).data, status=201)
+
+    def delete(self, request, pk, plate_pk):
+        plate = get_object_or_404(SupplierPlate, pk=plate_pk, supplier_id=pk)
+        plate.delete()
+        return Response(status=204)

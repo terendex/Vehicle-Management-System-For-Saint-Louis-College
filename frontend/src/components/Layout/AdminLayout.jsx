@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Briefcase,
   CalendarDays,
+  Truck,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -33,9 +34,10 @@ function buildNavGroups(isAdmin, isCdso) {
       id: 'management', type: 'group', name: 'Management',
       icon: <Briefcase size={18} />,
       children: [
-        { name: 'Vehicle Registration', path: '/admin/vehicles', icon: <Car size={18} />   },
-        { name: 'User Management',      path: '/admin/users',    icon: <Users size={18} /> },
-        { name: 'Device Management',    path: '/admin/devices',  icon: <Video size={18} /> },
+        { name: 'Vehicle Registration', path: '/admin/vehicles',   icon: <Car size={18} />   },
+        { name: 'User Management',      path: '/admin/users',      icon: <Users size={18} /> },
+        { name: 'Device Management',    path: '/admin/devices',    icon: <Video size={18} /> },
+        { name: 'Suppliers',            path: '/admin/suppliers',  icon: <Truck size={18} /> },
       ],
     })
   }
