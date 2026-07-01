@@ -90,6 +90,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [registrantType, setRegistrantType] = useState(null)
+  const vehiclePassFee = registrantType === 'employee' ? 150 : 300
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
@@ -569,7 +570,7 @@ export default function RegisterPage() {
               <div className="payment-step">
                 <div className="payment-step-num">1</div>
                 <div className="payment-step-text">
-                  <strong>Pay ₱300.00</strong> at the <strong>Accounting Office</strong> for your Vehicle Pass.
+                  <strong>Pay ₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong> for your Vehicle Pass.
                 </div>
               </div>
               <div className="payment-step">
@@ -639,7 +640,7 @@ export default function RegisterPage() {
               <div className="success-next-list">
                 <div className="success-next-item">
                   <span className="success-next-num">1</span>
-                  <span>Pay <strong>₱300.00</strong> at the <strong>Accounting Office</strong></span>
+                  <span>Pay <strong>₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong></span>
                 </div>
                 <div className="success-next-item">
                   <span className="success-next-num">2</span>
@@ -1279,7 +1280,7 @@ export default function RegisterPage() {
                     I understand that the vehicle pass is intended <strong>ONLY TO ALLOW THE ENTRY OF MY VEHICLE IN THE CAMPUS</strong>. The College does not guarantee the availability of parking spaces;
                   </li>
                   <li>The application for a vehicle pass is subject to the approval or disapproval of the Student Affairs Office;</li>
-                  <li>To pay the Vehicle Pass fee of <strong>₱300.00</strong> at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
+                  <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
                 <ol className="terms-alpha-list" type="a">

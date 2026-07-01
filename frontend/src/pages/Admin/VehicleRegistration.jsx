@@ -447,7 +447,9 @@ export default function VehicleRegistration() {
                       placeholder="e.g. 1380093"
                       disabled={submitting}
                     />
-                    <p className="form-hint">Issued by the Accounting Office upon payment of ₱300.00</p>
+                    <p className="form-hint">
+                      Issued by the Accounting Office upon payment of ₱{selectedReg.registrant_type === 'employee' ? '150.00 (50% employee discount)' : '300.00'}
+                    </p>
                   </div>
 
                   {selectedReg.registrant_type === 'student' && (
