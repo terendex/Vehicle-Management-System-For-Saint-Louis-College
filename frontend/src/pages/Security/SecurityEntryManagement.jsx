@@ -433,32 +433,19 @@ export default function SecurityEntryManagement() {
   const [plateInput, setPlateInput]   = useState('')
   const [loading, setLoading]         = useState(false)
   const [exitLoading, setExitLoading] = useState(false)
-  const [result, setResult]           = useState(null)
+  const [scanQueue, setScanQueue]     = useState([]) // [{id, result, cooldownKey}]
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [cooldownKey, setCooldownKey]       = useState(0)
-  const [cooldownActive, setCooldownActive] = useState(false)
-  const [dedupSeconds, setDedupSeconds]     = useState(10)
+  const [dedupSeconds, setDedupSeconds] = useState(10)
 
-  const dismissTimerRef = useRef(null)
-
-  const clearResultTimers = () => {
-    clearTimeout(dismissTimerRef.current)
-    setCooldownActive(false)
+  const addToQueue = (r, secs = dedupSeconds) => {
+    const id = Date.now() + Math.random()
+    setScanQueue(prev => [{ id, result: r, cooldownKey: id }, ...prev].slice(0, 4))
+    setTimeout(() => setScanQueue(prev => prev.filter(e => e.id !== id)), secs * 1000)
   }
 
-  const startResultCooldown = (secs = dedupSeconds) => {
-    clearTimeout(dismissTimerRef.current)
-    setCooldownKey(k => k + 1)
-    setCooldownActive(true)
-    dismissTimerRef.current = setTimeout(() => {
-      setResult(null)
-      setCooldownActive(false)
-    }, secs * 1000)
-  }
-
-  useEffect(() => () => clearTimeout(dismissTimerRef.current), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const removeFromQueue = (id) => setScanQueue(prev => prev.filter(e => e.id !== id))
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -481,8 +468,7 @@ export default function SecurityEntryManagement() {
       if (!r.plate_number || scanCooldown.current.has(r.plate_number)) return
       scanCooldown.current.add(r.plate_number)
       setTimeout(() => scanCooldown.current.delete(r.plate_number), dedupSeconds * 1000)
-      setResult(r)
-      startResultCooldown()
+      addToQueue(r)
       const m = getMeta(r.status)
       if (r.allowed) {
         toast.success(`Entry approved: ${r.plate_number}`)
@@ -521,13 +507,10 @@ export default function SecurityEntryManagement() {
     const plate = plateInput.trim().toUpperCase()
     if (!plate) return
     setLoading(true)
-    clearResultTimers()
-    setResult(null)
     setExitResult(null)
     try {
       const res = await manualEntry({ plate_number: plate })
-      setResult(res.data)
-      startResultCooldown()
+      addToQueue(res.data)
       const m = getMeta(res.data.status)
       if (res.data.allowed) {
         toast.success(`Entry approved: ${plate}`)
@@ -716,17 +699,36 @@ export default function SecurityEntryManagement() {
 
           {/* Right panel */}
           <div className="em-right">
-            <ResultCard
-              result={result}
-              offices={offices}
-              onPassCreated={refreshLogs}
-              onOverride={refreshLogs}
-              guardName={user?.full_name}
-              cooldownKey={cooldownKey}
-              cooldownActive={cooldownActive}
-              dedupSeconds={dedupSeconds}
-              onDismiss={() => { clearResultTimers(); setResult(null) }}
-            />
+            {scanQueue.length === 0 ? (
+              <ResultCard
+                result={null}
+                offices={offices}
+                onPassCreated={refreshLogs}
+                onOverride={refreshLogs}
+                guardName={user?.full_name}
+                cooldownKey={0}
+                cooldownActive={false}
+                dedupSeconds={dedupSeconds}
+                onDismiss={() => {}}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {scanQueue.map(item => (
+                  <ResultCard
+                    key={item.id}
+                    result={item.result}
+                    offices={offices}
+                    onPassCreated={refreshLogs}
+                    onOverride={refreshLogs}
+                    guardName={user?.full_name}
+                    cooldownKey={item.cooldownKey}
+                    cooldownActive={true}
+                    dedupSeconds={dedupSeconds}
+                    onDismiss={() => removeFromQueue(item.id)}
+                  />
+                ))}
+              </div>
+            )}
 
             {/* Recent scans */}
             <div className="em-card em-audit-card">
