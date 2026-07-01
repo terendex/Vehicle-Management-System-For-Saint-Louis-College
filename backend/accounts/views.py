@@ -470,14 +470,15 @@ class MyRegistrationView(APIView):
             return Response({'error': 'Only vehicle owners can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
         from vehicles.models import VehicleRegistration
         from vehicles.serializers import VehicleRegistrationSerializer
-        try:
-            registration = VehicleRegistration.objects.get(
-                email=request.user.email,
-                status='accepted'
-            )
-            return Response(VehicleRegistrationSerializer(registration).data)
-        except VehicleRegistration.DoesNotExist:
+        registration = (
+            VehicleRegistration.objects
+            .filter(Q(user=request.user) | Q(email=request.user.email), status='accepted')
+            .order_by('-reviewed_at')
+            .first()
+        )
+        if not registration:
             return Response({'error': 'No accepted registration found for this account.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(VehicleRegistrationSerializer(registration).data)
 
 
 # ──────────────────────────────────────────────
