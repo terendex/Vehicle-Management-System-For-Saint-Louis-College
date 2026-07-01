@@ -25,7 +25,7 @@ import numpy as np
 # PyTorch CUDA libs which ship cudnn64_9.dll copied as cudnn64_8.dll.
 _TORCH_LIB = Path(r"C:\Users\axel jonas tangalin\AppData\Local\Programs\Python\Python39\Lib\site-packages\torch\lib")
 if _TORCH_LIB.exists():
-    os.environ['PATH'] = str(_TORCH_LIB) + os.pathsep + os.environ.get('PATH', '')
+    os.environ['PATH'] = os.environ.get('PATH', '') + os.pathsep + str(_TORCH_LIB)
 
 from .validator import is_valid_ph_plate, normalize_plate, extract_plate_candidates, combine_multiline_text
 from .detection import detect_plates, is_gpu_available

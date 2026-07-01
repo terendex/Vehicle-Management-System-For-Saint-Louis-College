@@ -26,7 +26,7 @@ SNAPSHOT_DIR = "snapshots"
 _OPEN_CAP_LOCK = threading.Lock()
 
 FRAME_RATE_LIMIT_MS = 100
-_DEFAULT_DEDUP_SECONDS = 30  # fallback used if DB is unavailable at connect time
+_DEFAULT_DEDUP_SECONDS = 10  # fallback used if DB is unavailable at connect time
 
 # Per-track OCR accumulation settings
 _OCR_LOCK_CONF    = 0.50   # lock immediately if any single read reaches this
@@ -77,6 +77,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         self._fps_start: float | None = None
         self._last_process_time: float = 0.0
         self._detection_in_progress = False
+        self._loop = asyncio.get_running_loop()
 
         try:
             from vehicles.models import SystemSettings
@@ -89,8 +90,23 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         logger.info("[WS] Connection accepted for user: %s", self._user)
         await self.send_json({"type": "connected", "message": "Stream ready.", "gpu": is_gpu_available()})
 
+        from .ml.detection import add_ml_status_listener
+        _loop = self._loop
+        async def _send_ml_status(stage, message):
+            try:
+                await self.send_json({"type": "ml_status", "stage": stage, "message": message})
+            except Exception:
+                pass
+        def _ml_status_listener(stage, message):
+            asyncio.run_coroutine_threadsafe(_send_ml_status(stage, message), _loop)
+        self._ml_status_listener = _ml_status_listener
+        add_ml_status_listener(_ml_status_listener)
+
     async def disconnect(self, code):
         logger.info("[WS] Disconnecting with code %s", code)
+        from .ml.detection import remove_ml_status_listener
+        if hasattr(self, '_ml_status_listener'):
+            remove_ml_status_listener(self._ml_status_listener)
 
     # ── frame receive ──────────────────────────────────────────────────────────
 
@@ -350,6 +366,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     async def _process_scan_results(self, tracks_list: list[dict], now):
         results = []
+        fresh_results = []
         processed_ids: set[int] = set()
 
         for track_data in tracks_list:
@@ -369,6 +386,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             cached = self._plate_cache.get(plate_number)
             now_ts = time.time()
             if cached and (now_ts - cached[0]) < self._dedup_seconds:
+                # Already processed recently — skip DB and ML sample, just re-send UI result
                 results.append(cached[1])
                 continue
 
@@ -390,13 +408,17 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 self._evict_cache()
 
                 results.append(enriched)
+                fresh_results.append(enriched)
             except Exception as exc:
                 logger.error("[WS] Vehicle check failed for %s: %s", plate_number, exc)
                 # Cache the failure so we don't retry every frame and spam the log
                 self._plate_cache[plate_number] = (time.time(), {"plate_number": plate_number, "error": True})
 
+        if fresh_results:
+            # Only record ML sample for plates that were genuinely processed this call
+            await sync_to_async(self._record_ml_sample)(None, fresh_results)
+
         if results:
-            await sync_to_async(self._record_ml_sample)(None, results)
             await self.send_json({"type": "result", "results": results})
 
     # ── cache maintenance ──────────────────────────────────────────────────────
@@ -422,7 +444,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     def _save_to_db(self, track_id: int, plate_number: str, det_conf: float,
                     ocr_conf: float, bbox: dict, snapshot_path: str | None):
+        from django.db import close_old_connections
         from .models import PlateRecognitionRecord
+        close_old_connections()
         PlateRecognitionRecord.objects.create(
             track_id=track_id,
             plate_text=plate_number,
@@ -433,12 +457,14 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         )
 
     def _check_vehicle(self, plate_number: str, bbox):
+        from django.db import close_old_connections
         from vehicles.models import Vehicle, VehicleRegistration
         from .models import AccessLog
         from .entry_logic import check_entry
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
+        close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
         plate_number = plate_number.strip().upper().replace(' ', '')
@@ -530,19 +556,28 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             except Exception:
                 pass
 
+        try:
+            from .entry_logic import get_organizer_event
+            organizer_event = get_organizer_event(plate_number)
+        except Exception:
+            organizer_event = None
+
         return {
-            "status":         entry["status"],
-            "allowed":        entry["allowed"],
-            "message":        entry["message"],
-            "constraint":     entry.get("constraint"),
-            "vehicle":        VehicleSerializer(vehicle).data,
-            "registration":   registration_data,
-            "has_violations": has_violations,
-            "already_inside": already_inside,
+            "status":          entry["status"],
+            "allowed":         entry["allowed"],
+            "message":         entry["message"],
+            "constraint":      entry.get("constraint"),
+            "vehicle":         VehicleSerializer(vehicle).data,
+            "registration":    registration_data,
+            "has_violations":  has_violations,
+            "already_inside":  already_inside,
+            "organizer_event": organizer_event,
         }
 
     def _record_ml_sample(self, raw_bytes, results):
+        from django.db import close_old_connections
         from .models import MLTrainingSample
+        close_old_connections()
         try:
             plates = [r["plate_number"] for r in results if r.get("plate_number")]
             MLTrainingSample.objects.create(
@@ -782,16 +817,38 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._last_img_h            = 720
         self._stream_task           = None
         self._detect_tasks: set     = set()   # tracked so we can cancel on disconnect
-        self._dedup_seconds         = _DEFAULT_DEDUP_SECONDS
+        try:
+            from vehicles.models import SystemSettings
+            cfg = await sync_to_async(SystemSettings.get)()
+            self._dedup_seconds = cfg.scan_dedup_seconds
+        except Exception:
+            self._dedup_seconds = _DEFAULT_DEDUP_SECONDS
+        self._gate_id               = 'main'
         self._loop                  = asyncio.get_running_loop()
         self._worker_sid            = str(id(self))
 
         await self.accept()
         logger.info("[RTSP] Connected: user=%s scan=%s", self._user, self._scan_enabled)
+
+        # Register ML status listener — forwards loading stage events to this WS client
+        from .ml.detection import add_ml_status_listener
+        _loop = self._loop
+        async def _send_ml_status(stage, message):
+            try:
+                await self.send_json({"type": "ml_status", "stage": stage, "message": message})
+            except Exception:
+                pass
+        def _ml_status_listener(stage, message):
+            asyncio.run_coroutine_threadsafe(_send_ml_status(stage, message), _loop)
+        self._ml_status_listener = _ml_status_listener
+        add_ml_status_listener(_ml_status_listener)  # immediately delivers current status
         await self.send_json({"type": "connected", "message": "RTSP consumer ready."})
 
     async def disconnect(self, code):
         logger.info("[RTSP] Disconnect code=%s", code)
+        from .ml.detection import remove_ml_status_listener
+        if hasattr(self, '_ml_status_listener'):
+            remove_ml_status_listener(self._ml_status_listener)
         await self._cancel_stream()
 
     # ── receive ────────────────────────────────────────────────────────────────
@@ -804,6 +861,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             if not rtsp_url or not rtsp_url.lower().startswith("rtsp://"):
                 await self.send_json({"type": "error", "message": "Invalid or missing RTSP URL."})
                 return
+            if content.get("gate_id"):
+                self._gate_id = content["gate_id"]
             await self._cancel_stream()
             # Reset tracker state for fresh stream
             self._tracker       = ProximityTracker()

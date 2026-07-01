@@ -18,11 +18,13 @@ function buildRtspUrl(ip, deviceId, password) {
   return `rtsp://${deviceId}:${password}@${ip}/stream1`
 }
 
-function AssignmentBadge({ value }) {
+const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
+
+function AssignmentBadge({ value, gateId }) {
   if (value === 'entry') {
     return (
       <span className="dm-badge dm-badge-entry">
-        <ShieldCheck size={11} /> Entry
+        <ShieldCheck size={11} /> {gateId ? GATE_LABELS[gateId] ?? gateId : 'Entry'}
       </span>
     )
   }
@@ -35,6 +37,11 @@ function AssignmentBadge({ value }) {
 
 // ── Camera Form Modal ─────────────────────────────────────────────────────────
 
+const GATE_OPTIONS = [
+  { value: 'gate1', label: 'Gate 1' },
+  { value: 'gate4', label: 'Gate 4' },
+]
+
 function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
   const isEdit = mode === 'edit'
 
@@ -42,6 +49,7 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
   const [password,   setPassword]   = useState(camera?.password   ?? '')
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
+  const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
   const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
 
@@ -51,17 +59,28 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
       toast.error('Please fill in all fields.')
       return
     }
+    if (assignment === 'entry' && !gateId) {
+      toast.error('Please select a gate for this entry camera.')
+      return
+    }
     setSaving(true)
     try {
       const rtspUrl = buildRtspUrl(ip.trim(), deviceId.trim(), password.trim())
-      const payload = { ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(), rtsp_url: rtspUrl, assignment }
+      const payload = {
+        ip: ip.trim(),
+        device_id: deviceId.trim(),
+        password: password.trim(),
+        rtsp_url: rtspUrl,
+        assignment,
+        gate_id: assignment === 'entry' ? gateId : null,
+      }
       if (isEdit) {
         const updated = await camerasApi.update(camera.id, payload)
         toast.success(`${camera.name} updated.`)
         onAuditLog?.({
           action: 'device_updated',
           target_name: updated.name,
-          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}`,
+          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}${payload.gate_id ? `, Gate: ${GATE_LABELS[payload.gate_id]}` : ''}`,
         })
       } else {
         const created = await camerasApi.create(payload)
@@ -69,7 +88,7 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
         onAuditLog?.({
           action: 'device_created',
           target_name: created.name,
-          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}`,
+          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}${payload.gate_id ? `, Gate: ${GATE_LABELS[payload.gate_id]}` : ''}`,
         })
       }
       onSaved()
@@ -139,11 +158,30 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
               <button
                 type="button"
                 className={`dm-assign-btn ${assignment === 'parking' ? 'dm-assign-btn-active-parking' : ''}`}
-                onClick={() => setAssignment('parking')}
+                onClick={() => { setAssignment('parking'); setGateId(null) }}
               >
                 <ParkingCircle size={15} /> Parking Area
               </button>
             </div>
+
+            {assignment === 'entry' && (
+              <div className="form-group" style={{ marginTop: '14px' }}>
+                <label className="form-label">Gate <span className="required">*</span></label>
+                <div className="dm-gate-row">
+                  {GATE_OPTIONS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`dm-gate-btn ${gateId === value ? 'dm-gate-btn-active' : ''}`}
+                      onClick={() => setGateId(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="dm-gate-hint">Each gate should have its own dedicated camera.</p>
+              </div>
+            )}
           </div>
 
           <div className="modal-footer">
@@ -365,7 +403,7 @@ export default function DeviceManagement() {
                           <Camera size={14} className="dm-cam-icon" />
                           {cam.name}
                         </td>
-                        <td><AssignmentBadge value={cam.assignment} /></td>
+                        <td><AssignmentBadge value={cam.assignment} gateId={cam.gate_id} /></td>
                         <td className="token-link">{cam.ip}</td>
                         <td className="token-link">{cam.device_id}</td>
                         <td>
@@ -463,7 +501,7 @@ export default function DeviceManagement() {
                         {sc.name}
                       </span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {dbCam && <AssignmentBadge value={dbCam.assignment} />}
+                        {dbCam && <AssignmentBadge value={dbCam.assignment} gateId={dbCam?.gate_id} />}
                         <button
                           className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
                           onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}

@@ -72,9 +72,8 @@ export default function SystemSettings() {
     }
   }
 
-  const isDirty =
-    form.retention_years    !== saved.retention_years    ||
-    form.scan_dedup_seconds !== saved.scan_dedup_seconds
+  const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
+  const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
 
   const handleChange = (e) => {
     const { name, value, type } = e.target
@@ -196,6 +195,18 @@ export default function SystemSettings() {
                   <span className="ss-unit">seconds</span>
                 </div>
                 <p className="ss-hint">Allowed range: 5 – 300 seconds. Takes effect for new WebSocket connections.</p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="ss-save-btn"
+                  style={{ opacity: isDedupDirty ? 1 : 0.45, cursor: isDedupDirty ? 'pointer' : 'default' }}
+                  onClick={handleSave}
+                  disabled={saving || !isDedupDirty}
+                >
+                  {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
               </div>
             </div>
 

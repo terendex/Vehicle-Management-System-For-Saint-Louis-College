@@ -1,188 +1,47 @@
 # Smart Parking and Vehicle Verification System — Saint Louis College
 
-An AI-powered smart parking and vehicle verification system using license plate recognition, built for Philippine plate formats. Manages entry rules for students, employees, fetchers/droppers, and visitors, and monitors parking space occupancy in real time.
+An AI-powered smart parking and vehicle verification system using license plate recognition, built for Philippine plate formats. Manages entry rules for students, employees, fetchers, and visitors, and monitors parking space occupancy in real time.
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Features](#features)
-- [Entry Rules](#entry-rules)
-- [Tech Stack](#tech-stack)
-- [ML Pipeline](#ml-pipeline)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
 - [Running the Project](#running-the-project)
-- [API Endpoints](#api-endpoints)
 - [Git Workflow](#git-workflow)
-- [Team](#team)
+- [User Roles](#user-roles)
 
 ---
 
 ## Overview
 
-This system automates vehicle entry and parking monitoring at Saint Louis College by scanning and recognizing Philippine license plates via camera. It enforces entry rules based on owner type (student, employee, fetcher/dropper, or visitor), checks schedules, tracks real-time parking space occupancy, and provides a web interface for administrators and guards to manage devices, monitor cameras, and retrieve vehicle owner information.
+This system automates vehicle entry and parking monitoring at Saint Louis College by scanning and recognizing Philippine license plates via camera. It enforces entry rules based on owner type (student, employee, fetcher, or visitor), checks assigned campus day schedules, tracks real-time parking space occupancy, and provides a web interface for administrators and security guards to manage devices, monitor cameras, and retrieve vehicle owner information.
 
----
+### How Entry Works
 
-## Features
+Every vehicle scan goes through `check_entry()` in the following order:
 
-- **Camera-based plate scanning** — automatic detection at entry gates via webcam or IP cameras (RTSP)
-- **ML plate recognition** — YOLOv8 detection + EasyOCR text extraction
-- **Real-time bounding boxes** — 60fps canvas overlay with smooth LERP interpolation between 2fps backend detections
-- **Multi-camera support** — monitor multiple RTSP IP cameras simultaneously
-- **Device Management** — centralized admin panel to add, edit, and remove IP cameras; auto-named Cam 1, Cam 2, … with gap-filling; cameras auto-connect when visiting Entry or Parking pages
-- **Smart parking occupancy** — AI detects vehicles inside parking space bounding boxes and marks spaces red/green in real time
-- **Philippine plate validation** — supports all standard PH plate formats
-- **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
-- **Employee open access** — employees allowed entry any day
-- **Visitor pass system** — visitors declare office destination, office confirms entry
-- **Violation tracking** — flags vehicles with unresolved violations
-- **Mobile web scanner** — guards can scan plates from any device
-- **Secure Registration** — admin generates one-time tokens for self-registration
-- **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
-- **Access logs** — full history of every scan and entry attempt
-- **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
+1. **Open Campus Mode** — if enabled by an admin via System Settings, all vehicles are granted entry with no further checks.
+2. **Vehicle lookup** — plate must be registered in the system.
+3. **Authorization check** — `vehicle.is_authorized` must be `True`.
+4. **Account status** — the owner's account must be active.
+5. **Owner-type rules:**
 
----
-
-## Entry Rules
-
-| Owner Type | Entry Rule |
+| Owner Type | Entry Condition |
 |---|---|
-| **Student** | Only on their assigned schedule (MWF or TTHS) |
-| **Fetcher / Dropper** | Only on their assigned schedule (MWF or TTHS) |
-| **Employee** | Allowed any day, any time |
-| **Visitor** | Must have a visitor pass confirmed by the destination office |
+| **Student** | Must be on an assigned campus day (e.g. Mon/Wed/Fri). Optionally restricted by a time window rule. |
+| **Fetcher** | Same as student — campus days + optional time rule. |
+| **Employee** | Checked against an EMPLOYEE rule constraint (allowed days + time window). Unrestricted if no rule is active. |
+| **Visitor** | Must have an active `VisitorPass` for today, issued at the gate by a guard. |
 
-### Schedule Days
-| Schedule | Allowed Days |
-|---|---|
-| MWF | Monday, Wednesday, Friday |
-| TTHS | Tuesday, Thursday, Saturday |
+When a scan is denied, an `UNAUTHORIZED` violation is auto-created (deduplicated per 5 minutes per plate). Guards can override a denial with a logged reason, or issue a visitor pass for unregistered visitors.
 
-### Visitor Flow
-```
-1. Visitor arrives at gate
-2. Guard scans plate → "No pass found"
-3. Guard creates visitor pass (vehicle, office, purpose)
-4. Office staff confirms or rejects the pass
-5. Guard re-scans → "Authorized" if confirmed
-```
+### Scan Deduplication
 
----
-
-## Tech Stack
-
-### Backend
-| Package | Purpose |
-|---|---|
-| Django | Web framework |
-| Django REST Framework | REST API |
-| djangorestframework-simplejwt | JWT authentication |
-| django-cors-headers | Cross-origin requests from React |
-| django-channels | WebSocket support |
-| Daphne | ASGI server for WebSockets |
-| psycopg2-binary | PostgreSQL connector |
-| dj-database-url | Parse DATABASE_URL connection string |
-| django-storages + boto3 | Cloudflare R2 image storage |
-| Pillow | Image handling |
-| EasyOCR | Plate text extraction |
-| OpenCV | Image preprocessing |
-| YOLOv8 (Ultralytics) | Plate region detection |
-| python-dotenv | Environment variable loading |
-| Celery + Redis | Background tasks |
-
-### Frontend
-| Package | Purpose |
-|---|---|
-| React + Vite | UI framework and build tool |
-| Tailwind CSS v4 | Styling (via `@tailwindcss/vite` plugin) |
-| React Router v6 | Navigation |
-| TanStack Query | Server state and caching |
-| Zustand | Global state management |
-| Axios | HTTP client |
-| react-webcam | Camera access on mobile |
-| Lucide React | Icons |
-| Sonner | Toast notifications |
-| date-fns | Date formatting and manipulation |
-| React Hook Form + Zod | Forms and validation |
-| TanStack Table | Data tables |
-
-### Infrastructure
-| Service | Purpose |
-|---|---|
-| Neon (PostgreSQL) | Shared cloud database — no local PostgreSQL needed |
-| Cloudflare R2 | Image storage for scan snapshots, ML samples, owner photos |
-| Redis (Memurai on Windows) | Celery task queue — still runs locally |
-
----
-
-## ML Pipeline
-
-### How detection works
-
-Every camera frame goes through the following stages:
-
-```
-Camera JPEG (webcam or RTSP)
-    │
-    ▼
-YOLOv8 (detection.py)
-    │  Adaptive preprocessing — CLAHE + gamma for dark/glare/dim frames
-    │  Rotation fallback — retries at ±20°, ±40°, ±60° when no plate found
-    │  Per-class NMS — removes duplicate overlapping boxes
-    │
-    ├── bicycle / e_bike / electric_scooter  →  DROPPED (ignored, not processed)
-    ├── vehicle / motorcycle                 →  Tracked, shown on screen
-    └── license_plate                        →  Tracked + sent to EasyOCR
-            │
-            ▼
-    ProximityTracker (proximity_tracker.py)
-        Assigns stable track IDs across frames using centroid distance matching.
-        Persists last-known box position for up to 1.5s during detection gaps.
-            │
-            ├── Non-plate tracks  →  {"type":"tracks"} sent to frontend
-            └── Plate tracks      →  EasyOCR queue
-                    │
-                    ▼
-            EasyOCR (reader.py)
-                Runs on plate crops only. Tries binary/inverted/CLAHE variants
-                + left/middle/right region splits. Corrects common PH plate
-                misreads (O↔0, I↔1, etc.). Returns when confidence ≥ 0.60.
-                    │
-                    ▼
-            {"type":"ocr_update"} + DB lookup → {"type":"result"}
-```
-
-### Detected classes
-
-| Class | Processed? | Notes |
-|---|---|---|
-| `license_plate` | Yes | Cropped and sent to EasyOCR |
-| `vehicle` | Yes | Tracked, shown with green box |
-| `motorcycle` | Yes | Tracked, shown with blue box |
-| `bicycle` | No | Detected by model but discarded in software |
-| `e_bike` | No | Detected by model but discarded in software |
-| `electric_scooter` | No | Detected by model but discarded in software |
-
-To re-enable any ignored class, remove it from `_IGNORED_CLASSES` in `backend/scanning/ml/detection.py`.
-
-### Tracking
-
-`ProximityTracker` matches each new YOLO detection to an existing track by finding the closest track center within **100 pixels**. Unmatched tracks are re-emitted at their last known position until they expire (1.5 seconds of no match). This keeps bounding boxes stable on screen even at low ML frame rates.
-
-### Performance
-
-| Environment | YOLO inference | ML frame rate |
-|---|---|---|
-| CPU (no GPU) | ~200–500ms/frame | ~2–5 fps |
-| GPU (CUDA) | ~10–30ms/frame | ~30–100 fps |
-
-The frontend always renders at **60fps** using LERP interpolation between backend positions, so the UI is smooth regardless of backend speed. GPU mode is detected automatically — no config change needed.
+The live WebSocket stream (webcam and RTSP) deduplicates repeated scans of the same plate within a configurable window (`SystemSettings.scan_dedup_seconds`, default 30 s). Manual plate entry and photo upload have no cooldown — every call is logged.
 
 ---
 
@@ -194,13 +53,13 @@ Vehicle-Management-System-For-Saint-Louis-College/
 ├── frontend/                        # React (Vite)
 │   ├── src/
 │   │   ├── api/
-│   │   │   ├── axios.js               # Axios instance
-│   │   │   ├── auth.js                # Auth endpoints
+│   │   │   ├── axios.js
+│   │   │   ├── auth.js
 │   │   │   ├── vehicles.js
 │   │   │   ├── scanning.js
 │   │   │   ├── registration.js
 │   │   │   ├── parking.js
-│   │   │   ├── cameras.js             # Device Management — camera CRUD
+│   │   │   ├── cameras.js
 │   │   │   └── users.js
 │   │   ├── components/
 │   │   │   ├── Auth/
@@ -209,70 +68,69 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │       ├── AdminLayout.jsx
 │   │   │       ├── SecurityLayout.jsx
 │   │   │       └── OwnerLayout.jsx
-│   │   ├── hooks/
-│   │   │   ├── useScanStream.js       # Webcam → WS → 60fps canvas (live scan)
-│   │   │   ├── useRtspStream.js       # Single RTSP camera → WS → 60fps canvas
-│   │   │   └── useMultiRtspStream.js  # Multiple RTSP cameras, one WS per camera
 │   │   ├── pages/
 │   │   │   ├── Login/
-│   │   │   │   └── LoginPage.jsx
 │   │   │   ├── Register/
-│   │   │   │   └── RegisterPage.jsx
+│   │   │   ├── ForgotPassword/
+│   │   │   ├── ResetPassword/
+│   │   │   ├── Policy/              # Privacy Policy + Vehicle Pass Terms
 │   │   │   ├── Admin/
 │   │   │   │   ├── AdminDashboard.jsx
 │   │   │   │   ├── VehicleRegistration.jsx
 │   │   │   │   ├── UserManagement.jsx
-│   │   │   │   ├── EntryManagement.jsx
+│   │   │   │   ├── OperationsCenter.jsx
 │   │   │   │   ├── ParkingManagement.jsx
-│   │   │   │   ├── DeviceManagement.jsx   # Camera CRUD — add/edit/remove IP cameras
+│   │   │   │   ├── DeviceManagement.jsx
 │   │   │   │   ├── RuleConstraints.jsx
-│   │   │   │   └── AuditLog.jsx
+│   │   │   │   ├── ViolationsManagement.jsx
+│   │   │   │   ├── Events.jsx
+│   │   │   │   ├── AuditLog.jsx
+│   │   │   │   ├── GuardMonitor.jsx
+│   │   │   │   ├── GateActivityMonitor.jsx
+│   │   │   │   └── SystemSettings.jsx
 │   │   │   ├── Security/
-│   │   │   │   ├── SecurityDashboard.jsx
 │   │   │   │   ├── SecurityEntryManagement.jsx
-│   │   │   │   └── SecurityAuditLog.jsx
-│   │   │   ├── VehicleOwner/
-│   │   │   │   └── OwnerDashboard.jsx
-│   │   │   └── NotFoundPage.jsx
+│   │   │   │   ├── SecurityParkingView.jsx
+│   │   │   │   ├── SecurityAuditLogPage.jsx
+│   │   │   │   └── SecurityQRLogin.jsx
+│   │   │   └── VehicleOwner/
+│   │   │       └── OwnerDashboard.jsx
 │   │   ├── stores/
-│   │   │   └── authStore.js           # Zustand auth state
+│   │   │   └── authStore.js
 │   │   ├── App.jsx
 │   │   └── main.jsx
 │   ├── .env.example
 │   ├── package.json
 │   └── vite.config.js
 │
-├── backend/                         # Django
-│   ├── config/                      # Project settings
+├── backend/                         # Django + Daphne (ASGI)
+│   ├── config/
 │   │   ├── settings.py
-│   │   ├── asgi.py                  # ASGI entry point (required for WebSockets)
+│   │   ├── asgi.py
 │   │   └── urls.py
-│   ├── accounts/                    # Users and roles
-│   ├── vehicles/                    # Vehicles and owners
-│   ├── scanning/                    # Plate scanning, access logs, visitor passes
-│   │   ├── consumers.py             # WebSocket consumers (ScanLiveConsumer, RtspStreamConsumer)
-│   │   ├── ml/
-│   │   │   ├── detection.py         # YOLOv8 inference, adaptive preprocessing, NMS
-│   │   │   ├── proximity_tracker.py # Frame-to-frame vehicle tracking by centroid distance
-│   │   │   ├── reader.py            # EasyOCR pipeline for license plate text extraction
-│   │   │   ├── train.py             # YOLOv8 training (offline + incremental)
-│   │   │   ├── validator.py         # Philippine plate regex validation
-│   │   │   ├── collector.py         # Auto-collect scan data for retraining
-│   │   │   ├── weights/             # Trained model weights (not in git — transfer manually)
-│   │   │   │   ├── best.pt          # Best checkpoint (used in production)
-│   │   │   │   └── last.pt          # Latest checkpoint (for resuming)
-│   │   │   └── dataset/             # Training images and YOLO labels
-│   │   ├── tasks.py                 # Celery task: ML retrain job
-│   │   ├── views.py                 # Scan + ML sample/retrain endpoints
-│   │   ├── models.py                # AccessLog, VisitorPass, MLTrainingSample
-│   │   └── serializers.py           # DRF serializers including ML sample
-│   ├── violations/                  # Violation tracking
+│   ├── accounts/                    # Users, roles, audit logs
+│   ├── vehicles/                    # Vehicles, registrations, cameras, events, parking
+│   ├── violations/                  # Violation tracking and fines
+│   ├── scanning/
+│   │   ├── consumers.py             # WebSocket: ScanLiveConsumer, RtspStreamConsumer
+│   │   ├── entry_logic.py           # check_entry() — authorization rules per owner type
+│   │   ├── views.py                 # REST endpoints: scan, manual entry, visitor pass, override, exit
+│   │   ├── models.py                # AccessLog, VisitorPass, GuardShift, MLTrainingSample
+│   │   ├── serializers.py
+│   │   └── ml/
+│   │       ├── detection.py         # YOLO plate/vehicle detection + adaptive preprocessing
+│   │       ├── reader.py            # PaddleOCR pipeline — reads text from plate crops
+│   │       ├── proximity_tracker.py # Frame-to-frame tracking by centroid distance
+│   │       ├── validator.py         # Philippine plate regex validation
+│   │       ├── collector.py         # Auto-collects scan data for ML retraining
+│   │       ├── train.py             # YOLO training (offline + incremental)
+│   │       ├── weights/             # Trained model weights (not in git — transfer manually)
+│   │       │   ├── best.pt
+│   │       │   └── last.pt
+│   │       └── dataset/             # Training images and YOLO labels
 │   ├── manage.py
 │   ├── requirements.txt
 │   └── .env.example
-│
-├── docs/
-│   └── DATA_AND_ML_MIGRATION.md     # Guide for migrating DB and ML assets
 │
 ├── .gitignore
 └── README.md
@@ -282,19 +140,19 @@ Vehicle-Management-System-For-Saint-Louis-College/
 
 ## Prerequisites
 
-| Tool | Version | Download |
+| Tool | Version | Notes |
 |---|---|---|
 | Git | Latest | https://git-scm.com |
 | VS Code | Latest | https://code.visualstudio.com |
 | Node.js | 20+ | https://nodejs.org |
-| Python | 3.11 | https://python.org/downloads/release/python-3119 |
-| Redis | Latest | [Memurai](https://www.memurai.com) (Windows) or https://redis.io/downloads |
+| Python | 3.11 | Use 3.11 specifically — 3.12+ may break PaddleOCR/OpenCV |
+| Redis | Latest | [Memurai](https://www.memurai.com) on Windows, or https://redis.io/downloads on Linux |
 
-> **Use Python 3.11 specifically.** Python 3.12+ may cause issues with EasyOCR and OpenCV.
-> **PostgreSQL is no longer required locally.** The project uses a shared Neon cloud database — get the `.env` file from a teammate.
+> **PostgreSQL is not required locally.** The project uses a shared Neon cloud database — get the `.env` file from a teammate.
 
-### VS Code Extensions
-Install these when VS Code prompts "Install recommended extensions?" or search manually (`Ctrl+Shift+X`):
+### Recommended VS Code Extensions
+
+Install when VS Code prompts "Install recommended extensions?" or search manually (`Ctrl+Shift+X`):
 
 - Python (Microsoft)
 - Pylance (Microsoft)
@@ -321,28 +179,31 @@ code .
 
 ### 2. Set Up Environment Files
 
-Get the shared `.env` file from a teammate (sent via group chat — never committed to Git) and place it at `backend/.env`.
+Get the shared `backend/.env` from a teammate (sent via group chat — never committed to Git).
 
 For the frontend:
 ```bash
 cp frontend/.env.example frontend/.env
 ```
 
-The frontend `.env` only needs `VITE_API_BASE_URL=http://localhost:8000` — no secrets.
+The frontend `.env` only needs one variable — no secrets:
+```
+VITE_API_BASE_URL=http://localhost:8000
+```
 
-### 3. Set Up Redis
+### 3. Start Redis
 
-Redis is still required locally for Celery background tasks.
+Redis is required locally for Celery background tasks.
 
-**Windows** — install **Memurai** and ensure the service is running:
+**Windows** — install Memurai and confirm it is running:
 ```
 Services app → Memurai → Running
 ```
 If not running: right-click → Start.
 
-**Linux** — install Redis via your package manager and ensure the service is running:
+**Linux:**
 ```bash
-sudo apt install redis-server      # Debian/Ubuntu
+sudo apt install redis-server
 sudo systemctl enable --now redis-server
 ```
 
@@ -362,11 +223,9 @@ source venv/bin/activate # Linux
 # Install dependencies
 pip install -r requirements.txt
 
-# Apply any pending migrations
+# Apply migrations
 python manage.py migrate
 ```
-
-> No need to create a local database — `DATABASE_URL` in your `.env` points to the shared Neon database.
 
 ### 5. Set Up the Frontend
 
@@ -377,57 +236,13 @@ npm install
 
 ---
 
-## Environment Variables
-
-### `backend/.env`
-
-| Variable | Description | Example |
-|---|---|---|
-| `SECRET_KEY` | Django secret key | `your-secret-key` |
-| `DEBUG` | Debug mode | `True` |
-| `ALLOWED_HOSTS` | Comma-separated allowed hosts | `localhost,127.0.0.1` |
-| `DATABASE_URL` | Neon PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
-| `DB_NAME` | Local DB fallback (ignored when DATABASE_URL is set) | `plate_db` |
-| `DB_USER` | Local DB fallback | `postgres` |
-| `DB_PASSWORD` | Local DB fallback | `password` |
-| `DB_HOST` | Local DB fallback | `127.0.0.1` |
-| `DB_PORT` | Local DB fallback | `5432` |
-| `USE_R2` | Enable Cloudflare R2 image storage | `true` |
-| `R2_ACCESS_KEY_ID` | R2 API access key | — |
-| `R2_SECRET_ACCESS_KEY` | R2 API secret key | — |
-| `R2_BUCKET_NAME` | R2 bucket name | `slc-entry-management-ml` |
-| `R2_ACCOUNT_ID` | Cloudflare account ID | — |
-| `R2_PUBLIC_URL` | R2 public bucket URL | `pub-xxxx.r2.dev` |
-| `CORS_ALLOWED_ORIGINS` | Allowed frontend origins | `http://localhost:5173` |
-| `EMAIL_HOST_USER` | Gmail email for sending emails | `your-email@gmail.com` |
-| `EMAIL_HOST_PASSWORD` | Gmail app password | `your-app-password` |
-| `FRONTEND_URL` | Frontend URL for emails | `http://localhost:5173` |
-| `BACKEND_URL` | Backend URL | `http://localhost:8000` |
-| `ACCESS_TOKEN_LIFETIME_MINUTES` | JWT access token expiry | `60` |
-| `REFRESH_TOKEN_LIFETIME_DAYS` | JWT refresh token expiry | `7` |
-| `CELERY_BROKER_URL` | Redis broker URL | `redis://127.0.0.1:6379/0` |
-| `CELERY_RESULT_BACKEND` | Redis result backend URL | `redis://127.0.0.1:6379/0` |
-| `ML_SAMPLE_BATCH_SIZE` | New samples needed to trigger retraining | `50` |
-| `ML_CONFIDENCE_THRESHOLD` | Min confidence to auto-label a sample | `0.6` |
-| `ML_AUTO_RETRAIN_ENABLED` | Enable/disable automatic retraining | `true` |
-
-### `frontend/.env`
-
-| Variable | Description | Example |
-|---|---|---|
-| `VITE_API_BASE_URL` | Django backend URL | `http://localhost:8000` |
-
-> **Never commit `.env` files.** Only `.env.example` files are tracked in Git.
-
----
-
 ## Running the Project
 
-> **Prerequisite:** Ensure Redis is running before starting the backend (Memurai on Windows, `redis-server` on Linux).
+> Ensure Redis is running before starting the backend.
 
-Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
+Open **three terminals** in VS Code (`` Ctrl+` `` to open, click split icon to add more).
 
-### Terminal 1 — Backend (Django + Daphne)
+### Terminal 1 — Backend (Daphne)
 
 ```bash
 cd backend
@@ -436,15 +251,9 @@ source venv/bin/activate # Linux
 daphne -b 127.0.0.1 -p 8000 config.asgi:application
 ```
 
-> **Daphne is required** — `python manage.py runserver` uses WSGI and does not support WebSockets. Camera scanning will not work without Daphne.
+> `python manage.py runserver` does **not** support WebSockets. Daphne is required for live camera scanning.
 >
-> On first connection after starting Daphne, the YOLO model and EasyOCR load into memory (takes ~10–25s on CPU). Subsequent connections are instant.
-
-| URL | Description |
-|---|---|
-| `http://localhost:8000/api/` | Django REST API |
-| `http://localhost:8000/admin/` | Admin panel |
-| `http://localhost:8000/api/auth/login/` | Get JWT tokens |
+> On first start, the YOLO model and PaddleOCR load into memory (~10–25 s on CPU). Subsequent connections are instant.
 
 ### Terminal 2 — Frontend
 
@@ -453,11 +262,9 @@ cd frontend
 npm run dev
 ```
 
-| URL | Description |
-|---|---|
-| `http://localhost:5173` | React web app |
+Open `http://localhost:5173` in your browser.
 
-### Terminal 3 — Celery Worker (required for ML retraining)
+### Terminal 3 — Celery Worker
 
 ```bash
 cd backend
@@ -466,192 +273,69 @@ source venv/bin/activate # Linux
 
 # Windows
 python -m celery -A config worker -l info --pool=solo
+
 # Linux
 python -m celery -A config worker -l info
 ```
 
-> `--pool=solo` is required on Windows to avoid `billiard` semaphore errors. On Linux, omit it — the default prefork pool works fine.
+> `--pool=solo` is required on Windows. On Linux, omit it.
 
 ### Terminal 4 — ngrok (optional, for external access)
 
-Use ngrok to expose the app to the internet — useful for testing on other devices or sharing a live demo.
+Expose the app for testing on other devices or sharing a live demo.
 
 **One-time setup:**
 ```bash
-winget install ngrok.ngrok          # install ngrok (Windows)
-ngrok config add-authtoken <token>  # paste your token from ngrok.com/dashboard
+winget install ngrok.ngrok
+ngrok config add-authtoken <your-token>
 ```
 
-**Start the tunnel** (run while Vite is running on port 5173):
+**Start tunnel:**
 ```bash
 ngrok http --domain=preconcurrently-inorganic-nicolle.ngrok-free.dev 5173
 ```
 
-**After starting the tunnel, update `backend/.env`:**
+**Update `backend/.env` while tunnel is running:**
 ```
 ALLOWED_HOSTS=localhost,127.0.0.1,preconcurrently-inorganic-nicolle.ngrok-free.dev
 CORS_ALLOWED_ORIGINS=http://localhost:5173,https://preconcurrently-inorganic-nicolle.ngrok-free.dev
 FRONTEND_URL=https://preconcurrently-inorganic-nicolle.ngrok-free.dev
 ```
 
-Then restart Daphne. The public URL will proxy all API and WebSocket traffic through Vite to the local Django backend — no extra config needed.
-
-> The `--domain` flag requires a reserved static domain (free ngrok account). Omit it to get a random URL each session, and update `backend/.env` each time.
-
----
-
-## API Endpoints
-
-### Auth
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/auth/login/` | Login — returns access + refresh token | No |
-| `POST` | `/api/auth/refresh/` | Refresh access token | No |
-| `POST` | `/api/auth/verify/` | Verify token | No |
-| `GET` | `/api/accounts/me/` | Get current logged-in user | Yes |
-| `POST` | `/api/accounts/register/` | Create new user (admin only) | Admin |
-
-### User Management
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/accounts/users/` | List all users | Admin |
-| `GET` | `/api/accounts/users/{id}/` | Get user details | Admin |
-| `PATCH` | `/api/accounts/users/{id}/update/` | Update user | Admin |
-| `DELETE` | `/api/accounts/users/{id}/delete/` | Delete user | Admin |
-| `POST` | `/api/accounts/users/{id}/toggle-status/` | Enable/disable user | Admin |
-| `POST` | `/api/accounts/replace-admin/` | Replace current admin | Admin |
-| `GET` | `/api/accounts/audit-logs/` | List audit logs | Yes |
-| `GET` | `/api/accounts/audit-logs/stats/` | Audit log statistics | Admin |
-
-### Vehicles and Owners
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/vehicles/` | List all vehicles | Yes |
-| `POST` | `/api/vehicles/` | Register new vehicle | Admin |
-| `GET` | `/api/vehicles/{id}/` | Get vehicle by ID | Yes |
-| `PATCH` | `/api/vehicles/{id}/authorize/` | Toggle entry authorization | Admin |
-| `GET` | `/api/vehicles/owners/` | List all owners | Admin |
-| `POST` | `/api/vehicles/owners/` | Register new owner | Admin |
-| `GET` | `/api/vehicles/rules/` | List entry rules | Admin |
-| `POST` | `/api/vehicles/rules/` | Create rule | Admin |
-| `GET` | `/api/vehicles/vehicle-types/` | List vehicle type access rules | Admin |
-| `POST` | `/api/vehicles/vehicle-types/` | Create vehicle type rule | Admin |
-
-### Secure Registration
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | Admin |
-| `GET` | `/api/vehicles/tokens/` | List all registration tokens | Admin |
-| `DELETE` | `/api/vehicles/tokens/{id}/` | Delete a registration token | Admin |
-| `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | Admin |
-| `DELETE` | `/api/vehicles/tokens/clear/` | Clear used/expired tokens | Admin |
-| `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | No |
-| `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | No |
-| `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | Admin |
-| `POST` | `/api/vehicles/registrations/{id}/accept/` | Accept registration | Admin |
-| `POST` | `/api/vehicles/registrations/{id}/reject/` | Reject registration | Admin |
-
-### Scanning
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/scan/` | Scan plate image — returns entry decision | Yes |
-| `GET` | `/api/scan/logs/` | List recent access logs | Yes |
-| `GET` | `/api/scan/offices/` | List all offices | Yes |
-| `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | Yes |
-| `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | Yes |
-| `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | Yes |
-
-### WebSocket Endpoints (Daphne required)
-
-| Endpoint | Description |
-|---|---|
-| `ws://localhost:8000/ws/scan/live/?token=<JWT>` | Live webcam scanning — client sends JPEG frames, server returns detection tracks |
-| `ws://localhost:8000/ws/scan/rtsp/?token=<JWT>` | RTSP IP camera streaming — client sends `{type:"start", rtsp_url:"rtsp://..."}`, server streams frames and tracks back |
-
-**WS message types (server → client):**
-
-| Type | Payload | Description |
-|---|---|---|
-| `connected` | `{message, gpu}` | Sent once on open — confirms ASGI mode and GPU status |
-| `tracks` | `{tracks: [{track_id, bbox, class_name, plate_text, ocr_done}]}` | Sent every processed frame |
-| `ocr_update` | `{track_id, plate_text}` | Plate text confirmed by EasyOCR |
-| `result` | `{results: [...]}` | Plate matched against vehicle database |
-| `frame` | `{image_b64}` | RTSP only — JPEG frame from IP camera |
-| `status` | `{connected, message}` | RTSP only — stream connection status |
-| `error` | `{message}` | Processing or connection error |
-
-### ML Training & Feedback
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/scan/ml/samples/` | List collected training samples | Yes |
-| `PATCH` | `/api/scan/ml/samples/{id}/` | Approve/reject/correct a sample label | Yes |
-| `GET` | `/api/scan/ml/stats/` | Dashboard stats for sample collection | Yes |
-| `POST` | `/api/scan/ml/retrain/` | Manually trigger an incremental retrain | Yes |
-
-### Device Management (IP Cameras)
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/vehicles/cameras/` | List all cameras (supports `?assignment=entry\|parking`) | Yes |
-| `POST` | `/api/vehicles/cameras/` | Add a camera — auto-assigns name (Cam 1, Cam 2, …) with gap-filling | Admin |
-| `PATCH` | `/api/vehicles/cameras/{id}/` | Edit camera IP, credentials, RTSP URL, or assignment | Admin |
-| `DELETE` | `/api/vehicles/cameras/{id}/` | Remove camera — slot name is reused for the next addition | Admin |
-| `GET` | `/api/vehicles/cameras/next-name/` | Preview next auto-assigned name before adding | Yes |
-
-### Violations
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/violations/` | List all violations | Yes |
-| `POST` | `/api/violations/` | Add a violation | Yes |
-| `PATCH` | `/api/violations/{id}/` | Update or resolve violation | Yes |
-
-### Scan Response Examples
-
-```json
-// Student on wrong day
-{
-  "plate_number": "ABC1234",
-  "status": "wrong_day",
-  "allowed": false,
-  "message": "Student is on MWF schedule. Today (Tuesday) is not an allowed day.",
-  "vehicle": { "owner": { "full_name": "Juan dela Cruz", "schedule": "MWF" } },
-  "has_violations": false
-}
-
-// Visitor pending office confirmation
-{
-  "plate_number": "XYZ5678",
-  "status": "pending",
-  "allowed": false,
-  "message": "Waiting for confirmation from Registrar's Office."
-}
-
-// Employee — always authorized
-{
-  "plate_number": "EMP1234",
-  "status": "authorized",
-  "allowed": true,
-  "message": "Employee — Maria Santos. Entry granted."
-}
-```
+Then restart Daphne. All API and WebSocket traffic proxies through Vite to the local backend automatically.
 
 ---
 
 ## Git Workflow
 
 ### Branch Structure
+
 ```
 main          ← production only, never push directly
 │
 └── dev       ← integration branch, all PRs merge here
-    ├── feat/plate-scanner
-    ├── feat/auth
-    ├── feat/vehicle-crud
-    ├── feat/visitor-pass
-    ├── feat/violations
-    └── feat/mobile-scan-ui
+    ├── feat/your-feature
+    ├── fix/your-fix
+    └── ...
 ```
 
-> **Rule:** Nobody pushes directly to `main` or `dev`. Everything goes through a Pull Request.
+> Nobody pushes directly to `main` or `dev`. All changes go through a Pull Request reviewed by at least one other member.
+
+### Day-to-Day Flow
+
+```bash
+# Start a new feature
+git checkout dev
+git pull origin dev
+git checkout -b feat/your-feature
+
+# Work, commit often
+git add <files>
+git commit -m "feat: describe what you did"
+
+# Push and open a PR into dev
+git push origin feat/your-feature
+```
 
 ---
 
@@ -659,32 +343,19 @@ main          ← production only, never push directly
 
 | Role | Access |
 |---|---|
-| **Admin** | Full system access — manage users, vehicles, owners, rules, tokens, violations, audits |
-| **Security** | Scan plates, view logs, manage visitor passes, view own statistics |
-| **Vehicle Owner** | View own registered vehicles, history, and entry status |
+| **Admin** | Full system access — manage users, vehicles, registrations, rules, violations, parking, cameras, events, audit logs, system settings |
+| **CDSO** | Settings, operations center, parking, violations, events |
+| **Security** | Gate entry scanning (camera + manual), visitor pass issuance, exit logging, override, audit log |
+| **Vehicle Owner** | View own registration, QR code, violations, parking availability, and announcements |
 
 ### Demo Credentials
 
 | Role | Email | Password |
 |---|---|---|
 | Admin | admin@slc.edu.ph | Admin123! |
-| Security | guard@slc.edu.ph | guard123 |
-
-> Use these credentials to log in at `http://localhost:5173`.
-
----
-
-## Team
-
-| Name | Role |
-|---|---|
-| | ML / Plate Recognition |
-| | Backend / API |
-| | Frontend / Mobile UI |
-| | Database / DevOps |
 
 ---
 
 ## License
 
-For internal use only. © 2026 Saint Louis College.
+For internal use only. &copy; 2026 Saint Louis College.

@@ -65,6 +65,12 @@ export const usersApi = {
     return data
   },
 
+  /** Clear all audit log records (admin only). */
+  clearAuditLogs: async () => {
+    const { data } = await api.delete('/accounts/audit-logs/clear/')
+    return data
+  },
+
   /** Get audit log statistics (admin only). */
   getAuditLogStats: async () => {
     const { data } = await api.get('/accounts/audit-logs/stats/')

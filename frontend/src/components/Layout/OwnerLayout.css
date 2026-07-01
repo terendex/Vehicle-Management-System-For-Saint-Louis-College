@@ -125,6 +125,46 @@
   box-shadow: 0 2px 6px rgba(220, 38, 38, 0.1);
 }
 
+/* --- Footer --- */
+.owner-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 2rem;
+  border-top: 1px solid #E2E6EE;
+  background: #FFFFFF;
+  flex-wrap: wrap;
+}
+
+.owner-footer-copy {
+  font-size: 12px;
+  color: #A0A4BA;
+  font-weight: 500;
+}
+
+.owner-footer-policy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid #E2E6EE;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7C80A3;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.owner-footer-policy-btn:hover {
+  background: #EEF0FF;
+  border-color: #C7C9E8;
+  color: #2A2B61;
+}
+
 /* --- Main Content --- */
 .owner-main {
   flex: 1;
@@ -132,4 +172,99 @@
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+/* --- Tablet --- */
+@media (max-width: 768px) {
+  .owner-header {
+    padding: 0 1.25rem;
+  }
+
+  .owner-main {
+    padding: 1.25rem;
+  }
+
+  .header-subtitle {
+    font-size: 10px;
+    letter-spacing: 0.15px;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .owner-header {
+    padding: 0 1rem;
+    height: 56px;
+  }
+
+  .header-logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  .header-subtitle {
+    display: none;
+  }
+
+  .header-title {
+    font-size: 13px;
+    letter-spacing: 0.7px;
+  }
+
+  .header-actions {
+    gap: 8px;
+  }
+
+  .logout-btn span {
+    display: none;
+  }
+
+  .logout-btn {
+    padding: 8px 10px;
+    gap: 0;
+  }
+
+  .owner-main {
+    padding: 1rem;
+  }
+
+  .owner-footer {
+    padding: 12px 1rem;
+    justify-content: center;
+    gap: 10px;
+  }
+}
+
+/* --- Very Small Mobile --- */
+@media (max-width: 380px) {
+  .header-text {
+    max-width: 130px;
+    overflow: hidden;
+  }
+
+  .header-title {
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .action-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .owner-main {
+    padding: 0.75rem;
+  }
 }

@@ -428,8 +428,12 @@ export default function RegisterPage() {
       // Show payment instructions popup before success screen
       setShowPaymentPopup(true)
     } catch (err) {
-      setSubmitError(err.response?.data?.error || 'Failed to submit registration. Please try again.')
-      console.error(err)
+      const errData = err.response?.data
+      const msg = errData?.error
+        || (typeof errData === 'object' ? Object.entries(errData).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' | ') : null)
+        || 'Failed to submit registration. Please try again.'
+      setSubmitError(msg)
+      console.error('Registration error:', errData || err)
     } finally {
       setSubmitting(false)
     }
@@ -587,7 +591,7 @@ export default function RegisterPage() {
               The CDSO office will verify your Official Receipt number before approving your registration.
             </div>
 
-            <button className="card-btn payment-popup-btn" onClick={() => setSubmitted(true)}>
+            <button className="card-btn payment-popup-btn" onClick={() => navigate('/login')}>
               I Understand — Continue
               <ArrowRight size={15} />
             </button>

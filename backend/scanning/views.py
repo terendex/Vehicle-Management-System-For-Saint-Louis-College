@@ -11,7 +11,7 @@ from vehicles.models import Vehicle
 from violations.models import Violation
 from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
-from .entry_logic import check_entry
+from .entry_logic import check_entry, get_organizer_event
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from vehicles.serializers import VehicleSerializer
@@ -165,6 +165,7 @@ class ScanView(APIView):
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'has_violations':  has_violations,
                 'already_inside':  _already_inside(plate),
+                'organizer_event': get_organizer_event(plate),
                 'bbox':            bbox,
             }
             if ml_sample:
@@ -678,15 +679,16 @@ class ManualEntryView(APIView):
             _auto_log_violation(vehicle, entry['message'])
 
         return Response({
-            'plate_number':   plate_number,
-            'status':         entry['status'],
-            'allowed':        entry['allowed'],
-            'message':        entry['message'],
-            'constraint':     entry.get('constraint'),
-            'vehicle':        VehicleSerializer(vehicle).data,
-            'has_violations': has_violations,
-            'already_inside': _already_inside(plate_number),
-            'gate_id':        gate_id,
+            'plate_number':    plate_number,
+            'status':          entry['status'],
+            'allowed':         entry['allowed'],
+            'message':         entry['message'],
+            'constraint':      entry.get('constraint'),
+            'vehicle':         VehicleSerializer(vehicle).data,
+            'has_violations':  has_violations,
+            'already_inside':  _already_inside(plate_number),
+            'organizer_event': get_organizer_event(plate_number),
+            'gate_id':         gate_id,
         })
 
 

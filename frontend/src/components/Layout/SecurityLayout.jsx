@@ -245,7 +245,8 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   const gateLabel = GATE_LABELS[gate] || gate || 'Gate'
   const shift     = useCurrentShift(gate)
 
-  const [showChangeShift, setShowChangeShift] = useState(false)
+  const [showChangeShift,  setShowChangeShift]  = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
   const handleLogout = () => { logout('/security/qr-login') }
 
@@ -324,7 +325,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           </button>
 
           <div className="footer-actions">
-            <button className="logout-btn" onClick={handleLogout}>
+            <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
               <LogOut size={16} />
               <span>Log Out</span>
             </button>
@@ -347,6 +348,53 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           onClose={() => setShowChangeShift(false)}
           onSuccess={() => {}}
         />
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="cs-overlay" onClick={e => e.target === e.currentTarget && setShowLogoutConfirm(false)}>
+          <div className="cs-modal" style={{ maxWidth: 340 }}>
+            <div className="cs-modal-head">
+              <div className="cs-modal-head-left">
+                <LogOut size={15} style={{ color: '#dc2626' }} />
+                <span className="cs-modal-title">Log Out</span>
+              </div>
+              <button className="cs-close" onClick={() => setShowLogoutConfirm(false)}><X size={17} /></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <p style={{ margin: 0, fontSize: 13.5, color: '#374151', lineHeight: 1.5 }}>
+                Are you sure you want to log out?
+              </p>
+              <p style={{ margin: 0, fontSize: 12, color: '#9ca3af' }}>
+                Your shift at <strong style={{ color: '#5A5F72' }}>{gateLabel}</strong> will be ended.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button
+                style={{
+                  flex: 1, height: 38, border: '1.5px solid #E2E6EE', borderRadius: 8,
+                  background: '#fff', color: '#374151', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+                onClick={() => setShowLogoutConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                style={{
+                  flex: 1, height: 38, border: 'none', borderRadius: 8,
+                  background: '#dc2626', color: '#fff', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 6, fontFamily: 'inherit',
+                }}
+                onClick={handleLogout}
+              >
+                <LogOut size={14} />
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

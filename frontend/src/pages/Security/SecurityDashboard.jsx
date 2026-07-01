@@ -57,7 +57,7 @@ function CameraMonitor() {
 
   useEffect(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url)))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, c.gate_id)))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

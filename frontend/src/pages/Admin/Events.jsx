@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
-  ParkingCircle, Tag, Check, Pencil,
+  ParkingCircle, Tag, Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -98,6 +98,7 @@ function AddEventModal({ onClose, onCreated }) {
               className="ev-text-input"
               type="date"
               value={form.date}
+              min={new Date().toISOString().slice(0, 10)}
               onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
               required
             />
@@ -349,7 +350,7 @@ function ZoneCapacityRow({ zone, onSaved }) {
         <span className="ev-zone-type">{zone.vehicle_category}</span>
       </div>
       <div className="ev-zone-capacity-cell">
-        <span className="ev-zone-base">{zone.total_capacity} spaces</span>
+        <span className="ev-zone-base">{zone.space_count} spaces</span>
       </div>
       <div className="ev-zone-override-cell">
         <input
