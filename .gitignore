@@ -43,6 +43,7 @@ runs/
 
 # ===== NODE =====
 node_modules/
+frontend/node_modules/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
