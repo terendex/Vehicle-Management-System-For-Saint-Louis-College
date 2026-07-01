@@ -1256,6 +1256,7 @@
 
 /* ===== Responsive ===== */
 
+/* --- Tablet (iPad / iPad Pro) --- */
 @media (max-width: 960px) {
   .od-grid {
     grid-template-columns: 1fr;
@@ -1273,6 +1274,31 @@
   }
 }
 
+/* --- iPad Mini / Small Tablet --- */
+@media (max-width: 768px) {
+  .od-welcome-banner {
+    padding: 18px 20px;
+    gap: 12px;
+  }
+
+  .od-welcome-text h1 {
+    font-size: 17px;
+  }
+
+  .od-id-card-value {
+    font-size: 15px;
+  }
+
+  .od-zone-fill-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
+
+  .od-modal {
+    padding: 28px 22px 24px;
+  }
+}
+
+/* --- Mobile --- */
 @media (max-width: 640px) {
   .od-id-cards {
     grid-template-columns: 1fr;
@@ -1280,6 +1306,22 @@
 
   .od-welcome-banner {
     flex-wrap: wrap;
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .od-welcome-avatar {
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+  }
+
+  .od-welcome-text h1 {
+    font-size: 15px;
+  }
+
+  .od-welcome-text p {
+    font-size: 12px;
   }
 
   .od-change-pw-btn {
@@ -1293,6 +1335,128 @@
 
   .od-qr-col {
     flex-direction: column;
+  }
+
+  .od-section-title-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .od-section-title {
+    font-size: 13px;
+  }
+
+  .od-violations-table th,
+  .od-violations-table td {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .od-parking-summary {
+    margin: 12px;
+  }
+
+  .od-parking-grid {
+    padding: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    gap: 6px;
+  }
+
+  .od-parking-stat-num {
+    font-size: 24px;
+  }
+
+  .od-modal {
+    padding: 22px 16px 18px;
+    border-radius: 16px;
+  }
+
+  .od-modal-title {
+    font-size: 18px;
+  }
+
+  .od-pw-actions {
+    flex-direction: column;
+  }
+
+  .od-btn-logout,
+  .od-btn-outline {
+    width: 100%;
+  }
+
+  .od-zone-fill-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .od-outstanding-banner {
+    margin: 10px 12px;
+    font-size: 12px;
+  }
+}
+
+/* --- Very Small Mobile (< 400px) --- */
+@media (max-width: 400px) {
+  .od-welcome-text h1 {
+    font-size: 14px;
+  }
+
+  .od-welcome-text p {
+    display: none;
+  }
+
+  .od-change-pw-btn {
+    font-size: 12px;
+    padding: 7px 12px;
+  }
+
+  .od-id-card-value {
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  .od-id-card {
+    padding: 14px 16px;
+  }
+
+  .od-card-head {
+    font-size: 11px;
+    padding: 12px 14px;
+  }
+
+  .od-details-grid {
+    padding: 12px 14px;
+  }
+
+  .od-violations-table th,
+  .od-violations-table td {
+    padding: 7px 8px;
+    font-size: 11px;
+  }
+
+  .od-qr-display {
+    margin: 10px 12px;
+    padding: 14px;
+  }
+
+  .od-qr-data-box {
+    margin: 0 12px 10px;
+  }
+
+  .od-copy-btn {
+    margin: 0 12px 14px;
+    width: calc(100% - 24px);
+    font-size: 12px;
+  }
+
+  .od-status-badge {
+    font-size: 12px;
+    padding: 8px 12px;
+    margin: 12px 12px 8px;
+  }
+
+  .od-status-note {
+    font-size: 11px;
+    margin: 0 12px 14px;
   }
 }
 

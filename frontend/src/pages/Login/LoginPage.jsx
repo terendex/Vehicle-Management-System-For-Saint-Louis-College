@@ -182,7 +182,14 @@ export default function LoginPage() {
             </button>
 
             <div className="terms-row">
-              <a href="#" className="terms-link">Policy</a>
+              <button
+                type="button"
+                className="terms-link"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                onClick={() => navigate('/policy')}
+              >
+                Privacy Policy &amp; Terms
+              </button>
             </div>
           </form>
         </div>

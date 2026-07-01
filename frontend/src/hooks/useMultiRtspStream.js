@@ -158,6 +158,9 @@ export function useMultiRtspStream(token) {
     delete smoothMap.current[camId];
   }, []);
 
+  // Per-camera gate_id store (mutable ref, no re-render needed)
+  const gateMap = useRef({}); // id → gate_id string
+
   // ── Open WebSocket for one camera ────────────────────────────────────────
   const _connect = useCallback((camId, rtspUrl) => {
     if (!token) return;
@@ -167,7 +170,10 @@ export function useMultiRtspStream(token) {
 
     ws.onopen = () => {
       setCameras(p => p.map(c => c.id === camId ? { ...c, wsActive: true, statusMsg: "Connecting…" } : c));
-      ws.send(JSON.stringify({ type: "start", rtsp_url: rtspUrl }));
+      const startMsg = { type: "start", rtsp_url: rtspUrl };
+      const gateId = gateMap.current[camId];
+      if (gateId) startMsg.gate_id = gateId;
+      ws.send(JSON.stringify(startMsg));
     };
 
     ws.onmessage = (ev) => {
@@ -236,12 +242,13 @@ export function useMultiRtspStream(token) {
   }, [stopRenderLoop]);
 
   // ── Add a new camera ─────────────────────────────────────────────────────
-  const addCamera = useCallback((name, url) => {
+  const addCamera = useCallback((name, url, gateId) => {
     const trimUrl = (url || "").trim();
     if (!trimUrl.startsWith("rtsp://")) { toast.error("URL must start with rtsp://"); return null; }
     if (urlSet.current.has(trimUrl)) return null; // prevent StrictMode double-add
     urlSet.current.add(trimUrl);
     const id  = genId();
+    if (gateId) gateMap.current[id] = gateId;
     const cam = { id, name: (name || "").trim() || `Camera ${id}`, url: trimUrl, wsActive: false, streamConnected: false, statusMsg: "" };
     setCameras(p => [...p, cam]);
     setActiveCamId(id);

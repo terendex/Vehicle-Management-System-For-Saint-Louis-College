@@ -843,6 +843,27 @@ class PublicOpenRegistrationView(APIView):
 
         data = dict(request.data)
 
+        # The form sends department as a human-readable string ("Teaching" / "Non-Teaching").
+        # Map it to department_type and clear the FK field so the serializer doesn't choke.
+        dept_raw = data.pop('department', None)
+        if isinstance(dept_raw, list):
+            dept_raw = dept_raw[0] if dept_raw else None
+        if dept_raw == 'Teaching':
+            data['department_type'] = 'teaching'
+            data['department'] = None
+        elif dept_raw == 'Non-Teaching':
+            data['department_type'] = 'non_teaching'
+            data['department'] = None
+        else:
+            data['department'] = None
+
+        # Strip fields that are not model columns (e.g. form-only UI fields)
+        for extra in ('last_name', 'first_name', 'middle_name',
+                      'house_street', 'barangay', 'city_municipality', 'province',
+                      'student_level', 'student_strand', 'student_grade',
+                      'privacy_consent'):
+            data.pop(extra, None)
+
         if registrant_type == 'employee' or registrant_type == 'fetcher':
             data['schedule'] = 'ANY'
             data['campus_days'] = []

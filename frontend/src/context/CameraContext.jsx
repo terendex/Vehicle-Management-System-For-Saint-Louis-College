@@ -203,6 +203,11 @@ export function CameraProvider({ children }) {
           if (cur) trackMap.current[camId].set(msg.track_id, { ...cur, plate_text: msg.plate_text })
           return
         }
+        if (msg.type === 'ml_status') {
+          setCameras(p => p.map(c => c.id === camId
+            ? { ...c, mlStatus: { stage: msg.stage, message: msg.message } } : c))
+          return
+        }
         if (msg.type === 'result' && msg.results) {
           setFlash(true)
           setTimeout(() => setFlash(false), 450)
@@ -268,8 +273,10 @@ export function CameraProvider({ children }) {
       const needsReconnect = !ws
         || ws.readyState === WebSocket.CLOSED
         || ws.readyState === WebSocket.CLOSING
-      // Upgrade a view-only connection to scan mode when Entry Management arrives
-      const needsUpgrade = detect && !currentDetect && ws && ws.readyState === WebSocket.OPEN
+      // Upgrade a view-only connection to scan mode when Entry Management arrives.
+      // Also covers the CONNECTING race: if WS hasn't opened yet but detect mode
+      // needs to change, cancel it and reopen with the correct detect flag.
+      const needsUpgrade = detect && !currentDetect
 
       if (needsReconnect || needsUpgrade) {
         detectMap.current[existingId] = detect

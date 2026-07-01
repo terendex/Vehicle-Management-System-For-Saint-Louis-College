@@ -68,6 +68,7 @@ class ParkingNoticeSerializer(serializers.ModelSerializer):
 class ParkingZoneSerializer(serializers.ModelSerializer):
     spaces              = ParkingSpaceSerializer(many=True, read_only=True)
     reference_image_url = serializers.SerializerMethodField()
+    space_count         = serializers.SerializerMethodField()
     total_capacity      = serializers.SerializerMethodField()
     occupied_count      = serializers.SerializerMethodField()
     is_full             = serializers.SerializerMethodField()
@@ -75,8 +76,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ParkingZone
         fields = ['id', 'name', 'vehicle_category', 'rtsp_url', 'reference_image',
-                  'reference_image_url', 'capacity_override', 'total_capacity',
-                  'occupied_count', 'is_full', 'created_at', 'spaces']
+                  'reference_image_url', 'capacity_override', 'space_count',
+                  'total_capacity', 'occupied_count', 'is_full', 'created_at', 'spaces']
 
     def get_reference_image_url(self, obj):
         if not obj.reference_image:
@@ -85,6 +86,9 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.reference_image.url)
         return obj.reference_image.url
+
+    def get_space_count(self, obj):
+        return obj.spaces.count()
 
     def get_total_capacity(self, obj):
         if obj.capacity_override is not None:
@@ -104,5 +108,5 @@ class CameraSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Camera
         fields = ['id', 'cam_number', 'name', 'ip', 'device_id', 'password',
-                  'rtsp_url', 'assignment', 'is_active', 'created_at', 'updated_at']
+                  'rtsp_url', 'assignment', 'gate_id', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']
