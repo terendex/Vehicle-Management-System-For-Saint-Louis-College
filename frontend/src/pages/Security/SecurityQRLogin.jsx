@@ -42,7 +42,7 @@ export default function SecurityQRLogin() {
 
   // Camera-based QR detection using jsQR (works in all browsers)
   useEffect(() => {
-    if (!useCamera) return
+    if (!useCamera || !selectedGate) return
     let animFrame
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
@@ -85,7 +85,7 @@ export default function SecurityQRLogin() {
       cancelAnimationFrame(animFrame)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [useCamera]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useCamera, selectedGate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQRScan = async (token) => {
     if (status === 'scanning') return

@@ -70,6 +70,45 @@ _plate_load_attempted = False
 # serialised by CUDA, so this lock adds no throughput cost.
 _INFER_LOCK = threading.Lock()
 
+# ── ML loading status broadcast ────────────────────────────────────────────────
+# stage values: "idle" | "loading_yolo" | "warming_up" | "loading_plate_yolo"
+#               | "loading_ocr" | "ready"
+_ml_status: tuple[str, str] = ("idle", "")
+_ml_listeners: list = []
+_ml_listeners_lock = threading.Lock()
+
+
+def add_ml_status_listener(cb) -> None:
+    with _ml_listeners_lock:
+        if cb not in _ml_listeners:
+            _ml_listeners.append(cb)
+    # Immediately deliver current status so late-joining consumers are in sync
+    stage, msg = _ml_status
+    try:
+        cb(stage, msg)
+    except Exception:
+        pass
+
+
+def remove_ml_status_listener(cb) -> None:
+    with _ml_listeners_lock:
+        try:
+            _ml_listeners.remove(cb)
+        except ValueError:
+            pass
+
+
+def _broadcast_status(stage: str, message: str) -> None:
+    global _ml_status
+    _ml_status = (stage, message)
+    with _ml_listeners_lock:
+        listeners = list(_ml_listeners)
+    for cb in listeners:
+        try:
+            cb(stage, message)
+        except Exception:
+            pass
+
 
 def _validate_model_classes(model) -> bool:
     """
@@ -115,10 +154,12 @@ def _get_yolo():
         return None
 
     try:
+        _broadcast_status("loading_yolo", "Loading ML model…")
         import torch
         from ultralytics import YOLO
         candidate = YOLO(str(WEIGHTS_PATH))
         if not _validate_model_classes(candidate):
+            _broadcast_status("idle", "")
             return None
         _model = candidate
         if is_gpu_available():
@@ -128,22 +169,23 @@ def _get_yolo():
             torch.backends.cudnn.benchmark = True
             log.info("[DETECT] YOLO on GPU (CUDA): %s", WEIGHTS_PATH)
         else:
-            # Use all available CPU threads
             torch.set_num_threads(min(8, torch.get_num_threads()))
             log.info("[DETECT] YOLO on CPU (%d threads): %s",
                      torch.get_num_threads(), WEIGHTS_PATH)
 
-        # Warm-up: run a dummy inference so the first real frame is fast
+        _broadcast_status("warming_up", "Warming up detection model…")
         log.info("[DETECT] Warming up model (compiling JIT graph)…")
         dummy = np.zeros((480, 640, 3), np.uint8)
         _model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
         log.info("[DETECT] Warm-up complete — model ready.")
 
-        # Pre-load plate detector and PaddleOCR so first real frame is fast
+        _broadcast_status("loading_plate_yolo", "Loading plate detector…")
         try:
             _get_plate_yolo()
         except Exception as _pe:
             log.warning("[DETECT] Plate-detector pre-load skipped: %s", _pe)
+
+        _broadcast_status("loading_ocr", "Loading OCR engine…")
         try:
             from .reader import _get_ocr
             log.info("[DETECT] Pre-loading PaddleOCR…")
@@ -152,10 +194,14 @@ def _get_yolo():
         except Exception as _ocr_exc:
             log.warning("[DETECT] PaddleOCR pre-load skipped: %s", _ocr_exc)
 
+        _broadcast_status("ready", "Detection ready")
+
     except ImportError:
         log.error("[DETECT] ultralytics is not installed — cannot load YOLO model")
+        _broadcast_status("idle", "")
     except Exception as exc:
         log.error("[DETECT] Failed to load YOLO model: %s", exc)
+        _broadcast_status("idle", "")
 
     return _model
 
@@ -195,6 +241,10 @@ def _get_plate_yolo():
 # Per-class confidence minimums
 _CONF_PLATE   = 0.15   # raised from 0.05 — was generating false positives on truck bodies
 _CONF_VEHICLE = 0.15   # raised from 0.10
+
+# Set to True to re-enable vehicle/motorcycle bounding-box detection.
+# Currently disabled — only license plates are tracked.
+DETECT_VEHICLES = False
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -350,7 +400,7 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
     # throughput penalty in practice.
     with _INFER_LOCK:
         # ── Pass 1: main model → vehicles & motorcycles only ──────────────────
-        if model is not None:
+        if DETECT_VEHICLES and model is not None:
             res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
                                 half=gpu, imgsz=imgsz)
             all_dets.extend(
@@ -369,7 +419,7 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
             all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
 
         # ── GPU: tiled pass for high-res frames ───────────────────────────────
-        if gpu and model is not None and (w > 1280 or h > 960):
+        if DETECT_VEHICLES and gpu and model is not None and (w > 1280 or h > 960):
             tile, overlap = 640, 0.2
             stride = int(tile * (1 - overlap))
             for y0 in range(0, h, stride):

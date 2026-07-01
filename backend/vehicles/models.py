@@ -317,6 +317,10 @@ class Camera(models.Model):
         ENTRY   = 'entry',   'Entry'
         PARKING = 'parking', 'Parking'
 
+    class GateId(models.TextChoices):
+        GATE1 = 'gate1', 'Gate 1'
+        GATE4 = 'gate4', 'Gate 4'
+
     cam_number = models.PositiveIntegerField(unique=True)
     name       = models.CharField(max_length=50)
     ip         = models.CharField(max_length=100)
@@ -324,6 +328,8 @@ class Camera(models.Model):
     password   = models.CharField(max_length=100)
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
+    gate_id    = models.CharField(max_length=10, choices=GateId.choices, null=True, blank=True,
+                                  help_text='Required when assignment is Entry. Identifies which gate this camera covers.')
     is_active  = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -332,4 +338,5 @@ class Camera(models.Model):
         ordering = ['cam_number']
 
     def __str__(self):
-        return f"{self.name} ({self.get_assignment_display()})"
+        gate = f' — {self.get_gate_id_display()}' if self.gate_id else ''
+        return f"{self.name} ({self.get_assignment_display()}{gate})"
