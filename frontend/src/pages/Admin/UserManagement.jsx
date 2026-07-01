@@ -42,7 +42,7 @@ const CAMPUS_DAYS = [
   { key: 'Saturday', short: 'Sat' },
 ]
 
-const EMPTY_GUARD = { full_name: '', gate_assignment: '' }
+const EMPTY_GUARD = { full_name: '' }
 const EMPTY_OWNER = {
   last_name: '', first_name: '', middle_name: '',
   email: '', contact_number: '', age: '', drivers_license: '',
@@ -255,8 +255,7 @@ export default function UserManagement() {
     setSubmitting(true)
     try {
       const guard = await usersApi.createGuard({
-        full_name:       guardForm.full_name.trim(),
-        gate_assignment: guardForm.gate_assignment || '',
+        full_name: guardForm.full_name.trim(),
       })
       fetchUsers()
       closeModal()
@@ -652,15 +651,6 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
                       placeholder="e.g. Juan Dela Cruz" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
-                  </div>
-                  <div className="um-form-group">
-                    <label>Gate Assignment</label>
-                    <select className="um-form-select" value={guardForm.gate_assignment}
-                      onChange={e => setGuardForm({ ...guardForm, gate_assignment: e.target.value })}>
-                      <option value="">Unassigned (selects gate at kiosk)</option>
-                      <option value="gate1">Gate 1 — Main Entrance</option>
-                      <option value="gate4">Gate 4 — Side Entrance</option>
-                    </select>
                   </div>
                 </>
               )}
@@ -1128,11 +1118,11 @@ export default function UserManagement() {
                 </div>
                 {selectedUser.role === 'security' && (
                   <div className="um-profile-item">
-                    <span className="um-profile-label">Gate Assignment</span>
+                    <span className="um-profile-label">Last Gate Login</span>
                     <span className="um-profile-value">
                       {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
                         : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
-                        : 'Unassigned'}
+                        : 'Not yet logged in'}
                     </span>
                   </div>
                 )}
@@ -1249,7 +1239,7 @@ export default function UserManagement() {
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
                   {qrUser.user_code}
                   {qrUser.role === 'security' && (
-                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'No gate assigned'}</>
+                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
                   )}
                   {qrUser.role !== 'security' && <> · Vehicle Owner</>}
                 </p>
