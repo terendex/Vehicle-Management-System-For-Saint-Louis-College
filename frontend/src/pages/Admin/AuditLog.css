@@ -79,6 +79,129 @@
   cursor: not-allowed;
 }
 
+.al-clear-records-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #FECACA;
+  background: #FFF5F5;
+  color: #DC2626;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.al-clear-records-btn:hover:not(:disabled) {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
+  color: #B91C1C;
+}
+
+.al-clear-records-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Confirmation modal ── */
+.al-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.al-confirm-dialog {
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 32px 28px 24px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+
+.al-confirm-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #FEE2E2;
+  color: #DC2626;
+  margin: 0 auto 16px;
+}
+
+.al-confirm-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1A1B2E;
+  margin: 0 0 10px;
+}
+
+.al-confirm-body {
+  font-size: 14px;
+  color: #5A5F72;
+  margin: 0 0 24px;
+  line-height: 1.5;
+}
+
+.al-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.al-confirm-cancel {
+  padding: 9px 20px;
+  border-radius: 8px;
+  border: 1.5px solid #E2E6EE;
+  background: #FFFFFF;
+  color: #5A5F72;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.al-confirm-cancel:hover:not(:disabled) {
+  background: #F8F9FC;
+  border-color: #B8BAD4;
+}
+
+.al-confirm-delete {
+  padding: 9px 20px;
+  border-radius: 8px;
+  border: 1.5px solid #DC2626;
+  background: #DC2626;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.al-confirm-delete:hover:not(:disabled) {
+  background: #B91C1C;
+  border-color: #B91C1C;
+}
+
+.al-confirm-cancel:disabled,
+.al-confirm-delete:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .al-toolbar {
   display: flex;
   align-items: center;

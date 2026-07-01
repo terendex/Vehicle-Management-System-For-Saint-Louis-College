@@ -58,9 +58,10 @@ class VehicleRegistration(models.Model):
         FETCHER  = 'fetcher',  'Fetcher/Drop&Go'
 
     class Schedule(models.TextChoices):
-        MWF  = 'MWF',  'Monday-Wednesday-Friday'
-        TTHS = 'TTHS', 'Tuesday-Thursday-Saturday'
-        ANY  = 'ANY',  'Any Day'
+        MWF   = 'MWF',   'Monday-Wednesday-Friday'
+        TTHS  = 'TTHS',  'Tuesday-Thursday-Saturday'
+        MIXED = 'MIXED', 'Mixed / Custom Days'
+        ANY   = 'ANY',   'Any Day'
 
     class Source(models.TextChoices):
         PUBLIC = 'public', 'Online/Public Form'

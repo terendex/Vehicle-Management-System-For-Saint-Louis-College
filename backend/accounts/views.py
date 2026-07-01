@@ -379,6 +379,15 @@ class AuditLogListView(generics.ListAPIView):
         return qs.order_by('-created_at')
 
 
+class AuditLogClearView(APIView):
+    """Delete all audit log records — admin only."""
+    permission_classes = [IsAdminRole]
+
+    def delete(self, request):
+        deleted_count, _ = AuditLog.objects.all().delete()
+        return Response({'deleted': deleted_count}, status=status.HTTP_200_OK)
+
+
 class AuditLogStatsView(APIView):
     """Get audit log statistics."""
     permission_classes = [IsAdminRole]
