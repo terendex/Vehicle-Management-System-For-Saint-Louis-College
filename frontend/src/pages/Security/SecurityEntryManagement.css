@@ -73,7 +73,13 @@
 .em-audit-icon.denied,
 .em-audit-icon.wrong_day  { background: #fee2e2; color: #dc2626; }
 .em-audit-icon.visitor    { background: #ede9fe; color: #7c3aed; }
-.em-audit-icon.exited     { background: #f3f4f6; color: #6b7280; }
+.em-audit-icon.exited     { background: #dbeafe; color: #1d4ed8; }
+
+/* ─── Exited result card (distinct from entry/authorized) ────── */
+.em-result.exited         { border-left: 4px solid #2563eb; }
+.exited .em-result-icon   { background: #dbeafe; color: #1d4ed8; }
+.exited .em-result-status { color: #1d4ed8; }
+.exited .em-result-plate  { font-size: 20px; font-weight: 700; color: #111827; letter-spacing: 2px; }
 
 .em-audit-info {
   flex: 1;
