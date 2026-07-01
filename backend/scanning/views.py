@@ -37,17 +37,58 @@ def _audit(request, action, details=''):
         pass
 
 AUTO_VIOLATION_DEDUP_SECONDS = 300   # one auto-violation per plate per 5 min
+GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
+EXIT_COOLDOWN_SECONDS = 60           # block new entry for this many seconds after an exit
+
+
+def _inside_state(plate_number: str):
+    """
+    Returns ('outside', None), ('duplicate', entry), or ('inside', entry).
+    'duplicate' — plate just authorized within GRACE_PERIOD_SECONDS; ignore the re-scan.
+    'inside'    — plate is in campus but past the grace period; treat re-scan as exit.
+    """
+    today = timezone.localdate()
+    last_entry = AccessLog.objects.filter(
+        plate_number=plate_number,
+        status=AccessLog.Status.AUTHORIZED,
+        scanned_at__date=today,
+    ).order_by('-scanned_at').first()
+
+    if not last_entry:
+        return ('outside', None)
+
+    # Explicit paired-exit check — avoids reverse-FK isnull quirks on self-referential tables
+    if AccessLog.objects.filter(paired_entry=last_entry).exists():
+        return ('outside', None)
+
+    seconds_ago = (timezone.now() - last_entry.scanned_at).total_seconds()
+    if seconds_ago <= GRACE_PERIOD_SECONDS:
+        return ('duplicate', last_entry)
+
+    return ('inside', last_entry)
+
+
+def _in_exit_cooldown(plate_number: str) -> bool:
+    """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
+    cutoff = timezone.now() - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
+    return AccessLog.objects.filter(
+        plate_number=plate_number,
+        status=AccessLog.Status.EXITED,
+        scanned_at__gte=cutoff,
+    ).exists()
 
 
 def _already_inside(plate_number: str) -> bool:
     """True if the plate has an authorized entry today with no paired exit yet."""
     today = timezone.localdate()
-    return AccessLog.objects.filter(
+    last_entry = AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__date=today,
-        exit_log__isnull=True,
-    ).exists()
+    ).order_by('-scanned_at').first()
+    if not last_entry:
+        return False
+    return not AccessLog.objects.filter(paired_entry=last_entry).exists()
 
 
 def _pair_entry_exit(exit_log) -> None:
@@ -144,8 +185,86 @@ class ScanView(APIView):
                 })
                 continue
 
+            inside_status, last_entry = _inside_state(plate)
+
+            if inside_status == 'duplicate':
+                resp = {
+                    'plate_number':   plate,
+                    'status':         'duplicate',
+                    'allowed':        False,
+                    'message':        'Duplicate scan — already processed within grace period.',
+                    'vehicle':        VehicleSerializer(vehicle).data,
+                    'already_inside': True,
+                    'bbox':           bbox,
+                }
+                if ml_sample:
+                    resp['sample_id'] = ml_sample['sample_id']
+                results.append(resp)
+                continue
+
+            if inside_status == 'inside':
+                from django.db import transaction as _tx
+                with _tx.atomic():
+                    locked_entry = AccessLog.objects.select_for_update().filter(
+                        pk=last_entry.pk
+                    ).first()
+                    if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                        results.append({'plate_number': plate, 'status': 'duplicate', 'allowed': False,
+                                        'message': 'Duplicate scan — already processed.', 'bbox': bbox})
+                        continue
+                    exit_log = AccessLog.objects.create(
+                        plate_number=plate,
+                        vehicle=vehicle,
+                        status=AccessLog.Status.EXITED,
+                        gate_id=gate_id,
+                        scanned_by=request.user,
+                        paired_entry=locked_entry,
+                    )
+
+                delta = exit_log.scanned_at - last_entry.scanned_at
+                duration_minutes = int(delta.total_seconds() / 60)
+
+                owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+                guard_name = request.user.full_name
+                _audit(request, AuditLog.Action.VEHICLE_EXITED,
+                       f"Auto-exit (re-scan) | Plate: {plate} | Owner: {owner_name} | "
+                       f"Duration: {duration_minutes} min | Guard: {guard_name}")
+
+                resp = {
+                    'plate_number':    plate,
+                    'status':          'exited',
+                    'allowed':         False,
+                    'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.',
+                    'vehicle':         VehicleSerializer(vehicle).data,
+                    'already_inside':  False,
+                    'organizer_event': get_organizer_event(plate),
+                    'duration_minutes': duration_minutes,
+                    'bbox':            bbox,
+                }
+                if ml_sample:
+                    resp['sample_id'] = ml_sample['sample_id']
+                    resp['ml_confidence'] = ml_sample['confidence']
+                results.append(resp)
+                continue
+
+            if _in_exit_cooldown(plate):
+                resp = {
+                    'plate_number':   plate,
+                    'status':         'duplicate',
+                    'allowed':        False,
+                    'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
+                    'vehicle':        VehicleSerializer(vehicle).data,
+                    'already_inside': False,
+                    'bbox':           bbox,
+                }
+                if ml_sample:
+                    resp['sample_id'] = ml_sample['sample_id']
+                results.append(resp)
+                continue
+
             entry = check_entry(vehicle)
             has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
+            already_inside = _already_inside(plate)
 
             AccessLog.objects.create(
                 plate_number  = plate,
@@ -184,7 +303,7 @@ class ScanView(APIView):
                 'constraint':      entry.get('constraint'),
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'has_violations':  has_violations,
-                'already_inside':  _already_inside(plate),
+                'already_inside':  already_inside,
                 'organizer_event': get_organizer_event(plate),
                 'bbox':            bbox,
             }
@@ -693,6 +812,73 @@ class ManualEntryView(APIView):
                 'gate_id':      gate_id,
             })
 
+        inside_status, last_entry = _inside_state(plate_number)
+
+        if inside_status == 'duplicate':
+            return Response({
+                'plate_number':   plate_number,
+                'status':         'duplicate',
+                'allowed':        False,
+                'message':        'Duplicate scan — already processed within grace period.',
+                'vehicle':        VehicleSerializer(vehicle).data,
+                'already_inside': True,
+                'gate_id':        gate_id,
+            })
+
+        if inside_status == 'inside':
+            from django.db import transaction as _tx
+            with _tx.atomic():
+                locked_entry = AccessLog.objects.select_for_update().filter(
+                    pk=last_entry.pk
+                ).first()
+                if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                    return Response({
+                        'plate_number':   plate_number,
+                        'status':         'duplicate',
+                        'allowed':        False,
+                        'message':        'Duplicate scan — already processed.',
+                        'vehicle':        VehicleSerializer(vehicle).data,
+                        'already_inside': False,
+                        'gate_id':        gate_id,
+                    })
+                exit_log = AccessLog.objects.create(
+                    plate_number=plate_number,
+                    vehicle=vehicle,
+                    status=AccessLog.Status.EXITED,
+                    gate_id=gate_id,
+                    scanned_by=request.user,
+                    paired_entry=locked_entry,
+                )
+
+            delta = exit_log.scanned_at - last_entry.scanned_at
+            duration_minutes = int(delta.total_seconds() / 60)
+            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            guard_name = request.user.full_name
+            _audit(request, AuditLog.Action.VEHICLE_EXITED,
+                   f"Auto-exit (re-scan) | Plate: {plate_number} | Owner: {owner_name} | "
+                   f"Duration: {duration_minutes} min | Guard: {guard_name}")
+            return Response({
+                'plate_number':    plate_number,
+                'status':          'exited',
+                'allowed':         False,
+                'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.',
+                'vehicle':         VehicleSerializer(vehicle).data,
+                'already_inside':  False,
+                'duration_minutes': duration_minutes,
+                'gate_id':         gate_id,
+            })
+
+        if _in_exit_cooldown(plate_number):
+            return Response({
+                'plate_number':   plate_number,
+                'status':         'duplicate',
+                'allowed':        False,
+                'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
+                'vehicle':        VehicleSerializer(vehicle).data,
+                'already_inside': False,
+                'gate_id':        gate_id,
+            })
+
         entry = check_entry(vehicle)
         has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
 
@@ -724,7 +910,7 @@ class ManualEntryView(APIView):
             'constraint':      entry.get('constraint'),
             'vehicle':         VehicleSerializer(vehicle).data,
             'has_violations':  has_violations,
-            'already_inside':  _already_inside(plate_number),
+            'already_inside':  False,
             'organizer_event': get_organizer_event(plate_number),
             'gate_id':         gate_id,
         })

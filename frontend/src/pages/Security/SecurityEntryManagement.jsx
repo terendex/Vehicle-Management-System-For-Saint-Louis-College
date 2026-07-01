@@ -25,7 +25,7 @@ const STATUS_META = {
   no_pass:    { label: 'No Visitor Pass',        Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
-  exited:     { label: 'Exited',                 Icon: CheckCircle,   cls: 'authorized', logCls: 'exited'     },
+  exited:     { label: 'Exited',                 Icon: LogOut,        cls: 'exited',     logCls: 'exited'     },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -459,15 +459,21 @@ export default function SecurityEntryManagement() {
 
   const isLive = rtspCameras.some(c => c.streamConnected)
 
-  const scanCooldown = useRef(new Set())
+  const scanCooldown = useRef(new Map()) // plate → { status, timeoutId }
 
   // Auto-process ML scan results from camera
   useEffect(() => {
     if (!rtspResults?.length) return
     rtspResults.forEach(r => {
-      if (!r.plate_number || scanCooldown.current.has(r.plate_number)) return
-      scanCooldown.current.add(r.plate_number)
-      setTimeout(() => scanCooldown.current.delete(r.plate_number), dedupSeconds * 1000)
+      if (!r.plate_number) return
+      if (r.status === 'duplicate') return
+      const existing = scanCooldown.current.get(r.plate_number)
+      // Skip only when the same status repeats within the dedup window
+      if (existing && existing.status === r.status) return
+      // Different status (entry→exit or exit→entry): reset the timer and log it
+      if (existing) clearTimeout(existing.timeoutId)
+      const timeoutId = setTimeout(() => scanCooldown.current.delete(r.plate_number), dedupSeconds * 1000)
+      scanCooldown.current.set(r.plate_number, { status: r.status, timeoutId })
       addToQueue(r)
       const m = getMeta(r.status)
       if (r.allowed) {
