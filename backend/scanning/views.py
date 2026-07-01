@@ -710,9 +710,15 @@ class QRLoginView(APIView):
         except User.DoesNotExist:
             return Response({'error': 'Invalid or unrecognised QR code.'}, status=403)
 
-        gate = guard.gate_assignment
-        if not gate:
-            return Response({'error': 'This guard has no gate assignment. Contact the admin.'}, status=400)
+        # Gate is selected by the guard at the login screen — that selection IS their assignment.
+        gate = (request.data.get('gate') or '').strip() or guard.gate_assignment
+        if gate not in ('gate1', 'gate4'):
+            return Response({'error': 'Please select a valid gate before scanning.'}, status=400)
+
+        # Persist the gate the guard logged in at on their profile.
+        if guard.gate_assignment != gate:
+            User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
+            guard.gate_assignment = gate
 
         now = tz.now()
 
@@ -722,7 +728,7 @@ class QRLoginView(APIView):
             clocked_out_by=guard,
         )
 
-        # Start new shift
+        # Start new shift — records exact gate and clock-in time
         GuardShift.objects.create(guard=guard, gate=gate)
 
         # Issue JWT
@@ -731,11 +737,12 @@ class QRLoginView(APIView):
 
         # Audit
         _audit_ip = get_client_ip(request)
+        gate_label = 'Gate 1' if gate == 'gate1' else 'Gate 4'
         try:
             AuditLog.objects.create(
                 actor=guard,
-                action=AuditLog.Action.VEHICLE_ENTERED,
-                details=f"Guard QR login | Gate: {gate} | Guard: {guard.full_name}",
+                action=AuditLog.Action.SCAN,
+                details=f"Guard shift login | {gate_label} | {guard.full_name}",
                 ip_address=_audit_ip,
             )
         except Exception:
@@ -750,7 +757,7 @@ class QRLoginView(APIView):
                 'full_name':       guard.full_name,
                 'email':           guard.email,
                 'role':            guard.role,
-                'gate_assignment': guard.gate_assignment,
+                'gate_assignment': gate,
                 'must_change_password': guard.must_change_password,
             },
         })

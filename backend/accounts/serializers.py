@@ -88,12 +88,9 @@ def _generate_secure_password():
 
 class GuardCreateSerializer(serializers.Serializer):
     """Admin creates a security-guard account.  No email or password required —
-    guards authenticate via QR badge only."""
-    full_name       = serializers.CharField(max_length=150)
-    gate_assignment = serializers.ChoiceField(
-        choices=['gate1', 'gate4', ''],
-        required=False, allow_blank=True, default='',
-    )
+    guards authenticate via QR badge only.  Gate is assigned when the guard
+    selects a gate at the kiosk login screen, not at creation time."""
+    full_name = serializers.CharField(max_length=150)
 
     def validate_full_name(self, value):
         if not value.strip():
@@ -110,7 +107,6 @@ class GuardCreateSerializer(serializers.Serializer):
             full_name=validated_data['full_name'],
             password=pwd,
             role='security',
-            gate_assignment=validated_data.get('gate_assignment') or None,
         )
 
 
