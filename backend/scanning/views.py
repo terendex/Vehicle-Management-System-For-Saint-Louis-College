@@ -14,6 +14,7 @@ from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
 from .entry_logic import check_entry, get_organizer_event
 from .ml.reader import read_plate
 from .ml.collector import record_scan
+from .ml.validator import is_valid_ph_plate
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer
 
@@ -152,36 +153,107 @@ class ScanView(APIView):
             plate = plate_info["plate_text"]
             bbox = plate_info["bbox"]
 
+            if not is_valid_ph_plate(plate):
+                AccessLog.objects.create(plate_number=plate, status=AccessLog.Status.UNREADABLE, gate_id=gate_id, scanned_by=request.user)
+                results.append({
+                    'plate_number': plate,
+                    'status': 'unreadable',
+                    'allowed': False,
+                    'message': 'Detected text does not match a valid Philippine plate format.',
+                    'bbox': bbox,
+                    'sample_id': ml_sample.get("sample_id") if ml_sample else None,
+                })
+                continue
+
             vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate).first()
 
             if not vehicle:
                 supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                     plate_number=plate, supplier__is_active=True
                 ).first()
-                if supplier_plate:
-                    AccessLog.objects.create(
-                        plate_number=plate, status=AccessLog.Status.AUTHORIZED,
-                        gate_id=gate_id, scanned_by=request.user,
-                    )
+
+                if not supplier_plate:
+                    AccessLog.objects.create(plate_number=plate, status='unknown', gate_id=gate_id, scanned_by=request.user)
                     results.append({
-                        'plate_number':  plate,
-                        'status':        'authorized',
-                        'allowed':       True,
-                        'message':       f'Supplier vehicle — {supplier_plate.supplier.company_name}. Entry permitted.',
-                        'is_supplier':   True,
-                        'supplier_name': supplier_plate.supplier.company_name,
-                        'bbox':          bbox,
-                        'sample_id':     ml_sample.get("sample_id") if ml_sample else None,
+                        'plate_number': plate,
+                        'status': 'unknown',
+                        'message': 'Plate not registered.',
+                        'bbox': bbox,
+                        'sample_id': ml_sample.get("sample_id") if ml_sample else None,
                     })
                     continue
 
-                AccessLog.objects.create(plate_number=plate, status='unknown', gate_id=gate_id, scanned_by=request.user)
+                supplier_name = supplier_plate.supplier.company_name
+                inside_status, last_entry = _inside_state(plate)
+
+                if inside_status == 'duplicate':
+                    results.append({
+                        'plate_number':   plate,
+                        'status':         'duplicate',
+                        'allowed':        False,
+                        'message':        'Duplicate scan — already processed within grace period.',
+                        'is_supplier':    True,
+                        'supplier_name':  supplier_name,
+                        'already_inside': True,
+                        'bbox':           bbox,
+                        'sample_id':      ml_sample.get("sample_id") if ml_sample else None,
+                    })
+                    continue
+
+                if inside_status == 'inside':
+                    from django.db import transaction as _tx
+                    with _tx.atomic():
+                        locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+                        if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                            results.append({'plate_number': plate, 'status': 'duplicate', 'allowed': False,
+                                            'message': 'Duplicate scan — already processed.', 'bbox': bbox})
+                            continue
+                        exit_log = AccessLog.objects.create(
+                            plate_number=plate, status=AccessLog.Status.EXITED,
+                            gate_id=gate_id, scanned_by=request.user, paired_entry=locked_entry,
+                        )
+                    delta = exit_log.scanned_at - last_entry.scanned_at
+                    duration_minutes = int(delta.total_seconds() / 60)
+                    results.append({
+                        'plate_number':     plate,
+                        'status':           'exited',
+                        'allowed':          False,
+                        'message':          f'Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.',
+                        'is_supplier':      True,
+                        'supplier_name':    supplier_name,
+                        'already_inside':   False,
+                        'duration_minutes': duration_minutes,
+                        'bbox':             bbox,
+                        'sample_id':        ml_sample.get("sample_id") if ml_sample else None,
+                    })
+                    continue
+
+                if _in_exit_cooldown(plate):
+                    results.append({
+                        'plate_number':   plate,
+                        'status':         'duplicate',
+                        'allowed':        False,
+                        'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
+                        'is_supplier':    True,
+                        'supplier_name':  supplier_name,
+                        'already_inside': False,
+                        'bbox':           bbox,
+                    })
+                    continue
+
+                AccessLog.objects.create(
+                    plate_number=plate, status=AccessLog.Status.AUTHORIZED,
+                    gate_id=gate_id, scanned_by=request.user,
+                )
                 results.append({
-                    'plate_number': plate,
-                    'status': 'unknown',
-                    'message': 'Plate not registered.',
-                    'bbox': bbox,
-                    'sample_id': ml_sample.get("sample_id") if ml_sample else None,
+                    'plate_number':  plate,
+                    'status':        'authorized',
+                    'allowed':       True,
+                    'message':       f'Supplier vehicle — {supplier_name}. Entry permitted.',
+                    'is_supplier':   True,
+                    'supplier_name': supplier_name,
+                    'bbox':          bbox,
+                    'sample_id':     ml_sample.get("sample_id") if ml_sample else None,
                 })
                 continue
 
@@ -562,6 +634,9 @@ class ExitLogView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        if not is_valid_ph_plate(plate_number):
+            return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
+
         vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
 
         exit_log = AccessLog.objects.create(
@@ -776,6 +851,9 @@ class ManualEntryView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        if not is_valid_ph_plate(plate_number):
+            return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
+
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate_number).first()
 
@@ -783,33 +861,98 @@ class ManualEntryView(APIView):
             supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                 plate_number=plate_number, supplier__is_active=True
             ).first()
-            if supplier_plate:
+
+            if not supplier_plate:
                 AccessLog.objects.create(
-                    plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
-                    gate_id=gate_id, scanned_by=request.user,
+                    plate_number=plate_number,
+                    status=AccessLog.Status.UNKNOWN,
+                    gate_id=gate_id,
+                    scanned_by=request.user,
                 )
                 return Response({
-                    'plate_number':  plate_number,
-                    'status':        'authorized',
-                    'allowed':       True,
-                    'message':       f'Supplier vehicle — {supplier_plate.supplier.company_name}. Entry permitted.',
-                    'is_supplier':   True,
-                    'supplier_name': supplier_plate.supplier.company_name,
-                    'gate_id':       gate_id,
+                    'plate_number': plate_number,
+                    'status':       'unknown',
+                    'allowed':      False,
+                    'message':      'Plate not found in the system.',
+                    'gate_id':      gate_id,
+                })
+
+            supplier_name = supplier_plate.supplier.company_name
+            inside_status, last_entry = _inside_state(plate_number)
+
+            if inside_status == 'duplicate':
+                return Response({
+                    'plate_number':   plate_number,
+                    'status':         'duplicate',
+                    'allowed':        False,
+                    'message':        'Duplicate scan — already processed within grace period.',
+                    'is_supplier':    True,
+                    'supplier_name':  supplier_name,
+                    'already_inside': True,
+                    'gate_id':        gate_id,
+                })
+
+            if inside_status == 'inside':
+                from django.db import transaction as _tx
+                with _tx.atomic():
+                    locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+                    if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                        return Response({
+                            'plate_number':   plate_number,
+                            'status':         'duplicate',
+                            'allowed':        False,
+                            'message':        'Duplicate scan — already processed.',
+                            'is_supplier':    True,
+                            'supplier_name':  supplier_name,
+                            'already_inside': False,
+                            'gate_id':        gate_id,
+                        })
+                    exit_log = AccessLog.objects.create(
+                        plate_number=plate_number,
+                        status=AccessLog.Status.EXITED,
+                        gate_id=gate_id,
+                        scanned_by=request.user,
+                        paired_entry=locked_entry,
+                    )
+
+                delta = exit_log.scanned_at - last_entry.scanned_at
+                duration_minutes = int(delta.total_seconds() / 60)
+                return Response({
+                    'plate_number':      plate_number,
+                    'status':            'exited',
+                    'allowed':           False,
+                    'message':           f'Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.',
+                    'is_supplier':       True,
+                    'supplier_name':     supplier_name,
+                    'already_inside':    False,
+                    'duration_minutes':  duration_minutes,
+                    'gate_id':           gate_id,
+                })
+
+            if _in_exit_cooldown(plate_number):
+                return Response({
+                    'plate_number':   plate_number,
+                    'status':         'duplicate',
+                    'allowed':        False,
+                    'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
+                    'is_supplier':    True,
+                    'supplier_name':  supplier_name,
+                    'already_inside': False,
+                    'gate_id':        gate_id,
                 })
 
             AccessLog.objects.create(
-                plate_number=plate_number,
-                status=AccessLog.Status.UNKNOWN,
-                gate_id=gate_id,
-                scanned_by=request.user,
+                plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
+                gate_id=gate_id, scanned_by=request.user,
             )
             return Response({
-                'plate_number': plate_number,
-                'status':       'unknown',
-                'allowed':      False,
-                'message':      'Plate not found in the system.',
-                'gate_id':      gate_id,
+                'plate_number':  plate_number,
+                'status':        'authorized',
+                'allowed':       True,
+                'message':       f'Supplier vehicle — {supplier_name}. Entry permitted.',
+                'is_supplier':   True,
+                'supplier_name': supplier_name,
+                'gate_id':       gate_id,
             })
 
         inside_status, last_entry = _inside_state(plate_number)
