@@ -9,6 +9,7 @@ import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
 } from '../../api/vehicles'
+import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './SupplierManagement.css'
 
 // ── Add Supplier modal ────────────────────────────────────────────────
@@ -73,6 +74,7 @@ function AddSupplierModal({ onClose, onCreated }) {
 function SupplierCard({ supplier, onUpdated, onDeleted }) {
   const [expanded, setExpanded]     = useState(false)
   const [plateInput, setPlateInput] = useState('')
+  const [plateError, setPlateError] = useState('')
   const [toggling, setToggling]     = useState(false)
   const [deleting, setDeleting]     = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
@@ -95,8 +97,12 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
   }
 
   const addPlate = async () => {
-    const p = plateInput.trim().toUpperCase()
+    const p = formatPlateNumber(plateInput.trim())
     if (!p) return
+    if (!isValidPlateNumber(p)) {
+      setPlateError('Invalid Philippine plate number format.')
+      return
+    }
     if (plates.some(pl => pl.plate_number === p)) {
       toast.error('Plate already listed for this supplier.')
       return
@@ -204,10 +210,14 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
           <div className="sp-plate-input-row">
             <input
               ref={plateRef}
-              className="sp-text-input sp-plate-field"
+              className={`sp-text-input sp-plate-field${plateError ? ' sp-input-error' : ''}`}
               placeholder="Enter plate number (e.g. ABC 123)"
               value={plateInput}
-              onChange={e => setPlateInput(e.target.value)}
+              onChange={e => {
+                const formatted = formatPlateNumber(e.target.value)
+                setPlateInput(formatted)
+                setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+              }}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
               disabled={saving}
             />
@@ -216,6 +226,10 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
+          {plateError
+            ? <span className="sp-field-error-msg">{plateError}</span>
+            : <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+          }
 
           {plates.length === 0 ? (
             <p className="sp-no-plates">No plates registered yet. Add one above.</p>
