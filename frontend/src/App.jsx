@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import LoginPage from './pages/Login/LoginPage'
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <CameraProvider>
     <BrowserRouter>
+      <Toaster richColors position="top-right" />
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
