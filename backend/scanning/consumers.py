@@ -2,7 +2,7 @@ import logging
 import base64
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 import asyncio
 from asgiref.sync import sync_to_async
@@ -497,6 +497,23 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         gate_id = getattr(self, '_gate_id', 'main')
 
         if not vehicle:
+            cutoff = timezone.now() - timedelta(seconds=self._dedup_seconds)
+            recent_unknown = AccessLog.objects.filter(
+                plate_number=plate_number,
+                status="unknown",
+                scanned_at__gte=cutoff,
+            ).exists()
+            if recent_unknown:
+                return {
+                    "status":         "duplicate",
+                    "allowed":        False,
+                    "message":        "Duplicate scan — unregistered plate already logged within cooldown.",
+                    "constraint":     None,
+                    "vehicle":        None,
+                    "registration":   None,
+                    "has_violations": False,
+                    "already_inside": False,
+                }
             AccessLog.objects.create(
                 plate_number=plate_number,
                 status="unknown",

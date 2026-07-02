@@ -196,7 +196,7 @@ class SystemSettings(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(10)],
     )
     scan_dedup_seconds   = models.IntegerField(
-        default=30,
+        default=60,
         validators=[MinValueValidator(5), MaxValueValidator(300)],
     )
     event_mode_parking   = models.BooleanField(

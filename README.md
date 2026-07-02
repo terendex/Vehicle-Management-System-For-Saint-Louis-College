@@ -41,7 +41,7 @@ When a scan is denied, an `UNAUTHORIZED` violation is auto-created (deduplicated
 
 ### Scan Deduplication
 
-The live WebSocket stream (webcam and RTSP) deduplicates repeated scans of the same plate within a configurable window (`SystemSettings.scan_dedup_seconds`, default 30 s). Manual plate entry and photo upload have no cooldown — every call is logged.
+The live WebSocket stream (webcam and RTSP) deduplicates repeated scans of the same plate within a configurable window (`SystemSettings.scan_dedup_seconds`, default 60 s). Manual plate entry and photo upload have no cooldown — every call is logged.
 
 ---
 
