@@ -531,6 +531,30 @@
 .ev-add-plate-btn:hover:not(:disabled) { background: #1e1f4a; }
 .ev-add-plate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.ev-text-input.ev-input-error {
+  border-color: #DC2626;
+  background: #FFF8F8;
+}
+.ev-text-input.ev-input-error:focus {
+  border-color: #DC2626;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.08);
+}
+
+.ev-field-hint {
+  display: block;
+  font-size: 11px;
+  color: #9CA3B0;
+  margin: 4px 0 0;
+}
+
+.ev-field-error-msg {
+  display: block;
+  font-size: 11px;
+  color: #DC2626;
+  font-weight: 500;
+  margin: 4px 0 0;
+}
+
 /* ── Shared buttons ──────────────────────────────────────────────── */
 
 .ev-btn {

@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
 import { zoneApi } from '../../api/parking'
+import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './Events.css'
 
 // ── Toggle card for event mode switches ──────────────────────────────
@@ -38,13 +39,15 @@ function ModeToggle({ label, description, enabled, loading, onToggle }) {
 function AddEventModal({ onClose, onCreated }) {
   const [form, setForm]       = useState({ name: '', date: '' })
   const [plateInput, setPlateInput] = useState('')
+  const [plateError, setPlateError] = useState('')
   const [plates, setPlates]   = useState([])
   const [saving, setSaving]   = useState(false)
   const plateRef = useRef(null)
 
   const addPlate = () => {
-    const p = plateInput.trim().toUpperCase()
+    const p = formatPlateNumber(plateInput.trim())
     if (!p) return
+    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
     if (plates.includes(p)) { toast.error('Plate already added.'); return }
     setPlates(prev => [...prev, p])
     setPlateInput('')
@@ -108,16 +111,24 @@ function AddEventModal({ onClose, onCreated }) {
             <div className="ev-plate-input-row">
               <input
                 ref={plateRef}
-                className="ev-text-input ev-plate-field"
+                className={`ev-text-input ev-plate-field${plateError ? ' ev-input-error' : ''}`}
                 placeholder="e.g. ABC 123"
                 value={plateInput}
-                onChange={e => setPlateInput(e.target.value)}
+                onChange={e => {
+                  const formatted = formatPlateNumber(e.target.value)
+                  setPlateInput(formatted)
+                  setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+                }}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
               />
               <button type="button" className="ev-add-plate-btn" onClick={addPlate}>
                 <Plus size={15} /> Add
               </button>
             </div>
+            {plateError
+              ? <span className="ev-field-error-msg">{plateError}</span>
+              : <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            }
             {plates.length > 0 && (
               <div className="ev-plate-tags">
                 {plates.map(p => (
@@ -147,6 +158,7 @@ function AddEventModal({ onClose, onCreated }) {
 function EventCard({ event, onUpdated, onDeleted }) {
   const [expanded, setExpanded]         = useState(false)
   const [plateInput, setPlateInput]     = useState('')
+  const [plateError, setPlateError]     = useState('')
   const [toggling, setToggling]         = useState(false)
   const [deleting, setDeleting]         = useState(false)
   const [confirmDel, setConfirmDel]     = useState(false)
@@ -188,8 +200,9 @@ function EventCard({ event, onUpdated, onDeleted }) {
   }
 
   const addPlate = async () => {
-    const p = plateInput.trim().toUpperCase()
+    const p = formatPlateNumber(plateInput.trim())
     if (!p) return
+    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
     if (localPlates.includes(p)) { toast.error('Plate already listed.'); return }
     setSaving(true)
     try {
@@ -347,10 +360,14 @@ function EventCard({ event, onUpdated, onDeleted }) {
           <div className="ev-plate-input-row">
             <input
               ref={plateRef}
-              className="ev-text-input ev-plate-field"
+              className={`ev-text-input ev-plate-field${plateError ? ' ev-input-error' : ''}`}
               placeholder="Enter plate number"
               value={plateInput}
-              onChange={e => setPlateInput(e.target.value)}
+              onChange={e => {
+                const formatted = formatPlateNumber(e.target.value)
+                setPlateInput(formatted)
+                setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+              }}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
               disabled={saving}
             />
@@ -359,6 +376,10 @@ function EventCard({ event, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
+          {plateError
+            ? <span className="ev-field-error-msg">{plateError}</span>
+            : <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+          }
 
           {localPlates.length === 0 ? (
             <p className="ev-no-plates">No organizer plates added yet.</p>
