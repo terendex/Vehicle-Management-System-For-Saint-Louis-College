@@ -106,8 +106,9 @@ def _pair_entry_exit(exit_log) -> None:
         exit_log.save(update_fields=['paired_entry'])
 
 
-def _auto_log_violation(vehicle, message: str):
+def _auto_log_violation(vehicle, message: str, gate_id: str = ''):
     """Create an unauthorized violation if none was logged in the last 5 minutes."""
+    from .models import active_guard_for_gate
     cutoff = timezone.now() - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
     already = Violation.objects.filter(
         vehicle=vehicle,
@@ -120,6 +121,7 @@ def _auto_log_violation(vehicle, message: str):
             violation_type=Violation.Type.UNAUTHORIZED,
             notes=f'Auto-logged: {message}',
             fine_amount=Violation.compute_fine(vehicle),
+            on_duty_guard=active_guard_for_gate(gate_id),
         )
 
 
@@ -365,7 +367,7 @@ class ScanView(APIView):
             _audit(request, action, details)
 
             if not entry['allowed']:
-                _auto_log_violation(vehicle, entry['message'])
+                _auto_log_violation(vehicle, entry['message'], gate_id)
 
             resp = {
                 'plate_number':    plate,
@@ -511,10 +513,20 @@ class AccessLogListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = AccessLog.objects.all().order_by('-scanned_at')
+        qs = (
+            AccessLog.objects
+            .select_related('scanned_by', 'on_duty_guard', 'vehicle__user')
+            .order_by('-scanned_at')
+        )
         gate_id = request.query_params.get('gate_id')
         if gate_id:
             qs = qs.filter(gate_id=gate_id)
+        date = request.query_params.get('date')
+        if date:
+            try:
+                qs = qs.filter(scanned_at__date=date)
+            except Exception:
+                pass  # ignore malformed dates rather than 500
         limit = int(request.query_params.get('limit', 200))
         logs = qs[:limit]
         return Response(AccessLogSerializer(logs, many=True).data)
@@ -1043,7 +1055,7 @@ class ManualEntryView(APIView):
         )
 
         if not entry['allowed']:
-            _auto_log_violation(vehicle, entry['message'])
+            _auto_log_violation(vehicle, entry['message'], gate_id)
 
         return Response({
             'plate_number':    plate_number,

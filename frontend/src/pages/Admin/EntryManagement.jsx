@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Camera,
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Zap, Video, Wifi,
+  ClipboardList, UserPlus, X, Zap, Video, Wifi, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -28,6 +28,7 @@ const STATUS_META = {
   disabled:   { label: 'Access Disabled',     Icon: XCircle,    cls: 'denied',     logCls: 'denied' },
   unreadable: { label: 'Unreadable Plate',    Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
   cooldown:   { label: 'Recently Scanned',    Icon: Clock,      cls: 'pending',    logCls: 'pending' },
+  exited:     { label: 'Exited',              Icon: LogOut,     cls: 'exited',     logCls: 'exited' },
 }
 
 function getMeta(status) {
@@ -300,29 +301,30 @@ export default function EntryManagement() {
   }) // intentionally no deps — runs after every render until activeCamId is set
 
   const handleScanSuccess = useCallback((results) => {
-    if (!results || results.length === 0) return
-    setResult(results)
+    const fresh = (results ?? []).filter((r) => r.status !== 'duplicate')
+    if (fresh.length === 0) return
+    setResult(fresh)
 
-    setLogs((prev) => {
-      const now = Date.now()
-      const newLogs = results
-        .filter((r) => {
-          const cooldowns = plateCooldownRef.current
-          if (cooldowns.has(r.plate_number)) return false
-          cooldowns.add(r.plate_number)
-          setTimeout(() => cooldowns.delete(r.plate_number), PLATE_COOLDOWN_MS)
-          return true
-        })
-        .map((r) => ({
-          id: now + Math.random(),
-          plate_number: r.plate_number,
-          status: r.status,
-          scanned_at: new Date().toISOString(),
-          scanned_by_name: user?.full_name || null,
-        }))
-      return [...newLogs, ...prev].slice(0, LOG_LIMIT)
-    })
-  }, [])
+    const cooldowns = plateCooldownRef.current
+    const now = Date.now()
+    const newLogs = fresh
+      .filter((r) => {
+        if (cooldowns.has(r.plate_number)) return false
+        cooldowns.add(r.plate_number)
+        setTimeout(() => cooldowns.delete(r.plate_number), PLATE_COOLDOWN_MS)
+        return true
+      })
+      .map((r) => ({
+        id: now + Math.random(),
+        plate_number: r.plate_number,
+        status: r.status,
+        scanned_at: new Date().toISOString(),
+        scanned_by_name: user?.full_name || null,
+      }))
+    if (newLogs.length > 0) {
+      setLogs((prev) => [...newLogs, ...prev].slice(0, LOG_LIMIT))
+    }
+  }, [user])
 
   useEffect(() => {
     if (rtspResults?.length > 0) handleScanSuccess(rtspResults)
@@ -478,8 +480,13 @@ export default function EntryManagement() {
                         <span className={`em-log-dot ${m.logCls}`} />
                         <span className="em-log-plate">{log.plate_number || '—'}</span>
                         <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
-                        {log.scanned_by_name && (
-                          <span className="em-log-guard">{log.scanned_by_name}</span>
+                        {(log.on_duty_guard_name || log.scanned_by_name) && (
+                          <span
+                            className="em-log-guard"
+                            title={log.on_duty_guard_name ? 'Guard on duty' : 'Scanned by'}
+                          >
+                            {log.on_duty_guard_name || log.scanned_by_name}
+                          </span>
                         )}
                         <span className="em-log-time">{timeAgo(log.scanned_at)}</span>
                       </div>

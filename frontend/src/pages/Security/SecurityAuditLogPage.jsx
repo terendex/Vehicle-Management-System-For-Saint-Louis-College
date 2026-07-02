@@ -154,10 +154,13 @@ export default function SecurityAuditLogPage() {
                         <span className="sal-plate">{log.plate_number || '—'}</span>
                         <span className={`sal-badge ${cls}`}>{label}</span>
                       </div>
-                      {(log.vehicle_owner_name || log.scanned_by_name) && (
+                      {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
                         <div className="sal-row-sub">
                           {log.vehicle_owner_name && <span>Owner: {log.vehicle_owner_name}</span>}
-                          {log.scanned_by_name && <span>· Guard: {log.scanned_by_name}</span>}
+                          {log.on_duty_guard_name && <span>· On duty: {log.on_duty_guard_name}</span>}
+                          {log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && (
+                            <span>· Scanned by: {log.scanned_by_name}</span>
+                          )}
                         </div>
                       )}
                     </div>

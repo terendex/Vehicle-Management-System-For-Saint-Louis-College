@@ -75,9 +75,22 @@ class AccessLog(models.Model):
         'accounts.User', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='scans',
     )
+    on_duty_guard  = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='on_duty_scans',
+        help_text="Guard clocked in at this gate when the scan happened.",
+    )
 
     class Meta:
         ordering = ['-scanned_at']
+
+    def save(self, *args, **kwargs):
+        # scanned_by records whose session triggered the scan (may be an admin
+        # watching a camera feed); on_duty_guard records who was clocked in at
+        # the gate at that moment.
+        if self._state.adding and self.on_duty_guard_id is None and self.gate_id:
+            self.on_duty_guard = active_guard_for_gate(self.gate_id)
+        super().save(*args, **kwargs)
 
 
 class GuardShift(models.Model):
@@ -97,6 +110,20 @@ class GuardShift(models.Model):
 
     def __str__(self):
         return f"{self.guard.full_name} @ {self.gate} — {self.clocked_in_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+def active_guard_for_gate(gate: str):
+    """The guard currently clocked in at this gate, or None."""
+    if not gate:
+        return None
+    shift = (
+        GuardShift.objects
+        .filter(gate=gate, clocked_out_at__isnull=True)
+        .select_related('guard')
+        .order_by('-clocked_in_at')
+        .first()
+    )
+    return shift.guard if shift else None
 
 
 class MLTrainingSample(models.Model):

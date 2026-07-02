@@ -41,6 +41,11 @@ class Violation(models.Model):
         'accounts.User', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='issued_violations',
     )
+    on_duty_guard  = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='on_duty_violations',
+        help_text="Guard clocked in at the gate when this violation was auto-logged.",
+    )
     evidence       = models.ImageField(upload_to='violations/evidence/', blank=True, null=True)
 
     # Offense tracking (new-style violations only — null for legacy)
