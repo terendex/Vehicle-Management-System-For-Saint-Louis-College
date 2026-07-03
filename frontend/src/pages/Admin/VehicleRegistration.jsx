@@ -61,6 +61,7 @@ export default function VehicleRegistration() {
   const [qrDisplayData, setQrDisplayData] = useState(null)
   const [qrViewerCopied, setQrViewerCopied] = useState(false)
   const [accountModal, setAccountModal] = useState(null)
+  const [blockPrompt, setBlockPrompt] = useState(null)  // registration-block 409 payload
   const [emailFailed, setEmailFailed] = useState(false)
 
   useEffect(() => {
@@ -100,7 +101,9 @@ export default function VehicleRegistration() {
   }
 
   // ── Accept flow ──
-  const confirmAccept = async () => {
+  // acknowledgeBlock is set true after CDSO confirms a plate flagged by a prior
+  // 3rd-offense violation (backend returns 409 registration_blocked otherwise)
+  const confirmAccept = async (acknowledgeBlock = false) => {
     if (!selectedReg) return
     const originalDays  = selectedReg.campus_days || []
     const hasAddedDays  = daysOverride.some(d => !originalDays.includes(d))
@@ -111,7 +114,9 @@ export default function VehicleRegistration() {
         orNumber.trim(),
         daysOverride.length > 0 ? daysOverride : undefined,
         hasAddedDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
+        acknowledgeBlock,
       )
+      setBlockPrompt(null)
       setIsViewModalOpen(false)
       fetchRegistrations()
       if (result?.account) {
@@ -121,8 +126,13 @@ export default function VehicleRegistration() {
         showResult('Registration accepted successfully!', 'success')
       }
     } catch (error) {
-      console.error('Failed to accept registration:', error)
-      showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
+      if (error.response?.status === 409 && error.response?.data?.error === 'registration_blocked') {
+        // Plate is flagged — ask CDSO to confirm additional review before proceeding
+        setBlockPrompt(error.response.data)
+      } else {
+        console.error('Failed to accept registration:', error)
+        showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -623,6 +633,31 @@ export default function VehicleRegistration() {
       )}
 
       {/* MODAL: Result/Success/Error */}
+      {/* MODAL: Registration block — plate flagged by prior 3rd-offense violation */}
+      {blockPrompt && (
+        <div className="modal-overlay">
+          <div className="modal-content confirm-modal">
+            <div className="confirm-icon error"><AlertTriangle size={24} /></div>
+            <h2 className="confirm-title">Plate Flagged for Review</h2>
+            <p className="confirm-message">
+              {blockPrompt.detail}
+            </p>
+            {blockPrompt.registration_block && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', margin: '4px 0 12px', fontSize: 13, textAlign: 'left' }}>
+                <div><strong>Flagged violations:</strong> {blockPrompt.registration_block.count}</div>
+                <div><strong>Most recent:</strong> {blockPrompt.registration_block.latest_type} ({blockPrompt.registration_block.latest_status})</div>
+              </div>
+            )}
+            <div className="confirm-actions" style={{ display: 'flex', gap: 8 }}>
+              <button className="btn-secondary" onClick={() => setBlockPrompt(null)} disabled={submitting} style={{ flex: 1, justifyContent: 'center' }}>Cancel</button>
+              <button className="btn-primary" onClick={() => confirmAccept(true)} disabled={submitting} style={{ flex: 1, justifyContent: 'center', background: '#dc2626', borderColor: '#dc2626' }}>
+                {submitting ? 'Accepting…' : 'Reviewed — Accept Anyway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {resultModal && (
         <div className="modal-overlay">
           <div className="modal-content confirm-modal">
