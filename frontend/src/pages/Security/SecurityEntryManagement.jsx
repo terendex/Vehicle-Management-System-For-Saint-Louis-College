@@ -15,6 +15,7 @@ import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
+import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './SecurityEntryManagement.css'
 
 
@@ -591,6 +592,10 @@ export default function SecurityEntryManagement() {
     e?.preventDefault()
     const plate = plateInput.trim().toUpperCase()
     if (!plate) return
+    if (!isValidPlateNumber(plate)) {
+      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
+      return
+    }
     setLoading(true)
     setExitResult(null)
     try {
@@ -615,6 +620,10 @@ export default function SecurityEntryManagement() {
   const handleRecordExit = async () => {
     const plate = plateInput.trim().toUpperCase()
     if (!plate) return
+    if (!isValidPlateNumber(plate)) {
+      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
+      return
+    }
     setExitLoading(true)
     setExitResult(null)
     try {
@@ -746,7 +755,7 @@ export default function SecurityEntryManagement() {
                 <input
                   className="em-plate-input"
                   value={plateInput}
-                  onChange={e => { setPlateInput(e.target.value.toUpperCase()); setExitResult(null) }}
+                  onChange={e => { setPlateInput(formatPlateNumber(e.target.value)); setExitResult(null) }}
                   placeholder="E.G. ABC 123"
                   style={{
                     width: '100%', padding: '11px 14px', border: '2px solid #E2E6EE',
