@@ -118,6 +118,38 @@ class CameraSerializer(serializers.ModelSerializer):
                   'rtsp_url', 'assignment', 'gate_id', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']
 
+    def validate(self, attrs):
+        # Normalize connection fields
+        for f in ('ip', 'device_id', 'rtsp_url'):
+            if f in attrs and attrs[f]:
+                attrs[f] = attrs[f].strip()
+
+        ip         = attrs.get('ip',        getattr(self.instance, 'ip', '')) or ''
+        device_id  = attrs.get('device_id', getattr(self.instance, 'device_id', '')) or ''
+        rtsp_url   = attrs.get('rtsp_url',  getattr(self.instance, 'rtsp_url', '')) or ''
+        assignment = attrs.get('assignment', getattr(self.instance, 'assignment', '')) or ''
+        gate_id    = attrs.get('gate_id',    getattr(self.instance, 'gate_id', None))
+
+        # No duplicate devices — one row per physical camera
+        others = Camera.objects.all()
+        if self.instance:
+            others = others.exclude(pk=self.instance.pk)
+        if ip and others.filter(ip__iexact=ip).exists():
+            raise serializers.ValidationError(
+                {'ip': 'A camera with this IP address already exists.'})
+        if device_id and others.filter(device_id__iexact=device_id).exists():
+            raise serializers.ValidationError(
+                {'device_id': 'A camera with this Device ID already exists.'})
+        if rtsp_url and others.filter(rtsp_url__iexact=rtsp_url).exists():
+            raise serializers.ValidationError(
+                {'rtsp_url': 'A camera with this stream URL already exists.'})
+
+        # Entry cameras must know which gate they cover (drives log tagging)
+        if assignment == 'entry' and not gate_id:
+            raise serializers.ValidationError(
+                {'gate_id': 'Entry cameras must be assigned to a gate.'})
+        return attrs
+
 
 class SupplierPlateSerializer(serializers.ModelSerializer):
     class Meta:

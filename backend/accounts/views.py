@@ -371,16 +371,111 @@ class AuditLogListView(generics.ListAPIView):
         if date_to:
             qs = qs.filter(created_at__date__lte=date_to)
 
-        # Actor search: match user_code, full_name, or email (case-insensitive)
+        # Search matches the actor (code / name / email) or the details text
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(
                 Q(actor__user_code__icontains=search) |
                 Q(actor__full_name__icontains=search) |
-                Q(actor__email__icontains=search)
+                Q(actor__email__icontains=search) |
+                Q(details__icontains=search)
             )
 
         return qs.order_by('-created_at')
+
+
+class AuditLogExportView(APIView):
+    """Download the (filtered) audit log as a formatted Excel report — admin only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from django.utils import timezone as tz
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill
+
+        qs = AuditLog.objects.select_related('actor', 'target_user').all()
+        action    = request.query_params.get('action', '').strip()
+        date_from = request.query_params.get('date_from', '').strip()
+        date_to   = request.query_params.get('date_to', '').strip()
+        search    = request.query_params.get('search', '').strip()
+        if action:
+            qs = qs.filter(action=action)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        if search:
+            qs = qs.filter(
+                Q(actor__user_code__icontains=search) |
+                Q(actor__full_name__icontains=search) |
+                Q(actor__email__icontains=search) |
+                Q(details__icontains=search)
+            )
+        rows = qs.order_by('-created_at')[:5000]
+
+        action_labels = dict(AuditLog.Action.choices)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Audit Log'
+
+        # Report header
+        ws.merge_cells('A1:G1')
+        ws['A1'] = 'Saint Louis College — Vehicle Management System · Audit Log Report'
+        ws['A1'].font = Font(bold=True, size=13, color='2A2B61')
+
+        filters_desc = []
+        if action:
+            filters_desc.append(f"Action: {action_labels.get(action, action)}")
+        if date_from or date_to:
+            filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+        if search:
+            filters_desc.append(f"Search: '{search}'")
+        ws.merge_cells('A2:G2')
+        ws['A2'] = (
+            f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+            f"by {getattr(request.user, 'full_name', '')} · "
+            + ('; '.join(filters_desc) if filters_desc else 'All records')
+            + f" · {rows.count() if hasattr(rows, 'count') else len(rows)} entries"
+        )
+        ws['A2'].font = Font(size=10, color='666666')
+
+        # Column headers
+        headers = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details', 'IP Address']
+        header_fill = PatternFill('solid', fgColor='2A2B61')
+        for col, title in enumerate(headers, start=1):
+            cell = ws.cell(row=4, column=col, value=title)
+            cell.font = Font(bold=True, color='FFFFFF', size=11)
+            cell.fill = header_fill
+            cell.alignment = Alignment(vertical='center')
+
+        for width, col in zip([5, 21, 24, 12, 20, 95, 15], 'ABCDEFG'):
+            ws.column_dimensions[col].width = width
+        ws.freeze_panes = 'A5'
+
+        wrap = Alignment(wrap_text=True, vertical='top')
+        for i, log in enumerate(rows, start=1):
+            r = 4 + i
+            actor = log.actor.full_name if log.actor else 'System'
+            role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
+            ws.cell(row=r, column=1, value=i)
+            ws.cell(row=r, column=2,
+                    value=tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'))
+            ws.cell(row=r, column=3, value=actor)
+            ws.cell(row=r, column=4, value=role)
+            ws.cell(row=r, column=5, value=action_labels.get(log.action, log.action))
+            c = ws.cell(row=r, column=6, value=log.details or '')
+            c.alignment = wrap
+            ws.cell(row=r, column=7, value=log.ip_address or '')
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        response['Content-Disposition'] = f'attachment; filename="audit-log-report-{stamp}.xlsx"'
+        wb.save(response)
+        return response
 
 
 class AuditLogClearView(APIView):

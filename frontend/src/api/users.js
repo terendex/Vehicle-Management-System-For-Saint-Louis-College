@@ -60,6 +60,14 @@ export const usersApi = {
     return data
   },
 
+  /** Download the filtered audit log as an Excel (.xlsx) report (admin only). */
+  exportAuditLogsExcel: async (params = {}) => {
+    const { data } = await api.get('/accounts/audit-logs/export/', {
+      params, responseType: 'blob',
+    })
+    return data
+  },
+
   /** Create an audit log entry manually (used for device management actions). */
   createAuditLog: async (payload) => {
     const { data } = await api.post('/accounts/audit-logs/', payload)

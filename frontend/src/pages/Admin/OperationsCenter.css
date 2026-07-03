@@ -518,3 +518,48 @@
   .oc-bottom-row   { grid-template-columns: 1fr; }
   .oc-guard-table-wrap { overflow-x: auto; }
 }
+
+/* ── List pagination (matches violations table) ─────────────────────────────── */
+.oc-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef0f6;
+}
+.oc-pager-info {
+  font-size: 11.5px;
+  color: #9ca3af;
+}
+.oc-pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oc-pager-current {
+  font-size: 12px;
+  color: #4b5563;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.oc-pager-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #e2e6ee;
+  border-radius: 7px;
+  background: #fff;
+  color: #4b5563;
+  cursor: pointer;
+}
+.oc-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.oc-pager-btn:not(:disabled):hover {
+  border-color: #c7cbd8;
+  background: #f8fafc;
+}

@@ -13,17 +13,23 @@ from rest_framework import status as drf_status
 from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
 from . import parking_camera
+from accounts.audit import audit, AuditedViewSetMixin
+from accounts.models import AuditLog
 
-class VehicleViewSet(viewsets.ModelViewSet):
+class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = Vehicle.objects.select_related('user').all()
     serializer_class   = VehicleSerializer
     permission_classes = [permissions.IsAuthenticated]
+    audit_label        = 'Vehicle'
 
     @action(detail=True, methods=['patch'])
     def authorize(self, request, pk=None):
         vehicle = self.get_object()
         vehicle.is_authorized = not vehicle.is_authorized
         vehicle.save()
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Vehicle {'authorized' if vehicle.is_authorized else 'deauthorized'} | "
+              f"Plate: {vehicle.plate_number} | By: {request.user.full_name}")
         return Response({'plate': vehicle.plate_number, 'is_authorized': vehicle.is_authorized})
 
     @action(detail=True, methods=['get'])
@@ -54,15 +60,17 @@ class VehicleViewSet(viewsets.ModelViewSet):
             'resolved_violations': ViolationSerializer(resolved_violations, many=True).data,
         })
 
-class RuleConstraintViewSet(viewsets.ModelViewSet):
+class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = RuleConstraint.objects.all()
     serializer_class   = RuleConstraintSerializer
     permission_classes = [permissions.IsAuthenticated]
+    audit_label        = 'Schedule Rule'
 
-class ReferenceItemViewSet(viewsets.ModelViewSet):
+class ReferenceItemViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ReferenceItem.objects.all()
     serializer_class   = ReferenceItemSerializer
     permission_classes = [permissions.IsAuthenticated]
+    audit_label        = 'Reference Item'
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -77,10 +85,11 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
 
-class ParkingZoneViewSet(viewsets.ModelViewSet):
+class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ParkingZone.objects.prefetch_related('spaces').all()
     serializer_class   = ParkingZoneSerializer
     permission_classes = [permissions.IsAuthenticated]
+    audit_label        = 'Parking Zone'
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -289,10 +298,11 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int):
     raise Exception('CGI PTZ failed: ' + '; '.join(errors))
 
 
-class CameraViewSet(viewsets.ModelViewSet):
+class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = Camera.objects.all()
     serializer_class   = CameraSerializer
     permission_classes = [permissions.IsAuthenticated]
+    audit_label        = 'Camera'
 
     def _next_cam_number(self):
         existing = set(Camera.objects.values_list('cam_number', flat=True))
@@ -305,7 +315,9 @@ class CameraViewSet(viewsets.ModelViewSet):
         num        = self._next_cam_number()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(cam_number=num, name=f'Cam {num}')
+        cam = serializer.save(cam_number=num, name=f'Cam {num}')
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Camera added | {cam} | IP: {cam.ip} | By: {request.user.full_name}")
         return Response(serializer.data, status=drf_status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='next-name')
@@ -712,6 +724,11 @@ class AcceptRegistrationView(APIView):
 
         # Refresh user to get generated user_code
         user.refresh_from_db()
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration accepted | Plate: {registration.plate_number} | "
+              f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
+              f"OR: {or_number} | By: {request.user.full_name}",
+              target_user=user)
         system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
         # Send acceptance email with QR code and credentials
@@ -766,6 +783,10 @@ class RejectRegistrationView(APIView):
         registration.rejection_reason = reason
         registration.reviewed_at = timezone.now()
         registration.save()
+
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration rejected | Plate: {registration.plate_number} | "
+              f"Applicant: {registration.full_name} | Reason: {reason} | By: {request.user.full_name}")
 
         # Send rejection email
         send_rejection_email(registration, reason)
@@ -1151,6 +1172,7 @@ class SystemSettingsView(APIView):
 
     def put(self, request):
         obj = SystemSettings.get()
+        before = self._serialize(obj)
         errors = {}
 
         from datetime import date as date_type
@@ -1209,6 +1231,12 @@ class SystemSettingsView(APIView):
         obj.registration_end   = registration_end
         obj.save()
 
+        after   = self._serialize(obj)
+        changed = [f"{k}: {before[k]} -> {after[k]}" for k in after if before[k] != after[k]]
+        if changed:
+            audit(request, AuditLog.Action.RECORD_UPDATED,
+                  f"System Settings updated | {'; '.join(changed)} | By: {request.user.full_name}")
+
         return Response(self._serialize(obj))
 
     def patch(self, request):
@@ -1226,6 +1254,9 @@ class SystemSettingsView(APIView):
             update_fields.append('open_campus_mode')
         if update_fields:
             obj.save(update_fields=update_fields)
+            toggles = '; '.join(f"{f}: {getattr(obj, f)}" for f in update_fields)
+            audit(request, AuditLog.Action.RECORD_UPDATED,
+                  f"System Settings updated | {toggles} | By: {request.user.full_name}")
         return Response(self._serialize(obj))
 
 
@@ -1272,6 +1303,8 @@ class EventListCreateView(APIView):
         ev = Event.objects.create(
             name=name, date=date_obj, organizer_plates=plates, created_by=request.user,
         )
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Event added | {ev.name} on {ev.date} | Organizer plates: {len(plates)} | By: {request.user.full_name}")
         return Response(self._serialize(ev), status=201)
 
 
@@ -1322,6 +1355,8 @@ class EventDetailView(APIView):
             ev.organizer_plates = plates
 
         ev.save()
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Event updated | {ev.name} on {ev.date} | By: {request.user.full_name}")
         return Response(self._serialize(ev))
 
     def delete(self, request, pk):
@@ -1329,7 +1364,10 @@ class EventDetailView(APIView):
             ev = Event.objects.get(pk=pk)
         except Event.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=404)
+        desc = f"{ev.name} on {ev.date}"
         ev.delete()
+        audit(request, AuditLog.Action.RECORD_DELETED,
+              f"Event deleted | {desc} | By: {request.user.full_name}")
         return Response(status=204)
 
 
@@ -1355,6 +1393,8 @@ class ParkingNoticeView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
         notice = serializer.save(created_by=request.user)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Parking notice broadcast | {notice.title} | By: {request.user.full_name}")
 
         # Email blast to all active vehicle owners
         from accounts.models import User as UserModel
@@ -1407,6 +1447,8 @@ class ParkingNoticeDetailView(APIView):
         notice = get_object_or_404(ParkingNotice, pk=pk)
         notice.is_active = False
         notice.save(update_fields=['is_active'])
+        audit(request, AuditLog.Action.RECORD_DELETED,
+              f"Parking notice removed | {notice.title} | By: {request.user.full_name}")
         return Response({'message': 'Notice deactivated.'}, status=200)
 
 
@@ -1460,6 +1502,8 @@ class RegistrationPeriodListCreateView(APIView):
 
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Registration period added | {period.label} ({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
         return Response(_serialize_period(period), status=201)
 
 
@@ -1472,6 +1516,8 @@ class RegistrationPeriodActivateView(APIView):
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period.is_active = True
         period.save(update_fields=['is_active'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration period activated | {period.label} | By: {request.user.full_name}")
         return Response(_serialize_period(period))
 
     def delete(self, request, pk):
@@ -1479,6 +1525,8 @@ class RegistrationPeriodActivateView(APIView):
         period = get_object_or_404(RegistrationPeriod, pk=pk)
         period.is_active = False
         period.save(update_fields=['is_active'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration period archived | {period.label} | By: {request.user.full_name}")
         return Response(_serialize_period(period))
 
 
@@ -1504,6 +1552,8 @@ class SupplierListCreateView(APIView):
         if Supplier.objects.filter(company_name__iexact=company_name).exists():
             return Response({'company_name': 'A supplier with this name already exists.'}, status=400)
         supplier = Supplier.objects.create(company_name=company_name)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Supplier added | {supplier.company_name} | By: {request.user.full_name}")
         return Response(SupplierSerializer(supplier).data, status=201)
 
 
@@ -1520,11 +1570,16 @@ class SupplierDetailView(APIView):
         if 'is_active' in request.data:
             supplier.is_active = bool(request.data['is_active'])
         supplier.save()
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Supplier updated | {supplier.company_name} | Active: {supplier.is_active} | By: {request.user.full_name}")
         return Response(SupplierSerializer(supplier).data)
 
     def delete(self, request, pk):
         supplier = get_object_or_404(Supplier, pk=pk)
+        name = supplier.company_name
         supplier.delete()
+        audit(request, AuditLog.Action.RECORD_DELETED,
+              f"Supplier deleted | {name} | By: {request.user.full_name}")
         return Response(status=204)
 
 
@@ -1540,9 +1595,14 @@ class SupplierPlateView(APIView):
         if SupplierPlate.objects.filter(plate_number=plate_number).exists():
             return Response({'plate_number': 'This plate is already registered to a supplier.'}, status=400)
         sp = SupplierPlate.objects.create(supplier=supplier, plate_number=plate_number)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Supplier plate added | {plate_number} to {supplier.company_name} | By: {request.user.full_name}")
         return Response(SupplierPlateSerializer(sp).data, status=201)
 
     def delete(self, request, pk, plate_pk):
         plate = get_object_or_404(SupplierPlate, pk=plate_pk, supplier_id=pk)
+        desc = f"{plate.plate_number} from {plate.supplier.company_name}"
         plate.delete()
+        audit(request, AuditLog.Action.RECORD_DELETED,
+              f"Supplier plate removed | {desc} | By: {request.user.full_name}")
         return Response(status=204)

@@ -119,7 +119,7 @@ def _pair_entry_exit(exit_log) -> None:
         exit_log.save(update_fields=['paired_entry'])
 
 
-def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
+def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None) -> int:
     """
     Mark today's ACTIVE visitor pass for this plate as exited — called from every
     exit path (camera toggle, manual Record Exit, QR scan) so passes don't stay
@@ -145,6 +145,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
+                evidence_bytes=evidence_bytes,
             )
         except Exception:
             pass
@@ -152,7 +153,8 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
     return 0
 
 
-def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = ''):
+def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
+                        evidence_bytes=None):
     """
     Auto-issue a violation at the gate — at most ONE violation of each type per
     vehicle per calendar day, no matter how often it is scanned or detected that
@@ -193,6 +195,16 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         is_released          = True,  # visible to the owner immediately
         on_duty_guard        = active_guard_for_gate(gate_id),
     )
+    # Attach the camera frame as evidence (shown in admin table + owner email)
+    if evidence_bytes:
+        try:
+            from django.core.files.base import ContentFile
+            violation.evidence.save(
+                f"auto_{vehicle.plate_number}_{int(timezone.now().timestamp())}.jpg",
+                ContentFile(evidence_bytes), save=True,
+            )
+        except Exception:
+            pass
     try:
         from violations.email_utils import send_violation_warning_email, send_fee_imposed_email
         if offense_num in (1, 2):

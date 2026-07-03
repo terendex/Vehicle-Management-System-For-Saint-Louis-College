@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
-  AlertTriangle, CheckCircle, EyeOff, Filter,
+  AlertTriangle, CheckCircle, Filter,
   RotateCcw, Search, Bell, X,
   Image, ZoomIn, ChevronLeft, ChevronRight, Loader2,
   FileText, ShieldOff, ClipboardCheck,
@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
-  getAllViolations, releaseViolation, resolveViolation,
+  getAllViolations, resolveViolation,
   issueCDSOReport, clearViolation,
 } from '../../api/violations'
 import './ViolationsManagement.css'
@@ -20,7 +20,7 @@ const TYPE_LABELS = {
   time_exceed:          'Time Exceed',
   no_sticker:           'No Sticker',
   expired_registration: 'Expired Registration',
-  unauthorized:         'Unauthorized (Legacy)',
+  unauthorized:         'Unauthorized',
   other:                'Other',
 }
 
@@ -30,7 +30,6 @@ const FILTER_OPTIONS = [
   { value: 'all',        label: 'All' },
   { value: 'warning',    label: 'Warnings' },
   { value: 'fee',        label: 'Fee Imposed' },
-  { value: 'pending',    label: 'Pending (Legacy)' },
   { value: 'resolved',   label: 'Cleared / Resolved' },
 ]
 
@@ -130,6 +129,7 @@ export default function ViolationsManagement() {
   const [violations, setViolations]       = useState([])
   const [loading, setLoading]             = useState(true)
   const [filter, setFilter]               = useState('all')
+  const [typeFilter, setTypeFilter]       = useState('all')
   const [search, setSearch]               = useState('')
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
@@ -150,13 +150,23 @@ export default function ViolationsManagement() {
 
   useEffect(() => { fetchAll() }, [])
 
+  // Live wiring to gate scanning: new auto-issued violations appear without a
+  // manual refresh (silent poll — no loading spinner)
+  useEffect(() => {
+    const t = setInterval(() => {
+      getAllViolations().then(({ data }) => setViolations(data)).catch(() => {})
+    }, 30000)
+    return () => clearInterval(t)
+  }, [])
+
   const filtered = useMemo(() => {
     let list = [...violations]
 
     if (filter === 'warning')  list = list.filter(v => v.status === 'warning')
     if (filter === 'fee')      list = list.filter(v => v.status === 'fee_imposed')
-    if (filter === 'pending')  list = list.filter(v => !v.is_released && !v.is_resolved && !v.offense_number)
     if (filter === 'resolved') list = list.filter(v => v.is_resolved || v.status === 'cleared')
+
+    if (typeFilter !== 'all') list = list.filter(v => v.violation_type === typeFilter)
 
     if (datePeriod !== 'all') {
       const cutoff = getPeriodStart(datePeriod)
@@ -168,15 +178,16 @@ export default function ViolationsManagement() {
       list = list.filter(v =>
         v.plate_number?.toLowerCase().includes(q) ||
         v.owner_name?.toLowerCase().includes(q) ||
-        v.owner_email?.toLowerCase().includes(q)
+        v.owner_email?.toLowerCase().includes(q) ||
+        v.notes?.toLowerCase().includes(q)
       )
     }
 
     list.sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at))
     return list
-  }, [violations, filter, datePeriod, search])
+  }, [violations, filter, typeFilter, datePeriod, search])
 
-  useEffect(() => { setPage(1) }, [filter, datePeriod, search])
+  useEffect(() => { setPage(1) }, [filter, typeFilter, datePeriod, search])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -191,19 +202,16 @@ export default function ViolationsManagement() {
     setActionLoading(v.id)
     try {
       let data
-      if (type === 'notify')        ({ data } = await releaseViolation(v.id))
       if (type === 'resolve')       ({ data } = await resolveViolation(v.id))
       if (type === 'issue_report')  ({ data } = await issueCDSOReport(v.id))
       setViolations(prev => prev.map(x => x.id === v.id ? data : x))
       const msgs = {
-        notify:        `Owner of ${v.plate_number} notified and sent an email.`,
         resolve:       'Violation marked as resolved.',
         issue_report:  `CDSO report issued for ${v.plate_number}. Owner may now pay at Accounting.`,
       }
       setResultModal({ type: 'success', message: msgs[type] })
     } catch {
       const msgs = {
-        notify:       'Failed to notify owner.',
         resolve:      'Failed to resolve violation.',
         issue_report: 'Failed to issue CDSO report.',
       }
@@ -247,9 +255,7 @@ export default function ViolationsManagement() {
       return <span className="vm-status vm-status-warning"><AlertTriangle size={12} /> Warning</span>
     if (v.is_resolved)
       return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Resolved</span>
-    if (v.is_released)
-      return <span className="vm-status vm-status-released"><Bell size={12} /> Notified</span>
-    return <span className="vm-status vm-status-pending"><EyeOff size={12} /> Pending</span>
+    return <span className="vm-status vm-status-released"><Bell size={12} /> Issued</span>
   }
 
   function ActionButtons({ v }) {
@@ -287,27 +293,17 @@ export default function ViolationsManagement() {
       return null
     }
 
-    // Legacy violations
+    // Non-offense violations (owner is auto-emailed at creation) — just Resolve
     if (v.is_resolved) return null
     return (
       <div className="vm-actions">
-        {!v.is_released && (
-          <button
-            className="vm-btn vm-btn-release"
-            disabled={busy}
-            onClick={() => setConfirmAction({ type: 'notify', violation: v })}
-            title="Officially notify owner and send email"
-          >
-            {busy ? <Loader2 size={13} className="vm-spin" /> : <Bell size={13} />} Notify
-          </button>
-        )}
         <button
           className="vm-btn vm-btn-resolve"
           disabled={busy}
           onClick={() => setConfirmAction({ type: 'resolve', violation: v })}
           title="Mark resolved"
         >
-          <CheckCircle size={13} /> Resolve
+          {busy ? <Loader2 size={13} className="vm-spin" /> : <CheckCircle size={13} />} Resolve
         </button>
       </div>
     )
@@ -362,6 +358,18 @@ export default function ViolationsManagement() {
               </button>
             ))}
             <span className="vm-filter-sep" />
+            <select
+              className="vm-type-select"
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              title="Filter by violation type"
+            >
+              <option value="all">All types</option>
+              {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <span className="vm-filter-sep" />
             <div className="vm-period-btns">
               {DATE_PERIODS.map(p => (
                 <button
@@ -380,7 +388,7 @@ export default function ViolationsManagement() {
               <Search size={13} className="vm-search-icon" />
               <input
                 className="vm-search-input"
-                placeholder="Search plate or owner…"
+                placeholder="Search plate, owner, or notes…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -390,11 +398,6 @@ export default function ViolationsManagement() {
                 </button>
               )}
             </div>
-            {(filter !== 'all' || datePeriod !== 'all' || search) && (
-              <button className="vm-clear-btn" onClick={() => { setFilter('all'); setDatePeriod('all'); setSearch('') }} title="Clear filters">
-                <X size={13} /> Clear
-              </button>
-            )}
             <button className="vm-refresh-btn" onClick={fetchAll} title="Refresh">
               <RotateCcw size={14} />
             </button>
@@ -440,7 +443,7 @@ export default function ViolationsManagement() {
                       </div>
                     </td>
                     <td><FineTag amount={v.fine_amount} /></td>
-                    <td className="vm-notes">{v.notes || '—'}</td>
+                    <td><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
                     <td>
                       {v.evidence_url ? (
                         <button
@@ -506,11 +509,6 @@ export default function ViolationsManagement() {
       {confirmAction && (() => {
         const { type, violation: v } = confirmAction
         const config = {
-          notify: {
-            title: 'Notify Owner?',
-            body: `This will officially flag the violation for plate ${v.plate_number} and send a notification email to the owner.`,
-            confirm: 'Notify & Email', cls: 'vm-modal-btn-primary',
-          },
           resolve: {
             title: 'Mark as Resolved?',
             body: `This will mark the violation for plate ${v.plate_number} as resolved. This action cannot be undone.`,

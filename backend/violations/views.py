@@ -9,6 +9,8 @@ from django.db.models import Q
 from .models import Violation, NEW_STYLE_TYPES, FEE_ESCALATING_TYPES, FEE_THIRD_OFFENSE
 from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
+from accounts.audit import audit
+from accounts.models import AuditLog
 
 
 class IsStaffRole(permissions.BasePermission):
@@ -65,6 +67,10 @@ class ViolationViewSet(viewsets.ModelViewSet):
                 is_released          = True,   # always visible to owner immediately
                 issued_by            = self.request.user,
             )
+            audit(self.request, AuditLog.Action.RECORD_CREATED,
+                  f"Violation issued | Plate: {vehicle.plate_number} | "
+                  f"Type: {instance.get_violation_type_display()} | Offense: {offense_num} | "
+                  f"Status: {instance.get_status_display()} | By: {self.request.user.full_name}")
             self._notify_new_offense(instance)
         else:
             # Legacy violation types — fine from the caller, or computed.
@@ -75,6 +81,10 @@ class ViolationViewSet(viewsets.ModelViewSet):
             if not self.request.data.get('fine_amount'):
                 save_kwargs['fine_amount'] = Violation.compute_fine(vehicle)
             instance = serializer.save(**save_kwargs)
+            audit(self.request, AuditLog.Action.RECORD_CREATED,
+                  f"Violation issued | Plate: {vehicle.plate_number} | "
+                  f"Type: {instance.get_violation_type_display()} | "
+                  f"Fine: {instance.fine_amount} | By: {self.request.user.full_name}")
             try:
                 from .email_utils import send_violation_notified_email
                 send_violation_notified_email(instance)
@@ -111,6 +121,9 @@ class ViolationViewSet(viewsets.ModelViewSet):
         response = super().partial_update(request, *args, **kwargs)
         if not was_resolved and response.data.get('is_resolved'):
             instance = self.get_object()
+            audit(request, AuditLog.Action.RECORD_UPDATED,
+                  f"Violation resolved | Plate: {instance.vehicle.plate_number} | "
+                  f"Type: {instance.get_violation_type_display()} | By: {request.user.full_name}")
             self._notify_resolved(instance)
         return response
 
@@ -153,6 +166,9 @@ class ViolationViewSet(viewsets.ModelViewSet):
             )
         violation.cdso_report_issued = True
         violation.save(update_fields=['cdso_report_issued'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"CDSO violation report issued | Plate: {violation.vehicle.plate_number} | "
+              f"Type: {violation.get_violation_type_display()} | By: {request.user.full_name}")
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
     @action(detail=True, methods=['post'], url_path='clear',
@@ -180,6 +196,10 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation.status            = Violation.Status.CLEARED
         violation.is_resolved       = True
         violation.save(update_fields=['official_receipt', 'status', 'is_resolved'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Violation cleared | Plate: {violation.vehicle.plate_number} | "
+              f"Type: {violation.get_violation_type_display()} | OR: {or_number} | "
+              f"Entry access restored | By: {request.user.full_name}")
         self._notify_resolved(violation)
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 

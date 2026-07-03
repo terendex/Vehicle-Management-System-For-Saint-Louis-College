@@ -8,16 +8,24 @@ import {
 import './AuditLog.css'
 
 const ACTION_LABELS = {
-  user_created:   'User Created',
-  user_updated:   'User Updated',
-  user_deleted:   'User Deleted',
-  user_disabled:  'User Disabled',
-  user_enabled:   'User Enabled',
-  admin_replaced: 'Admin Replaced',
-  scan:           'Vehicle Scanned',
-  device_created: 'Device Added',
-  device_updated: 'Device Updated',
-  device_deleted: 'Device Removed',
+  scan:            'Vehicle Scanned',
+  vehicle_entered: 'Vehicle Entered',
+  vehicle_exited:  'Vehicle Exited',
+  entry_override:  'Entry Override',
+  visitor_issued:  'Visitor Pass Issued',
+  visitor_exited:  'Visitor Exited',
+  created:         'Record Created',
+  updated:         'Record Updated',
+  deleted:         'Record Deleted',
+  user_created:    'User Created',
+  user_updated:    'User Updated',
+  user_deleted:    'User Deleted',
+  user_disabled:   'User Disabled',
+  user_enabled:    'User Enabled',
+  admin_replaced:  'Admin Replaced',
+  device_created:  'Device Added',
+  device_updated:  'Device Updated',
+  device_deleted:  'Device Removed',
 }
 
 const DATE_PERIODS = [
@@ -114,25 +122,29 @@ export default function AuditLog() {
     }
   }
 
-  const exportCsv = () => {
-    if (!logs.length) return
-    const header = 'Timestamp,Actor,Action,Target,Details,IP Address'
-    const rows = logs.map(log => [
-      `"${formatDate(log.created_at)}"`,
-      `"${log.actor_name || ''}"`,
-      `"${ACTION_LABELS[log.action] || log.action}"`,
-      `"${log.target_name || ''}"`,
-      `"${(log.details || '').replace(/"/g, '""')}"`,
-      `"${log.ip_address || ''}"`,
-    ].join(','))
-    const csv = [header, ...rows].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `audit-log-page${page}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  const [exporting, setExporting] = useState(false)
+
+  // Server-generated Excel report of ALL rows matching the current filters
+  const exportExcel = async () => {
+    setExporting(true)
+    try {
+      const params = {}
+      if (actionFilter) params.action    = actionFilter
+      if (dateFrom)     params.date_from = dateFrom
+      if (dateTo)       params.date_to   = dateTo
+      if (search)       params.search    = search
+      const blob = await usersApi.exportAuditLogsExcel(params)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `audit-log-report-${toDateStr(new Date())}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // download failed silently — surface nothing destructive
+    } finally {
+      setExporting(false)
+    }
   }
 
   const formatDate = (iso) => {
@@ -147,7 +159,9 @@ export default function AuditLog() {
     const map = {
       user_created: 'created', user_updated: 'updated', user_deleted: 'deleted',
       user_disabled: 'disabled', user_enabled: 'enabled', admin_replaced: 'replaced',
-      scan: 'scan',
+      created: 'created', updated: 'updated', deleted: 'deleted',
+      scan: 'scan', vehicle_entered: 'enabled', vehicle_exited: 'updated',
+      entry_override: 'replaced', visitor_issued: 'scan', visitor_exited: 'updated',
       device_created: 'device-created', device_updated: 'device-updated', device_deleted: 'device-deleted',
     }
     return map[action] || ''
@@ -166,9 +180,9 @@ export default function AuditLog() {
               <ClipboardList size={16} />
               <span>{totalCount} events</span>
             </div>
-            <button className="al-export-btn" onClick={exportCsv} disabled={!logs.length} title="Export current page to CSV">
+            <button className="al-export-btn" onClick={exportExcel} disabled={exporting || totalCount === 0} title="Download all filtered entries as an Excel report">
               <Download size={14} />
-              <span>Export CSV</span>
+              <span>{exporting ? 'Exporting…' : 'Export Excel'}</span>
             </button>
           </div>
         </div>
@@ -191,7 +205,7 @@ export default function AuditLog() {
             <input
               className="al-search-input"
               type="text"
-              placeholder="Search actor, target…"
+              placeholder="Search actor, plate, details…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -212,16 +226,9 @@ export default function AuditLog() {
               onChange={(e) => setAction(e.target.value)}
             >
               <option value="">All Actions</option>
-              <option value="user_created">User Created</option>
-              <option value="user_updated">User Updated</option>
-              <option value="user_deleted">User Deleted</option>
-              <option value="user_disabled">User Disabled</option>
-              <option value="user_enabled">User Enabled</option>
-              <option value="admin_replaced">Admin Replaced</option>
-              <option value="scan">Vehicle Scanned</option>
-              <option value="device_created">Device Added</option>
-              <option value="device_updated">Device Updated</option>
-              <option value="device_deleted">Device Removed</option>
+              {Object.entries(ACTION_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
           </div>
 
@@ -246,29 +253,25 @@ export default function AuditLog() {
             <table className="al-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Timestamp</th>
-                  <th>Actor</th>
-                  <th>Action</th>
-                  <th>Target</th>
+                  <th style={{ width: 165 }}>Time Stamp</th>
+                  <th style={{ width: 170 }}>Actor</th>
+                  <th style={{ width: 160 }}>Action</th>
                   <th>Details</th>
-                  <th>IP Address</th>
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log, idx) => (
+                {logs.map((log) => (
                   <tr key={log.id}>
-                    <td>{(page - 1) * 10 + idx + 1}</td>
-                    <td>{formatDate(log.created_at)}</td>
-                    <td>{log.actor_name || '—'}</td>
+                    <td className="al-timestamp">{formatDate(log.created_at)}</td>
+                    <td>{log.actor_name || 'System'}</td>
                     <td>
                       <span className={`al-action-badge ${actionBadgeClass(log.action)}`}>
                         {ACTION_LABELS[log.action] || log.action}
                       </span>
                     </td>
-                    <td>{log.target_name || '—'}</td>
-                    <td className="al-details">{log.details || '—'}</td>
-                    <td>{log.ip_address || '—'}</td>
+                    <td className="al-details">
+                      <span className="al-details-text">{log.details || '—'}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
