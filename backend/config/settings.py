@@ -153,7 +153,9 @@ CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173'
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Campus wall-clock — schedule rules (campus days, time windows) and
+# "today" boundaries are evaluated in this timezone. DB storage stays UTC.
+TIME_ZONE = 'Asia/Manila'
 
 USE_I18N = True
 

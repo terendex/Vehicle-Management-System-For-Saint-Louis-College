@@ -53,6 +53,7 @@ def _inside_state(plate_number: str):
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__date=today,
+        scanned_at__lte=timezone.now(),  # ignore future-dated rows from clock skew
     ).order_by('-scanned_at').first()
 
     if not last_entry:
@@ -71,11 +72,13 @@ def _inside_state(plate_number: str):
 
 def _in_exit_cooldown(plate_number: str) -> bool:
     """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
-    cutoff = timezone.now() - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
     return AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.EXITED,
         scanned_at__gte=cutoff,
+        scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
     ).exists()
 
 
@@ -86,6 +89,7 @@ def _already_inside(plate_number: str) -> bool:
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__date=today,
+        scanned_at__lte=timezone.now(),
     ).order_by('-scanned_at').first()
     if not last_entry:
         return False
@@ -109,11 +113,13 @@ def _pair_entry_exit(exit_log) -> None:
 def _auto_log_violation(vehicle, message: str, gate_id: str = ''):
     """Create an unauthorized violation if none was logged in the last 5 minutes."""
     from .models import active_guard_for_gate
-    cutoff = timezone.now() - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
     already = Violation.objects.filter(
         vehicle=vehicle,
         violation_type=Violation.Type.UNAUTHORIZED,
         issued_at__gte=cutoff,
+        issued_at__lte=now,
     ).exists()
     if not already:
         Violation.objects.create(
@@ -432,11 +438,14 @@ class VisitorPassView(APIView):
         )
 
         # Log entry in AccessLog so the visitor appears in "Recent Scans"
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
         AccessLog.objects.create(
             plate_number=plate_number,
             vehicle=vehicle,
             status=AccessLog.Status.AUTHORIZED,
-            gate_id='main',
+            gate_id=gate_id,
             scanned_by=request.user,
         )
 
@@ -1037,10 +1046,13 @@ class ManualEntryView(APIView):
         entry = check_entry(vehicle)
         has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
 
+        # UI-only statuses (e.g. 'no_pass') aren't valid AccessLog statuses
+        log_status = (entry['status'] if entry['status'] in AccessLog.Status.values
+                      else AccessLog.Status.DENIED)
         AccessLog.objects.create(
             plate_number  = plate_number,
             vehicle       = vehicle,
-            status        = entry['status'],
+            status        = log_status,
             gate_id       = gate_id,
             denied_reason = '' if entry['allowed'] else entry['message'],
             scanned_by    = request.user,
@@ -1054,7 +1066,8 @@ class ManualEntryView(APIView):
             f"Plate: {plate_number} | Owner: {owner_name} | Gate: {gate_id} | Guard: {guard_name} | Status: {entry['status']}",
         )
 
-        if not entry['allowed']:
+        # 'no_pass' means a visitor awaiting a pass — not a violation
+        if not entry['allowed'] and entry['status'] != 'no_pass':
             _auto_log_violation(vehicle, entry['message'], gate_id)
 
         return Response({
