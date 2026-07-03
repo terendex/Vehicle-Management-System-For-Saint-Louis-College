@@ -14,6 +14,7 @@ from .ml.detection import detect_plates, is_gpu_available
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
 from .ml.reader import _ocr_crop, find_plate_in_crop
+from .ml.validator import is_valid_ph_plate
 
 logger = logging.getLogger(__name__)
 
@@ -353,8 +354,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                         await self._finalize_plate(track_id, best, 0.0)
                     continue
 
-                # Accumulate confidence-weighted votes across reads
-                state["votes"][plate_text] = state["votes"].get(plate_text, 0.0) + conf
+                # Accumulate confidence-weighted votes across reads.
+                # Reads matching a valid PH plate format get triple weight so a
+                # correct read outvotes garbled partials when the track locks.
+                normalized = plate_text.strip().upper().replace(' ', '')
+                weight = conf * (3.0 if is_valid_ph_plate(normalized) else 1.0)
+                state["votes"][plate_text] = state["votes"].get(plate_text, 0.0) + weight
                 best = max(state["votes"], key=state["votes"].get)
 
                 # Always push the current best to the overlay immediately
@@ -423,6 +428,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     state.pop("switch_reads", None)  # confirmed — drop any switch candidate
                     continue
 
+                # Never re-lock a track onto an invalid plate format
+                if not is_valid_ph_plate(plate_norm):
+                    continue
+
                 reads = state.setdefault("switch_reads", {})
                 if len(reads) > 5:
                     reads = state["switch_reads"] = {}  # noisy garbage — start over
@@ -464,7 +473,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         Each client is told about a given decision exactly once.
         """
         plate = plate_text.strip().upper().replace(' ', '')
-        if not plate:
+        # OCR noise gate: only valid Philippine plate formats reach the lookup,
+        # the access log, or the violation pipeline — partial/garbled reads
+        # (e.g. "8946", "C946") are dropped here.
+        if not plate or not is_valid_ph_plate(plate):
             return None
 
         now_ts = time.time()

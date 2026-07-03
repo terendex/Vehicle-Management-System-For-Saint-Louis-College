@@ -489,7 +489,7 @@ class VisitorPassView(APIView):
         Create a visitor pass and return its data for thermal printing.
         Accepts plate_number directly; finds or creates the Vehicle record.
         """
-        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
@@ -714,7 +714,7 @@ class OverrideEntryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         reason       = (request.data.get('reason') or '').strip()
 
         if not plate_number:
@@ -752,7 +752,7 @@ class ExitLogView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
@@ -974,7 +974,7 @@ class ManualEntryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 

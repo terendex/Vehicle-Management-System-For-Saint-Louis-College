@@ -41,7 +41,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
         return {**super().get_serializer_context(), 'request': self.request}
 
     def perform_create(self, serializer):
-        plate = self.request.data.get('plate_number', '').strip().upper()
+        plate = self.request.data.get('plate_number', '').strip().upper().replace(' ', '')
         vehicle = serializer.validated_data.get('vehicle')
         if vehicle is None and plate:
             vehicle = get_object_or_404(Vehicle, plate_number=plate)
