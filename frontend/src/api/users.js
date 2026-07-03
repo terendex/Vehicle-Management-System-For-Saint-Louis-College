@@ -48,7 +48,7 @@ export const usersApi = {
     return data
   },
 
-  /** Replace the current admin with a new admin account. */
+  /** Replace the current admin with a new admin account (password auto-generated & emailed). */
   replaceAdmin: async (adminData) => {
     const { data } = await api.post('/accounts/replace-admin/', adminData)
     return data
@@ -100,15 +100,9 @@ export const usersApi = {
     return data
   },
 
-  /** Admin creates a security guard (name + gate only, no email/password). */
+  /** Admin creates a security guard (name, email, agency — password auto-generated & emailed). */
   createGuard: async (data) => {
     const { data: res } = await api.post('/accounts/admin/create-guard/', data)
-    return res
-  },
-
-  /** Admin creates a vehicle owner with all registration fields (password emailed). */
-  createOwner: async (data) => {
-    const { data: res } = await api.post('/accounts/admin/create-owner/', data)
     return res
   },
 

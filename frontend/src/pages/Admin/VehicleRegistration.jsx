@@ -10,6 +10,14 @@ const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', A
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DAY_SHORT = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' }
 
+function formatSchedule(entity) {
+  if (!entity?.schedule) return '—'
+  if (entity.schedule === 'MIXED' && entity.campus_days?.length > 0) {
+    return entity.campus_days.map(day => DAY_SHORT[day] || day).join(' · ')
+  }
+  return SCHEDULE_LABELS[entity.schedule] || entity.schedule
+}
+
 const DATE_PERIODS = [
   { value: 'all',   label: 'All' },
   { value: 'day',   label: 'Today' },
@@ -52,7 +60,7 @@ export default function VehicleRegistration() {
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
   const [specialCaseReason, setSpecialCaseReason] = useState('')
 
-  const orValid = orNumber.trim().length >= 6
+  const orValid = orNumber.trim().length >= 6 && orNumber.trim().length <= 7
 
   const [resultModal, setResultModal] = useState(null)
   const [showAcceptConfirm, setShowAcceptConfirm] = useState(false)
@@ -258,7 +266,7 @@ export default function VehicleRegistration() {
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
                     <td className="token-link">{r.plate_number}</td>
-                    <td>{r.schedule ? (SCHEDULE_LABELS[r.schedule] || r.schedule) : '—'}</td>
+                    <td>{formatSchedule(r)}</td>
                     <td>{format(new Date(r.created_at), 'PP')}</td>
                     <td>
                       <span className={`status-badge status-${r.status}`}>
@@ -327,7 +335,7 @@ export default function VehicleRegistration() {
               </div>
               <div className="detail-item">
                 <div className="detail-label">Schedule</div>
-                <div className="detail-value">{selectedReg.schedule ? (SCHEDULE_LABELS[selectedReg.schedule] || selectedReg.schedule) : '—'}</div>
+                <div className="detail-value">{formatSchedule(selectedReg)}</div>
               </div>
 
               {selectedReg.registrant_type === 'student' ? (
@@ -451,9 +459,11 @@ export default function VehicleRegistration() {
                     </label>
                     <input
                       type="text"
+                      inputMode="numeric"
+                      maxLength={7}
                       className={`form-input${orValid ? ' input-valid' : ''}`}
                       value={orNumber}
-                      onChange={(e) => setOrNumber(e.target.value)}
+                      onChange={(e) => setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7))}
                       placeholder="e.g. 1380093"
                       disabled={submitting}
                     />
@@ -743,7 +753,7 @@ export default function VehicleRegistration() {
                   </div>
                   <div className="account-info-item">
                     <span className="account-info-label">Schedule</span>
-                    <span className="account-info-val">{accountModal.schedule ? (SCHEDULE_LABELS[accountModal.schedule] || accountModal.schedule) : '—'}</span>
+                    <span className="account-info-val">{formatSchedule(accountModal)}</span>
                   </div>
                 </div>
               </div>

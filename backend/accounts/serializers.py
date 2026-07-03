@@ -27,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'qr_token', 'registrant_type']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type']
 
     def get_photo_url(self, obj):
         if not obj.photo:
@@ -91,14 +91,82 @@ def _generate_secure_password():
             return pwd
 
 
+def _send_account_created_email(full_name, email, password, extra_rows=None):
+    """Email a newly-created account's login info. Temp password must be
+    changed on first login (must_change_password is set by the caller)."""
+    from django.core.mail import send_mail
+    from django.conf import settings as _cfg
+
+    frontend_url = getattr(_cfg, 'FRONTEND_URL', 'http://localhost:5173')
+    extra_rows = extra_rows or []
+    extra_html = ''.join(
+        f'<tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">{label}</td>'
+        f'<td style="padding:8px 12px;">{value}</td></tr>'
+        for label, value in extra_rows
+    )
+    extra_text = ''.join(f"{label:<10}: {value}\n" for label, value in extra_rows)
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;">
+      <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;
+                  border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
+        <div style="padding:28px 32px 24px;">
+          <h2 style="color:#2A2B61;margin:0 0 8px;">Your SLC Account is Ready</h2>
+          <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
+            Hello <strong>{full_name}</strong>, the administrator has created your account.
+          </p>
+          <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+            <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;width:40%;">Login URL</td>
+                <td style="padding:8px 12px;">{frontend_url}/login</td></tr>
+            <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Email</td>
+                <td style="padding:8px 12px;">{email}</td></tr>
+            {extra_html}
+            <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Temp Password</td>
+                <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{password}</td></tr>
+          </table>
+          <p style="color:#DC2626;font-size:13px;background:#FEF2F2;border:1px solid #FECACA;
+                     border-radius:8px;padding:10px 14px;margin:0 0 20px;">
+            Please log in and <strong>change your password immediately</strong>.
+          </p>
+          <p style="color:#9CA3B0;font-size:12px;margin:0;">
+            This is an automated message from the Saint Louis College Vehicle Management System.
+            Do not reply to this email.
+          </p>
+        </div>
+      </div>
+    </body></html>
+    """
+    try:
+        send_mail(
+            subject='SLC Vehicle Management — Your Account Has Been Created',
+            message=(
+                f"Hello {full_name},\n\n"
+                f"Your account has been created by the administrator.\n\n"
+                f"Login URL : {frontend_url}/login\n"
+                f"Email     : {email}\n"
+                f"{extra_text}"
+                f"Password  : {password}\n\n"
+                f"Please log in and change your password immediately.\n\n"
+                f"Saint Louis College Vehicle Management System"
+            ),
+            from_email=_cfg.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            html_message=html,
+            fail_silently=True,
+        )
+    except Exception:
+        pass
+
+
 class GuardCreateSerializer(serializers.Serializer):
-    """Admin creates a security-guard account with email + password credentials.
+    """Admin creates a security-guard account. A temporary password is
+    auto-generated and emailed to the guard, who must change it on first login.
     Guards log in at the dedicated guard gate login page (credentials or QR badge).
     Gate is assigned when the guard selects a gate at the kiosk login screen,
     not at creation time."""
     full_name = serializers.CharField(max_length=150)
     email     = serializers.EmailField()
-    password  = serializers.CharField(min_length=8, write_only=True)
+    agency    = serializers.CharField(max_length=150)
 
     def validate_full_name(self, value):
         if not value.strip():
@@ -111,13 +179,28 @@ class GuardCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
+    def validate_agency(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Agency is required.')
+        return value.strip()
+
     def create(self, validated_data):
-        return User.objects.create_user(
+        password = _generate_secure_password()
+        user = User.objects.create_user(
             email=validated_data['email'],
             full_name=validated_data['full_name'],
-            password=validated_data['password'],
+            password=password,
             role='security',
+            agency=validated_data['agency'],
+            must_change_password=True,
         )
+        _send_account_created_email(
+            full_name=validated_data['full_name'],
+            email=validated_data['email'],
+            password=password,
+            extra_rows=[('Agency', validated_data['agency'])],
+        )
+        return user
 
 
 class AdminOwnerCreateSerializer(serializers.Serializer):
@@ -168,8 +251,6 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         from vehicles.models import Vehicle, VehicleRegistration
-        from django.core.mail import send_mail
-        from django.conf import settings as _cfg
 
         reg_type    = validated_data['registrant_type']
         last        = validated_data['last_name'].strip()
@@ -245,86 +326,44 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             source=VehicleRegistration.Source.DIRECT,
         )
 
-        frontend_url = getattr(_cfg, 'FRONTEND_URL', 'http://localhost:5173')
-        html = f"""
-        <html><body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;">
-          <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;
-                      border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
-            <div style="padding:28px 32px 24px;">
-              <h2 style="color:#2A2B61;margin:0 0 8px;">Your SLC Account is Ready</h2>
-              <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-                Hello <strong>{full_name}</strong>, the administrator has created your vehicle owner account.
-              </p>
-              <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-                <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;width:40%;">Login URL</td>
-                    <td style="padding:8px 12px;">{frontend_url}/login</td></tr>
-                <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Email</td>
-                    <td style="padding:8px 12px;">{email}</td></tr>
-                <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Temp Password</td>
-                    <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{password}</td></tr>
-              </table>
-              <p style="color:#DC2626;font-size:13px;background:#FEF2F2;border:1px solid #FECACA;
-                         border-radius:8px;padding:10px 14px;margin:0 0 20px;">
-                Please log in and <strong>change your password immediately</strong>.
-              </p>
-              <p style="color:#9CA3B0;font-size:12px;margin:0;">
-                This is an automated message from the Saint Louis College Vehicle Management System.
-                Do not reply to this email.
-              </p>
-            </div>
-          </div>
-        </body></html>
-        """
-        try:
-            send_mail(
-                subject='SLC Vehicle Management — Your Account Has Been Created',
-                message=(
-                    f"Hello {full_name},\n\n"
-                    f"Your vehicle owner account has been created by the administrator.\n\n"
-                    f"Login URL : {frontend_url}/login\n"
-                    f"Email     : {email}\n"
-                    f"Password  : {password}\n\n"
-                    f"Please log in and change your password immediately.\n\n"
-                    f"Saint Louis College Vehicle Management System"
-                ),
-                from_email=_cfg.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                html_message=html,
-                fail_silently=True,
-            )
-        except Exception:
-            pass
+        _send_account_created_email(full_name=full_name, email=email, password=password)
 
         return user
 
 
 class AdminReplaceSerializer(serializers.Serializer):
-    """Create a new admin and delete the requesting admin."""
+    """Create a new admin and delete the requesting admin. A temporary password
+    is auto-generated and emailed to the new admin, who must change it on first login."""
     full_name = serializers.CharField(max_length=150)
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_full_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Full name is required.')
+        return value.strip()
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
-    def validate(self, attrs):
-        if attrs['password'] != attrs.pop('confirm_password'):
-            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
-        validate_password_strength(attrs['password'])
-        return attrs
-
     def create(self, validated_data):
-        return User.objects.create_user(
+        password = _generate_secure_password()
+        user = User.objects.create_user(
             full_name=validated_data['full_name'],
             email=validated_data['email'],
-            password=validated_data['password'],
+            password=password,
             role='admin',
             is_staff=True,
             is_superuser=True,
+            must_change_password=True,
         )
+        _send_account_created_email(
+            full_name=validated_data['full_name'],
+            email=validated_data['email'],
+            password=password,
+        )
+        return user
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

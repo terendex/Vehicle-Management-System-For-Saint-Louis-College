@@ -14,15 +14,31 @@ import './SupplierManagement.css'
 
 // ── Add Supplier modal ────────────────────────────────────────────────
 function AddSupplierModal({ onClose, onCreated }) {
-  const [name, setName]     = useState('')
-  const [saving, setSaving] = useState(false)
+  const [name, setName]             = useState('')
+  const [plateInput, setPlateInput] = useState('')
+  const [plateError, setPlateError] = useState('')
+  const [plates, setPlates]         = useState([])
+  const [saving, setSaving]         = useState(false)
+  const plateRef = useRef(null)
+
+  const addPlate = () => {
+    const p = formatPlateNumber(plateInput.trim())
+    if (!p) return
+    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
+    if (plates.includes(p)) { toast.error('Plate already added.'); return }
+    setPlates(prev => [...prev, p])
+    setPlateInput('')
+    plateRef.current?.focus()
+  }
+
+  const removePlate = (p) => setPlates(prev => prev.filter(x => x !== p))
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
     setSaving(true)
     try {
-      const { data } = await createSupplier({ company_name: name.trim() })
+      const { data } = await createSupplier({ company_name: name.trim(), plates })
       onCreated(data)
       toast.success('Supplier added.')
       onClose()
@@ -55,6 +71,41 @@ function AddSupplierModal({ onClose, onCreated }) {
               autoFocus
               required
             />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-label">License Plates <span className="sp-label-optional">(optional)</span></label>
+            <div className="sp-plate-input-row">
+              <input
+                ref={plateRef}
+                className={`sp-text-input sp-plate-field${plateError ? ' sp-input-error' : ''}`}
+                placeholder="e.g. ABC 123"
+                value={plateInput}
+                onChange={e => {
+                  const formatted = formatPlateNumber(e.target.value)
+                  setPlateInput(formatted)
+                  setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
+              />
+              <button type="button" className="sp-add-plate-btn" onClick={addPlate}>
+                <Plus size={15} /> Add
+              </button>
+            </div>
+            {plateError
+              ? <span className="sp-field-error-msg">{plateError}</span>
+              : <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            }
+            {plates.length > 0 && (
+              <div className="sp-plate-tags">
+                {plates.map(p => (
+                  <span key={p} className="sp-plate-tag">
+                    {p}
+                    <button type="button" onClick={() => removePlate(p)}><X size={11} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="sp-modal-actions">
