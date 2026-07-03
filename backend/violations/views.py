@@ -40,10 +40,12 @@ class ViolationViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         plate = self.request.data.get('plate_number', '').strip().upper()
-        if plate and 'vehicle' not in self.request.data:
+        vehicle = serializer.validated_data.get('vehicle')
+        if vehicle is None and plate:
             vehicle = get_object_or_404(Vehicle, plate_number=plate)
-        else:
-            vehicle = serializer.validated_data.get('vehicle')
+        if vehicle is None:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'vehicle': 'Provide a vehicle id or plate_number.'})
 
         vtype = serializer.validated_data.get('violation_type', '')
 
@@ -65,12 +67,19 @@ class ViolationViewSet(viewsets.ModelViewSet):
             )
             self._notify_new_offense(instance)
         else:
-            # Legacy violation types — fine set by caller or computed
-            if plate and 'vehicle' not in self.request.data:
-                fine = Violation.compute_fine(vehicle)
-                serializer.save(vehicle=vehicle, fine_amount=fine, issued_by=self.request.user)
-            else:
-                serializer.save(issued_by=self.request.user)
+            # Legacy violation types — fine from the caller, or computed.
+            # Every violation notifies the owner immediately, so these are
+            # released (visible) and emailed at creation like new-style ones.
+            save_kwargs = {'vehicle': vehicle, 'is_released': True,
+                           'issued_by': self.request.user}
+            if not self.request.data.get('fine_amount'):
+                save_kwargs['fine_amount'] = Violation.compute_fine(vehicle)
+            instance = serializer.save(**save_kwargs)
+            try:
+                from .email_utils import send_violation_notified_email
+                send_violation_notified_email(instance)
+            except Exception:
+                pass
 
     def _notify_new_offense(self, instance):
         try:

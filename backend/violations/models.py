@@ -73,5 +73,20 @@ class Violation(models.Model):
         existing = cls.objects.filter(vehicle=vehicle).count()
         return FINE_REPEAT if existing >= REPEAT_THRESHOLD else FINE_STANDARD
 
+    @classmethod
+    def registration_block_for_plate(cls, plate_number: str):
+        """
+        Return the QuerySet of violations that flag this plate for additional
+        review at vehicle registration (a 3rd-offense fee sets registration_blocked
+        and it stays set even after the fee is cleared). Empty if the plate is clear.
+        """
+        plate = (plate_number or '').strip().upper()
+        if not plate:
+            return cls.objects.none()
+        return cls.objects.filter(
+            vehicle__plate_number=plate,
+            registration_blocked=True,
+        ).order_by('-issued_at')
+
     def __str__(self):
         return f"{self.vehicle.plate_number} — {self.violation_type}"
