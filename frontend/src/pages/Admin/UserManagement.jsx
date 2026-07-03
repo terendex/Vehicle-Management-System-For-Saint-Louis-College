@@ -42,7 +42,7 @@ const CAMPUS_DAYS = [
   { key: 'Saturday', short: 'Sat' },
 ]
 
-const EMPTY_GUARD = { full_name: '' }
+const EMPTY_GUARD = { full_name: '', email: '', password: '' }
 const EMPTY_OWNER = {
   last_name: '', first_name: '', middle_name: '',
   email: '', contact_number: '', age: '', drivers_license: '',
@@ -255,6 +255,10 @@ export default function UserManagement() {
   const validateGuard = () => {
     const errors = {}
     if (!guardForm.full_name.trim()) errors.full_name = 'Full name is required.'
+    if (!guardForm.email.trim()) errors.email = 'Email is required.'
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardForm.email.trim())) errors.email = 'Enter a valid email address.'
+    if (!guardForm.password) errors.password = 'Password is required.'
+    else if (guardForm.password.length < 8) errors.password = 'Password must be at least 8 characters.'
     setFormErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -264,6 +268,8 @@ export default function UserManagement() {
     try {
       const guard = await usersApi.createGuard({
         full_name: guardForm.full_name.trim(),
+        email:     guardForm.email.trim(),
+        password:  guardForm.password,
       })
       fetchUsers()
       closeModal()
@@ -272,8 +278,12 @@ export default function UserManagement() {
       openQrModal(guard)
     } catch (err) {
       const data = err.response?.data
-      if (data?.full_name) {
-        setFormErrors({ full_name: Array.isArray(data.full_name) ? data.full_name[0] : data.full_name })
+      const fieldErrors = {}
+      for (const field of ['full_name', 'email', 'password']) {
+        if (data?.[field]) fieldErrors[field] = Array.isArray(data[field]) ? data[field][0] : data[field]
+      }
+      if (Object.keys(fieldErrors).length > 0) {
+        setFormErrors(fieldErrors)
         setModal('add')
       } else {
         showResult('Failed to create guard.', 'error')
@@ -675,8 +685,8 @@ export default function UserManagement() {
                 <>
                   <div className="um-info-banner">
                     <Info size={14} />
-                    Guards authenticate via QR badge only — no email or password is needed.
-                    The QR badge will be shown immediately after creation.
+                    Guards log in with these credentials at the guard gate login page.
+                    Their QR badge (alternative login) will be shown immediately after creation.
                   </div>
                   <div className="um-form-group">
                     <label>Full Name <span className="um-required">*</span></label>
@@ -685,6 +695,25 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
                       placeholder="e.g. Juan Dela Cruz" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
+                  </div>
+                  <div className="um-form-group">
+                    <label>Email <span className="um-required">*</span></label>
+                    <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
+                      type="email"
+                      value={guardForm.email}
+                      onChange={e => setGuardForm({ ...guardForm, email: e.target.value })}
+                      placeholder="e.g. guard@slc.edu.ph" />
+                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
+                  </div>
+                  <div className="um-form-group">
+                    <label>Password <span className="um-required">*</span></label>
+                    <input className={`um-form-input ${formErrors.password ? 'error' : ''}`}
+                      type="password"
+                      value={guardForm.password}
+                      onChange={e => setGuardForm({ ...guardForm, password: e.target.value })}
+                      placeholder="At least 8 characters"
+                      autoComplete="new-password" />
+                    {formErrors.password && <div className="um-form-error">{formErrors.password}</div>}
                   </div>
                 </>
               )}

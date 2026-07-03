@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ScanLine, ShieldCheck, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
+import { ScanLine, ShieldCheck, KeyRound, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
@@ -10,10 +10,15 @@ import './SecurityQRLogin.css'
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 export default function SecurityQRLogin() {
-  const navigate                     = useNavigate()
-  const { qrLogin, isLoading, user } = useAuthStore()
+  const navigate                                 = useNavigate()
+  const { qrLogin, guardLogin, isLoading, user } = useAuthStore()
 
   const [selectedGate, setSelectedGate] = useState(null)
+  const [method, setMethod]             = useState('credentials') // credentials | qr
+  const [email, setEmail]               = useState('')
+  const [password, setPassword]         = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [credError, setCredError]       = useState('')
   const [inputToken, setInputToken]     = useState('')
   const [showToken, setShowToken]       = useState(false)
   const [status, setStatus]             = useState('idle') // idle | scanning | success | error
@@ -35,15 +40,15 @@ export default function SecurityQRLogin() {
   }, [])
 
   useEffect(() => {
-    if (selectedGate && !useCamera) inputRef.current?.focus()
-  }, [selectedGate, useCamera])
+    if (selectedGate && method === 'qr' && !useCamera) inputRef.current?.focus()
+  }, [selectedGate, method, useCamera])
 
   const handleGoToDashboard = () => navigate('/security/entries')
 
   // Camera-based QR detection using jsQR (works in all browsers).
   // Only starts once a gate is selected so the scan callback always has a valid gate.
   useEffect(() => {
-    if (!useCamera || !selectedGate) return
+    if (!useCamera || !selectedGate || method !== 'qr') return
     let animFrame
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
@@ -86,7 +91,7 @@ export default function SecurityQRLogin() {
       cancelAnimationFrame(animFrame)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [useCamera, selectedGate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useCamera, selectedGate, method]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQRScan = async (token) => {
     if (status === 'scanning') return
@@ -108,11 +113,41 @@ export default function SecurityQRLogin() {
     }
   }
 
+  const handleCredentialLogin = async (e) => {
+    e?.preventDefault()
+    if (!email.trim() || !password || isLoading) return
+    setCredError('')
+    try {
+      const guard = await guardLogin(email.trim(), password, selectedGate)
+      setGuardInfo(guard)
+      setStatus('success')
+      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${GATE_LABELS[guard.gate_assignment] || guard.gate_assignment}.`)
+      setTimeout(() => navigate('/security/entries'), 1800)
+    } catch (err) {
+      setCredError(err.message || 'Login failed. Please check your credentials.')
+      setPassword('')
+    }
+  }
+
+  const switchMethod = (next) => {
+    setMethod(next)
+    setCredError('')
+    setErrorMsg('')
+    setStatus('idle')
+    setInputToken('')
+    if (next === 'qr') setUseCamera(true)
+    else streamRef.current?.getTracks().forEach(t => t.stop())
+  }
+
   const handleBackToGateSelect = () => {
     setSelectedGate(null)
     setStatus('idle')
     setInputToken('')
     setErrorMsg('')
+    setCredError('')
+    setEmail('')
+    setPassword('')
+    setMethod('credentials')
     setUseCamera(true)
     streamRef.current?.getTracks().forEach(t => t.stop())
   }
@@ -213,6 +248,83 @@ export default function SecurityQRLogin() {
                     <span className="sqr-gate-pill">{GATE_LABELS[selectedGate]}</span>
                   </div>
 
+                  <div className="sqr-method-tabs">
+                    <button
+                      className={`sqr-method-tab ${method === 'credentials' ? 'active' : ''}`}
+                      onClick={() => switchMethod('credentials')}
+                    >
+                      <KeyRound size={15} /> Credentials
+                    </button>
+                    <button
+                      className={`sqr-method-tab ${method === 'qr' ? 'active' : ''}`}
+                      onClick={() => switchMethod('qr')}
+                    >
+                      <ScanLine size={15} /> QR Badge
+                    </button>
+                  </div>
+
+                  {method === 'credentials' ? (
+                    <>
+                      <div className="sqr-card-header">
+                        <ShieldCheck size={22} className="sqr-card-icon" />
+                        <div>
+                          <h1 className="sqr-card-title">Guard Login</h1>
+                          <p className="sqr-card-subtitle">
+                            Sign in with your guard credentials to clock in at <strong>{GATE_LABELS[selectedGate]}</strong>
+                          </p>
+                        </div>
+                      </div>
+
+                      <form className="sqr-cred-form" onSubmit={handleCredentialLogin}>
+                        {credError && (
+                          <div className="sqr-cred-error" role="alert">
+                            <AlertCircle size={15} />
+                            <span>{credError}</span>
+                          </div>
+                        )}
+                        <div className="sqr-cred-group">
+                          <label className="sqr-cred-label" htmlFor="guard-email">Email</label>
+                          <input
+                            id="guard-email"
+                            className="sqr-input"
+                            type="email"
+                            value={email}
+                            onChange={e => setEmail(e.target.value)}
+                            placeholder="Enter your email address"
+                            autoComplete="username"
+                            required
+                          />
+                        </div>
+                        <div className="sqr-cred-group">
+                          <label className="sqr-cred-label" htmlFor="guard-password">Password</label>
+                          <div className="sqr-input-wrap">
+                            <input
+                              id="guard-password"
+                              className="sqr-input"
+                              type={showPassword ? 'text' : 'password'}
+                              value={password}
+                              onChange={e => setPassword(e.target.value)}
+                              placeholder="••••••••"
+                              autoComplete="current-password"
+                              required
+                            />
+                            <button type="button" className="sqr-eye" onClick={() => setShowPassword(v => !v)}>
+                              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type="submit"
+                          className="sqr-cred-submit"
+                          disabled={!email.trim() || !password || isLoading}
+                        >
+                          {isLoading ? <span className="sqr-btn-spinner" /> : <LogIn size={17} />}
+                          {isLoading ? 'Signing in…' : 'Login & Clock In'}
+                        </button>
+                      </form>
+                    </>
+                  ) : (
+                    <>
                   <div className="sqr-card-header">
                     <ScanLine size={22} className="sqr-card-icon" />
                     <div>
@@ -267,6 +379,8 @@ export default function SecurityQRLogin() {
                       </button>
                     </div>
                   )}
+                    </>
+                  )}
                 </>
               )}
             </>
@@ -274,7 +388,8 @@ export default function SecurityQRLogin() {
         </div>
 
         <p className="sqr-footer">
-          QR codes are managed by the system administrator. Contact admin if your badge is lost or damaged.
+          Guard credentials and QR badges are managed by the system administrator.
+          Contact admin if you forgot your password or your badge is lost or damaged.
         </p>
       </main>
     </div>

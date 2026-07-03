@@ -92,25 +92,30 @@ def _generate_secure_password():
 
 
 class GuardCreateSerializer(serializers.Serializer):
-    """Admin creates a security-guard account.  No email or password required —
-    guards authenticate via QR badge only.  Gate is assigned when the guard
-    selects a gate at the kiosk login screen, not at creation time."""
+    """Admin creates a security-guard account with email + password credentials.
+    Guards log in at the dedicated guard gate login page (credentials or QR badge).
+    Gate is assigned when the guard selects a gate at the kiosk login screen,
+    not at creation time."""
     full_name = serializers.CharField(max_length=150)
+    email     = serializers.EmailField()
+    password  = serializers.CharField(min_length=8, write_only=True)
 
     def validate_full_name(self, value):
         if not value.strip():
             raise serializers.ValidationError('Full name is required.')
         return value.strip()
 
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
     def create(self, validated_data):
-        import uuid as _uuid
-        uid   = _uuid.uuid4().hex[:12]
-        email = f'guard.{uid}@slc.internal'
-        pwd   = _generate_secure_password()
         return User.objects.create_user(
-            email=email,
+            email=validated_data['email'],
             full_name=validated_data['full_name'],
-            password=pwd,
+            password=validated_data['password'],
             role='security',
         )
 
@@ -353,7 +358,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     )
                 if user.role == 'security':
                     raise AuthenticationFailed(
-                        'Security personnel must log in using a QR badge at the gate terminal.'
+                        'Security personnel must log in at the guard gate login page.'
                     )
         except User.DoesNotExist:
             pass
