@@ -570,6 +570,8 @@ class AcceptRegistrationView(APIView):
         or_number = request.data.get('or_number', '').strip()
         if not or_number:
             return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
+        if not or_number.isdigit() or len(or_number) > 7:
+            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
         # A plate flagged by a 3rd-offense fee violation requires additional
         # review before it can be registered again. CDSO must explicitly
@@ -792,6 +794,8 @@ class CdsoDirectRegisterView(APIView):
         or_number = request.data.get('or_number', '').strip()
         if not or_number:
             return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not or_number.isdigit() or len(or_number) > 7:
+            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
         email = request.data.get('email', '').strip()
         if User.objects.filter(email=email).exists():
@@ -1070,10 +1074,18 @@ class DepartmentListView(APIView):
 
 
 class ProgramListView(APIView):
+    """College program list — excludes legacy Senior High (Grade 11/12) strand
+    entries, which now have their own Track/Strand + Grade Level pickers on
+    the registration form and don't belong in the college program dropdown."""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        names = list(ReferenceItem.objects.filter(category='program', is_active=True).values_list('name', flat=True))
+        names = list(
+            ReferenceItem.objects.filter(category='program', is_active=True)
+            .exclude(name__icontains='Grade 11')
+            .exclude(name__icontains='Grade 12')
+            .values_list('name', flat=True)
+        )
         return Response(names)
 
 
@@ -1503,7 +1515,21 @@ class SupplierListCreateView(APIView):
             return Response({'company_name': 'Company name is required.'}, status=400)
         if Supplier.objects.filter(company_name__iexact=company_name).exists():
             return Response({'company_name': 'A supplier with this name already exists.'}, status=400)
+
+        plate_numbers = [
+            p.strip().upper() for p in (request.data.get('plates') or []) if p.strip()
+        ]
+        if plate_numbers:
+            existing = SupplierPlate.objects.filter(plate_number__in=plate_numbers).values_list('plate_number', flat=True)
+            if existing:
+                return Response({'plates': f"Plate(s) already registered: {', '.join(existing)}."}, status=400)
+
         supplier = Supplier.objects.create(company_name=company_name)
+        if plate_numbers:
+            SupplierPlate.objects.bulk_create(
+                [SupplierPlate(supplier=supplier, plate_number=p) for p in dict.fromkeys(plate_numbers)]
+            )
+            supplier = Supplier.objects.prefetch_related('plates').get(pk=supplier.pk)
         return Response(SupplierSerializer(supplier).data, status=201)
 
 

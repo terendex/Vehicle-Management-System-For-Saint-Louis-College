@@ -337,7 +337,7 @@ export default function AdminDashboard() {
               >
                 <DayBarChart
                   data={stats?.day_distribution}
-                  weekTotal={stats?.scans?.week}
+                  weekTotal={stats?.scans?.authorized_week}
                 />
               </ChartCard>
 

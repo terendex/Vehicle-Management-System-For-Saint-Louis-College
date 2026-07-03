@@ -42,7 +42,7 @@ const GATE_OPTIONS = [
   { value: 'gate4', label: 'Gate 4' },
 ]
 
-function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
+function CameraModal({ mode, camera, nextName, cameras = [], onClose, onSaved, onAuditLog }) {
   const isEdit = mode === 'edit'
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
@@ -53,6 +53,10 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
   const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
 
+  // Live duplicate check — warns as soon as the IP/Device ID matches an existing camera
+  const ipDupe = cameras.find(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
+  const deviceIdDupe = cameras.find(c => c.id !== camera?.id && deviceId.trim() && c.device_id === deviceId.trim())
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!ip.trim() || !deviceId.trim() || !password.trim()) {
@@ -61,6 +65,11 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
     }
     if (assignment === 'entry' && !gateId) {
       toast.error('Please select a gate for this entry camera.')
+      return
+    }
+    const duplicate = ipDupe || deviceIdDupe
+    if (duplicate) {
+      toast.error(`This camera is already registered as "${duplicate.name}".`)
       return
     }
     setSaving(true)
@@ -94,7 +103,9 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
       onSaved()
       onClose()
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to save camera.')
+      const data = err?.response?.data
+      const fieldError = data?.ip?.[0] || data?.device_id?.[0]
+      toast.error(fieldError || data?.detail || 'Failed to save camera.')
     } finally {
       setSaving(false)
     }
@@ -122,10 +133,16 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
               <div className="form-group">
                 <label className="form-label">Camera IP <span className="required">*</span></label>
                 <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => setIp(e.target.value)} required />
+                {ipDupe && (
+                  <p className="dm-hint dm-hint-error">Already used by "{ipDupe.name}".</p>
+                )}
               </div>
               <div className="form-group">
                 <label className="form-label">Device ID <span className="required">*</span></label>
                 <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} required />
+                {deviceIdDupe && (
+                  <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
+                )}
               </div>
             </div>
 
@@ -186,7 +203,7 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
 
           <div className="modal-footer">
             <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>
+            <button type="submit" className="btn-primary" disabled={saving || !!ipDupe || !!deviceIdDupe}>
               {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Device'}
             </button>
           </div>
@@ -594,10 +611,10 @@ export default function DeviceManagement() {
 
       {/* Modals */}
       {modal?.type === 'add' && (
-        <CameraModal mode="add" nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
+        <CameraModal mode="add" nextName={nextName} cameras={cameras} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
       )}
       {modal?.type === 'edit' && (
-        <CameraModal mode="edit" camera={modal.camera} nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
+        <CameraModal mode="edit" camera={modal.camera} nextName={nextName} cameras={cameras} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
       )}
       {modal?.type === 'delete' && (
         <DeleteModal camera={modal.camera} onClose={() => setModal(null)} onDeleted={load} onAuditLog={logAuditEvent} />

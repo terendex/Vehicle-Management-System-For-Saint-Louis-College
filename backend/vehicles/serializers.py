@@ -118,6 +118,18 @@ class CameraSerializer(serializers.ModelSerializer):
                   'rtsp_url', 'assignment', 'gate_id', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']
 
+    def validate(self, attrs):
+        ip        = attrs.get('ip', getattr(self.instance, 'ip', None))
+        device_id = attrs.get('device_id', getattr(self.instance, 'device_id', None))
+        qs        = Camera.objects.all()
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if ip and qs.filter(ip=ip).exists():
+            raise serializers.ValidationError({'ip': 'A camera with this IP address is already registered.'})
+        if device_id and qs.filter(device_id=device_id).exists():
+            raise serializers.ValidationError({'device_id': 'A camera with this Device ID is already registered.'})
+        return attrs
+
 
 class SupplierPlateSerializer(serializers.ModelSerializer):
     class Meta:
