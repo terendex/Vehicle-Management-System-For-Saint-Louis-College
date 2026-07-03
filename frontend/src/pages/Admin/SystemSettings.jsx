@@ -6,7 +6,7 @@ import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deac
 import './SystemSettings.css'
 
 export default function SystemSettings() {
-  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 30 }
+  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60 }
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
@@ -25,7 +25,7 @@ export default function SystemSettings() {
       .then(({ data }) => {
         const normalized = {
           retention_years:    data.retention_years    ?? 5,
-          scan_dedup_seconds: data.scan_dedup_seconds ?? 30,
+          scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
         }
         setForm(normalized)
         setSaved(normalized)

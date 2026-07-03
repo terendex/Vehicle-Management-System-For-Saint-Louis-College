@@ -455,7 +455,16 @@ export default function ViolationsManagement() {
                         <span className="vm-no-evidence"><Image size={13} /> None</span>
                       )}
                     </td>
-                    <td className="vm-time" title={fmtDate(v.issued_at)}>{timeAgo(v.issued_at)}</td>
+                    <td className="vm-time" title={fmtDate(v.issued_at)}>
+                      {timeAgo(v.issued_at)}
+                      {(v.on_duty_guard_name || v.issued_by_name) && (
+                        <span className="vm-issued-guard">
+                          {v.on_duty_guard_name
+                            ? `On duty: ${v.on_duty_guard_name}`
+                            : `By: ${v.issued_by_name}`}
+                        </span>
+                      )}
+                    </td>
                     <td><StatusBadge v={v} /></td>
                     <td><ActionButtons v={v} /></td>
                   </tr>

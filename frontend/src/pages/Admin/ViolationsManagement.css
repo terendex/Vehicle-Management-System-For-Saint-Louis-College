@@ -343,6 +343,13 @@
   white-space: nowrap;
 }
 
+.vm-issued-guard {
+  display: block;
+  font-size: 0.7rem;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
 /* ── Type pills ────────────────────────────────────────────────── */
 
 .vm-type-pill {

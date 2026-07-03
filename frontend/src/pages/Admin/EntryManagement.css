@@ -362,6 +362,7 @@
 .em-result.wrong_day  { border-left: 4px solid #ef4444; }
 .em-result.pending    { border-left: 4px solid #f59e0b; }
 .em-result.visitor    { border-left: 4px solid #8b5cf6; }
+.em-result.exited     { border-left: 4px solid #2563eb; }
 
 /* Banner */
 .em-result-banner {
@@ -392,6 +393,7 @@
 .wrong_day .em-result-icon  { background: #fee2e2; color: #dc2626; }
 .pending .em-result-icon    { background: #fef3c7; color: #d97706; }
 .visitor .em-result-icon    { background: #ede9fe; color: #7c3aed; }
+.exited .em-result-icon     { background: #dbeafe; color: #2563eb; }
 
 .em-result-text {
   text-align: center;
@@ -411,6 +413,7 @@
 .pending .em-result-status    { color: #d97706; }
 .visitor .em-result-status    { color: #7c3aed; }
 .idle .em-result-status       { color: #6b7280; }
+.exited .em-result-status     { color: #2563eb; }
 
 .em-result-plate {
   font-size: 14px;
