@@ -112,6 +112,10 @@ class AuditLog(models.Model):
         VISITOR_ISSUED   = 'visitor_issued',   'Visitor Pass Issued'
         VISITOR_EXITED   = 'visitor_exited',   'Visitor Exited'
         ENTRY_OVERRIDE   = 'entry_override',   'Entry Override'
+        # Generic CRUD actions for all other admin-managed records
+        RECORD_CREATED   = 'created',          'Record Created'
+        RECORD_UPDATED   = 'updated',          'Record Updated'
+        RECORD_DELETED   = 'deleted',          'Record Deleted'
 
     actor       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='audit_logs')
     action      = models.CharField(max_length=30, choices=Action.choices)

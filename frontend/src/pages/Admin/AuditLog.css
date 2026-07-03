@@ -300,12 +300,7 @@
   border-bottom: none;
 }
 
-.al-details {
-  max-width: 300px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* Details is now the main content column - full text, wrapped (rules at end of file) */
 
 .al-action-badge {
   display: inline-flex;
@@ -455,4 +450,26 @@
 .al-page-current {
   font-weight: 600;
   color: #1A1D2E;
+}
+/* ── Three-column layout: badge + text share the Details cell ──────────────── */
+.al-details {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.al-details .al-action-badge {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.al-details-text {
+  color: #4b5563;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.al-timestamp {
+  white-space: nowrap;
+  color: #6b7280;
+  font-size: 12.5px;
 }

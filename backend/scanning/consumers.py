@@ -149,6 +149,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": str(exc)})
             return
 
+        # Keep the latest frame — attached as evidence when a scan auto-issues a violation
+        self._last_frame_jpeg = image_bytes
+
         # FPS accounting
         self._frame_counter += 1
         self._fps_counter += 1
@@ -701,7 +704,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
-            overstay_minutes = _close_active_pass(plate_number, gate_id)
+            overstay_minutes = _close_active_pass(
+                plate_number, gate_id,
+                evidence_bytes=getattr(self, '_last_frame_jpeg', None))
             overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             try:
@@ -791,7 +796,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         # genuinely denied/wrong-day entries are auto-fined.
         if not entry["allowed"] and entry["status"] != "no_pass":
             try:
-                _auto_log_violation(vehicle, entry["message"], gate_id)
+                _auto_log_violation(
+                    vehicle, entry["message"], gate_id,
+                    evidence_bytes=getattr(self, '_last_frame_jpeg', None))
             except Exception:
                 pass
 
@@ -1218,6 +1225,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     # ── detection + scan pipeline ──────────────────────────────────────────────
 
     async def _detect_and_scan(self, jpeg_bytes: bytes):
+        # Keep the latest frame — attached as evidence when a scan auto-issues a violation
+        self._last_frame_jpeg = jpeg_bytes
         loop = asyncio.get_running_loop()
         try:
             detections = await loop.run_in_executor(None, self._run_detection, jpeg_bytes)

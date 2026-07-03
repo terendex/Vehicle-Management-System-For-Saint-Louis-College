@@ -7,7 +7,6 @@ import {
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
-import { usersApi } from '../../api/users'
 import { useCameraContext } from '../../context/CameraContext'
 import './DeviceManagement.css'
 
@@ -42,7 +41,25 @@ const GATE_OPTIONS = [
   { value: 'gate4', label: 'Gate 4' },
 ]
 
-function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
+const IP_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
+
+function isValidIp(value) {
+  const m = IP_PATTERN.exec(value)
+  return !!m && m.slice(1).every(part => Number(part) <= 255)
+}
+
+// Extract a readable message from a DRF error payload ({field: [msg]} or {detail})
+function apiErrorMessage(err, fallback) {
+  const data = err?.response?.data
+  if (data?.detail) return data.detail
+  if (data && typeof data === 'object') {
+    const first = Object.values(data).flat()[0]
+    if (typeof first === 'string') return first
+  }
+  return fallback
+}
+
+function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved }) {
   const isEdit = mode === 'edit'
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
@@ -59,8 +76,24 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
       toast.error('Please fill in all fields.')
       return
     }
+    if (!isValidIp(ip.trim())) {
+      toast.error('Enter a valid IP address (e.g. 192.168.137.86).')
+      return
+    }
     if (assignment === 'entry' && !gateId) {
       toast.error('Please select a gate for this entry camera.')
+      return
+    }
+    // Instant duplicate check against the loaded list (backend re-validates)
+    const others = cameras.filter(c => !isEdit || c.id !== camera.id)
+    const ipDup  = others.find(c => (c.ip || '').trim() === ip.trim())
+    if (ipDup) {
+      toast.error(`${ipDup.name} already uses this IP address.`)
+      return
+    }
+    const idDup = others.find(c => (c.device_id || '').trim() === deviceId.trim())
+    if (idDup) {
+      toast.error(`${idDup.name} already uses this Device ID.`)
       return
     }
     setSaving(true)
@@ -75,26 +108,16 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
         gate_id: assignment === 'entry' ? gateId : null,
       }
       if (isEdit) {
-        const updated = await camerasApi.update(camera.id, payload)
+        await camerasApi.update(camera.id, payload)
         toast.success(`${camera.name} updated.`)
-        onAuditLog?.({
-          action: 'device_updated',
-          target_name: updated.name,
-          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}${payload.gate_id ? `, Gate: ${GATE_LABELS[payload.gate_id]}` : ''}`,
-        })
       } else {
-        const created = await camerasApi.create(payload)
+        await camerasApi.create(payload)
         toast.success('Camera added successfully.')
-        onAuditLog?.({
-          action: 'device_created',
-          target_name: created.name,
-          details: `IP: ${payload.ip}, Assignment: ${payload.assignment}${payload.gate_id ? `, Gate: ${GATE_LABELS[payload.gate_id]}` : ''}`,
-        })
       }
       onSaved()
       onClose()
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to save camera.')
+      toast.error(apiErrorMessage(err, 'Failed to save camera.'))
     } finally {
       setSaving(false)
     }
@@ -198,7 +221,7 @@ function CameraModal({ mode, camera, nextName, onClose, onSaved, onAuditLog }) {
 
 // ── Delete Confirm Modal ──────────────────────────────────────────────────────
 
-function DeleteModal({ camera, onClose, onDeleted, onAuditLog }) {
+function DeleteModal({ camera, onClose, onDeleted }) {
   const [deleting, setDeleting] = useState(false)
 
   const handleDelete = async () => {
@@ -206,11 +229,6 @@ function DeleteModal({ camera, onClose, onDeleted, onAuditLog }) {
     try {
       await camerasApi.remove(camera.id)
       toast.success(`${camera.name} removed.`)
-      onAuditLog?.({
-        action: 'device_deleted',
-        target_name: camera.name,
-        details: `IP: ${camera.ip}, Assignment: ${camera.assignment}`,
-      })
       onDeleted()
       onClose()
     } catch {
@@ -286,9 +304,7 @@ export default function DeviceManagement() {
 
   useEffect(() => { load() }, [load])
 
-  const logAuditEvent = useCallback((payload) => {
-    usersApi.createAuditLog(payload).catch(() => {})
-  }, [])
+  // Camera CRUD is audited server-side (CameraViewSet) — no client-side audit posts.
 
   const handlePing = async (cam) => {
     setPingStates(p => ({ ...p, [cam.id]: 'testing' }))
@@ -594,13 +610,22 @@ export default function DeviceManagement() {
 
       {/* Modals */}
       {modal?.type === 'add' && (
-        <CameraModal mode="add" nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
+        <CameraModal mode="add" cameras={cameras} nextName={nextName} onClose={() => setModal(null)} onSaved={load} />
       )}
       {modal?.type === 'edit' && (
-        <CameraModal mode="edit" camera={modal.camera} nextName={nextName} onClose={() => setModal(null)} onSaved={load} onAuditLog={logAuditEvent} />
+        <CameraModal mode="edit" camera={modal.camera} cameras={cameras} nextName={nextName} onClose={() => setModal(null)} onSaved={load} />
       )}
       {modal?.type === 'delete' && (
-        <DeleteModal camera={modal.camera} onClose={() => setModal(null)} onDeleted={load} onAuditLog={logAuditEvent} />
+        <DeleteModal
+          camera={modal.camera}
+          onClose={() => setModal(null)}
+          onDeleted={() => {
+            // Also tear down the live stream connection so no ghost feed lingers
+            const sc = getStreamCam(modal.camera)
+            if (sc) disconnectCamera(sc.id)
+            load()
+          }}
+        />
       )}
     </AdminLayout>
   )

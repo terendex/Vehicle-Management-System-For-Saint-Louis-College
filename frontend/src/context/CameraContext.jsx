@@ -277,6 +277,10 @@ export function CameraProvider({ children }) {
     if (existingId !== undefined) {
       const ws             = wsMap.current[existingId]
       const currentDetect  = detectMap.current[existingId] ?? false
+      // Detection is STICKY: a view-only page (Operations Center, Device
+      // Management) must never downgrade a scanning connection — otherwise a
+      // reconnect triggered from those pages would silently stop gate scanning.
+      const effectiveDetect = detect || currentDetect
       const needsReconnect = !ws
         || ws.readyState === WebSocket.CLOSED
         || ws.readyState === WebSocket.CLOSING
@@ -285,13 +289,16 @@ export function CameraProvider({ children }) {
       // needs to change, cancel it and reopen with the correct detect flag.
       const needsUpgrade = detect && !currentDetect
       // A scan connection tagging logs with the wrong gate must be reopened too
-      const gateChanged  = detect && !!gate && gateMap.current[existingId] !== gate
+      const gateChanged  = effectiveDetect && !!gate && gateMap.current[existingId] !== gate
 
-      if (gate) gateMap.current[existingId] = gate
+      if (gate) {
+        gateMap.current[existingId] = gate
+        setCameras(p => p.map(c => c.id === existingId && c.gate !== gate ? { ...c, gate } : c))
+      }
       if (needsReconnect || needsUpgrade || gateChanged) {
-        detectMap.current[existingId] = detect
+        detectMap.current[existingId] = effectiveDetect
         startRenderLoop(existingId)
-        _connect(existingId, trimUrl, detect)
+        _connect(existingId, trimUrl, effectiveDetect)
       }
       return existingId
     }
@@ -306,6 +313,7 @@ export function CameraProvider({ children }) {
       name: (name || '').trim() || `Camera ${id}`,
       url: trimUrl,
       assignment,
+      gate: gate || '',
       wsActive: false,
       streamConnected: false,
       statusMsg: '',

@@ -329,12 +329,18 @@
 }
 
 .vm-notes {
-  max-width: 200px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 260px;
+  min-width: 160px;
   color: #6b7280;
   font-size: 0.8rem;
+  line-height: 1.45;
+  /* wrap up to 3 lines, then ellipsis — full text on hover via title */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .vm-time {
@@ -351,6 +357,18 @@
 }
 
 /* ── Type pills ────────────────────────────────────────────────── */
+
+.vm-type-select {
+  padding: 5px 10px;
+  border: 1px solid #e2e6ee;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #374151;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.vm-type-select:focus { border-color: #6d5ff2; }
 
 .vm-type-pill {
   display: inline-block;

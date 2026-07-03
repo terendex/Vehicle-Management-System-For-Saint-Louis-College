@@ -3,6 +3,7 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from 'sonner'
@@ -23,6 +24,7 @@ const STATUS_META = {
   unknown:    { label: 'Visitor',    cls: 'visitor',    Icon: HelpCircle   },
   no_pass:    { label: 'No Pass',    cls: 'visitor',    Icon: HelpCircle   },
   disabled:   { label: 'Disabled',   cls: 'denied',     Icon: XCircle      },
+  unreadable: { label: 'Unreadable', cls: 'visitor',    Icon: HelpCircle   },
   exited:     { label: 'Exited',     cls: 'exited',     Icon: CheckCircle  },
   pending:    { label: 'Pending',    cls: 'pending',    Icon: Clock        },
 }
@@ -38,6 +40,29 @@ function shiftDur(start) {
   const mins = Math.floor((Date.now() - new Date(start).getTime()) / 60000)
   if (mins < 60) return `${mins}m`
   return `${Math.floor(mins / 60)}h ${mins % 60}m`
+}
+
+// ─── Pager (matches the violations table pagination) ──────────────────────────
+const LIST_PAGE_SIZE = 8
+
+function Pager({ page, totalPages, total, onPage }) {
+  if (totalPages <= 1) return null
+  return (
+    <div className="oc-pager">
+      <span className="oc-pager-info">
+        Showing {(page - 1) * LIST_PAGE_SIZE + 1}–{Math.min(page * LIST_PAGE_SIZE, total)} of {total}
+      </span>
+      <div className="oc-pager-controls">
+        <button className="oc-pager-btn" disabled={page === 1} onClick={() => onPage(page - 1)}>
+          <ChevronLeft size={14} />
+        </button>
+        <span className="oc-pager-current">Page {page} of {totalPages}</span>
+        <button className="oc-pager-btn" disabled={page === totalPages} onClick={() => onPage(page + 1)}>
+          <ChevronRight size={14} />
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // ─── Gate Panel ───────────────────────────────────────────────────────────────
@@ -152,8 +177,11 @@ function CameraMonitor() {
   }) // intentionally no deps — runs after every render until activeCamId is set
 
   useEffect(() => {
+    // View-only (no detect flag) — detection runs on the guard/entry terminals.
+    // The gate is passed so the monitor can label feeds and so a later upgrade
+    // to scan mode tags its logs with the right gate.
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry')))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { gate: c.gate_id })))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -193,6 +221,7 @@ function CameraMonitor() {
             <div className="oc-cam-name-tag">
               <span className={`oc-cam-dot ${activeCam?.streamConnected ? 'live' : 'wait'}`} />
               {activeCam?.name || 'Camera'}
+              {activeCam?.gate && ` — ${GATE_LABELS[activeCam.gate] ?? activeCam.gate}`}
             </div>
           </>
         ) : (
@@ -213,7 +242,7 @@ function CameraMonitor() {
               onClick={() => setActiveCamId(cam.id)}
             >
               <span className={`oc-cam-dot ${cam.streamConnected ? 'live' : cam.wsActive ? 'wait' : 'off'}`} />
-              {cam.name}
+              {cam.name}{cam.gate && ` · ${GATE_LABELS[cam.gate] ?? cam.gate}`}
             </button>
           ))}
         </div>
@@ -231,6 +260,8 @@ export default function OperationsCenter() {
   const [guards,        setGuards]        = useState([])
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState(null)
+  const [shiftPage,     setShiftPage]     = useState(1)
+  const [flagPage,      setFlagPage]      = useState(1)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -240,7 +271,7 @@ export default function OperationsCenter() {
         getGuardMonitor(),
         getAccessLogs({ gate_id: 'gate1', limit: 12 }),
         getAccessLogs({ gate_id: 'gate4', limit: 12 }),
-        getShifts({ limit: 20 }),
+        getShifts({ limit: 100 }),
       ])
 
       if (shiftsRes.status === 'fulfilled')
@@ -276,6 +307,17 @@ export default function OperationsCenter() {
 
   const activeGuards   = Object.values(currentShifts).filter(Boolean).length
   const totalEntries   = (logsByGate.gate1?.length ?? 0) + (logsByGate.gate4?.length ?? 0)
+
+  // Newest first (LIFO) + client-side pagination, same as the violations table
+  const sortedShifts    = [...shiftHistory].sort((a, b) => new Date(b.clocked_in_at) - new Date(a.clocked_in_at))
+  const shiftTotalPages = Math.max(1, Math.ceil(sortedShifts.length / LIST_PAGE_SIZE))
+  const shiftPageSafe   = Math.min(shiftPage, shiftTotalPages)
+  const pagedShifts     = sortedShifts.slice((shiftPageSafe - 1) * LIST_PAGE_SIZE, shiftPageSafe * LIST_PAGE_SIZE)
+
+  const sortedFlags    = [...crossFlags].sort((a, b) => new Date(b.exited_at) - new Date(a.exited_at))
+  const flagTotalPages = Math.max(1, Math.ceil(sortedFlags.length / LIST_PAGE_SIZE))
+  const flagPageSafe   = Math.min(flagPage, flagTotalPages)
+  const pagedFlags     = sortedFlags.slice((flagPageSafe - 1) * LIST_PAGE_SIZE, flagPageSafe * LIST_PAGE_SIZE)
 
   return (
     <AdminLayout>
@@ -375,20 +417,23 @@ export default function OperationsCenter() {
                 <span>No discrepancies detected</span>
               </div>
             ) : (
-              <div className="oc-flags-list">
-                {crossFlags.map((f, i) => (
-                  <div key={i} className="oc-flag-item">
-                    <AlertTriangle size={13} className="oc-flag-icon" />
-                    <div>
-                      <span className="oc-log-plate">{f.plate_number}</span>
-                      <span className="oc-flag-route">
-                        Entered {GATE_LABELS[f.entry_gate] ?? f.entry_gate} → Exited {GATE_LABELS[f.exit_gate] ?? f.exit_gate}
-                      </span>
-                      <div className="oc-flag-times">{fmt(f.entered_at)} · {fmt(f.exited_at)}</div>
+              <>
+                <div className="oc-flags-list">
+                  {pagedFlags.map((f, i) => (
+                    <div key={i} className="oc-flag-item">
+                      <AlertTriangle size={13} className="oc-flag-icon" />
+                      <div>
+                        <span className="oc-log-plate">{f.plate_number}</span>
+                        <span className="oc-flag-route">
+                          Entered {GATE_LABELS[f.entry_gate] ?? f.entry_gate} → Exited {GATE_LABELS[f.exit_gate] ?? f.exit_gate}
+                        </span>
+                        <div className="oc-flag-times">{fmt(f.entered_at)} · {fmt(f.exited_at)}</div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                <Pager page={flagPageSafe} totalPages={flagTotalPages} total={sortedFlags.length} onPage={setFlagPage} />
+              </>
             )}
           </div>
 
@@ -401,27 +446,30 @@ export default function OperationsCenter() {
             {shiftHistory.length === 0 ? (
               <p className="oc-empty">No shift records found.</p>
             ) : (
-              <div className="oc-shift-list">
-                {shiftHistory.map((s, i) => (
-                  <div key={s.id ?? i} className="oc-shift-item">
-                    <UserCheck size={13} className="oc-shift-icon" />
-                    <div className="oc-shift-info">
-                      <div className="oc-shift-name">
-                        {s.guard_name}
-                        {s.is_active && <span className="oc-shift-active">On Duty</span>}
-                      </div>
-                      <div className="oc-shift-meta">
-                        <span className="oc-shift-gate">{GATE_LABELS[s.gate] ?? s.gate}</span>
-                        <span>In: {fmt(s.clocked_in_at)}</span>
-                        {s.clocked_out_at
-                          ? <span>Out: {fmt(s.clocked_out_at)}</span>
-                          : <span className="oc-shift-still">Still active</span>
-                        }
+              <>
+                <div className="oc-shift-list">
+                  {pagedShifts.map((s, i) => (
+                    <div key={s.id ?? i} className="oc-shift-item">
+                      <UserCheck size={13} className="oc-shift-icon" />
+                      <div className="oc-shift-info">
+                        <div className="oc-shift-name">
+                          {s.guard_name}
+                          {s.is_active && <span className="oc-shift-active">On Duty</span>}
+                        </div>
+                        <div className="oc-shift-meta">
+                          <span className="oc-shift-gate">{GATE_LABELS[s.gate] ?? s.gate}</span>
+                          <span>In: {fmt(s.clocked_in_at)}</span>
+                          {s.clocked_out_at
+                            ? <span>Out: {fmt(s.clocked_out_at)}</span>
+                            : <span className="oc-shift-still">Still active</span>
+                          }
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                <Pager page={shiftPageSafe} totalPages={shiftTotalPages} total={sortedShifts.length} onPage={setShiftPage} />
+              </>
             )}
           </div>
         </div>

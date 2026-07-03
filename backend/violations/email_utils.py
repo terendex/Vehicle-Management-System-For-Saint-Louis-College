@@ -1,5 +1,6 @@
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
+from email.mime.image import MIMEImage
 
 VIOLATION_TYPE_LABELS = {
     'unauthorized_entry':   'Unauthorized Entry',
@@ -27,6 +28,45 @@ _FOOTER = """
     <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
   </div>
 """
+
+
+def _evidence_html(violation):
+    """Inline evidence-photo block (rendered via cid) — empty when no photo."""
+    if not getattr(violation, 'evidence', None):
+        return ''
+    return (
+        '<div style="margin:0 0 20px;">'
+        '<p style="font-size:13px;color:#5A5F72;margin:0 0 8px;font-weight:600;">Evidence Photo</p>'
+        '<img src="cid:evidence" alt="violation evidence" '
+        'style="max-width:100%;border-radius:10px;border:1px solid #E2E6EE;display:block;" />'
+        '</div>'
+    )
+
+
+def _send_violation_email(subject, text, html, recipient, violation=None):
+    """Send a violation email, inlining the evidence photo when one exists."""
+    try:
+        msg = EmailMultiAlternatives(
+            subject=subject, body=text,
+            from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient],
+        )
+        msg.attach_alternative(html, 'text/html')
+        evidence = getattr(violation, 'evidence', None)
+        if evidence:
+            try:
+                evidence.open('rb')
+                data = evidence.read()
+                evidence.close()
+                subtype = 'png' if (evidence.name or '').lower().endswith('.png') else 'jpeg'
+                img = MIMEImage(data, _subtype=subtype)
+                img.add_header('Content-ID', '<evidence>')
+                img.add_header('Content-Disposition', 'inline', filename='evidence.jpg')
+                msg.attach(img)
+            except Exception:
+                pass
+        msg.send(fail_silently=True)
+    except Exception:
+        pass
 
 
 def send_violation_warning_email(violation):
@@ -77,6 +117,7 @@ def send_violation_warning_email(violation):
                 {notes_row}
               </table>
             </div>
+            {_evidence_html(violation)}
             <div style="background:#FEF3C7;border-left:4px solid #D97706;border-radius:6px;padding:12px 16px;margin-bottom:20px;">
               <p style="margin:0;font-size:14px;color:#92400E;">{warning_blurb}</p>
             </div>
@@ -91,9 +132,9 @@ def send_violation_warning_email(violation):
     </html>
     """
 
-    send_mail(
+    _send_violation_email(
         subject=f"SLC Vehicle — {offense_label} Violation Warning: {vtype_label}",
-        message=(
+        text=(
             f"Dear {owner.full_name},\n\n"
             f"A {offense_label} offense violation ({vtype_label}) has been recorded for your vehicle "
             f"{vehicle.plate_number}.\n\n"
@@ -101,10 +142,9 @@ def send_violation_warning_email(violation):
             f"and a ₱150 fee is imposed.\n\n"
             f"Contact the CDSO office for any concerns."
         ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[owner.email],
-        html_message=html_message,
-        fail_silently=True,
+        html=html_message,
+        recipient=owner.email,
+        violation=violation,
     )
 
 
@@ -151,6 +191,7 @@ def send_fee_imposed_email(violation):
                 {notes_row}
               </table>
             </div>
+            {_evidence_html(violation)}
             <div style="background:#FEF2F2;border-left:4px solid #DC2626;border-radius:6px;padding:12px 16px;margin-bottom:20px;">
               <p style="margin:0 0 8px;font-size:14px;color:#991B1B;font-weight:600;">Payment Process:</p>
               <ol style="margin:0;padding-left:18px;color:#7F1D1D;font-size:13px;line-height:1.7;">
@@ -171,9 +212,9 @@ def send_fee_imposed_email(violation):
     </html>
     """
 
-    send_mail(
+    _send_violation_email(
         subject=f"SLC Vehicle — Entry Denied: 3rd Offense Fee ₱150 ({vtype_label})",
-        message=(
+        text=(
             f"Dear {owner.full_name},\n\n"
             f"Your vehicle {vehicle.plate_number} has been denied campus entry due to a 3rd offense "
             f"({vtype_label}).\n\n"
@@ -183,10 +224,9 @@ def send_fee_imposed_email(violation):
             f"3. Return to CDSO with your Official Receipt to clear the violation.\n\n"
             f"Contact the CDSO office for assistance."
         ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[owner.email],
-        html_message=html_message,
-        fail_silently=True,
+        html=html_message,
+        recipient=owner.email,
+        violation=violation,
     )
 
 
@@ -235,6 +275,7 @@ def send_violation_notified_email(violation):
                 {notes_row}
               </table>
             </div>
+            {_evidence_html(violation)}
             <p style="color:#5A5F72;font-size:14px;margin:0;">
               Please contact or visit the CDSO office to address this violation. This record is now visible on your vehicle owner portal.
             </p>
@@ -245,9 +286,9 @@ def send_violation_notified_email(violation):
     </html>
     """
 
-    send_mail(
+    _send_violation_email(
         subject=f"SLC Vehicle — Violation Notice: {vtype_label}",
-        message=(
+        text=(
             f"Dear {owner.full_name},\n\n"
             f"The CDSO office has issued a violation notice ({vtype_label}) "
             f"for your vehicle {vehicle.plate_number}.\n\n"
@@ -255,10 +296,9 @@ def send_violation_notified_email(violation):
             f"Please visit the CDSO office to address this violation.\n\n"
             f"This record is now visible on your vehicle owner portal."
         ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[owner.email],
-        html_message=html_message,
-        fail_silently=True,
+        html=html_message,
+        recipient=owner.email,
+        violation=violation,
     )
 
 
