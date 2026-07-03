@@ -198,8 +198,8 @@ class AdminReplaceView(APIView):
 
 
 class AdminCreateGuardView(APIView):
-    """Admin creates a security-guard account.  No email or password in the form —
-    guards authenticate via QR badge only."""
+    """Admin creates a security-guard account with email + password credentials.
+    Guards log in at the dedicated guard gate login page (credentials or QR badge)."""
     permission_classes = [IsAdminRole]
 
     def post(self, request):
@@ -486,10 +486,6 @@ class MyRegistrationView(APIView):
 
 
 # ──────────────────────────────────────────────
-#  Password Reset (unauthenticated)
-# ──────────────────────────────────────────────
-
-# ──────────────────────────────────────────────
 #  Guard QR Login (passwordless, for gate stations)
 # ──────────────────────────────────────────────
 
@@ -644,7 +640,7 @@ class PasswordResetRequestView(APIView):
           </body>
         </html>
         """
-
+        
         send_mail(
             subject='SLC Vehicle Management — Password Reset',
             message=(
@@ -777,6 +773,81 @@ class QRLoginView(APIView):
         })
 
 
+class GuardCredentialLoginView(APIView):
+    """Guard logs in with email + password at the gate station — clocks out the
+    previous shift at the selected gate, creates a new shift, issues JWT.
+    Only accounts with role='security' may use this endpoint; everyone else
+    logs in through the regular /api/auth/login/ endpoint."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from scanning.models import GuardShift
+        from scanning.serializers import GuardShiftSerializer
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        email      = (request.data.get('email')    or '').strip().lower()
+        password   = request.data.get('password')  or ''
+        gate_param = (request.data.get('gate')     or '').strip()
+
+        if not email or not password:
+            return Response({'error': 'Email and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            guard = User.objects.get(email__iexact=email, role='security')
+        except User.DoesNotExist:
+            return Response({'error': 'Incorrect email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not guard.check_password(password):
+            return Response({'error': 'Incorrect email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not guard.is_active:
+            return Response(
+                {'error': 'Your account has been disabled. Please contact the administrator.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        valid_gates = ('gate1', 'gate4')
+        gate = gate_param if gate_param in valid_gates else guard.gate_assignment
+        if not gate or gate not in valid_gates:
+            return Response(
+                {'error': 'Gate selection required. Please choose a gate before logging in.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+
+        # Clock out whoever is currently active at this gate (the previous guard)
+        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
+            clocked_out_at=now,
+            clocked_out_by=guard,
+        )
+
+        shift   = GuardShift.objects.create(guard=guard, gate=gate)
+        refresh = RefreshToken.for_user(guard)
+
+        AuditLog.objects.create(
+            actor=guard,
+            action=AuditLog.Action.SCAN,
+            details=f'Guard credential login: {guard.full_name} ({guard.user_code}) at {gate}',
+            ip_address=get_client_ip(request),
+        )
+
+        return Response({
+            'access':  str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id':                   guard.id,
+                'user_code':            guard.user_code,
+                'full_name':            guard.full_name,
+                'email':                guard.email,
+                'role':                 guard.role,
+                'gate_assignment':      gate,   # shift gate, not profile default
+                'must_change_password': guard.must_change_password,
+            },
+            'shift': GuardShiftSerializer(shift).data,
+        })
+
+
 class GuardQRView(APIView):
     """Admin only: return a guard's QR token for badge printing."""
     permission_classes = [IsAdminRole]
@@ -804,4 +875,4 @@ class RegenerateGuardQRView(APIView):
         return Response({'qr_token': str(guard.qr_token)})
 
 
-
+

@@ -170,6 +170,35 @@ const useAuthStore = create((set, get) => {
       window.location.href = redirectTo
     },
 
+    /** Guard email + password login at the gate station — replaces the current session. */
+    guardLogin: async (email, password, gate) => {
+      set({ isLoading: true, error: null })
+      try {
+        const data = await authApi.guardLogin(email, password, gate)
+
+        const user         = data.user
+        const accessToken  = data.access
+        const refreshToken = data.refresh
+
+        _clearTimer()
+        localStorage.setItem('access_token',  accessToken)
+        localStorage.setItem('refresh_token', refreshToken)
+        localStorage.setItem('user', JSON.stringify(user))
+
+        set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false, error: null })
+        _scheduleRefresh(accessToken, _doRefresh, get().logout)
+
+        return user
+      } catch (error) {
+        const message =
+          error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Login failed. Please check your credentials.'
+        set({ isLoading: false, error: message })
+        throw new Error(message)
+      }
+    },
+
     /** Guard QR scan login — replaces the current session with the scanned guard's session. */
     qrLogin: async (qr_token, gate) => {
       set({ isLoading: true, error: null })
