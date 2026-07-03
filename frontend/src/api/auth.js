@@ -11,6 +11,11 @@ export const authApi = {
     return data
   },
 
+  guardLogin: async (email, password, gate) => {
+    const { data } = await api.post('/auth/guard-login/', { email, password, gate })
+    return data
+  },
+
   getGuardQrCode: async (pk) => {
     const { data } = await api.get(`/accounts/guard-qr/${pk}/`)
     return data

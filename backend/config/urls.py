@@ -22,7 +22,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
-from accounts.views import CustomTokenObtainPairView, QRLoginView
+from accounts.views import CustomTokenObtainPairView, QRLoginView, GuardCredentialLoginView
 
 urlpatterns = [
     path('admin/',                      admin.site.urls),
@@ -30,6 +30,7 @@ urlpatterns = [
     # JWT Auth
     path('api/auth/login/',             CustomTokenObtainPairView.as_view(),  name='token_obtain'),
     path('api/auth/qr-login/',          QRLoginView.as_view(),                name='qr_login'),
+    path('api/auth/guard-login/',       GuardCredentialLoginView.as_view(),   name='guard_login'),
     path('api/auth/refresh/',           TokenRefreshView.as_view(),           name='token_refresh'),
     path('api/auth/verify/',            TokenVerifyView.as_view(),            name='token_verify'),
 
