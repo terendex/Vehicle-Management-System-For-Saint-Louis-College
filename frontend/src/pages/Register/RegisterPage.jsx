@@ -86,6 +86,8 @@ export default function RegisterPage() {
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
   const [formErrors, setFormErrors] = useState({})
+  const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
+  const [dupChecking, setDupChecking] = useState({})
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -298,9 +300,59 @@ export default function RegisterPage() {
       setFormData((prev) => ({ ...prev, [name]: formatted }))
       const errorMsg = validateField(name, formatted)
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
+      // Stale duplicate hint no longer applies to the value being typed — the debounced
+      // check below will repopulate it once the new value settles
+      if (name === 'plate_number' || name === 'student_id' || name === 'employee_id')
+        setDupErrors((prev) => ({ ...prev, [name]: null }))
       setSubmitError(null)
     }
   }
+
+  // Debounced live duplicate check — warns in the field hint before the user submits
+  useEffect(() => {
+    const plate = formData.plate_number?.trim()
+    const studentId = formData.student_id?.trim()
+    const employeeId = formData.employee_id?.trim()
+
+    const plateValid = plate && isValidPlateNumber(plate)
+    const studentIdValid = registrantType === 'student' && /^\d{8}$/.test(studentId || '')
+    const employeeIdValid = registrantType === 'employee' && /^\d{8}$/.test(employeeId || '')
+
+    if (!plateValid && !studentIdValid && !employeeIdValid) return
+
+    setDupChecking(prev => ({
+      ...prev,
+      plate_number: plateValid || prev.plate_number,
+      student_id: studentIdValid || prev.student_id,
+      employee_id: employeeIdValid || prev.employee_id,
+    }))
+
+    const timer = setTimeout(async () => {
+      try {
+        const result = await registrationApi.checkAvailability({
+          plate_number: plateValid ? plate : '',
+          student_id: studentIdValid ? studentId : '',
+          employee_id: employeeIdValid ? employeeId : '',
+        })
+        setDupErrors(prev => ({
+          ...prev,
+          ...(plateValid && { plate_number: result.plate_number }),
+          ...(studentIdValid && { student_id: result.student_id }),
+          ...(employeeIdValid && { employee_id: result.employee_id }),
+        }))
+      } catch {
+        // Network hiccup — the backend still enforces this on submit, so fail silently here
+      } finally {
+        setDupChecking(prev => ({
+          ...prev,
+          ...(plateValid && { plate_number: false }),
+          ...(studentIdValid && { student_id: false }),
+          ...(employeeIdValid && { employee_id: false }),
+        }))
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [formData.plate_number, formData.student_id, formData.employee_id, registrantType])
 
   const toggleDay = (dayKey) => {
     setFormData(prev => {
@@ -335,6 +387,12 @@ export default function RegisterPage() {
     if (Object.keys(newErrors).length > 0) {
       setFormErrors(prev => ({ ...prev, ...newErrors }))
       setSubmitError('Please fix the format errors highlighted in the form before submitting.')
+      return
+    }
+
+    // Block on already-known duplicates from the live check (the backend re-checks regardless)
+    if (dupErrors.plate_number || dupErrors.student_id || dupErrors.employee_id) {
+      setSubmitError('Please resolve the duplicate entries highlighted in the form before submitting.')
       return
     }
 
@@ -723,10 +781,12 @@ export default function RegisterPage() {
                   onChange={handleInputChange}
                   required
                   placeholder={FIELD_PATTERNS.plate_number.hint}
-                  className={formErrors.plate_number ? 'input-error' : ''}
+                  className={formErrors.plate_number || dupErrors.plate_number ? 'input-error' : ''}
                 />
                 <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>
                 {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
+                {!formErrors.plate_number && dupErrors.plate_number && <span className="field-error-msg">{dupErrors.plate_number}</span>}
+                {!formErrors.plate_number && dupChecking.plate_number && <span className="field-checking-msg">Checking availability…</span>}
               </div>
 
               <div className="form-group">
@@ -950,10 +1010,12 @@ export default function RegisterPage() {
                         onChange={handleInputChange}
                         required
                         placeholder={FIELD_PATTERNS.student_id.hint}
-                        className={formErrors.student_id ? 'input-error' : ''}
+                        className={formErrors.student_id || dupErrors.student_id ? 'input-error' : ''}
                       />
                       <span className="field-hint">{FIELD_PATTERNS.student_id.hint}</span>
                       {formErrors.student_id && <span className="field-error-msg">{formErrors.student_id}</span>}
+                      {!formErrors.student_id && dupErrors.student_id && <span className="field-error-msg">{dupErrors.student_id}</span>}
+                      {!formErrors.student_id && dupChecking.student_id && <span className="field-checking-msg">Checking availability…</span>}
                     </div>
                   )}
 
@@ -1069,10 +1131,12 @@ export default function RegisterPage() {
                       onChange={handleInputChange}
                       required
                       placeholder={FIELD_PATTERNS.employee_id.hint}
-                      className={formErrors.employee_id ? 'input-error' : ''}
+                      className={formErrors.employee_id || dupErrors.employee_id ? 'input-error' : ''}
                     />
                     <span className="field-hint">{FIELD_PATTERNS.employee_id.hint}</span>
                     {formErrors.employee_id && <span className="field-error-msg">{formErrors.employee_id}</span>}
+                    {!formErrors.employee_id && dupErrors.employee_id && <span className="field-error-msg">{dupErrors.employee_id}</span>}
+                    {!formErrors.employee_id && dupChecking.employee_id && <span className="field-checking-msg">Checking availability…</span>}
                   </div>
                   <div className="form-group">
                     <label>Department <span className="required">*</span></label>

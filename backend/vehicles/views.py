@@ -497,6 +497,35 @@ def _normalize_plate(plate):
     return (plate or '').strip().upper().replace(' ', '')
 
 
+def _plate_conflict(plate_number, qs):
+    plate_norm = _normalize_plate(plate_number)
+    if not plate_norm:
+        return None
+    # Stored plates may vary in spacing/case, so compare normalized values
+    existing_plates = qs.exclude(plate_number='').values_list('plate_number', flat=True)
+    if any(_normalize_plate(p) == plate_norm for p in existing_plates):
+        return "This plate number already has an active registration."
+    # Unowned Vehicle rows are adopted by update_or_create at accept time,
+    # so only plates already tied to an account are conflicts
+    if Vehicle.objects.filter(plate_number__iexact=plate_norm, user__isnull=False).exists():
+        return "This plate number is already registered to an existing vehicle pass."
+    return None
+
+
+def _id_conflict(registrant_type, student_id, employee_id, qs):
+    student_id = (student_id or '').strip()
+    if registrant_type == 'student' and student_id:
+        if qs.filter(registrant_type='student', student_id__iexact=student_id).exists():
+            return "This student ID already has an active registration."
+
+    employee_id = (employee_id or '').strip()
+    if registrant_type == 'employee' and employee_id:
+        if qs.filter(registrant_type='employee', employee_id__iexact=employee_id).exists():
+            return "This employee ID already has an active registration."
+
+    return None
+
+
 def _registration_conflict(registrant_type, plate_number, student_id, employee_id,
                            statuses=None, exclude_pk=None):
     """
@@ -510,28 +539,10 @@ def _registration_conflict(registrant_type, plate_number, student_id, employee_i
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
 
-    plate_norm = _normalize_plate(plate_number)
-    if plate_norm:
-        # Stored plates may vary in spacing/case, so compare normalized values
-        existing_plates = qs.exclude(plate_number='').values_list('plate_number', flat=True)
-        if any(_normalize_plate(p) == plate_norm for p in existing_plates):
-            return "This plate number already has an active registration."
-        # Unowned Vehicle rows are adopted by update_or_create at accept time,
-        # so only plates already tied to an account are conflicts
-        if Vehicle.objects.filter(plate_number__iexact=plate_norm, user__isnull=False).exists():
-            return "This plate number is already registered to an existing vehicle pass."
-
-    student_id = (student_id or '').strip()
-    if registrant_type == 'student' and student_id:
-        if qs.filter(registrant_type='student', student_id__iexact=student_id).exists():
-            return "This student ID already has an active registration."
-
-    employee_id = (employee_id or '').strip()
-    if registrant_type == 'employee' and employee_id:
-        if qs.filter(registrant_type='employee', employee_id__iexact=employee_id).exists():
-            return "This employee ID already has an active registration."
-
-    return None
+    conflict = _plate_conflict(plate_number, qs)
+    if conflict:
+        return conflict
+    return _id_conflict(registrant_type, student_id, employee_id, qs)
 
 
 class AcceptRegistrationView(APIView):
@@ -889,6 +900,26 @@ class ScheduleSlotsView(APIView):
                 "available": max(0, limit - used),
             }
         return Response(result)
+
+
+class RegistrationAvailabilityView(APIView):
+    """Live duplicate check used to warn the user in the registration form's text boxes
+    before they submit, e.g. 'This plate number already has an active registration.'"""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        plate_number = request.query_params.get('plate_number', '')
+        student_id   = request.query_params.get('student_id', '')
+        employee_id  = request.query_params.get('employee_id', '')
+
+        statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+        qs = VehicleRegistration.objects.filter(status__in=statuses)
+
+        return Response({
+            'plate_number': _plate_conflict(plate_number, qs),
+            'student_id':   _id_conflict('student', student_id, '', qs),
+            'employee_id':  _id_conflict('employee', '', employee_id, qs),
+        })
 
 
 class PublicOpenRegistrationView(APIView):
