@@ -603,7 +603,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
-        from .views import _inside_state, _in_exit_cooldown, _already_inside, _auto_log_violation
+        from .views import (_inside_state, _in_exit_cooldown, _already_inside,
+                            _auto_log_violation, _close_active_pass)
         close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
@@ -700,23 +701,28 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            overstay_minutes = _close_active_pass(plate_number)
+            overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             try:
                 AuditLog.objects.create(
                     actor=self._user,
                     action="scan",
-                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | Duration: {duration_minutes} min",
+                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | "
+                            f"Duration: {duration_minutes} min"
+                            + (f" | OVERSTAYED by {overstay_minutes} min" if overstay_minutes else ""),
                 )
             except Exception:
                 pass
             return {
                 "status":           "exited",
                 "allowed":          False,
-                "message":          f"{owner_name} — Exit recorded. Duration: {duration_minutes} min.",
+                "message":          f"{owner_name} — Exit recorded. Duration: {duration_minutes} min.{overstay_note}",
                 "vehicle":          VehicleSerializer(vehicle).data,
                 "has_violations":   False,
                 "already_inside":   False,
                 "duration_minutes": duration_minutes,
+                "overstay_minutes": overstay_minutes,
             }
 
         if _in_exit_cooldown(plate_number):
