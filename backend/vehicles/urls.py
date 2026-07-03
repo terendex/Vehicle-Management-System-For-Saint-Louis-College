@@ -12,9 +12,10 @@ router.register('',                views.VehicleViewSet,        basename='vehicl
 
 urlpatterns = [
     # Public online registration (goes to PENDING for CDSO review)
-    path('register/open/',           views.PublicOpenRegistrationView.as_view(), name='open-registration'),
-    path('register/status/',         views.RegistrationStatusView.as_view(),     name='registration-status'),
-    path('register/schedule-slots/', views.ScheduleSlotsView.as_view(),          name='schedule-slots'),
+    path('register/open/',           views.PublicOpenRegistrationView.as_view(),      name='open-registration'),
+    path('register/status/',         views.RegistrationStatusView.as_view(),          name='registration-status'),
+    path('register/schedule-slots/', views.ScheduleSlotsView.as_view(),               name='schedule-slots'),
+    path('register/availability/',   views.RegistrationAvailabilityView.as_view(),    name='registration-availability'),
 
     # CDSO walk-in direct registration (auto-accepted, no pending)
     path('register/direct/', views.CdsoDirectRegisterView.as_view(), name='direct-registration'),
