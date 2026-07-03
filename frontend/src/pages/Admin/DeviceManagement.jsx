@@ -70,6 +70,10 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
 
+  // Live duplicate check — warns as soon as the IP/Device ID matches an existing camera
+  const ipDupe = cameras.find(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
+  const deviceIdDupe = cameras.find(c => c.id !== camera?.id && deviceId.trim() && c.device_id === deviceId.trim())
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!ip.trim() || !deviceId.trim() || !password.trim()) {
@@ -145,10 +149,16 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
               <div className="form-group">
                 <label className="form-label">Camera IP <span className="required">*</span></label>
                 <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => setIp(e.target.value)} required />
+                {ipDupe && (
+                  <p className="dm-hint dm-hint-error">Already used by "{ipDupe.name}".</p>
+                )}
               </div>
               <div className="form-group">
                 <label className="form-label">Device ID <span className="required">*</span></label>
                 <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} required />
+                {deviceIdDupe && (
+                  <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
+                )}
               </div>
             </div>
 
@@ -209,7 +219,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
           <div className="modal-footer">
             <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>
+            <button type="submit" className="btn-primary" disabled={saving || !!ipDupe || !!deviceIdDupe}>
               {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Device'}
             </button>
           </div>
