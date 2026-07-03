@@ -217,7 +217,7 @@ function OverrideModal({ plate, onClose, onOverridden }) {
 }
 
 // ─── CircleCountdown ───────────────────────────────────────────────────────────
-function CircleCountdown({ duration = 10, onDismiss }) {
+function CircleCountdown({ duration = 5, onDismiss }) {
   const R = 18
   const circumference = +(2 * Math.PI * R).toFixed(2) // 113.1
   const [progress, setProgress] = useState(0) // 0 → 1
@@ -282,9 +282,15 @@ function CircleCountdown({ duration = 10, onDismiss }) {
 }
 
 // ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss, onPause, onResume }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
+
+  // Opening a modal pauses the card's auto-dismiss so the form can't vanish
+  const openVisitor   = () => { setShowVisitor(true);   onPause?.() }
+  const closeVisitor  = () => { setShowVisitor(false);  onResume?.() }
+  const openOverride  = () => { setShowOverride(true);  onPause?.() }
+  const closeOverride = () => { setShowOverride(false); onResume?.() }
 
   if (!result) return (
     <div className="em-card em-result em-result-idle-compact">
@@ -398,13 +404,13 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
           )}
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
             {isVisitor && (
-              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
+              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={openVisitor}>
                 <UserPlus size={14} /> Create Visitor Pass
               </button>
             )}
             {isDeniable && (
               <button className="em-btn" style={{ width: '100%', background: '#d97706', color: '#fff', border: 'none', justifyContent: 'center' }}
-                onClick={() => setShowOverride(true)}>
+                onClick={openOverride}>
                 <Shield size={14} /> Override Entry
               </button>
             )}
@@ -414,12 +420,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
 
       {showVisitor && (
         <VisitorPassModal plate={result.plate_number} offices={offices}
-          onClose={() => setShowVisitor(false)} onCreated={onPassCreated} guardName={guardName} />
+          onClose={closeVisitor} onCreated={onPassCreated} guardName={guardName} />
       )}
       {showOverride && (
         <OverrideModal plate={result.plate_number}
-          onClose={() => setShowOverride(false)}
-          onOverridden={() => { onOverride?.(); setShowOverride(false) }} />
+          onClose={closeOverride}
+          onOverridden={() => onOverride?.()} />
       )}
     </>
   )
@@ -437,15 +443,35 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [dedupSeconds, setDedupSeconds] = useState(10)
+  const [dedupSeconds, setDedupSeconds] = useState(5)
+  const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
 
   const addToQueue = (r, secs = dedupSeconds) => {
     const id = Date.now() + Math.random()
-    setScanQueue(prev => [{ id, result: r, cooldownKey: id }, ...prev].slice(0, 4))
-    setTimeout(() => setScanQueue(prev => prev.filter(e => e.id !== id)), secs * 1000)
+    setScanQueue(prev => [{ id, result: r, cooldownKey: id, paused: false }, ...prev].slice(0, 4))
+    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), secs * 1000))
   }
 
-  const removeFromQueue = (id) => setScanQueue(prev => prev.filter(e => e.id !== id))
+  const removeFromQueue = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    queueTimers.current.delete(id)
+    setScanQueue(prev => prev.filter(e => e.id !== id))
+  }
+
+  // Pause the auto-dismiss while a modal (visitor pass / override) is open so
+  // the card can't vanish mid-form; resume restarts the full countdown.
+  const pauseQueueEntry = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    queueTimers.current.delete(id)
+    setScanQueue(prev => prev.map(e => e.id === id ? { ...e, paused: true } : e))
+  }
+
+  const resumeQueueEntry = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    setScanQueue(prev => prev.map(e => e.id === id
+      ? { ...e, paused: false, cooldownKey: Date.now() } : e))
+    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), dedupSeconds * 1000))
+  }
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -460,6 +486,7 @@ export default function SecurityEntryManagement() {
   const isLive = rtspCameras.some(c => c.streamConnected)
 
   const scanCooldown = useRef(new Map()) // plate → { status, timeoutId }
+  const processedRids = useRef(new Set()) // result _rid values already handled
 
   // Auto-process ML scan results from camera
   useEffect(() => {
@@ -467,6 +494,15 @@ export default function SecurityEntryManagement() {
     rtspResults.forEach(r => {
       if (!r.plate_number) return
       if (r.status === 'duplicate') return
+      // Each delivered result is handled exactly once — results linger in context
+      // state, and this effect re-runs on every render, so without this guard the
+      // same scan would re-spam the queue/toasts/log every time the cooldown lapses
+      if (r._rid) {
+        if (processedRids.current.has(r._rid)) return
+        processedRids.current.add(r._rid)
+        if (processedRids.current.size > 500) processedRids.current.clear()
+      }
+      if (r._at && Date.now() - r._at > 30000) return // stale result from before this page mounted
       const existing = scanCooldown.current.get(r.plate_number)
       // Skip only when the same status repeats within the dedup window
       if (existing && existing.status === r.status) return
@@ -498,7 +534,7 @@ export default function SecurityEntryManagement() {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
       .catch(() => {})
     getSystemSettings()
       .then(({ data }) => { if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds) })
@@ -728,9 +764,11 @@ export default function SecurityEntryManagement() {
                     onOverride={refreshLogs}
                     guardName={user?.full_name}
                     cooldownKey={item.cooldownKey}
-                    cooldownActive={true}
+                    cooldownActive={!item.paused}
                     dedupSeconds={dedupSeconds}
                     onDismiss={() => removeFromQueue(item.id)}
+                    onPause={() => pauseQueueEntry(item.id)}
+                    onResume={() => resumeQueueEntry(item.id)}
                   />
                 ))}
               </div>
