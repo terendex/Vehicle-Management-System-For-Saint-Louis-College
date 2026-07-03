@@ -57,6 +57,13 @@ export const registrationApi = {
     const { data } = await api.post('/vehicles/register/open/', registrationData)
     return data
   },
+  // Live duplicate check for the registration form's plate/student/employee ID fields
+  checkAvailability: async ({ plate_number, student_id, employee_id }) => {
+    const { data } = await api.get('/vehicles/register/availability/', {
+      params: { plate_number, student_id, employee_id },
+    })
+    return data
+  },
 
   // ── Admin: pending registrations ──
   getPendingRegistrations: async (status = 'pending') => {
