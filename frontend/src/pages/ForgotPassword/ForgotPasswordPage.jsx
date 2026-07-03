@@ -10,6 +10,8 @@ export default function ForgotPasswordPage() {
   const navigate = useNavigate()
   const [email, setEmail]       = useState('')
   const [isLoading, setLoading] = useState(false)
+  // `sent` swaps the whole card from "form" to "confirmation" view instead of routing away,
+  // so the user stays on this page and can immediately go back if they mistyped the email.
   const [sent, setSent]         = useState(false)
   const [error, setError]       = useState('')
 
@@ -18,6 +20,8 @@ export default function ForgotPasswordPage() {
     setError('')
     setLoading(true)
     try {
+      // Normalize the email client-side (trim + lowercase) so "  User@Mail.com" and
+      // "user@mail.com" are treated as the same account lookup on the backend.
       await authApi.requestPasswordReset(email.trim().toLowerCase())
       setSent(true)
     } catch (err) {
