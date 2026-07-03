@@ -110,6 +110,28 @@ def _pair_entry_exit(exit_log) -> None:
         exit_log.save(update_fields=['paired_entry'])
 
 
+def _close_active_pass(plate_number: str) -> int:
+    """
+    Mark today's ACTIVE visitor pass for this plate as exited — called from every
+    exit path (camera toggle, manual Record Exit, QR scan) so passes don't stay
+    open after the visitor leaves. Returns overstay in minutes (0 if none).
+    """
+    now = timezone.now()
+    pass_ = VisitorPass.objects.filter(
+        plate_number=plate_number,
+        valid_date=timezone.localdate(),
+        status=VisitorPass.Status.ACTIVE,
+    ).order_by('-entered_at').first()
+    if not pass_:
+        return 0
+    pass_.status = VisitorPass.Status.EXITED
+    pass_.exited_at = now
+    pass_.save(update_fields=['status', 'exited_at'])
+    if pass_.expires_at and now > pass_.expires_at:
+        return int((now - pass_.expires_at).total_seconds() / 60)
+    return 0
+
+
 def _auto_log_violation(vehicle, message: str, gate_id: str = ''):
     """Create an unauthorized violation if none was logged in the last 5 minutes."""
     from .models import active_guard_for_gate
@@ -499,12 +521,16 @@ class ExitScanView(APIView):
         )
 
         duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
+        overstay_minutes = (int((now - pass_.expires_at).total_seconds() / 60)
+                            if pass_.expires_at and now > pass_.expires_at else 0)
         guard_name = request.user.full_name
         _audit(
             request,
             AuditLog.Action.VISITOR_EXITED,
             f"Visitor exited | Plate: {pass_.plate_number} | "
-            f"Duration: {duration_minutes} min | Guard: {guard_name}",
+            f"Duration: {duration_minutes} min | "
+            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+            + f"Guard: {guard_name}",
         )
 
         return Response(VisitorPassSerializer(pass_).data)
@@ -668,6 +694,7 @@ class ExitLogView(APIView):
         )
 
         _pair_entry_exit(exit_log)
+        overstay_minutes = _close_active_pass(plate_number)
 
         duration_minutes = None
         entry_scanned_at = None
@@ -683,13 +710,15 @@ class ExitLogView(APIView):
             AuditLog.Action.VEHICLE_EXITED,
             f"Vehicle exited | Plate: {plate_number} | Owner: {owner_name} | "
             f"Duration: {duration_minutes if duration_minutes is not None else 'N/A'} min | "
-            f"Guard: {guard_name}",
+            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+            + f"Guard: {guard_name}",
         )
 
         return Response({
             'plate_number':    plate_number,
             'status':          'exited',
             'duration_minutes': duration_minutes,
+            'overstay_minutes': overstay_minutes,
             'entry_scanned_at': entry_scanned_at,
             'scanned_at':      exit_log.scanned_at,
         })
@@ -1016,19 +1045,24 @@ class ManualEntryView(APIView):
 
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            overstay_minutes = _close_active_pass(plate_number)
+            overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             guard_name = request.user.full_name
             _audit(request, AuditLog.Action.VEHICLE_EXITED,
                    f"Auto-exit (re-scan) | Plate: {plate_number} | Owner: {owner_name} | "
-                   f"Duration: {duration_minutes} min | Guard: {guard_name}")
+                   f"Duration: {duration_minutes} min | "
+                   + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+                   + f"Guard: {guard_name}")
             return Response({
                 'plate_number':    plate_number,
                 'status':          'exited',
                 'allowed':         False,
-                'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.',
+                'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.{overstay_note}',
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'already_inside':  False,
                 'duration_minutes': duration_minutes,
+                'overstay_minutes': overstay_minutes,
                 'gate_id':         gate_id,
             })
 

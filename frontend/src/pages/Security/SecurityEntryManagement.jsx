@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -9,6 +9,7 @@ import SecurityLayout from '../../components/Layout/SecurityLayout'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, logExit,
+  getVisitorPasses, extendVisitorPass,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -34,6 +35,14 @@ const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
   catch { return '' }
+}
+
+// Time-left / overstay info for an active visitor pass
+function passTimeInfo(p) {
+  if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
+  const diffMin = Math.round((new Date(p.expires_at).getTime() - Date.now()) / 60000)
+  if (diffMin >= 0) return { label: `${diffMin}m left`, overdue: false, soon: diffMin <= 10 }
+  return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
 }
 
 function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration }) {
@@ -443,6 +452,8 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
+  const [passes, setPasses]           = useState([]) // today's ACTIVE visitor passes
+  const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
   const [dedupSeconds, setDedupSeconds] = useState(5)
   const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
 
@@ -544,6 +555,38 @@ export default function SecurityEntryManagement() {
   const refreshLogs = () =>
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
 
+  // Active visitor passes — alert once per pass when it crosses into overstay
+  const refreshPasses = () =>
+    getVisitorPasses().then(r => {
+      const list = (r.data?.results ?? r.data ?? []).filter(p => p.status === 'active')
+      setPasses(list)
+      list.forEach(p => {
+        if (p.expires_at && new Date(p.expires_at).getTime() < Date.now()
+            && !overstayToasted.current.has(p.id)) {
+          overstayToasted.current.add(p.id)
+          toast.warning(`Visitor overstay: ${p.plate_number} exceeded the allowed ${p.allowed_duration} min.`, { duration: 8000 })
+        }
+      })
+    }).catch(() => {})
+
+  const refreshAll = () => { refreshLogs(); refreshPasses() }
+
+  useEffect(() => {
+    refreshPasses()
+    const t = setInterval(refreshPasses, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  const handleExtendPass = (p) => {
+    extendVisitorPass(p.id, 30)
+      .then(() => {
+        toast.success(`Pass extended +30 min for ${p.plate_number}.`)
+        overstayToasted.current.delete(p.id) // re-alert if it overstays again
+        refreshPasses()
+      })
+      .catch(err => toast.error(err?.response?.data?.error || 'Failed to extend pass.'))
+  }
+
   const handleCheckEntry = async (e) => {
     e?.preventDefault()
     const plate = plateInput.trim().toUpperCase()
@@ -580,7 +623,10 @@ export default function SecurityEntryManagement() {
       setPlateInput('')
       const dur = res.data.duration_minutes
       toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
-      refreshLogs()
+      if (res.data.overstay_minutes > 0) {
+        toast.warning(`${plate} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
+      }
+      refreshAll()
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Failed to record exit.')
     } finally { setExitLoading(false) }
@@ -734,6 +780,9 @@ export default function SecurityEntryManagement() {
                 <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
                   <strong>{exitResult.plate_number}</strong> exited
                   {exitResult.duration_minutes != null && <> · inside <strong>{exitResult.duration_minutes} min</strong></>}
+                  {exitResult.overstay_minutes > 0 && (
+                    <> · <span style={{ color: '#dc2626', fontWeight: 700 }}>overstayed {exitResult.overstay_minutes} min</span></>
+                  )}
                 </div>
               )}
             </div>
@@ -745,8 +794,8 @@ export default function SecurityEntryManagement() {
               <ResultCard
                 result={null}
                 offices={offices}
-                onPassCreated={refreshLogs}
-                onOverride={refreshLogs}
+                onPassCreated={refreshAll}
+                onOverride={refreshAll}
                 guardName={user?.full_name}
                 cooldownKey={0}
                 cooldownActive={false}
@@ -760,8 +809,8 @@ export default function SecurityEntryManagement() {
                     key={item.id}
                     result={item.result}
                     offices={offices}
-                    onPassCreated={refreshLogs}
-                    onOverride={refreshLogs}
+                    onPassCreated={refreshAll}
+                    onOverride={refreshAll}
                     guardName={user?.full_name}
                     cooldownKey={item.cooldownKey}
                     cooldownActive={!item.paused}
@@ -823,6 +872,63 @@ export default function SecurityEntryManagement() {
                           )}
                         </div>
                         <span className="em-audit-time">{timeAgo(log.scanned_at)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Active visitors — time remaining / overstay */}
+            <div className="em-card">
+              <div className="em-card-head">
+                <span className="em-card-label"><Clock size={14} /> Active Visitors</span>
+                <span className="em-logs-count">{passes.length}</span>
+              </div>
+              {passes.length === 0 ? (
+                <p style={{ margin: 0, padding: '10px 2px', fontSize: 12, color: '#9ca3af' }}>
+                  No visitors currently inside.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {passes.map(p => {
+                    const t = passTimeInfo(p)
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px',
+                          borderRadius: 8,
+                          background: t.overdue ? '#fef2f2' : '#f8fafc',
+                          border: `1px solid ${t.overdue ? '#fecaca' : '#e2e8f0'}`,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12.5, fontFamily: "'Courier New', monospace", letterSpacing: 0.5 }}>
+                            {p.plate_number}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+                          color: t.overdue ? '#dc2626' : t.soon ? '#d97706' : '#059669',
+                        }}>
+                          {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
+                          {t.label}
+                        </span>
+                        <button
+                          onClick={() => handleExtendPass(p)}
+                          title="Extend by 30 minutes"
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 6,
+                            border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer',
+                            color: '#374151', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          +30m
+                        </button>
                       </div>
                     )
                   })}
