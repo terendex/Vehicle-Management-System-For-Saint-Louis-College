@@ -13,6 +13,8 @@ class ViolationSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Violation
         fields = '__all__'
+        # The view resolves the vehicle from plate_number when no id is given
+        extra_kwargs = {'vehicle': {'required': False}}
 
     def get_evidence_url(self, obj):
         if not obj.evidence:

@@ -3,7 +3,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
-  RefreshCw, ChevronLeft, ChevronRight, Download, X, Trash2
+  RefreshCw, ChevronLeft, ChevronRight, Download, X
 } from 'lucide-react'
 import './AuditLog.css'
 
@@ -53,8 +53,6 @@ export default function AuditLog() {
   const [page, setPage]             = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
-  const [showClearConfirm, setShowClearConfirm] = useState(false)
-  const [clearing, setClearing]     = useState(false)
   const searchTimer = useRef(null)
 
   const hasFilters = search || actionFilter || datePeriod !== 'all'
@@ -116,32 +114,6 @@ export default function AuditLog() {
     }
   }
 
-  const clearFilters = () => {
-    setSearch('')
-    setAction('')
-    setDateFrom('')
-    setDateTo('')
-    setDatePeriod('all')
-    setPage(1)
-  }
-
-  const handleClearLogs = async () => {
-    setClearing(true)
-    try {
-      await usersApi.clearAuditLogs()
-      setShowClearConfirm(false)
-      setLogs([])
-      setTotalCount(0)
-      setTotalPages(1)
-      setPage(1)
-    } catch (err) {
-      console.error('Failed to clear audit logs:', err?.response?.data || err.message)
-      alert('Failed to clear audit logs. Check the console for details.')
-    } finally {
-      setClearing(false)
-    }
-  }
-
   const exportCsv = () => {
     if (!logs.length) return
     const header = 'Timestamp,Actor,Action,Target,Details,IP Address'
@@ -198,10 +170,6 @@ export default function AuditLog() {
               <Download size={14} />
               <span>Export CSV</span>
             </button>
-            <button className="al-clear-records-btn" onClick={() => setShowClearConfirm(true)} disabled={totalCount === 0} title="Clear all audit log records">
-              <Trash2 size={14} />
-              <span>Clear All</span>
-            </button>
           </div>
         </div>
 
@@ -257,11 +225,6 @@ export default function AuditLog() {
             </select>
           </div>
 
-          {hasFilters && (
-            <button className="al-clear-btn" onClick={clearFilters}>
-              <X size={13} /> Clear
-            </button>
-          )}
           <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
             <RefreshCw size={14} />
           </button>
@@ -278,11 +241,6 @@ export default function AuditLog() {
               <ClipboardList size={48} />
               <h3>No audit logs found</h3>
               <p>{hasFilters ? 'No events match your current filters.' : 'No events recorded yet.'}</p>
-              {hasFilters && (
-                <button className="al-clear-btn al-clear-btn-center" onClick={clearFilters}>
-                  <X size={14} /> Clear filters
-                </button>
-              )}
             </div>
           ) : (
             <table className="al-table">
@@ -343,28 +301,6 @@ export default function AuditLog() {
           </div>
         )}
       </div>
-
-      {showClearConfirm && (
-        <div className="al-confirm-overlay">
-          <div className="al-confirm-dialog">
-            <div className="al-confirm-icon">
-              <Trash2 size={28} />
-            </div>
-            <h3 className="al-confirm-title">Clear All Audit Logs?</h3>
-            <p className="al-confirm-body">
-              This will permanently delete all <strong>{totalCount}</strong> audit log records. This action cannot be undone.
-            </p>
-            <div className="al-confirm-actions">
-              <button className="al-confirm-cancel" onClick={() => setShowClearConfirm(false)} disabled={clearing}>
-                Cancel
-              </button>
-              <button className="al-confirm-delete" onClick={handleClearLogs} disabled={clearing}>
-                {clearing ? 'Clearing…' : 'Yes, Clear All'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </AdminLayout>
   )
 }

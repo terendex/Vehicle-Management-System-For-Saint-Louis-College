@@ -364,6 +364,9 @@
 .vm-type-no_sticker           { background: #fef9c3; color: #a16207; }
 .vm-type-expired_registration { background: #fee2e2; color: #b91c1c; }
 .vm-type-unauthorized         { background: #fde8d8; color: #c2410c; }
+.vm-type-unauthorized_entry   { background: #fde8d8; color: #c2410c; }
+.vm-type-time_exceed          { background: #ede9fe; color: #6d28d9; }
+.vm-type-double_parking       { background: #dbeafe; color: #1d4ed8; }
 .vm-type-other                { background: #f3f4f6; color: #374151; }
 
 /* ── Fine tag ──────────────────────────────────────────────────── */

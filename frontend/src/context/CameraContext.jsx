@@ -39,6 +39,7 @@ export function CameraProvider({ children }) {
   const smoothMap = useRef({})
   const rafMap    = useRef({})
   const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
+  const gateMap   = useRef({}) // id → gate_id the camera covers (used to tag scan logs)
 
   // url → camId: tracks all known cameras by URL, used for dedup + reconnection
   // Using a Map instead of a Set so we can look up existing camId by URL
@@ -157,7 +158,8 @@ export function CameraProvider({ children }) {
 
     ws.onopen = () => {
       setCameras(p => p.map(c => c.id === camId ? { ...c, wsActive: true, statusMsg: 'Connecting…' } : c))
-      ws.send(JSON.stringify({ type: 'start', rtsp_url: rtspUrl }))
+      const gate = gateMap.current[camId]
+      ws.send(JSON.stringify({ type: 'start', rtsp_url: rtspUrl, ...(gate ? { gate_id: gate } : {}) }))
     }
 
     ws.onmessage = (ev) => {
@@ -211,7 +213,12 @@ export function CameraProvider({ children }) {
         if (msg.type === 'result' && msg.results) {
           setFlash(true)
           setTimeout(() => setFlash(false), 450)
-          setResults(msg.results.map(r => ({ ...r, _camId: camId })))
+          // _rid uniquely identifies this delivery — pages use it to process each
+          // result exactly once (results stay in state, but must not be re-handled
+          // on later re-renders). _at lets a freshly mounted page skip stale ones.
+          const rid = genId()
+          const at  = Date.now()
+          setResults(msg.results.map((r, i) => ({ ...r, _camId: camId, _rid: `${rid}.${i}`, _at: at })))
         }
       } catch { /* ignore parse errors */ }
     }
@@ -262,7 +269,7 @@ export function CameraProvider({ children }) {
   // tracked but disconnected, we reconnect it.  If a scan page calls with
   // detect=true and the existing connection has detect=false, we upgrade it
   // so ML starts running for that camera.
-  const addCamera = useCallback((name, url, assignment = '', { detect = false } = {}) => {
+  const addCamera = useCallback((name, url, assignment = '', { detect = false, gate = '' } = {}) => {
     const trimUrl = (url || '').trim()
     if (!trimUrl.startsWith('rtsp://')) { toast.error('URL must start with rtsp://'); return null }
 
@@ -277,8 +284,11 @@ export function CameraProvider({ children }) {
       // Also covers the CONNECTING race: if WS hasn't opened yet but detect mode
       // needs to change, cancel it and reopen with the correct detect flag.
       const needsUpgrade = detect && !currentDetect
+      // A scan connection tagging logs with the wrong gate must be reopened too
+      const gateChanged  = detect && !!gate && gateMap.current[existingId] !== gate
 
-      if (needsReconnect || needsUpgrade) {
+      if (gate) gateMap.current[existingId] = gate
+      if (needsReconnect || needsUpgrade || gateChanged) {
         detectMap.current[existingId] = detect
         startRenderLoop(existingId)
         _connect(existingId, trimUrl, detect)
@@ -290,6 +300,7 @@ export function CameraProvider({ children }) {
     const id  = genId()
     urlToIdMap.current[trimUrl] = id
     detectMap.current[id]       = detect
+    if (gate) gateMap.current[id] = gate
     const cam = {
       id,
       name: (name || '').trim() || `Camera ${id}`,
@@ -330,6 +341,7 @@ export function CameraProvider({ children }) {
     trackMap.current   = {}
     smoothMap.current  = {}
     detectMap.current  = {}
+    gateMap.current    = {}
     urlToIdMap.current = {}
     setCameras([])
     setResults([])

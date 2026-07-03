@@ -72,10 +72,13 @@ export const registrationApi = {
   },
   // orNumber required; campusDaysOverride is an optional string[] the admin freely picks;
   // specialCaseReason is required when campusDaysOverride adds days not in the original request
-  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason) => {
+  // acknowledgeBlock: pass true to accept a plate flagged by a prior 3rd-offense
+  // violation (the backend returns 409 registration_blocked until acknowledged)
+  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason, acknowledgeBlock) => {
     const payload = { or_number: orNumber }
     if (campusDaysOverride && campusDaysOverride.length > 0) payload.campus_days = campusDaysOverride
     if (specialCaseReason) payload.special_case_reason = specialCaseReason
+    if (acknowledgeBlock) payload.acknowledge_block = true
     const { data } = await api.post(`/vehicles/registrations/${id}/accept/`, payload)
     return data
   },

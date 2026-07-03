@@ -26,6 +26,14 @@ def get_client_ip(request):
     return request.META.get('REMOTE_ADDR')
 
 
+GATE_DISPLAY = {'gate1': 'Gate 1', 'gate4': 'Gate 4', 'main': 'Main'}
+
+
+def _gate_label(gate_id: str) -> str:
+    """Human-readable gate name for audit-log details."""
+    return GATE_DISPLAY.get(gate_id, gate_id or 'Main')
+
+
 def _audit(request, action, details=''):
     try:
         AuditLog.objects.create(
@@ -37,7 +45,8 @@ def _audit(request, action, details=''):
     except Exception:
         pass
 
-AUTO_VIOLATION_DEDUP_SECONDS = 300   # one auto-violation per plate per 5 min
+# Auto-violations are issued at most once per type per vehicle per calendar day
+# (see _auto_log_violation); the counter resets at midnight local time.
 GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
 EXIT_COOLDOWN_SECONDS = 60           # block new entry for this many seconds after an exit
 
@@ -53,6 +62,7 @@ def _inside_state(plate_number: str):
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__date=today,
+        scanned_at__lte=timezone.now(),  # ignore future-dated rows from clock skew
     ).order_by('-scanned_at').first()
 
     if not last_entry:
@@ -71,11 +81,13 @@ def _inside_state(plate_number: str):
 
 def _in_exit_cooldown(plate_number: str) -> bool:
     """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
-    cutoff = timezone.now() - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
     return AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.EXITED,
         scanned_at__gte=cutoff,
+        scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
     ).exists()
 
 
@@ -86,6 +98,7 @@ def _already_inside(plate_number: str) -> bool:
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__date=today,
+        scanned_at__lte=timezone.now(),
     ).order_by('-scanned_at').first()
     if not last_entry:
         return False
@@ -106,23 +119,88 @@ def _pair_entry_exit(exit_log) -> None:
         exit_log.save(update_fields=['paired_entry'])
 
 
-def _auto_log_violation(vehicle, message: str, gate_id: str = ''):
-    """Create an unauthorized violation if none was logged in the last 5 minutes."""
+def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
+    """
+    Mark today's ACTIVE visitor pass for this plate as exited — called from every
+    exit path (camera toggle, manual Record Exit, QR scan) so passes don't stay
+    open after the visitor leaves. Returns overstay in minutes (0 if none).
+    An overstay also auto-issues a 'time_exceed' violation (once per day).
+    """
+    now = timezone.now()
+    pass_ = VisitorPass.objects.filter(
+        plate_number=plate_number,
+        valid_date=timezone.localdate(),
+        status=VisitorPass.Status.ACTIVE,
+    ).order_by('-entered_at').first()
+    if not pass_:
+        return 0
+    pass_.status = VisitorPass.Status.EXITED
+    pass_.exited_at = now
+    pass_.save(update_fields=['status', 'exited_at'])
+    if pass_.expires_at and now > pass_.expires_at:
+        overstay = int((now - pass_.expires_at).total_seconds() / 60)
+        try:
+            _auto_log_violation(
+                pass_.vehicle,
+                f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay} min',
+                gate_id,
+                vtype=Violation.Type.TIME_EXCEED,
+            )
+        except Exception:
+            pass
+        return overstay
+    return 0
+
+
+def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = ''):
+    """
+    Auto-issue a violation at the gate — at most ONE violation of each type per
+    vehicle per calendar day, no matter how often it is scanned or detected that
+    day. A new day allows the type to be issued again. Past violations stay
+    stored, and the cumulative (non-cleared) count drives severity: 1st/2nd
+    offense → warning, 3rd → ₱150 fee imposed, which check_entry then uses to
+    block the vehicle at the gate until CDSO clears it.
+    """
+    from decimal import Decimal
+    from violations.models import FEE_ESCALATING_TYPES, FEE_THIRD_OFFENSE
     from .models import active_guard_for_gate
-    cutoff = timezone.now() - timedelta(seconds=AUTO_VIOLATION_DEDUP_SECONDS)
-    already = Violation.objects.filter(
+
+    vtype = vtype or Violation.Type.UNAUTHORIZED_ENTRY
+
+    # One violation of this type per vehicle per calendar day
+    dedup_types = [vtype]
+    if vtype == Violation.Type.UNAUTHORIZED_ENTRY:
+        dedup_types.append(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
+    already_today = Violation.objects.filter(
         vehicle=vehicle,
-        violation_type=Violation.Type.UNAUTHORIZED,
-        issued_at__gte=cutoff,
+        violation_type__in=dedup_types,
+        issued_at__date=timezone.localdate(),
     ).exists()
-    if not already:
-        Violation.objects.create(
-            vehicle=vehicle,
-            violation_type=Violation.Type.UNAUTHORIZED,
-            notes=f'Auto-logged: {message}',
-            fine_amount=Violation.compute_fine(vehicle),
-            on_duty_guard=active_guard_for_gate(gate_id),
-        )
+    if already_today:
+        return
+
+    offense_num  = Violation.compute_offense_number(vehicle, vtype)
+    is_fee_event = offense_num == 3 and vtype in FEE_ESCALATING_TYPES
+    violation = Violation.objects.create(
+        vehicle              = vehicle,
+        violation_type       = vtype,
+        notes                = f'Auto-logged at gate: {message}',
+        offense_number       = offense_num,
+        fine_amount          = FEE_THIRD_OFFENSE if is_fee_event else Decimal('0.00'),
+        status               = (Violation.Status.FEE_IMPOSED if is_fee_event
+                                else Violation.Status.WARNING),
+        registration_blocked = is_fee_event,
+        is_released          = True,  # visible to the owner immediately
+        on_duty_guard        = active_guard_for_gate(gate_id),
+    )
+    try:
+        from violations.email_utils import send_violation_warning_email, send_fee_imposed_email
+        if offense_num in (1, 2):
+            send_violation_warning_email(violation)
+        elif is_fee_event:
+            send_fee_imposed_email(violation)
+    except Exception:
+        pass
 
 
 class ScanView(APIView):
@@ -302,7 +380,7 @@ class ScanView(APIView):
                 guard_name = request.user.full_name
                 _audit(request, AuditLog.Action.VEHICLE_EXITED,
                        f"Auto-exit (re-scan) | Plate: {plate} | Owner: {owner_name} | "
-                       f"Duration: {duration_minutes} min | Guard: {guard_name}")
+                       f"Duration: {duration_minutes} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}")
 
                 resp = {
                     'plate_number':    plate,
@@ -356,13 +434,13 @@ class ScanView(APIView):
                 action  = AuditLog.Action.VEHICLE_ENTERED
                 details = (
                     f"Plate: {plate} | Owner: {owner_name} | "
-                    f"Vehicle: {vehicle.vehicle_type or 'N/A'} | Guard: {guard_name}"
+                    f"Vehicle: {vehicle.vehicle_type or 'N/A'} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}"
                 )
             else:
                 action  = AuditLog.Action.SCAN
                 details = (
                     f"Plate: {plate} | Owner: {owner_name} | "
-                    f"Status: {entry['status']} | Reason: {entry['message']} | Guard: {guard_name}"
+                    f"Status: {entry['status']} | Reason: {entry['message']} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}"
                 )
             _audit(request, action, details)
 
@@ -432,11 +510,14 @@ class VisitorPassView(APIView):
         )
 
         # Log entry in AccessLog so the visitor appears in "Recent Scans"
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
         AccessLog.objects.create(
             plate_number=plate_number,
             vehicle=vehicle,
             status=AccessLog.Status.AUTHORIZED,
-            gate_id='main',
+            gate_id=gate_id,
             scanned_by=request.user,
         )
 
@@ -447,7 +528,7 @@ class VisitorPassView(APIView):
             AuditLog.Action.VISITOR_ISSUED,
             f"Visitor pass issued | Plate: {plate_number} | "
             f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
-            f"Duration: {allowed_duration} min | Guard: {guard_name}",
+            f"Duration: {allowed_duration} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
         return Response(VisitorPassSerializer(pass_).data, status=201)
@@ -481,21 +562,36 @@ class ExitScanView(APIView):
         pass_.exited_at = now
         pass_.save()
 
+        gate_id = request.data.get('gate_id', 'main')
         AccessLog.objects.create(
             vehicle=pass_.vehicle,
             plate_number=pass_.plate_number,
             status=AccessLog.Status.EXITED,
-            gate_id=request.data.get('gate_id', 'main'),
+            gate_id=gate_id,
             scanned_by=request.user,
         )
 
         duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
+        overstay_minutes = (int((now - pass_.expires_at).total_seconds() / 60)
+                            if pass_.expires_at and now > pass_.expires_at else 0)
+        if overstay_minutes:
+            try:
+                _auto_log_violation(
+                    pass_.vehicle,
+                    f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
+                    request.data.get('gate_id', ''),
+                    vtype=Violation.Type.TIME_EXCEED,
+                )
+            except Exception:
+                pass
         guard_name = request.user.full_name
         _audit(
             request,
             AuditLog.Action.VISITOR_EXITED,
             f"Visitor exited | Plate: {pass_.plate_number} | "
-            f"Duration: {duration_minutes} min | Guard: {guard_name}",
+            f"Duration: {duration_minutes} min | "
+            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+            + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
         return Response(VisitorPassSerializer(pass_).data)
@@ -616,12 +712,14 @@ class OverrideEntryView(APIView):
 
         vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
 
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         AccessLog.objects.create(
             plate_number    = plate_number,
             vehicle         = vehicle,
             status          = AccessLog.Status.AUTHORIZED,
             is_override     = True,
             override_reason = reason,
+            gate_id         = gate_id,
             scanned_by      = request.user,
         )
 
@@ -631,7 +729,7 @@ class OverrideEntryView(APIView):
             request,
             AuditLog.Action.ENTRY_OVERRIDE,
             f"Entry override | Plate: {plate_number} | Owner: {owner_name} | "
-            f"Reason: {reason} | Guard: {guard_name}",
+            f"Reason: {reason} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
         return Response({'status': 'overridden', 'plate_number': plate_number})
@@ -651,14 +749,17 @@ class ExitLogView(APIView):
 
         vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
 
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         exit_log = AccessLog.objects.create(
             plate_number = plate_number,
             vehicle      = vehicle,
             status       = AccessLog.Status.EXITED,
+            gate_id      = gate_id,
             scanned_by   = request.user,
         )
 
         _pair_entry_exit(exit_log)
+        overstay_minutes = _close_active_pass(plate_number, gate_id)
 
         duration_minutes = None
         entry_scanned_at = None
@@ -674,13 +775,15 @@ class ExitLogView(APIView):
             AuditLog.Action.VEHICLE_EXITED,
             f"Vehicle exited | Plate: {plate_number} | Owner: {owner_name} | "
             f"Duration: {duration_minutes if duration_minutes is not None else 'N/A'} min | "
-            f"Guard: {guard_name}",
+            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+            + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
         return Response({
             'plate_number':    plate_number,
             'status':          'exited',
             'duration_minutes': duration_minutes,
+            'overstay_minutes': overstay_minutes,
             'entry_scanned_at': entry_scanned_at,
             'scanned_at':      exit_log.scanned_at,
         })
@@ -1007,19 +1110,24 @@ class ManualEntryView(APIView):
 
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            overstay_minutes = _close_active_pass(plate_number, gate_id)
+            overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             guard_name = request.user.full_name
             _audit(request, AuditLog.Action.VEHICLE_EXITED,
                    f"Auto-exit (re-scan) | Plate: {plate_number} | Owner: {owner_name} | "
-                   f"Duration: {duration_minutes} min | Guard: {guard_name}")
+                   f"Duration: {duration_minutes} min | "
+                   + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+                   + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}")
             return Response({
                 'plate_number':    plate_number,
                 'status':          'exited',
                 'allowed':         False,
-                'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.',
+                'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.{overstay_note}',
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'already_inside':  False,
                 'duration_minutes': duration_minutes,
+                'overstay_minutes': overstay_minutes,
                 'gate_id':         gate_id,
             })
 
@@ -1037,10 +1145,13 @@ class ManualEntryView(APIView):
         entry = check_entry(vehicle)
         has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
 
+        # UI-only statuses (e.g. 'no_pass') aren't valid AccessLog statuses
+        log_status = (entry['status'] if entry['status'] in AccessLog.Status.values
+                      else AccessLog.Status.DENIED)
         AccessLog.objects.create(
             plate_number  = plate_number,
             vehicle       = vehicle,
-            status        = entry['status'],
+            status        = log_status,
             gate_id       = gate_id,
             denied_reason = '' if entry['allowed'] else entry['message'],
             scanned_by    = request.user,
@@ -1051,10 +1162,11 @@ class ManualEntryView(APIView):
         action = AuditLog.Action.VEHICLE_ENTERED if entry['allowed'] else AuditLog.Action.SCAN
         _audit(
             request, action,
-            f"Plate: {plate_number} | Owner: {owner_name} | Gate: {gate_id} | Guard: {guard_name} | Status: {entry['status']}",
+            f"Plate: {plate_number} | Owner: {owner_name} | Gate: {_gate_label(gate_id)} | Guard: {guard_name} | Status: {entry['status']}",
         )
 
-        if not entry['allowed']:
+        # 'no_pass' means a visitor awaiting a pass — not a violation
+        if not entry['allowed'] and entry['status'] != 'no_pass':
             _auto_log_violation(vehicle, entry['message'], gate_id)
 
         return Response({

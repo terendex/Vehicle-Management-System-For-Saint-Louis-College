@@ -289,6 +289,7 @@ export default function EntryManagement() {
   const [logs, setLogs] = useState([])
   const [offices, setOffices] = useState([])
   const plateCooldownRef = useRef(new Set())
+  const processedRidsRef = useRef(new Set()) // result _rid values already handled
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -301,7 +302,19 @@ export default function EntryManagement() {
   }) // intentionally no deps — runs after every render until activeCamId is set
 
   const handleScanSuccess = useCallback((results) => {
-    const fresh = (results ?? []).filter((r) => r.status !== 'duplicate')
+    // Handle each delivered result exactly once — results linger in context state
+    // and this callback re-fires on every render, so without the _rid guard the
+    // same scan re-spams the card and log whenever the plate cooldown lapses
+    const fresh = (results ?? []).filter((r) => {
+      if (r.status === 'duplicate') return false
+      if (r._rid) {
+        if (processedRidsRef.current.has(r._rid)) return false
+        processedRidsRef.current.add(r._rid)
+        if (processedRidsRef.current.size > 500) processedRidsRef.current.clear()
+      }
+      if (r._at && Date.now() - r._at > 30000) return false // stale result from before this page mounted
+      return true
+    })
     if (fresh.length === 0) return
     setResult(fresh)
 
@@ -333,7 +346,7 @@ export default function EntryManagement() {
   // Load entry cameras — detect=true enables plate-scan ML for this page
   useEffect(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

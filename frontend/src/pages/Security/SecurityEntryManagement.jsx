@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star,
+  ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
@@ -9,6 +9,7 @@ import SecurityLayout from '../../components/Layout/SecurityLayout'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, logExit,
+  getVisitorPasses, extendVisitorPass,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -34,6 +35,14 @@ const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
   catch { return '' }
+}
+
+// Time-left / overstay info for an active visitor pass
+function passTimeInfo(p) {
+  if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
+  const diffMin = Math.round((new Date(p.expires_at).getTime() - Date.now()) / 60000)
+  if (diffMin >= 0) return { label: `${diffMin}m left`, overdue: false, soon: diffMin <= 10 }
+  return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
 }
 
 function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration }) {
@@ -217,7 +226,7 @@ function OverrideModal({ plate, onClose, onOverridden }) {
 }
 
 // ─── CircleCountdown ───────────────────────────────────────────────────────────
-function CircleCountdown({ duration = 10, onDismiss }) {
+function CircleCountdown({ duration = 5, onDismiss }) {
   const R = 18
   const circumference = +(2 * Math.PI * R).toFixed(2) // 113.1
   const [progress, setProgress] = useState(0) // 0 → 1
@@ -282,9 +291,15 @@ function CircleCountdown({ duration = 10, onDismiss }) {
 }
 
 // ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss, onPause, onResume }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
+
+  // Opening a modal pauses the card's auto-dismiss so the form can't vanish
+  const openVisitor   = () => { setShowVisitor(true);   onPause?.() }
+  const closeVisitor  = () => { setShowVisitor(false);  onResume?.() }
+  const openOverride  = () => { setShowOverride(true);  onPause?.() }
+  const closeOverride = () => { setShowOverride(false); onResume?.() }
 
   if (!result) return (
     <div className="em-card em-result em-result-idle-compact">
@@ -398,13 +413,13 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
           )}
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
             {isVisitor && (
-              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
+              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={openVisitor}>
                 <UserPlus size={14} /> Create Visitor Pass
               </button>
             )}
             {isDeniable && (
               <button className="em-btn" style={{ width: '100%', background: '#d97706', color: '#fff', border: 'none', justifyContent: 'center' }}
-                onClick={() => setShowOverride(true)}>
+                onClick={openOverride}>
                 <Shield size={14} /> Override Entry
               </button>
             )}
@@ -414,12 +429,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
 
       {showVisitor && (
         <VisitorPassModal plate={result.plate_number} offices={offices}
-          onClose={() => setShowVisitor(false)} onCreated={onPassCreated} guardName={guardName} />
+          onClose={closeVisitor} onCreated={onPassCreated} guardName={guardName} />
       )}
       {showOverride && (
         <OverrideModal plate={result.plate_number}
-          onClose={() => setShowOverride(false)}
-          onOverridden={() => { onOverride?.(); setShowOverride(false) }} />
+          onClose={closeOverride}
+          onOverridden={() => onOverride?.()} />
       )}
     </>
   )
@@ -437,15 +452,37 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [dedupSeconds, setDedupSeconds] = useState(10)
+  const [passes, setPasses]           = useState([]) // today's ACTIVE visitor passes
+  const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
+  const [dedupSeconds, setDedupSeconds] = useState(5)
+  const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
 
   const addToQueue = (r, secs = dedupSeconds) => {
     const id = Date.now() + Math.random()
-    setScanQueue(prev => [{ id, result: r, cooldownKey: id }, ...prev].slice(0, 4))
-    setTimeout(() => setScanQueue(prev => prev.filter(e => e.id !== id)), secs * 1000)
+    setScanQueue(prev => [{ id, result: r, cooldownKey: id, paused: false }, ...prev].slice(0, 4))
+    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), secs * 1000))
   }
 
-  const removeFromQueue = (id) => setScanQueue(prev => prev.filter(e => e.id !== id))
+  const removeFromQueue = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    queueTimers.current.delete(id)
+    setScanQueue(prev => prev.filter(e => e.id !== id))
+  }
+
+  // Pause the auto-dismiss while a modal (visitor pass / override) is open so
+  // the card can't vanish mid-form; resume restarts the full countdown.
+  const pauseQueueEntry = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    queueTimers.current.delete(id)
+    setScanQueue(prev => prev.map(e => e.id === id ? { ...e, paused: true } : e))
+  }
+
+  const resumeQueueEntry = (id) => {
+    clearTimeout(queueTimers.current.get(id))
+    setScanQueue(prev => prev.map(e => e.id === id
+      ? { ...e, paused: false, cooldownKey: Date.now() } : e))
+    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), dedupSeconds * 1000))
+  }
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -460,6 +497,7 @@ export default function SecurityEntryManagement() {
   const isLive = rtspCameras.some(c => c.streamConnected)
 
   const scanCooldown = useRef(new Map()) // plate → { status, timeoutId }
+  const processedRids = useRef(new Set()) // result _rid values already handled
 
   // Auto-process ML scan results from camera
   useEffect(() => {
@@ -467,6 +505,15 @@ export default function SecurityEntryManagement() {
     rtspResults.forEach(r => {
       if (!r.plate_number) return
       if (r.status === 'duplicate') return
+      // Each delivered result is handled exactly once — results linger in context
+      // state, and this effect re-runs on every render, so without this guard the
+      // same scan would re-spam the queue/toasts/log every time the cooldown lapses
+      if (r._rid) {
+        if (processedRids.current.has(r._rid)) return
+        processedRids.current.add(r._rid)
+        if (processedRids.current.size > 500) processedRids.current.clear()
+      }
+      if (r._at && Date.now() - r._at > 30000) return // stale result from before this page mounted
       const existing = scanCooldown.current.get(r.plate_number)
       // Skip only when the same status repeats within the dedup window
       if (existing && existing.status === r.status) return
@@ -498,7 +545,7 @@ export default function SecurityEntryManagement() {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true })))
+      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
       .catch(() => {})
     getSystemSettings()
       .then(({ data }) => { if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds) })
@@ -507,6 +554,38 @@ export default function SecurityEntryManagement() {
 
   const refreshLogs = () =>
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
+
+  // Active visitor passes — alert once per pass when it crosses into overstay
+  const refreshPasses = () =>
+    getVisitorPasses().then(r => {
+      const list = (r.data?.results ?? r.data ?? []).filter(p => p.status === 'active')
+      setPasses(list)
+      list.forEach(p => {
+        if (p.expires_at && new Date(p.expires_at).getTime() < Date.now()
+            && !overstayToasted.current.has(p.id)) {
+          overstayToasted.current.add(p.id)
+          toast.warning(`Visitor overstay: ${p.plate_number} exceeded the allowed ${p.allowed_duration} min.`, { duration: 8000 })
+        }
+      })
+    }).catch(() => {})
+
+  const refreshAll = () => { refreshLogs(); refreshPasses() }
+
+  useEffect(() => {
+    refreshPasses()
+    const t = setInterval(refreshPasses, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  const handleExtendPass = (p) => {
+    extendVisitorPass(p.id, 30)
+      .then(() => {
+        toast.success(`Pass extended +30 min for ${p.plate_number}.`)
+        overstayToasted.current.delete(p.id) // re-alert if it overstays again
+        refreshPasses()
+      })
+      .catch(err => toast.error(err?.response?.data?.error || 'Failed to extend pass.'))
+  }
 
   const handleCheckEntry = async (e) => {
     e?.preventDefault()
@@ -544,7 +623,10 @@ export default function SecurityEntryManagement() {
       setPlateInput('')
       const dur = res.data.duration_minutes
       toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
-      refreshLogs()
+      if (res.data.overstay_minutes > 0) {
+        toast.warning(`${plate} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
+      }
+      refreshAll()
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Failed to record exit.')
     } finally { setExitLoading(false) }
@@ -698,6 +780,9 @@ export default function SecurityEntryManagement() {
                 <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
                   <strong>{exitResult.plate_number}</strong> exited
                   {exitResult.duration_minutes != null && <> · inside <strong>{exitResult.duration_minutes} min</strong></>}
+                  {exitResult.overstay_minutes > 0 && (
+                    <> · <span style={{ color: '#dc2626', fontWeight: 700 }}>overstayed {exitResult.overstay_minutes} min</span></>
+                  )}
                 </div>
               )}
             </div>
@@ -709,8 +794,8 @@ export default function SecurityEntryManagement() {
               <ResultCard
                 result={null}
                 offices={offices}
-                onPassCreated={refreshLogs}
-                onOverride={refreshLogs}
+                onPassCreated={refreshAll}
+                onOverride={refreshAll}
                 guardName={user?.full_name}
                 cooldownKey={0}
                 cooldownActive={false}
@@ -724,13 +809,15 @@ export default function SecurityEntryManagement() {
                     key={item.id}
                     result={item.result}
                     offices={offices}
-                    onPassCreated={refreshLogs}
-                    onOverride={refreshLogs}
+                    onPassCreated={refreshAll}
+                    onOverride={refreshAll}
                     guardName={user?.full_name}
                     cooldownKey={item.cooldownKey}
-                    cooldownActive={true}
+                    cooldownActive={!item.paused}
                     dedupSeconds={dedupSeconds}
                     onDismiss={() => removeFromQueue(item.id)}
+                    onPause={() => pauseQueueEntry(item.id)}
+                    onResume={() => resumeQueueEntry(item.id)}
                   />
                 ))}
               </div>
@@ -785,6 +872,63 @@ export default function SecurityEntryManagement() {
                           )}
                         </div>
                         <span className="em-audit-time">{timeAgo(log.scanned_at)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Active visitors — time remaining / overstay */}
+            <div className="em-card">
+              <div className="em-card-head">
+                <span className="em-card-label"><Clock size={14} /> Active Visitors</span>
+                <span className="em-logs-count">{passes.length}</span>
+              </div>
+              {passes.length === 0 ? (
+                <p style={{ margin: 0, padding: '10px 2px', fontSize: 12, color: '#9ca3af' }}>
+                  No visitors currently inside.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {passes.map(p => {
+                    const t = passTimeInfo(p)
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px',
+                          borderRadius: 8,
+                          background: t.overdue ? '#fef2f2' : '#f8fafc',
+                          border: `1px solid ${t.overdue ? '#fecaca' : '#e2e8f0'}`,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12.5, fontFamily: "'Courier New', monospace", letterSpacing: 0.5 }}>
+                            {p.plate_number}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+                          color: t.overdue ? '#dc2626' : t.soon ? '#d97706' : '#059669',
+                        }}>
+                          {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
+                          {t.label}
+                        </span>
+                        <button
+                          onClick={() => handleExtendPass(p)}
+                          title="Extend by 30 minutes"
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 6,
+                            border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer',
+                            color: '#374151', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          +30m
+                        </button>
                       </div>
                     )
                   })}
