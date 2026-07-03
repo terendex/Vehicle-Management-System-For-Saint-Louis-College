@@ -153,7 +153,9 @@ CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173'
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Campus wall-clock — schedule rules (campus days, time windows) and
+# "today" boundaries are evaluated in this timezone. DB storage stays UTC.
+TIME_ZONE = 'Asia/Manila'
 
 USE_I18N = True
 
@@ -192,6 +194,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER')
+EMAIL_TIMEOUT = 10  # seconds — a hung SMTP server must not stall the scan pipeline
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 

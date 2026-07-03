@@ -571,6 +571,29 @@ class AcceptRegistrationView(APIView):
         if not or_number:
             return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # A plate flagged by a 3rd-offense fee violation requires additional
+        # review before it can be registered again. CDSO must explicitly
+        # acknowledge the flag (soft block) to proceed.
+        from violations.models import Violation
+        blocks = Violation.registration_block_for_plate(registration.plate_number)
+        block_count = blocks.count()
+        if block_count and not request.data.get('acknowledge_block'):
+            latest = blocks.first()
+            return Response({
+                "error": "registration_blocked",
+                "detail": (
+                    f"Plate {registration.plate_number} is flagged for additional review "
+                    f"from a prior 3rd-offense violation. Confirm you have reviewed this "
+                    f"before accepting."
+                ),
+                "registration_block": {
+                    "count": block_count,
+                    "latest_type": latest.get_violation_type_display(),
+                    "latest_status": latest.get_status_display(),
+                    "latest_issued_at": latest.issued_at.isoformat() if latest.issued_at else None,
+                },
+            }, status=status.HTTP_409_CONFLICT)
+
         # Admin may override campus_days (free day picker) and/or schedule group
         campus_days_override = request.data.get('campus_days', None)  # list or None
         schedule_override    = request.data.get('schedule', '').strip()
@@ -608,6 +631,23 @@ class AcceptRegistrationView(APIView):
             contact=registration.contact_number,
             address=registration.address,
         )
+
+        # Record that CDSO knowingly accepted a flagged plate (audit trail)
+        if block_count:
+            try:
+                from accounts.models import AuditLog
+                AuditLog.objects.create(
+                    actor=request.user,
+                    action=AuditLog.Action.USER_CREATED,
+                    target_user=user,
+                    details=(
+                        f"Registration accepted despite registration block | "
+                        f"Plate: {registration.plate_number} | "
+                        f"Prior flagged violations: {block_count} | Reviewed by: {request.user.full_name}"
+                    ),
+                )
+            except Exception:
+                pass
 
         # Create or update Vehicle linked directly to User
         # update_or_create handles duplicate plates gracefully (plate_number is unique)

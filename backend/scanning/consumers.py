@@ -26,13 +26,38 @@ SNAPSHOT_DIR = "snapshots"
 _OPEN_CAP_LOCK = threading.Lock()
 
 FRAME_RATE_LIMIT_MS = 100
-_DEFAULT_DEDUP_SECONDS = 10  # fallback used if DB is unavailable at connect time
+_DEFAULT_DEDUP_SECONDS = 5  # fallback used if DB is unavailable at connect time
 CAMERA_ENTRY_COOLDOWN_SECONDS = 60  # breathing space: camera won't exit a vehicle within this window after entry
+NEGATIVE_SCAN_COOLDOWN_SECONDS = 60  # unregistered & denied/violation plates: same plate re-logged at most once per minute (DB-backed, survives reconnects)
 
 # Per-track OCR accumulation settings
 _OCR_LOCK_CONF    = 0.50   # lock immediately if any single read reaches this
 _OCR_MIN_CONF     = 0.08   # minimum confidence to count a read — low to handle noisy vehicle crops
 _OCR_MAX_ATTEMPTS = 15     # more attempts before force-locking, helps accumulate votes
+
+# Locked-plate re-verification: quietly re-read each locked track's plate so a
+# physical plate swap (or an early misread) is noticed without restarting the
+# stream. A same-text read changes nothing; a confirmed different plate re-locks
+# the track and runs the normal presence pipeline (per-plate cooldowns apply).
+_OCR_REVERIFY_SECONDS = 5.0   # how often a locked track's plate is re-read
+_REVERIFY_STRONG_CONF = 0.60  # a single read at this confidence switches immediately;
+                              # weaker reads need two agreeing reads to switch
+
+# ── Shared plate-presence registry ─────────────────────────────────────────────
+#
+# Shared across ALL consumers in this process (multiple cameras, WS reconnects).
+# Each decision is *held* for a status-dependent cooldown (see
+# _result_hold_seconds): while the plate stays in view within the hold, repeat
+# reads are suppressed — no log spam, no per-frame re-processing. Once the hold
+# expires (or the plate re-appears after leaving view), the entry/exit state
+# machine runs again, so a vehicle waiting at the gate is re-evaluated about
+# once a minute and the flow advances Entry → Exit → Entry.
+#
+# plate → {"result": dict, "decided_at": float, "last_seen": float}
+_PLATE_PRESENCE: dict[str, dict] = {}
+# plates whose decision is currently being computed — prevents duplicate DB writes
+_PLATES_IN_FLIGHT: set[str] = set()
+_PRESENCE_LOCK = threading.Lock()
 
 
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
@@ -70,10 +95,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         # track_id → {votes, attempts, locked}
         self._ocr_state: dict[int, dict] = {}
 
-        # plate_text → (processed_at_timestamp, cached_result_dict)
-        self._plate_cache: dict[str, tuple[float, dict]] = {}
-        # plates currently being processed — prevents concurrent duplicate DB writes
-        self._plates_in_flight: set[str] = set()
+        # plate → decided_at of the presence decision this client last received
+        self._announced: dict[str, float] = {}
 
         self._fps = 0.0
         self._fps_counter = 0
@@ -169,6 +192,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         active_tracks = []
         tracks_needing_ocr = []
+        tracks_to_reverify = []
 
         for t_out in tracker_output:
             track_id    = t_out["track_id"]
@@ -183,12 +207,20 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             d_idx = t_out.get("detection_index")
             det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
-            if (not ocr_done and det
-                  and det.get("class_name") == "license_plate"
-                  and det.get("crop") is not None):
-                tracks_needing_ocr.append(
-                    (track_id, det["crop"], det.get("aspect_ratio", 1.0))
-                )
+            if (det and det.get("class_name") == "license_plate"
+                    and det.get("crop") is not None):
+                if not ocr_done:
+                    tracks_needing_ocr.append(
+                        (track_id, det["crop"], det.get("aspect_ratio", 1.0))
+                    )
+                else:
+                    st = self._ocr_state.get(track_id)
+                    if (st and st.get("locked")
+                            and now_ts - st.get("verify_at", 0.0) >= _OCR_REVERIFY_SECONDS):
+                        st["verify_at"] = now_ts  # claim before queueing
+                        tracks_to_reverify.append(
+                            (track_id, det["crop"], det.get("aspect_ratio", 1.0))
+                        )
 
             w_img = getattr(self, "_last_img_w", 640)
             h_img = getattr(self, "_last_img_h", 480)
@@ -234,8 +266,11 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+        if tracks_to_reverify:
+            asyncio.create_task(self._reverify_locked_tracks(tracks_to_reverify))
 
-        # Re-broadcast cached results for tracks whose plates are already known
+        # Refresh presence for tracks whose plates are already known — keeps the
+        # sliding dedup window open while the vehicle stays in view
         if any(t.get("plate_text") for t in active_tracks):
             await self._process_scan_results(active_tracks, now)
 
@@ -309,6 +344,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     if state["attempts"] >= _OCR_MAX_ATTEMPTS and state["votes"]:
                         best = max(state["votes"], key=state["votes"].get)
                         state["locked"] = True
+                        state["verify_at"] = time.time()
                         self._tracker.set_plate_text(track_id, best)
                         logger.info("[WS] Max attempts (no lock) track %d → %s", track_id, best)
                         await self._finalize_plate(track_id, best, 0.0)
@@ -330,6 +366,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 # Lock when confident or attempts exhausted
                 if conf >= _OCR_LOCK_CONF or state["attempts"] >= _OCR_MAX_ATTEMPTS:
                     state["locked"] = True
+                    state["verify_at"] = time.time()
                     self._tracker.set_plate_text(track_id, best)
                     logger.info("[WS] Locked track %d → %s (conf=%.2f, attempts=%d)",
                                 track_id, best, conf, state["attempts"])
@@ -341,114 +378,196 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 self._pending_ocr.pop(track_id, None)
 
     async def _finalize_plate(self, track_id: int, plate_text: str, conf: float):
-        """Write to DB and broadcast result once a plate is locked."""
-        plate_text = plate_text.strip().upper().replace(' ', '')
-        cached = self._plate_cache.get(plate_text)
+        """Process a freshly locked plate and broadcast the decision once."""
+        result = await self._handle_plate_sighting(track_id, plate_text, 0.0, conf, None)
+        if result:
+            await self.send_json({"type": "result", "results": [result]})
+
+    # ── locked-plate re-verification ───────────────────────────────────────────
+
+    async def _reverify_locked_tracks(self, tracks_to_verify: list):
+        """
+        Quietly re-read plates on locked tracks (every _OCR_REVERIFY_SECONDS).
+
+        A read matching the locked text changes nothing — no UI events, no DB
+        writes. A different plate needs either one strong read or two agreeing
+        reads to switch; the track then re-locks to the new text and the plate
+        runs through the normal presence pipeline, so per-plate cooldowns
+        (1-minute unknown/denied window etc.) still decide what gets reported.
+        Catches physical plate swaps and corrects early misreads.
+        """
+        loop = asyncio.get_running_loop()
+
+        for track_id, crop, aspect in tracks_to_verify:
+            if track_id in self._pending_ocr:
+                continue
+            state = self._ocr_state.get(track_id)
+            track = self._tracker.get_track(track_id)
+            if not state or not state.get("locked") or track is None:
+                continue
+
+            self._pending_ocr[track_id] = True
+            try:
+                plate_text, conf = await loop.run_in_executor(None, _ocr_crop, crop, aspect)
+                conf = conf or 0.0
+                plate_norm = (plate_text or "").strip().upper().replace(" ", "")
+                current    = (track.plate_text or "").strip().upper().replace(" ", "")
+
+                if not plate_norm or conf < _OCR_MIN_CONF:
+                    continue  # unreadable frame — keep the current lock
+
+                if plate_norm == current:
+                    state.pop("switch_reads", None)  # confirmed — drop any switch candidate
+                    continue
+
+                reads = state.setdefault("switch_reads", {})
+                if len(reads) > 5:
+                    reads = state["switch_reads"] = {}  # noisy garbage — start over
+                reads[plate_norm] = reads.get(plate_norm, 0) + 1
+
+                if conf >= _REVERIFY_STRONG_CONF or reads[plate_norm] >= 2:
+                    state["switch_reads"] = {}
+                    state["votes"] = {plate_norm: conf}
+                    state["verify_at"] = time.time()
+                    self._tracker.set_plate_text(track_id, plate_norm)
+                    logger.info("[WS] Re-verify: track %d plate %s -> %s (conf=%.2f)",
+                                track_id, current or "?", plate_norm, conf)
+                    await self.send_json({
+                        "type": "ocr_update", "track_id": track_id, "plate_text": plate_norm,
+                    })
+                    await self._finalize_plate(track_id, plate_norm, conf)
+                else:
+                    # One differing read — re-check shortly to confirm or dismiss
+                    state["verify_at"] = time.time() - (_OCR_REVERIFY_SECONDS - 2.0)
+            except Exception as exc:
+                logger.warning("[OCR] Re-verify failed for track %d: %s", track_id, exc)
+            finally:
+                self._pending_ocr.pop(track_id, None)
+
+    # ── presence-aware scan processing ─────────────────────────────────────────
+
+    async def _handle_plate_sighting(self, track_id: int, plate_text: str,
+                                     det_conf: float, ocr_conf: float, bbox):
+        """
+        Record a sighting of `plate_text` and return a result to announce, or None.
+
+        While the plate stays in view, its `last_seen` slides forward and the
+        existing decision is held — repeated reads of the current state are
+        suppressed. The entry/exit state machine (_check_vehicle) runs again
+        when the decision's hold time expires (even if the vehicle never left
+        the frame) or when the plate re-appears after `scan_dedup_seconds` out
+        of view — so the flow advances Entry → Exit → Entry both across genuine
+        appearances and for a vehicle waiting at the gate.
+        Each client is told about a given decision exactly once.
+        """
+        plate = plate_text.strip().upper().replace(' ', '')
+        if not plate:
+            return None
+
         now_ts = time.time()
-        if cached and (now_ts - cached[0]) < self._dedup_seconds:
-            logger.info("[WS] Plate %s in dedup window — skipping DB write", plate_text)
-            await self.send_json({"type": "result", "results": [cached[1]]})
-            return
-        _in_flight = getattr(self, '_plates_in_flight', None)
-        if _in_flight is not None and plate_text in _in_flight:
-            logger.info("[WS] Plate %s already in-flight — skipping finalize", plate_text)
-            return
-        if _in_flight is not None:
-            _in_flight.add(plate_text)
-        try:
-            await sync_to_async(self._save_to_db)(
-                track_id, plate_text, 0.0, conf, None, None
+        needs_decision = False
+        with _PRESENCE_LOCK:
+            entry = _PLATE_PRESENCE.get(plate)
+            in_view = entry is not None and (now_ts - entry["last_seen"]) < self._dedup_seconds
+            if in_view:
+                entry["last_seen"] = now_ts   # sliding window — still in view
+            hold_expired = (
+                entry is None
+                or (now_ts - entry["decided_at"]) >= self._result_hold_seconds(entry["result"])
             )
-            enriched = await sync_to_async(self._check_vehicle)(plate_text, None)
-            enriched["plate_number"] = plate_text
+            if (not in_view or hold_expired) and plate not in _PLATES_IN_FLIGHT:
+                _PLATES_IN_FLIGHT.add(plate)
+                needs_decision = True
 
-            self._plate_cache[plate_text] = (time.time(), enriched)
-            self._evict_cache()
+        if needs_decision:
+            try:
+                await sync_to_async(self._save_to_db)(
+                    track_id, plate, det_conf, ocr_conf, bbox, None
+                )
+                enriched = await sync_to_async(
+                    self._check_vehicle, thread_sensitive=True
+                )(plate, bbox)
+                enriched["plate_number"] = plate
+                ts = time.time()
+                with _PRESENCE_LOCK:
+                    _PLATE_PRESENCE[plate] = {
+                        "result": enriched, "decided_at": ts, "last_seen": ts,
+                    }
+                await sync_to_async(self._record_ml_sample)(None, [enriched])
+                logger.info("[WS] Plate %s decided → %s", plate, enriched.get("status"))
+            except Exception as exc:
+                logger.error("[WS] Scan processing failed for %s: %s", plate, exc)
+                # Remember the failure so we don't retry every frame and spam the log
+                ts = time.time()
+                with _PRESENCE_LOCK:
+                    _PLATE_PRESENCE[plate] = {
+                        "result": {"plate_number": plate, "error": True},
+                        "decided_at": ts, "last_seen": ts,
+                    }
+            finally:
+                with _PRESENCE_LOCK:
+                    _PLATES_IN_FLIGHT.discard(plate)
+                self._evict_presence()
 
-            await sync_to_async(self._record_ml_sample)(None, [enriched])
-            await self.send_json({"type": "result", "results": [enriched]})
-        except Exception as db_exc:
-            logger.error("[WS] DB error for plate %s: %s", plate_text, db_exc)
-            self._plate_cache[plate_text] = (time.time(), {"plate_number": plate_text, "error": True})
-        finally:
-            if _in_flight is not None:
-                _in_flight.discard(plate_text)
+        with _PRESENCE_LOCK:
+            entry = _PLATE_PRESENCE.get(plate)
+        if not entry or entry["result"].get("error"):
+            return None
+        if (time.time() - entry["last_seen"]) >= self._dedup_seconds:
+            return None   # stale decision awaiting replacement — don't announce it
+        if self._announced.get(plate) == entry["decided_at"]:
+            return None   # this client already received this decision
+        self._announced[plate] = entry["decided_at"]
+        return entry["result"]
 
     # ── process tracks that already have plate text ────────────────────────────
 
     async def _process_scan_results(self, tracks_list: list[dict], now):
         results = []
-        fresh_results = []
         processed_ids: set[int] = set()
 
         for track_data in tracks_list:
             track_id     = track_data["track_id"]
-            plate_number = track_data.get("plate_text", "").strip().upper().replace(' ', '')
+            plate_number = track_data.get("plate_text", "")
             det_conf     = track_data.get("detection_conf", 0.0)
+
+            if not plate_number.strip() or track_id in processed_ids:
+                continue
+            processed_ids.add(track_id)
+
             bbox = {
                 "x": track_data["bbox"][0], "y": track_data["bbox"][1],
                 "width": track_data["bbox"][2], "height": track_data["bbox"][3],
             }
-
-            if not plate_number or track_id in processed_ids:
-                continue
-            processed_ids.add(track_id)
-
-            # Dedup: re-use cached result within self._dedup_seconds
-            cached = self._plate_cache.get(plate_number)
-            now_ts = time.time()
-            if cached and (now_ts - cached[0]) < self._dedup_seconds:
-                # Already processed recently — skip DB and ML sample, just re-send UI result
-                results.append(cached[1])
-                continue
-
-            try:
-                await sync_to_async(self._save_to_db)(
-                    track_id, plate_number, det_conf, 0.0, bbox, None
-                )
-            except Exception as exc:
-                logger.error("[WS] DB save failed for %s: %s", plate_number, exc)
-
-            _in_flight = getattr(self, '_plates_in_flight', None)
-            if _in_flight is not None and plate_number in _in_flight:
-                continue  # another coroutine is already processing this plate
-            if _in_flight is not None:
-                _in_flight.add(plate_number)
-            try:
-                enriched = await sync_to_async(
-                    self._check_vehicle, thread_sensitive=True
-                )(plate_number, bbox)
-                enriched["plate_number"] = plate_number
-                enriched["bbox"]         = bbox
-
-                self._plate_cache[plate_number] = (time.time(), enriched)
-                self._evict_cache()
-
-                results.append(enriched)
-                fresh_results.append(enriched)
-            except Exception as exc:
-                logger.error("[WS] Vehicle check failed for %s: %s", plate_number, exc)
-                # Cache the failure so we don't retry every frame and spam the log
-                self._plate_cache[plate_number] = (time.time(), {"plate_number": plate_number, "error": True})
-            finally:
-                if _in_flight is not None:
-                    _in_flight.discard(plate_number)
-
-        if fresh_results:
-            # Only record ML sample for plates that were genuinely processed this call
-            await sync_to_async(self._record_ml_sample)(None, fresh_results)
+            result = await self._handle_plate_sighting(
+                track_id, plate_number, det_conf, 0.0, bbox
+            )
+            if result:
+                results.append({**result, "bbox": bbox})
 
         if results:
             await self.send_json({"type": "result", "results": results})
 
-    # ── cache maintenance ──────────────────────────────────────────────────────
+    # ── presence maintenance ───────────────────────────────────────────────────
 
-    def _evict_cache(self):
-        """Remove entries older than 2× the dedup window to bound memory."""
+    def _result_hold_seconds(self, result: dict) -> float:
+        """How long a decision is held before the plate is re-evaluated in view."""
+        status = result.get("status")
+        if result.get("error") or status == "duplicate":
+            return self._dedup_seconds            # transient — retry soon
+        if status in ("authorized", "exited"):
+            return CAMERA_ENTRY_COOLDOWN_SECONDS  # breathing space before state can flip
+        return NEGATIVE_SCAN_COOLDOWN_SECONDS     # unknown / denied / wrong_day etc.
+
+    def _evict_presence(self):
+        """Drop plates not seen for 2× the dedup window to bound memory."""
         cutoff = time.time() - self._dedup_seconds * 2
-        stale = [k for k, (ts, _) in self._plate_cache.items() if ts < cutoff]
-        for k in stale:
-            del self._plate_cache[k]
+        with _PRESENCE_LOCK:
+            for p in [p for p, e in _PLATE_PRESENCE.items() if e["last_seen"] < cutoff]:
+                del _PLATE_PRESENCE[p]
+            alive = set(_PLATE_PRESENCE)
+        for p in [p for p in self._announced if p not in alive]:
+            del self._announced[p]
 
     # ── sync helpers (run in executor / sync_to_async) ─────────────────────────
 
@@ -484,7 +603,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
-        from .views import _inside_state, _in_exit_cooldown, _already_inside, _auto_log_violation
+        from .views import (_inside_state, _in_exit_cooldown, _already_inside,
+                            _auto_log_violation, _close_active_pass, _gate_label)
         close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
@@ -497,11 +617,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         gate_id = getattr(self, '_gate_id', 'main')
 
         if not vehicle:
-            cutoff = timezone.now() - timedelta(seconds=self._dedup_seconds)
+            now = timezone.now()
+            cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
             recent_unknown = AccessLog.objects.filter(
                 plate_number=plate_number,
                 status="unknown",
                 scanned_at__gte=cutoff,
+                scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
             ).exists()
             if recent_unknown:
                 return {
@@ -579,23 +701,29 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            overstay_minutes = _close_active_pass(plate_number, gate_id)
+            overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             try:
                 AuditLog.objects.create(
                     actor=self._user,
                     action="scan",
-                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | Duration: {duration_minutes} min",
+                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | "
+                            f"Duration: {duration_minutes} min"
+                            + (f" | OVERSTAYED by {overstay_minutes} min" if overstay_minutes else "")
+                            + f" | Gate: {_gate_label(gate_id)}",
                 )
             except Exception:
                 pass
             return {
                 "status":           "exited",
                 "allowed":          False,
-                "message":          f"{owner_name} — Exit recorded. Duration: {duration_minutes} min.",
+                "message":          f"{owner_name} — Exit recorded. Duration: {duration_minutes} min.{overstay_note}",
                 "vehicle":          VehicleSerializer(vehicle).data,
                 "has_violations":   False,
                 "already_inside":   False,
                 "duration_minutes": duration_minutes,
+                "overstay_minutes": overstay_minutes,
             }
 
         if _in_exit_cooldown(plate_number):
@@ -610,15 +738,22 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         entry = check_entry(vehicle)
 
+        # UI-only statuses (e.g. 'no_pass') aren't valid AccessLog statuses —
+        # store those rows as 'denied' while the client still sees the real status
+        log_status = (entry["status"] if entry["status"] in AccessLog.Status.values
+                      else AccessLog.Status.DENIED)
+
         # Authorized entries are deduped by the grace-period / entry-window checks
-        # above; denied-type statuses need their own DB-backed cooldown so a vehicle
-        # idling at the gate doesn't flood the log across WS reconnects.
+        # above; denied/violation statuses get a 1-minute DB-backed cooldown so a
+        # vehicle idling at the gate doesn't flood the log across WS reconnects.
         if not entry["allowed"]:
-            cutoff = timezone.now() - timedelta(seconds=self._dedup_seconds)
+            now = timezone.now()
+            cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
             recent_same = AccessLog.objects.filter(
                 plate_number=plate_number,
-                status=entry["status"],
+                status=log_status,
                 scanned_at__gte=cutoff,
+                scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
             ).exists()
             if recent_same:
                 return {
@@ -638,7 +773,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         AccessLog.objects.create(
             plate_number=plate_number,
             vehicle=vehicle,
-            status=entry["status"],
+            status=log_status,
             denied_reason="" if entry["allowed"] else entry["message"],
             gate_id=gate_id,
             scanned_by=self._user,
@@ -647,12 +782,14 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             AuditLog.objects.create(
                 actor=self._user,
                 action="scan",
-                details=f"Plate: {plate_number}, Status: {entry['status']}",
+                details=f"Plate: {plate_number} | Status: {entry['status']} | Gate: {_gate_label(gate_id)}",
             )
         except Exception:
             pass
 
-        if not entry["allowed"]:
+        # A visitor waiting for a pass ('no_pass') isn't a violation — only
+        # genuinely denied/wrong-day entries are auto-fined.
+        if not entry["allowed"] and entry["status"] != "no_pass":
             try:
                 _auto_log_violation(vehicle, entry["message"], gate_id)
             except Exception:
@@ -902,7 +1039,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     many browser tabs/users are watching.
 
     Client → Server:
-        {"type": "start",  "rtsp_url": "rtsp://..."}
+        {"type": "start",  "rtsp_url": "rtsp://...", "gate_id": "gate1"}
         {"type": "stop"}
 
     Server → Client:
@@ -942,8 +1079,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         self._frame_counter         = 0
         self._pending_ocr: dict     = {}
         self._ocr_state: dict       = {}
-        self._plate_cache: dict     = {}
-        self._plates_in_flight: set = set()  # prevents concurrent duplicate DB writes
+        self._announced: dict       = {}  # plate → decided_at last sent to this client
         self._detection_in_progress = False
         self._last_img_w            = 1280
         self._last_img_h            = 720
@@ -1000,7 +1136,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             self._tracker       = ProximityTracker()
             self._ocr_state     = {}
             self._pending_ocr   = {}
-            self._plate_cache   = {}
+            self._announced     = {}
             self._frame_counter = 0
             self._stream_task   = asyncio.create_task(self._consume_stream(rtsp_url))
 
@@ -1104,6 +1240,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
         active_tracks      = []
         tracks_needing_ocr = []
+        tracks_to_reverify = []
+        now_ts             = time.time()
 
         for t_out in tracker_output:
             track_id      = t_out["track_id"]
@@ -1118,12 +1256,20 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             d_idx = t_out.get("detection_index")
             det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
-            if (not ocr_done and det
-                  and det.get("class_name") == "license_plate"
-                  and det.get("crop") is not None):
-                tracks_needing_ocr.append(
-                    (track_id, det["crop"], det.get("aspect_ratio", 1.0))
-                )
+            if (det and det.get("class_name") == "license_plate"
+                    and det.get("crop") is not None):
+                if not ocr_done:
+                    tracks_needing_ocr.append(
+                        (track_id, det["crop"], det.get("aspect_ratio", 1.0))
+                    )
+                else:
+                    st = self._ocr_state.get(track_id)
+                    if (st and st.get("locked")
+                            and now_ts - st.get("verify_at", 0.0) >= _OCR_REVERIFY_SECONDS):
+                        st["verify_at"] = now_ts  # claim before queueing
+                        tracks_to_reverify.append(
+                            (track_id, det["crop"], det.get("aspect_ratio", 1.0))
+                        )
 
             w_img = self._last_img_w
             h_img = self._last_img_h
@@ -1169,6 +1315,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+        if tracks_to_reverify:
+            asyncio.create_task(self._reverify_locked_tracks(tracks_to_reverify))
 
         if any(t.get("plate_text") for t in active_tracks):
             await self._process_scan_results(active_tracks, now)
@@ -1245,11 +1393,14 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     # Reuse async/sync helpers from ScanLiveConsumer (method assignment works in Python 3
     # because unbound functions become properly-bound methods when accessed on an instance)
-    _run_ocr_for_tracks   = ScanLiveConsumer._run_ocr_for_tracks
-    _finalize_plate       = ScanLiveConsumer._finalize_plate
-    _process_scan_results = ScanLiveConsumer._process_scan_results
-    _evict_cache          = ScanLiveConsumer._evict_cache
-    _save_snapshot        = ScanLiveConsumer._save_snapshot
-    _save_to_db           = ScanLiveConsumer._save_to_db
-    _check_vehicle        = ScanLiveConsumer._check_vehicle
-    _record_ml_sample     = ScanLiveConsumer._record_ml_sample
+    _run_ocr_for_tracks    = ScanLiveConsumer._run_ocr_for_tracks
+    _reverify_locked_tracks = ScanLiveConsumer._reverify_locked_tracks
+    _finalize_plate        = ScanLiveConsumer._finalize_plate
+    _handle_plate_sighting = ScanLiveConsumer._handle_plate_sighting
+    _process_scan_results  = ScanLiveConsumer._process_scan_results
+    _result_hold_seconds   = ScanLiveConsumer._result_hold_seconds
+    _evict_presence        = ScanLiveConsumer._evict_presence
+    _save_snapshot         = ScanLiveConsumer._save_snapshot
+    _save_to_db            = ScanLiveConsumer._save_to_db
+    _check_vehicle         = ScanLiveConsumer._check_vehicle
+    _record_ml_sample      = ScanLiveConsumer._record_ml_sample

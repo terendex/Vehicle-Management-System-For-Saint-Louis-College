@@ -22,9 +22,16 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 
 class VehicleRegistrationSerializer(serializers.ModelSerializer):
+    registration_block_count = serializers.SerializerMethodField()
+
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
+
+    def get_registration_block_count(self, instance):
+        """Number of prior violations that flag this plate for additional review."""
+        from violations.models import Violation
+        return Violation.registration_block_for_plate(instance.plate_number).count()
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

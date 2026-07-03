@@ -110,8 +110,24 @@ def check_entry(vehicle) -> dict:
 
     user = vehicle.user
 
-    if not user:
-        return _result('denied', False, 'Vehicle has no registered owner.', None)
+    # ── VISITOR / gate-issued vehicle (pass-based entry) ──────────────
+    # Covers vehicles created at the gate when a pass is issued (no owner
+    # account) and owners registered as visitors. Entry is granted purely by
+    # an active, unexpired pass for today.
+    if not user or user.owner_type == User.OwnerType.VISITOR:
+        today = timezone.localdate()
+        pass_ = VisitorPass.objects.filter(
+            vehicle=vehicle,
+            valid_date=today,
+            status=VisitorPass.Status.ACTIVE,
+        ).order_by('-entered_at').first()
+        if pass_ and pass_.expires_at and pass_.expires_at < timezone.now():
+            return _result('no_pass', False,
+                'Visitor pass expired — create a new pass to grant entry.', None)
+        if pass_:
+            return _result('authorized', True, 'Visitor pass active. Entry granted.', None)
+        return _result('no_pass', False,
+            'No active visitor pass for today. Create a visitor pass to grant entry.', None)
 
     if not vehicle.is_authorized:
         return _result('denied', False, 'Vehicle is not authorized for entry.', None)
@@ -171,20 +187,6 @@ def check_entry(vehicle) -> dict:
                 f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name)
         return _result('authorized', True, f'Fetcher — {user.full_name}. Entry granted.', rule.name if rule else None)
-
-    # ── VISITOR (thermal pass-based) ─────────────────────────────────
-    if owner_type == User.OwnerType.VISITOR:
-        today = timezone.localdate()
-        pass_ = VisitorPass.objects.filter(
-            vehicle=vehicle,
-            valid_date=today,
-            status=VisitorPass.Status.ACTIVE,
-        ).order_by('-entered_at').first()
-
-        if not pass_:
-            return _result('denied', False,
-                'No active visitor pass for today. Guard must issue a pass first.', None)
-        return _result('authorized', True, 'Visitor pass active. Entry granted.', None)
 
     return _result('denied', False, 'Unknown owner type.', None)
 
