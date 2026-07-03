@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# PaddlePaddle CPU build. Paddle 3.x is required for numpy 2 compatibility;
+# the old paddlepaddle-gpu==2.6.2.post120 pin is not on PyPI and breaks numpy 2.
+RUN pip install --no-cache-dir paddlepaddle==3.0.0
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

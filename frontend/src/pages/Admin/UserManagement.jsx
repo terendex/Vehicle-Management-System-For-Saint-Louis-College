@@ -6,55 +6,15 @@ import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
-  Users, UserCheck, UserX, AlertTriangle, ShieldAlert, EyeOff,
-  Check, Circle, MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
-  Shield, Car, Info, LogIn,
+  Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
+  MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
+  Shield, Info, LogIn,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
 
-/* ─── password helpers ─────────────────────────────────────────── */
-const PASSWORD_RULES = [
-  { key: 'length',  label: 'At least 8 characters',        test: (p) => p.length >= 8 },
-  { key: 'upper',   label: 'One uppercase letter',         test: (p) => /[A-Z]/.test(p) },
-  { key: 'lower',   label: 'One lowercase letter',         test: (p) => /[a-z]/.test(p) },
-  { key: 'number',  label: 'One number',                    test: (p) => /[0-9]/.test(p) },
-  { key: 'special', label: 'One special character (!@#$…)', test: (p) => /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(p) },
-]
-
-function getStrength(pw) {
-  if (!pw) return { level: '', score: 0 }
-  const passed = PASSWORD_RULES.filter((r) => r.test(pw)).length
-  if (passed <= 1) return { level: 'weak', score: 1 }
-  if (passed === 2) return { level: 'fair', score: 2 }
-  if (passed === 3) return { level: 'good', score: 3 }
-  if (passed === 4) return { level: 'strong', score: 4 }
-  return { level: 'excellent', score: 5 }
-}
-const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
-
-const CAMPUS_DAYS = [
-  { key: 'Monday', short: 'Mon' },
-  { key: 'Tuesday', short: 'Tue' },
-  { key: 'Wednesday', short: 'Wed' },
-  { key: 'Thursday', short: 'Thu' },
-  { key: 'Friday', short: 'Fri' },
-  { key: 'Saturday', short: 'Sat' },
-]
-
-const EMPTY_GUARD = { full_name: '', email: '', password: '' }
-const EMPTY_OWNER = {
-  last_name: '', first_name: '', middle_name: '',
-  email: '', contact_number: '', age: '', drivers_license: '',
-  registrant_type: '',
-  house_street: '', province: '', city_municipality: '', barangay: '',
-  student_id: '', student_level: '', program_year: '',
-  student_strand: '', student_grade: '',
-  employee_id: '', department_type: '',
-  campus_days: [],
-  plate_number: '', conduction_number: '', vehicle_type: '', vehicle_color: '', body_number: '',
-}
-const EMPTY_ADMIN = { full_name: '', email: '', password: '', confirm_password: '' }
+const EMPTY_GUARD = { full_name: '', email: '', agency: '' }
+const EMPTY_ADMIN = { full_name: '', email: '' }
 
 /* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
@@ -75,60 +35,18 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [submitting, setSubmitting]   = useState(false)
   const [activeMenu, setActiveMenu]   = useState(null)
-  const [addType, setAddType]         = useState(null)   // 'guard' | 'owner' | 'admin'
+  const [addType, setAddType]         = useState(null)   // 'guard' | 'admin'
   const [showGateConfirm, setShowGateConfirm] = useState(false)
   const [formErrors, setFormErrors]   = useState({})
 
   /* ── per-type form state ── */
   const [guardForm, setGuardForm] = useState(EMPTY_GUARD)
-  const [ownerForm, setOwnerForm] = useState(EMPTY_OWNER)
   const [adminForm, setAdminForm] = useState(EMPTY_ADMIN)
-  const [showPassword, setShowPassword] = useState(false)
-  const [showConfirm,  setShowConfirm]  = useState(false)
-
-  /* ── owner address cascading dropdowns ── */
-  const [provinces,        setProvinces]        = useState([])
-  const [cities,           setCities]           = useState([])
-  const [barangays,        setBarangays]        = useState([])
-  const [loadingCities,    setLoadingCities]    = useState(false)
-  const [loadingBarangays, setLoadingBarangays] = useState(false)
-  const [selProvince,      setSelProvince]      = useState('')
-  const [selCity,          setSelCity]          = useState('')
 
   /* ── QR state ── */
   const [qrUser,    setQrUser]    = useState(null)
   const [qrToken,   setQrToken]   = useState(null)
   const [qrLoading, setQrLoading] = useState(false)
-
-  /* ── provinces load once ── */
-  useEffect(() => {
-    fetch('https://psgc.gitlab.io/api/provinces/')
-      .then(r => r.json())
-      .then(d => setProvinces(d.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-  }, [])
-
-  /* ── cities load when province changes ── */
-  useEffect(() => {
-    if (!selProvince) { setCities([]); setBarangays([]); return }
-    setLoadingCities(true); setCities([]); setBarangays([])
-    fetch(`https://psgc.gitlab.io/api/provinces/${selProvince}/cities-municipalities/`)
-      .then(r => r.json())
-      .then(d => setCities(d.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-      .finally(() => setLoadingCities(false))
-  }, [selProvince])
-
-  /* ── barangays load when city changes ── */
-  useEffect(() => {
-    if (!selCity) { setBarangays([]); return }
-    setLoadingBarangays(true); setBarangays([])
-    fetch(`https://psgc.gitlab.io/api/cities-municipalities/${selCity}/barangays/`)
-      .then(r => r.json())
-      .then(d => setBarangays(d.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-      .finally(() => setLoadingBarangays(false))
-  }, [selCity])
 
   /* ── QR open ── */
   const openQrModal = async (user) => {
@@ -224,13 +142,8 @@ export default function UserManagement() {
   const openAdd = () => {
     setAddType(null)
     setGuardForm(EMPTY_GUARD)
-    setOwnerForm(EMPTY_OWNER)
     setAdminForm(EMPTY_ADMIN)
     setFormErrors({})
-    setShowPassword(false)
-    setShowConfirm(false)
-    setSelProvince(''); setSelCity('')
-    setCities([]); setBarangays([])
     setModal('add')
   }
   const openView   = (user) => { setSelectedUser(user); setModal('view') }
@@ -241,24 +154,13 @@ export default function UserManagement() {
     setSubmitting(false); setFormErrors({}); setAddType(null)
   }
 
-  /* ── toggle campus day (owner form) ── */
-  const toggleOwnerDay = (dayKey) => {
-    setOwnerForm(prev => {
-      const days = prev.campus_days
-      if (days.includes(dayKey)) return { ...prev, campus_days: days.filter(d => d !== dayKey) }
-      if (days.length >= 3) return prev
-      return { ...prev, campus_days: [...days, dayKey] }
-    })
-  }
-
   /* ── guard validation & submit ── */
   const validateGuard = () => {
     const errors = {}
     if (!guardForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!guardForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardForm.email.trim())) errors.email = 'Enter a valid email address.'
-    if (!guardForm.password) errors.password = 'Password is required.'
-    else if (guardForm.password.length < 8) errors.password = 'Password must be at least 8 characters.'
+    if (!guardForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -269,17 +171,17 @@ export default function UserManagement() {
       const guard = await usersApi.createGuard({
         full_name: guardForm.full_name.trim(),
         email:     guardForm.email.trim(),
-        password:  guardForm.password,
+        agency:    guardForm.agency.trim(),
       })
       fetchUsers()
       closeModal()
-      toast.success(`Guard "${guard.full_name}" created.`)
+      toast.success(`Guard "${guard.full_name}" created. Login credentials have been emailed.`)
       // Open QR badge immediately
       openQrModal(guard)
     } catch (err) {
       const data = err.response?.data
       const fieldErrors = {}
-      for (const field of ['full_name', 'email', 'password']) {
+      for (const field of ['full_name', 'email', 'agency']) {
         if (data?.[field]) fieldErrors[field] = Array.isArray(data[field]) ? data[field][0] : data[field]
       }
       if (Object.keys(fieldErrors).length > 0) {
@@ -291,96 +193,8 @@ export default function UserManagement() {
     } finally { setSubmitting(false) }
   }
 
-  /* ── owner validation & submit ── */
-  const validateOwner = () => {
-    const errors = {}
-    if (!ownerForm.last_name.trim())   errors.last_name   = 'Last name is required.'
-    if (!ownerForm.first_name.trim())  errors.first_name  = 'First name is required.'
-    if (!ownerForm.email.trim())       errors.email       = 'Email is required.'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerForm.email)) errors.email = 'Invalid email format.'
-    if (!ownerForm.registrant_type)    errors.registrant_type = 'Please select a registrant type.'
-    if (!ownerForm.plate_number.trim()) errors.plate_number = 'Plate number is required.'
-    if (!ownerForm.vehicle_type)       errors.vehicle_type = 'Vehicle type is required.'
-    if (!ownerForm.house_street.trim()) errors.house_street = 'Street address is required.'
-    if (!ownerForm.province)           errors.province = 'Province is required.'
-    if (!ownerForm.city_municipality)  errors.city_municipality = 'City / Municipality is required.'
-    if (!ownerForm.barangay)           errors.barangay = 'Barangay is required.'
-    if (!ownerForm.contact_number.trim()) errors.contact_number = 'Contact number is required.'
-    if (!ownerForm.drivers_license.trim()) errors.drivers_license = 'Driver\'s license is required.'
-    if (ownerForm.registrant_type === 'student') {
-      if (!ownerForm.student_id.trim()) errors.student_id = 'Student ID is required.'
-      if (!ownerForm.student_level)     errors.student_level = 'Education level is required.'
-      if (ownerForm.campus_days.length === 0 && ownerForm.student_level !== 'sped')
-        errors.campus_days = 'Select at least one campus day.'
-    }
-    if (ownerForm.registrant_type === 'employee') {
-      if (!ownerForm.employee_id.trim()) errors.employee_id = 'Employee ID is required.'
-      if (!ownerForm.department_type)    errors.department_type = 'Department is required.'
-    }
-    setFormErrors(errors)
-    return Object.keys(errors).length === 0
-  }
-
-  const handleAddOwner = async () => {
-    setSubmitting(true)
-    try {
-      const address = [ownerForm.house_street, ownerForm.barangay, ownerForm.city_municipality, ownerForm.province]
-        .map(s => s.trim()).filter(Boolean).join(', ')
-      let program_year = ownerForm.program_year
-      if (ownerForm.registrant_type === 'student' && ownerForm.student_level !== 'college') {
-        if (ownerForm.student_level === 'shs')
-          program_year = ['SHS', ownerForm.student_strand, ownerForm.student_grade ? `Grade ${ownerForm.student_grade}` : ''].filter(Boolean).join(' - ')
-        else if (ownerForm.student_level === 'jhs')
-          program_year = ['JHS', ownerForm.student_grade ? `Grade ${ownerForm.student_grade}` : ''].filter(Boolean).join(' - ')
-        else if (ownerForm.student_level === 'elementary')
-          program_year = ['Elementary', ownerForm.student_grade ? `Grade ${ownerForm.student_grade}` : ''].filter(Boolean).join(' - ')
-        else if (ownerForm.student_level === 'sped')
-          program_year = ownerForm.student_grade ? `SpEd - Grade ${ownerForm.student_grade}` : 'SpEd'
-      }
-      const campus_days = ownerForm.student_level === 'sped'
-        ? CAMPUS_DAYS.map(d => d.key)
-        : ownerForm.campus_days
-
-      await usersApi.createOwner({
-        last_name: ownerForm.last_name.trim(),
-        first_name: ownerForm.first_name.trim(),
-        middle_name: ownerForm.middle_name.trim(),
-        email: ownerForm.email.trim(),
-        contact_number: ownerForm.contact_number.trim(),
-        age: ownerForm.age ? parseInt(ownerForm.age) : null,
-        drivers_license: ownerForm.drivers_license.trim(),
-        address,
-        registrant_type: ownerForm.registrant_type,
-        student_id: ownerForm.student_id.trim(),
-        program_year,
-        campus_days,
-        employee_id: ownerForm.employee_id.trim(),
-        department_type: ownerForm.department_type,
-        plate_number: ownerForm.plate_number.trim(),
-        conduction_number: ownerForm.conduction_number.trim(),
-        vehicle_type: ownerForm.vehicle_type,
-        vehicle_color: ownerForm.vehicle_color.trim(),
-        body_number: ownerForm.body_number.trim(),
-      })
-      fetchUsers()
-      showResult('Vehicle owner account created. Login credentials have been emailed.')
-    } catch (err) {
-      const data = err.response?.data
-      if (data && typeof data === 'object') {
-        const errors = {}
-        Object.entries(data).forEach(([k, v]) => {
-          errors[k] = Array.isArray(v) ? v[0] : String(v)
-        })
-        setFormErrors(errors); setModal('add')
-      } else {
-        showResult('Failed to create vehicle owner.', 'error')
-      }
-    } finally { setSubmitting(false) }
-  }
-
   const onAddClick = () => {
     if (addType === 'guard')  { if (!validateGuard()) return;  setModal('confirmAdd') }
-    if (addType === 'owner')  { if (!validateOwner()) return;  setModal('confirmAdd') }
     if (addType === 'admin')  { if (!validateAdmin()) return;  setModal('confirmAdd') }
   }
 
@@ -390,10 +204,6 @@ export default function UserManagement() {
     if (!adminForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!adminForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email)) errors.email = 'Invalid email format.'
-    if (!adminForm.password) errors.password = 'Password is required.'
-    else if (getStrength(adminForm.password).score < 5) errors.password = 'Password does not meet all requirements.'
-    if (!adminForm.confirm_password) errors.confirm_password = 'Please confirm password.'
-    else if (adminForm.password !== adminForm.confirm_password) errors.confirm_password = 'Passwords do not match.'
     setFormErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -403,9 +213,8 @@ export default function UserManagement() {
     try {
       await usersApi.replaceAdmin({
         full_name: adminForm.full_name.trim(), email: adminForm.email.trim(),
-        password: adminForm.password, confirm_password: adminForm.confirm_password,
       })
-      showResult('Admin replaced. Logging out…')
+      showResult('Admin replaced. Login credentials have been emailed. Logging out…')
       setTimeout(() => { logout(); window.location.href = '/login' }, 1500)
     } catch (err) {
       const data = err.response?.data
@@ -437,7 +246,6 @@ export default function UserManagement() {
     finally { setSubmitting(false) }
   }
 
-  const adminStrength = getStrength(adminForm.password)
   const formatDate    = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
   const roleLabel     = (user) => {
     if (user.role === 'security') return 'Security Personnel'
@@ -650,7 +458,6 @@ export default function UserManagement() {
             <div className="um-modal-header">
               <h2>
                 {addType === 'guard' ? 'Add Security Guard'
-                  : addType === 'owner' ? 'Add Vehicle Owner'
                   : addType === 'admin' ? 'Replace Admin'
                   : 'Add User'}
               </h2>
@@ -665,12 +472,7 @@ export default function UserManagement() {
                   <div className="um-type-option" onClick={() => setAddType('guard')}>
                     <div className="um-type-option-icon"><Shield size={20} /></div>
                     <span className="um-type-option-label">Security Guard</span>
-                    <span className="um-type-option-desc">Name & gate — QR badge auto-generated</span>
-                  </div>
-                  <div className="um-type-option" onClick={() => setAddType('owner')}>
-                    <div className="um-type-option-icon"><Car size={20} /></div>
-                    <span className="um-type-option-label">Vehicle Owner</span>
-                    <span className="um-type-option-desc">Full registration — password emailed</span>
+                    <span className="um-type-option-desc">Name, email & agency — QR badge auto-generated</span>
                   </div>
                   <div className="um-type-option" onClick={() => setAddType('admin')}>
                     <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
@@ -685,8 +487,8 @@ export default function UserManagement() {
                 <>
                   <div className="um-info-banner">
                     <Info size={14} />
-                    Guards log in with these credentials at the guard gate login page.
-                    Their QR badge (alternative login) will be shown immediately after creation.
+                    A temporary password will be auto-generated and emailed to the guard.
+                    They must change it on first login. Their QR badge (alternative login) will be shown immediately after creation.
                   </div>
                   <div className="um-form-group">
                     <label>Full Name <span className="um-required">*</span></label>
@@ -706,337 +508,13 @@ export default function UserManagement() {
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                   <div className="um-form-group">
-                    <label>Password <span className="um-required">*</span></label>
-                    <input className={`um-form-input ${formErrors.password ? 'error' : ''}`}
-                      type="password"
-                      value={guardForm.password}
-                      onChange={e => setGuardForm({ ...guardForm, password: e.target.value })}
-                      placeholder="At least 8 characters"
-                      autoComplete="new-password" />
-                    {formErrors.password && <div className="um-form-error">{formErrors.password}</div>}
+                    <label>Agency <span className="um-required">*</span></label>
+                    <input className={`um-form-input ${formErrors.agency ? 'error' : ''}`}
+                      value={guardForm.agency}
+                      onChange={e => setGuardForm({ ...guardForm, agency: e.target.value })}
+                      placeholder="e.g. SLC Security Office" />
+                    {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                   </div>
-                </>
-              )}
-
-              {/* ══ OWNER FORM ══ */}
-              {addType === 'owner' && (
-                <>
-                  <div className="um-info-banner">
-                    <Info size={14} />
-                    A temporary password will be auto-generated and emailed to the owner.
-                    They must change it on first login.
-                  </div>
-
-                  {/* Registrant type */}
-                  <div className="um-form-section-title">Registrant Type</div>
-                  <div className="um-reg-type-row">
-                    {['student', 'employee', 'fetcher'].map(t => (
-                      <button key={t} type="button"
-                        className={`um-reg-type-btn ${ownerForm.registrant_type === t ? 'selected' : ''}`}
-                        onClick={() => setOwnerForm({ ...ownerForm, registrant_type: t, campus_days: [], student_level: '' })}>
-                        {t === 'student' ? 'Student' : t === 'employee' ? 'Employee' : 'Fetcher / Drop & Go'}
-                      </button>
-                    ))}
-                  </div>
-                  {formErrors.registrant_type && <div className="um-form-error">{formErrors.registrant_type}</div>}
-
-                  {/* Vehicle */}
-                  <div className="um-form-section-title">Vehicle Information</div>
-                  <div className="um-form-grid-2">
-                    <div className="um-form-group">
-                      <label>Plate Number <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.plate_number ? 'error' : ''}`}
-                        value={ownerForm.plate_number}
-                        onChange={e => setOwnerForm({ ...ownerForm, plate_number: e.target.value.toUpperCase() })}
-                        placeholder="e.g. ABC 1234" />
-                      {formErrors.plate_number && <div className="um-form-error">{formErrors.plate_number}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Conduction Number</label>
-                      <input className="um-form-input"
-                        value={ownerForm.conduction_number}
-                        onChange={e => setOwnerForm({ ...ownerForm, conduction_number: e.target.value })}
-                        placeholder="e.g. CS12345A678" />
-                    </div>
-                    <div className="um-form-group">
-                      <label>Vehicle Type <span className="um-required">*</span></label>
-                      <select className={`um-form-select ${formErrors.vehicle_type ? 'error' : ''}`}
-                        value={ownerForm.vehicle_type}
-                        onChange={e => setOwnerForm({ ...ownerForm, vehicle_type: e.target.value })}>
-                        <option value="">Select Type</option>
-                        <option>Sedan</option><option>SUV</option>
-                        <option>Motorcycle</option><option>Tricycle</option>
-                        <option>Van</option><option>Truck</option><option>Other</option>
-                      </select>
-                      {formErrors.vehicle_type && <div className="um-form-error">{formErrors.vehicle_type}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Vehicle Color</label>
-                      <input className="um-form-input"
-                        value={ownerForm.vehicle_color}
-                        onChange={e => setOwnerForm({ ...ownerForm, vehicle_color: e.target.value.toUpperCase() })}
-                        placeholder="e.g. White" />
-                    </div>
-                    {ownerForm.vehicle_type === 'Tricycle' && (
-                      <div className="um-form-group um-col-span-2">
-                        <label>Body Number</label>
-                        <input className="um-form-input"
-                          value={ownerForm.body_number}
-                          onChange={e => setOwnerForm({ ...ownerForm, body_number: e.target.value })} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Personal info */}
-                  <div className="um-form-section-title">Personal Information</div>
-                  <div className="um-form-grid-2">
-                    <div className="um-form-group">
-                      <label>Last Name <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.last_name ? 'error' : ''}`}
-                        value={ownerForm.last_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, last_name: e.target.value.toUpperCase() })}
-                        placeholder="e.g. Dela Cruz" />
-                      {formErrors.last_name && <div className="um-form-error">{formErrors.last_name}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>First Name <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.first_name ? 'error' : ''}`}
-                        value={ownerForm.first_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, first_name: e.target.value.toUpperCase() })}
-                        placeholder="e.g. Juan" />
-                      {formErrors.first_name && <div className="um-form-error">{formErrors.first_name}</div>}
-                    </div>
-                    <div className="um-form-group um-col-span-2">
-                      <label>Middle Name <span className="um-optional">(optional)</span></label>
-                      <input className="um-form-input"
-                        value={ownerForm.middle_name}
-                        onChange={e => setOwnerForm({ ...ownerForm, middle_name: e.target.value.toUpperCase() })}
-                        placeholder="e.g. Santos" />
-                    </div>
-
-                    {/* Address */}
-                    <div className="um-form-group um-col-span-2">
-                      <label>House / Unit No. & Street <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.house_street ? 'error' : ''}`}
-                        value={ownerForm.house_street}
-                        onChange={e => setOwnerForm({ ...ownerForm, house_street: e.target.value })}
-                        placeholder="e.g. 123 Rizal Street" />
-                      {formErrors.house_street && <div className="um-form-error">{formErrors.house_street}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Province <span className="um-required">*</span></label>
-                      <select className={`um-form-select ${formErrors.province ? 'error' : ''}`}
-                        value={selProvince}
-                        onChange={e => {
-                          const opt = provinces.find(p => p.code === e.target.value)
-                          setSelProvince(e.target.value); setSelCity('')
-                          setOwnerForm(f => ({ ...f, province: opt?.name ?? '', city_municipality: '', barangay: '' }))
-                        }}>
-                        <option value="">Select Province</option>
-                        {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
-                      </select>
-                      {formErrors.province && <div className="um-form-error">{formErrors.province}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>City / Municipality <span className="um-required">*</span></label>
-                      <select className={`um-form-select ${formErrors.city_municipality ? 'error' : ''}`}
-                        value={selCity}
-                        disabled={!selProvince || loadingCities}
-                        onChange={e => {
-                          const opt = cities.find(c => c.code === e.target.value)
-                          setSelCity(e.target.value)
-                          setOwnerForm(f => ({ ...f, city_municipality: opt?.name ?? '', barangay: '' }))
-                        }}>
-                        <option value="">{loadingCities ? 'Loading…' : !selProvince ? 'Select province first' : 'Select City / Municipality'}</option>
-                        {cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-                      </select>
-                      {formErrors.city_municipality && <div className="um-form-error">{formErrors.city_municipality}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Barangay <span className="um-required">*</span></label>
-                      <select className={`um-form-select ${formErrors.barangay ? 'error' : ''}`}
-                        value={ownerForm.barangay}
-                        disabled={!selCity || loadingBarangays}
-                        onChange={e => setOwnerForm(f => ({ ...f, barangay: e.target.value }))}>
-                        <option value="">{loadingBarangays ? 'Loading…' : !selCity ? 'Select city first' : 'Select Barangay'}</option>
-                        {barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
-                      </select>
-                      {formErrors.barangay && <div className="um-form-error">{formErrors.barangay}</div>}
-                    </div>
-
-                    {/* Contact + email */}
-                    <div className="um-form-group um-col-span-2">
-                      <label>Email Address <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
-                        type="email" value={ownerForm.email}
-                        onChange={e => setOwnerForm({ ...ownerForm, email: e.target.value })}
-                        placeholder="e.g. juan@example.com" />
-                      {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Contact Number <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.contact_number ? 'error' : ''}`}
-                        value={ownerForm.contact_number}
-                        onChange={e => setOwnerForm({ ...ownerForm, contact_number: e.target.value })}
-                        placeholder="+639XXXXXXXXX" />
-                      {formErrors.contact_number && <div className="um-form-error">{formErrors.contact_number}</div>}
-                    </div>
-                    <div className="um-form-group">
-                      <label>Age</label>
-                      <input className="um-form-input" type="number" min="15" max="99"
-                        value={ownerForm.age}
-                        onChange={e => setOwnerForm({ ...ownerForm, age: e.target.value })} />
-                    </div>
-                    <div className="um-form-group um-col-span-2">
-                      <label>Driver's License Number <span className="um-required">*</span></label>
-                      <input className={`um-form-input ${formErrors.drivers_license ? 'error' : ''}`}
-                        value={ownerForm.drivers_license}
-                        onChange={e => setOwnerForm({ ...ownerForm, drivers_license: e.target.value.toUpperCase() })}
-                        placeholder="e.g. N01-20-123456" maxLength={13} />
-                      {formErrors.drivers_license && <div className="um-form-error">{formErrors.drivers_license}</div>}
-                    </div>
-                  </div>
-
-                  {/* Student-specific */}
-                  {ownerForm.registrant_type === 'student' && (
-                    <>
-                      <div className="um-form-section-title">Student Details</div>
-                      <div className="um-form-group">
-                        <label>Education Level <span className="um-required">*</span></label>
-                        <div className="um-level-row">
-                          {['college', 'shs', 'jhs', 'elementary', 'sped'].map(lvl => (
-                            <button key={lvl} type="button"
-                              className={`um-level-btn ${ownerForm.student_level === lvl ? 'selected' : ''}`}
-                              onClick={() => setOwnerForm(f => ({
-                                ...f, student_level: lvl,
-                                student_grade: '', student_strand: '', program_year: '',
-                                campus_days: lvl === 'sped' ? CAMPUS_DAYS.map(d => d.key) : [],
-                              }))}>
-                              {lvl === 'college' ? 'College' : lvl === 'shs' ? 'Senior HS' : lvl === 'jhs' ? 'Junior HS' : lvl === 'elementary' ? 'Elementary' : 'SpEd'}
-                            </button>
-                          ))}
-                        </div>
-                        {formErrors.student_level && <div className="um-form-error">{formErrors.student_level}</div>}
-                      </div>
-                      <div className="um-form-grid-2">
-                        <div className="um-form-group">
-                          <label>Student ID <span className="um-required">*</span></label>
-                          <input className={`um-form-input ${formErrors.student_id ? 'error' : ''}`}
-                            value={ownerForm.student_id}
-                            onChange={e => setOwnerForm({ ...ownerForm, student_id: e.target.value })}
-                            placeholder="e.g. 23100174" />
-                          {formErrors.student_id && <div className="um-form-error">{formErrors.student_id}</div>}
-                        </div>
-                        {ownerForm.student_level === 'college' && (
-                          <div className="um-form-group">
-                            <label>Program & Year Level</label>
-                            <input className="um-form-input"
-                              value={ownerForm.program_year}
-                              onChange={e => setOwnerForm({ ...ownerForm, program_year: e.target.value })}
-                              placeholder="e.g. BSIT - 3" />
-                          </div>
-                        )}
-                        {ownerForm.student_level === 'shs' && (
-                          <>
-                            <div className="um-form-group">
-                              <label>Track / Strand</label>
-                              <select className="um-form-select" value={ownerForm.student_strand}
-                                onChange={e => setOwnerForm({ ...ownerForm, student_strand: e.target.value })}>
-                                <option value="">Select Strand</option>
-                                {['ABM','STEM','HUMSS','ICT','HE'].map(s => <option key={s}>{s}</option>)}
-                              </select>
-                            </div>
-                            <div className="um-form-group">
-                              <label>Grade Level</label>
-                              <select className="um-form-select" value={ownerForm.student_grade}
-                                onChange={e => setOwnerForm({ ...ownerForm, student_grade: e.target.value })}>
-                                <option value="">Select</option>
-                                <option value="11">Grade 11</option><option value="12">Grade 12</option>
-                              </select>
-                            </div>
-                          </>
-                        )}
-                        {ownerForm.student_level === 'jhs' && (
-                          <div className="um-form-group">
-                            <label>Grade Level</label>
-                            <select className="um-form-select" value={ownerForm.student_grade}
-                              onChange={e => setOwnerForm({ ...ownerForm, student_grade: e.target.value })}>
-                              <option value="">Select</option>
-                              {['7','8','9','10'].map(g => <option key={g} value={g}>Grade {g}</option>)}
-                            </select>
-                          </div>
-                        )}
-                        {ownerForm.student_level === 'elementary' && (
-                          <div className="um-form-group">
-                            <label>Grade Level</label>
-                            <select className="um-form-select" value={ownerForm.student_grade}
-                              onChange={e => setOwnerForm({ ...ownerForm, student_grade: e.target.value })}>
-                              <option value="">Select</option>
-                              {['Kinder 1','Kinder 2','1','2','3','4','5','6'].map(g => (
-                                <option key={g} value={g}>{g.includes('Kinder') ? g : `Grade ${g}`}</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-                      {/* Campus days */}
-                      {ownerForm.student_level && ownerForm.student_level !== 'sped' && (
-                        <div className="um-form-group">
-                          <label>Campus Days <span className="um-required">*</span></label>
-                          <div className="um-day-picker">
-                            {CAMPUS_DAYS.map(d => {
-                              const sel = ownerForm.campus_days.includes(d.key)
-                              const max = ownerForm.campus_days.length >= 3 && !sel
-                              return (
-                                <button key={d.key} type="button"
-                                  className={`um-day-btn ${sel ? 'selected' : ''} ${max ? 'disabled' : ''}`}
-                                  onClick={() => !max && toggleOwnerDay(d.key)}>
-                                  {d.short}
-                                </button>
-                              )
-                            })}
-                          </div>
-                          {formErrors.campus_days && <div className="um-form-error">{formErrors.campus_days}</div>}
-                          <div className="um-day-note">{ownerForm.campus_days.length}/3 days selected</div>
-                        </div>
-                      )}
-                      {ownerForm.student_level === 'sped' && (
-                        <p className="um-info-note"><Info size={12} /> SpEd students are assigned all campus days.</p>
-                      )}
-                    </>
-                  )}
-
-                  {/* Employee-specific */}
-                  {ownerForm.registrant_type === 'employee' && (
-                    <>
-                      <div className="um-form-section-title">Employee Details</div>
-                      <div className="um-form-grid-2">
-                        <div className="um-form-group">
-                          <label>Employee ID <span className="um-required">*</span></label>
-                          <input className={`um-form-input ${formErrors.employee_id ? 'error' : ''}`}
-                            value={ownerForm.employee_id}
-                            onChange={e => setOwnerForm({ ...ownerForm, employee_id: e.target.value })}
-                            placeholder="e.g. 23100174" />
-                          {formErrors.employee_id && <div className="um-form-error">{formErrors.employee_id}</div>}
-                        </div>
-                        <div className="um-form-group">
-                          <label>Department <span className="um-required">*</span></label>
-                          <select className={`um-form-select ${formErrors.department_type ? 'error' : ''}`}
-                            value={ownerForm.department_type}
-                            onChange={e => setOwnerForm({ ...ownerForm, department_type: e.target.value })}>
-                            <option value="">Select Department</option>
-                            <option value="teaching">Teaching</option>
-                            <option value="non_teaching">Non-Teaching</option>
-                          </select>
-                          {formErrors.department_type && <div className="um-form-error">{formErrors.department_type}</div>}
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {ownerForm.registrant_type === 'fetcher' && (
-                    <p className="um-info-note"><Info size={12} /> Fetchers may enter on any day during designated drop-off and pick-up hours.</p>
-                  )}
                 </>
               )}
 
@@ -1048,6 +526,11 @@ export default function UserManagement() {
                     <div className="um-admin-warning-text">
                       <strong>Warning:</strong> This will <strong>delete your current admin account</strong> and create a new one. You will be logged out immediately.
                     </div>
+                  </div>
+                  <div className="um-info-banner">
+                    <Info size={14} />
+                    A temporary password will be auto-generated and emailed to the new admin.
+                    They must change it on first login.
                   </div>
                   <div className="um-form-group">
                     <label>Full Name <span className="um-required">*</span></label>
@@ -1064,46 +547,6 @@ export default function UserManagement() {
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
                       placeholder="Enter email address" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
-                  </div>
-                  <div className="um-form-group">
-                    <label>Password <span className="um-required">*</span></label>
-                    <div className="um-password-wrapper">
-                      <input className={`um-form-input ${formErrors.password ? 'error' : ''}`}
-                        type={showPassword ? 'text' : 'password'} value={adminForm.password}
-                        onChange={e => setAdminForm({ ...adminForm, password: e.target.value })}
-                        placeholder="Enter password" />
-                      <button type="button" className="um-password-toggle" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                    {formErrors.password && <div className="um-form-error">{formErrors.password}</div>}
-                    {adminForm.password && (
-                      <div className="um-password-strength">
-                        <div className="um-strength-bar-bg"><div className={`um-strength-bar ${adminStrength.level}`} /></div>
-                        <span className={`um-strength-label ${adminStrength.level}`}>{STRENGTH_LABELS[adminStrength.level] || ''}</span>
-                        <div className="um-password-rules">
-                          {PASSWORD_RULES.map(rule => (
-                            <div key={rule.key} className={`um-password-rule ${rule.test(adminForm.password) ? 'met' : ''}`}>
-                              {rule.test(adminForm.password) ? <Check size={12} /> : <Circle size={12} />}
-                              {rule.label}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="um-form-group">
-                    <label>Confirm Password <span className="um-required">*</span></label>
-                    <div className="um-password-wrapper">
-                      <input className={`um-form-input ${formErrors.confirm_password ? 'error' : ''}`}
-                        type={showConfirm ? 'text' : 'password'} value={adminForm.confirm_password}
-                        onChange={e => setAdminForm({ ...adminForm, confirm_password: e.target.value })}
-                        placeholder="Re-enter password" />
-                      <button type="button" className="um-password-toggle" onClick={() => setShowConfirm(v => !v)} tabIndex={-1}>
-                        {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                    {formErrors.confirm_password && <div className="um-form-error">{formErrors.confirm_password}</div>}
                   </div>
                 </>
               )}
@@ -1277,7 +720,7 @@ export default function UserManagement() {
             </div>
             <div className="um-modal-footer">
               <button className="um-btn-secondary" disabled={submitting} onClick={() => setModal('add')}>Back</button>
-              <button className="um-btn-primary" disabled={submitting} onClick={addType === 'admin' ? handleReplaceAdmin : addType === 'guard' ? handleAddGuard : handleAddOwner}>
+              <button className="um-btn-primary" disabled={submitting} onClick={addType === 'admin' ? handleReplaceAdmin : handleAddGuard}>
                 {submitting ? 'Processing...' : 'Confirm'}
               </button>
             </div>

@@ -15,7 +15,8 @@ Django==4.2.30
 django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
-paddlepaddle-gpu==2.6.2.post120
+# paddlepaddle (CPU) is installed in the Dockerfile; paddle 3.x is required
+# for numpy 2 compatibility
 paddleocr==2.10.0
 albumentations==1.4.24
 filelock==3.19.1

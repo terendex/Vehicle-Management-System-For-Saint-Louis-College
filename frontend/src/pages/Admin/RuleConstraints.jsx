@@ -439,18 +439,21 @@ export default function RuleConstraints() {
                   <tbody>
                     {periods.map(p => {
                       const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+                      const todayIso = new Date().toLocaleDateString('en-CA')
+                      const ended = p.end_date < todayIso
+                      const isActive = p.is_active && !ended
                       return (
-                        <tr key={p.id} className={p.is_active ? 'rc-period-row--active' : ''}>
+                        <tr key={p.id} className={isActive ? 'rc-period-row--active' : ''}>
                           <td className="rc-period-label">{p.label}</td>
                           <td>{fmt(p.start_date)}</td>
                           <td>{fmt(p.end_date)}</td>
                           <td>
-                            {p.is_active
+                            {isActive
                               ? <span className="rc-period-badge rc-period-badge--active"><CheckCircle size={11} /> Active</span>
                               : <span className="rc-period-badge rc-period-badge--archived"><Archive size={11} /> Archived</span>}
                           </td>
                           <td>
-                            {p.is_active ? (
+                            {ended ? null : isActive ? (
                               <button
                                 className="rc-btn rc-btn-secondary rc-btn-sm"
                                 disabled={togglingId === p.id}

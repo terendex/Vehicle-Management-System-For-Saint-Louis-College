@@ -271,7 +271,7 @@ class DashboardStatsView(APIView):
             DAY_MAP = {2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu', 6: 'Fri', 7: 'Sat'}
             day_rows = (
                 AccessLog.objects
-                .filter(status='authorized')
+                .filter(status='authorized', scanned_at__date__gte=week_ago)
                 .annotate(wd=ExtractWeekDay('scanned_at'))
                 .filter(wd__in=DAY_MAP.keys())
                 .values('wd')
@@ -282,6 +282,7 @@ class DashboardStatsView(APIView):
                 {'day': DAY_MAP[wd], 'count': day_dist_map.get(wd, 0)}
                 for wd in sorted(DAY_MAP.keys())
             ]
+            authorized_week = sum(day_dist_map.values())
 
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='admin'
@@ -311,6 +312,7 @@ class DashboardStatsView(APIView):
                     'today':            today_scans,
                     'week':             week_scans,
                     'authorized_today': authorized_today,
+                    'authorized_week':  authorized_week,
                     'denied_today':     denied_today,
                     'unknown_today':    unknown_today,
                 },
