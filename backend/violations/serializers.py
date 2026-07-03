@@ -7,6 +7,7 @@ class ViolationSerializer(serializers.ModelSerializer):
     owner_email     = serializers.CharField(source='vehicle.user.email', read_only=True, default='')
     issued_by_name  = serializers.CharField(source='issued_by.full_name', read_only=True, default='')
     issued_by_code  = serializers.CharField(source='issued_by.user_code', read_only=True, default='')
+    on_duty_guard_name = serializers.CharField(source='on_duty_guard.full_name', read_only=True, default='')
     evidence_url    = serializers.SerializerMethodField()
 
     class Meta:

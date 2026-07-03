@@ -2,7 +2,7 @@ import logging
 import base64
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 import asyncio
 from asgiref.sync import sync_to_async
@@ -497,6 +497,23 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         gate_id = getattr(self, '_gate_id', 'main')
 
         if not vehicle:
+            cutoff = timezone.now() - timedelta(seconds=self._dedup_seconds)
+            recent_unknown = AccessLog.objects.filter(
+                plate_number=plate_number,
+                status="unknown",
+                scanned_at__gte=cutoff,
+            ).exists()
+            if recent_unknown:
+                return {
+                    "status":         "duplicate",
+                    "allowed":        False,
+                    "message":        "Duplicate scan — unregistered plate already logged within cooldown.",
+                    "constraint":     None,
+                    "vehicle":        None,
+                    "registration":   None,
+                    "has_violations": False,
+                    "already_inside": False,
+                }
             AccessLog.objects.create(
                 plate_number=plate_number,
                 status="unknown",
@@ -592,6 +609,27 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             }
 
         entry = check_entry(vehicle)
+
+        # Authorized entries are deduped by the grace-period / entry-window checks
+        # above; denied-type statuses need their own DB-backed cooldown so a vehicle
+        # idling at the gate doesn't flood the log across WS reconnects.
+        if not entry["allowed"]:
+            cutoff = timezone.now() - timedelta(seconds=self._dedup_seconds)
+            recent_same = AccessLog.objects.filter(
+                plate_number=plate_number,
+                status=entry["status"],
+                scanned_at__gte=cutoff,
+            ).exists()
+            if recent_same:
+                return {
+                    "status":         "duplicate",
+                    "allowed":        False,
+                    "message":        "Duplicate scan — result already logged within cooldown.",
+                    "vehicle":        VehicleSerializer(vehicle).data,
+                    "has_violations": False,
+                    "already_inside": False,
+                }
+
         has_violations = Violation.objects.filter(
             vehicle=vehicle, is_resolved=False
         ).exists()
@@ -616,7 +654,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         if not entry["allowed"]:
             try:
-                _auto_log_violation(vehicle, entry["message"])
+                _auto_log_violation(vehicle, entry["message"], gate_id)
             except Exception:
                 pass
 

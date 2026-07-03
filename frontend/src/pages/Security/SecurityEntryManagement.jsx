@@ -774,10 +774,13 @@ export default function SecurityEntryManagement() {
                             <span className="em-audit-plate">{log.plate_number || '—'}</span>
                             <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
                           </div>
-                          {(log.vehicle_owner_name || log.scanned_by_name) && (
+                          {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
                             <div className="em-audit-sub">
                               {log.vehicle_owner_name && <span>{log.vehicle_owner_name}</span>}
-                              {log.scanned_by_name && <span>· {log.scanned_by_name}</span>}
+                              {log.on_duty_guard_name && <span>· On duty: {log.on_duty_guard_name}</span>}
+                              {log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && (
+                                <span>· {log.scanned_by_name}</span>
+                              )}
                             </div>
                           )}
                         </div>
