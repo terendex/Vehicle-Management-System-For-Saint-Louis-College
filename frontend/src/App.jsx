@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
@@ -28,6 +28,12 @@ import ForgotPasswordPage from './pages/ForgotPassword/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPassword/ResetPasswordPage'
 import PolicyPage from './pages/Policy/PolicyPage'
 
+// Old /security/qr-login/:gateParam kiosk URLs → new /security/guard-login/:gateParam
+function GuardLoginLegacyRedirect() {
+  const { gateParam } = useParams()
+  return <Navigate to={`/security/guard-login/${gateParam}`} replace />
+}
+
 export default function App() {
   const initAutoLogout = useAuthStore((s) => s.initAutoLogout)
 
@@ -46,7 +52,11 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/policy" element={<PolicyPage />} />
-        <Route path="/security/qr-login" element={<SecurityQRLogin />} />
+        <Route path="/security/guard-login" element={<SecurityQRLogin />} />
+        <Route path="/security/guard-login/:gateParam" element={<SecurityQRLogin />} />
+        {/* Legacy URL — redirect old bookmarks/kiosks */}
+        <Route path="/security/qr-login" element={<Navigate to="/security/guard-login" replace />} />
+        <Route path="/security/qr-login/:gateParam" element={<GuardLoginLegacyRedirect />} />
 
         {/* Role-specific dashboards */}
 

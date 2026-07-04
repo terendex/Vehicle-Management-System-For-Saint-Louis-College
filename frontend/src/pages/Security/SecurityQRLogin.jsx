@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { ScanLine, ShieldCheck, KeyRound, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -11,9 +11,13 @@ const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
+  const { gateParam }                            = useParams()
   const { qrLogin, guardLogin, isLoading, user } = useAuthStore()
 
-  const [selectedGate, setSelectedGate] = useState(null)
+  // Kiosk mode: /security/guard-login/gate1 or /security/guard-login/gate4 locks the gate
+  const kioskGate = GATE_LABELS[gateParam] ? gateParam : null
+
+  const [selectedGate, setSelectedGate] = useState(kioskGate)
   const [method, setMethod]             = useState('credentials') // credentials | qr
   const [email, setEmail]               = useState('')
   const [password, setPassword]         = useState('')
@@ -31,13 +35,25 @@ export default function SecurityQRLogin() {
   const videoRef  = useRef(null)
   const streamRef = useRef(null)
 
-  // Trap back-button navigation — hard replace beats React Router's popstate handler
+  // Trap back-button navigation — hard replace beats React Router's popstate handler.
+  // In kiosk mode the trap pins the browser to the gate-specific URL.
   useEffect(() => {
+    const trapUrl = kioskGate ? `/security/guard-login/${kioskGate}` : '/security/guard-login'
     window.history.pushState(null, '', window.location.href)
-    const handlePop = () => window.location.replace('/security/qr-login')
+    const handlePop = () => window.location.replace(trapUrl)
     window.addEventListener('popstate', handlePop)
     return () => window.removeEventListener('popstate', handlePop)
-  }, [])
+  }, [kioskGate])
+
+  // Invalid gate in URL (e.g. /security/guard-login/gate9) → fall back to gate selector
+  useEffect(() => {
+    if (gateParam && !kioskGate) navigate('/security/guard-login', { replace: true })
+  }, [gateParam, kioskGate, navigate])
+
+  // Keep the locked gate in sync if the kiosk URL changes
+  useEffect(() => {
+    if (kioskGate) setSelectedGate(kioskGate)
+  }, [kioskGate])
 
   useEffect(() => {
     if (selectedGate && method === 'qr' && !useCamera) inputRef.current?.focus()
@@ -242,9 +258,13 @@ export default function SecurityQRLogin() {
               ) : (
                 <>
                   <div className="sqr-scan-topbar">
-                    <button className="sqr-back" onClick={handleBackToGateSelect}>
-                      <ChevronLeft size={15} /> Change gate
-                    </button>
+                    {kioskGate ? (
+                      <span className="sqr-kiosk-tag"><ShieldCheck size={14} /> Kiosk mode</span>
+                    ) : (
+                      <button className="sqr-back" onClick={handleBackToGateSelect}>
+                        <ChevronLeft size={15} /> Change gate
+                      </button>
+                    )}
                     <span className="sqr-gate-pill">{GATE_LABELS[selectedGate]}</span>
                   </div>
 
