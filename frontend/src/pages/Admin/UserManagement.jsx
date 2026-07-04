@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
@@ -8,7 +7,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
-  Shield, Info, LogIn,
+  Shield, Info,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
@@ -19,7 +18,6 @@ const EMPTY_ADMIN = { full_name: '', email: '' }
 /* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
   const { logout } = useAuthStore()
-  const navigate = useNavigate()
 
   /* ── users state ── */
   const [users, setUsers]             = useState([])
@@ -35,8 +33,7 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [submitting, setSubmitting]   = useState(false)
   const [activeMenu, setActiveMenu]   = useState(null)
-  const [addType, setAddType]         = useState(null)   // 'guard' | 'admin'
-  const [showGateConfirm, setShowGateConfirm] = useState(false)
+  const [addType, setAddType]         = useState('guard')   // 'guard' | 'admin'
   const [formErrors, setFormErrors]   = useState({})
 
   /* ── per-type form state ── */
@@ -88,7 +85,6 @@ export default function UserManagement() {
     setResultModal({ message, type })
     setModal(null)
     setSelectedUser(null)
-    setAddType(null)
   }
 
   const TABS = [
@@ -96,6 +92,7 @@ export default function UserManagement() {
     { key: 'security',       label: 'Security Personnel',      role: 'security',      registrantType: '' },
     { key: 'owner_employee', label: 'Vehicle Owner — Employee', role: 'vehicle_owner', registrantType: 'employee' },
     { key: 'owner_student',  label: 'Vehicle Owner — Student',  role: 'vehicle_owner', registrantType: 'student' },
+    { key: 'owner_fetcher',  label: 'Fetcher / Drop & Go',      role: 'vehicle_owner', registrantType: 'fetcher' },
   ]
 
   /* ── fetch users ── */
@@ -140,18 +137,19 @@ export default function UserManagement() {
 
   /* ── open modals ── */
   const openAdd = () => {
-    setAddType(null)
+    setAddType('guard')
     setGuardForm(EMPTY_GUARD)
     setAdminForm(EMPTY_ADMIN)
     setFormErrors({})
     setModal('add')
   }
+  const switchAddType = (t) => { setAddType(t); setFormErrors({}) }
   const openView   = (user) => { setSelectedUser(user); setModal('view') }
   const openDelete = (user) => { setSelectedUser(user); setModal('delete') }
   const openToggle = (user) => { setSelectedUser(user); setModal('toggle') }
   const closeModal = () => {
     setModal(null); setSelectedUser(null)
-    setSubmitting(false); setFormErrors({}); setAddType(null)
+    setSubmitting(false); setFormErrors({})
   }
 
   /* ── guard validation & submit ── */
@@ -278,9 +276,6 @@ export default function UserManagement() {
           <p>Manage system user accounts and access.</p>
         </div>
         <div className="um-header-actions">
-          <button className="um-gate-login-btn" onClick={() => setShowGateConfirm(true)}>
-            <LogIn size={16} /> Gate Login
-          </button>
           <button className="um-add-btn" onClick={openAdd}>
             <UserPlus size={16} /> Add User
           </button>
@@ -324,7 +319,7 @@ export default function UserManagement() {
             <input
               className="um-search-input"
               type="text"
-              placeholder="Search by name…"
+              placeholder="Search by name, email, or user ID…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -456,31 +451,37 @@ export default function UserManagement() {
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal um-modal--wide" onClick={(e) => e.stopPropagation()}>
             <div className="um-modal-header">
-              <h2>
-                {addType === 'guard' ? 'Add Security Guard'
-                  : addType === 'admin' ? 'Replace Admin'
-                  : 'Add User'}
-              </h2>
+              <h2>{addType === 'admin' ? 'Replace Admin' : 'Add Security Guard'}</h2>
               <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
             </div>
 
             <div className="um-modal-body um-modal-scroll">
 
-              {/* ── type selector ── */}
-              {addType === null && (
-                <div className="um-user-type-selector">
-                  <div className="um-type-option" onClick={() => setAddType('guard')}>
-                    <div className="um-type-option-icon"><Shield size={20} /></div>
-                    <span className="um-type-option-label">Security Guard</span>
-                    <span className="um-type-option-desc">Name, email & agency — QR badge auto-generated</span>
-                  </div>
-                  <div className="um-type-option" onClick={() => setAddType('admin')}>
-                    <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
-                    <span className="um-type-option-label">New Admin</span>
-                    <span className="um-type-option-desc">Replaces current admin account</span>
-                  </div>
+              {/* ── type switcher — always visible so the form can be swapped freely ── */}
+              <div className="um-user-type-selector" style={{ marginBottom: 18 }}>
+                <div
+                  className="um-type-option"
+                  onClick={() => switchAddType('guard')}
+                  style={addType === 'guard'
+                    ? { borderColor: '#2A2B61', background: '#F5F6FF', boxShadow: '0 0 0 1px #2A2B61' }
+                    : { opacity: 0.75 }}
+                >
+                  <div className="um-type-option-icon"><Shield size={20} /></div>
+                  <span className="um-type-option-label">Security Guard</span>
+                  <span className="um-type-option-desc">Name, email & agency — QR badge auto-generated</span>
                 </div>
-              )}
+                <div
+                  className="um-type-option"
+                  onClick={() => switchAddType('admin')}
+                  style={addType === 'admin'
+                    ? { borderColor: '#B45309', background: '#FFFBEB', boxShadow: '0 0 0 1px #B45309' }
+                    : { opacity: 0.75 }}
+                >
+                  <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
+                  <span className="um-type-option-label">New Admin</span>
+                  <span className="um-type-option-desc">Replaces current admin account</span>
+                </div>
+              </div>
 
               {/* ══ GUARD FORM ══ */}
               {addType === 'guard' && (
@@ -552,20 +553,18 @@ export default function UserManagement() {
               )}
             </div>
 
-            {addType !== null && (
-              <div className="um-modal-footer">
-                <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
-                {addType === 'admin' ? (
-                  <button className="um-btn-warning" disabled={submitting} onClick={onAddClick}>
-                    <ShieldAlert size={16} /> Continue
-                  </button>
-                ) : (
-                  <button className="um-btn-primary" disabled={submitting} onClick={onAddClick}>
-                    <UserPlus size={16} /> Continue
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="um-modal-footer">
+              <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
+              {addType === 'admin' ? (
+                <button className="um-btn-warning" disabled={submitting} onClick={onAddClick}>
+                  <ShieldAlert size={16} /> Continue
+                </button>
+              ) : (
+                <button className="um-btn-primary" disabled={submitting} onClick={onAddClick}>
+                  <UserPlus size={16} /> Continue
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -779,45 +778,12 @@ export default function UserManagement() {
             <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
               <button className="um-btn-secondary" onClick={() => setQrUser(null)}>Close</button>
               {qrUser.role === 'security' && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <RefreshCw size={14} />
-                    {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
-                  </button>
-                  <button className="um-btn-primary" onClick={() => setShowGateConfirm(true)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <LogIn size={14} /> Go to Gate Login
-                  </button>
-                </div>
+                <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <RefreshCw size={14} />
+                  {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
+                </button>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* GATE LOGIN CONFIRM */}
-      {showGateConfirm && (
-        <div className="um-modal-overlay" onClick={() => setShowGateConfirm(false)}>
-          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
-            <div className="um-modal-header">
-              <h2>Open Gate Login?</h2>
-              <button className="um-modal-close" onClick={() => setShowGateConfirm(false)}><X size={18} /></button>
-            </div>
-            <div className="um-modal-body">
-              <div className="um-confirm-body">
-                <div className="um-confirm-icon warning">
-                  <LogIn size={24} />
-                </div>
-                <h3>You will be logged out</h3>
-                <p>This will end your admin session and open the security gate login screen for guard clock-in.</p>
-              </div>
-            </div>
-            <div className="um-modal-footer">
-              <button className="um-btn-secondary" onClick={() => setShowGateConfirm(false)}>Cancel</button>
-              <button className="um-btn-primary" onClick={() => logout('/security/qr-login')}>
-                <LogIn size={16} /> Proceed
-              </button>
             </div>
           </div>
         </div>

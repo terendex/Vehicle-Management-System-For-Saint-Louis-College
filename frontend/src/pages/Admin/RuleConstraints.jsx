@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   CalendarDays, Clock, Pencil, X, Settings2,
-  Loader2, User, Car, Users, ChevronRight,
+  Loader2, User, Car, Users, ChevronRight, Truck, Timer,
   CalendarRange, Globe, Plus, CheckCircle, Archive, AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -44,6 +44,14 @@ const ENTRY_TYPES = [
     title: 'Fetcher / Drop & Go',
     desc: 'Parent or guardian fetching a student',
     Icon: Users,
+    hasStayLimit: true,
+  },
+  {
+    key: 'supplier',
+    title: 'Supplier',
+    desc: 'Supplier company vehicles (auto-permitted plates)',
+    Icon: Truck,
+    hasStayLimit: true,
   },
 ]
 
@@ -62,13 +70,18 @@ function EditModal({ entryType, rule, onSave, onClose }) {
   const [startTime, setStartTime] = useState(rule?.start_time ?? '06:00')
   const [endTime, setEndTime] = useState(rule?.end_time ?? '19:00')
   const [enabled, setEnabled] = useState(rule?.enabled ?? true)
+  const [maxStay, setMaxStay] = useState(rule?.max_stay_minutes ?? '')
 
   const toggleDay = (key) =>
     setDays((prev) => prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key])
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    onSave({ days, start_time: startTime, end_time: endTime, enabled })
+    const payload = { days, start_time: startTime, end_time: endTime, enabled }
+    if (entryType.hasStayLimit) {
+      payload.max_stay_minutes = maxStay === '' ? null : Math.max(1, parseInt(maxStay, 10) || 0)
+    }
+    onSave(payload)
     onClose()
   }
 
@@ -123,6 +136,23 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                 />
               </div>
             </div>
+
+            {entryType.hasStayLimit && (
+              <div className="rc-field">
+                <label className="rc-field-label">Max Stay (minutes)</label>
+                <input
+                  className="rc-field-input"
+                  type="number"
+                  min="1"
+                  placeholder="No limit"
+                  value={maxStay}
+                  onChange={(e) => setMaxStay(e.target.value)}
+                />
+                <span style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 4, display: 'block' }}>
+                  Exceeding this on exit auto-issues a time-exceed violation. Leave blank for no limit.
+                </span>
+              </div>
+            )}
 
             <div className="rc-field">
               <label className="rc-field-label">Status</label>
@@ -524,6 +554,12 @@ export default function RuleConstraints() {
                               <Clock size={11} />
                               {formatTime12(rule.start_time)} – {formatTime12(rule.end_time)}
                             </span>
+                            {rule.max_stay_minutes != null && (
+                              <span className="rc-entry-time" style={{ color: '#B45309' }}>
+                                <Timer size={11} />
+                                Max stay: {rule.max_stay_minutes} min
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>

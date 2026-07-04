@@ -129,6 +129,59 @@ def _pair_entry_exit(exit_log) -> None:
         exit_log.save(update_fields=['paired_entry'])
 
 
+def _supplier_rule_denial() -> str | None:
+    """Day/time-window check for supplier entries against the supplier
+    RuleConstraint. Returns a denial message, or None when entry is allowed.
+    Open Campus Mode bypasses the restriction like every other rule."""
+    from vehicles.models import SystemSettings
+    from .entry_logic import _get_active_rule, _is_within_days, _is_within_window
+    rule = _get_active_rule('supplier')
+    if not rule or SystemSettings.get().open_campus_mode:
+        return None
+    if not _is_within_days(rule):
+        day_name = timezone.localdate().strftime('%A')
+        return f'Supplier access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.'
+    if not _is_within_window(rule):
+        return (f'Supplier access restricted. Outside allowed hours '
+                f'({rule.start_time}–{rule.end_time}) per rule: {rule.name}.')
+    return None
+
+
+def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
+                      duration_minutes: int, gate_id: str = '', evidence_bytes=None) -> int:
+    """
+    Enforce the RuleConstraint max-stay limit for this constraint type at exit
+    time. Returns overstay minutes (0 if none/no limit) and auto-issues a
+    time-exceed violation when exceeded. Supplier plates have no Vehicle row,
+    so one is adopted/created (unauthorized, unowned) to carry the violation.
+    """
+    from vehicles.models import RuleConstraint, Vehicle
+    rule = RuleConstraint.objects.filter(
+        constraint_type=constraint_type, enabled=True,
+        max_stay_minutes__isnull=False,
+    ).first()
+    if not rule or duration_minutes <= rule.max_stay_minutes:
+        return 0
+    overstay = duration_minutes - rule.max_stay_minutes
+    if vehicle is None:
+        vehicle, _ = Vehicle.objects.get_or_create(
+            plate_number=plate_number,
+            defaults={'vehicle_type': 'car', 'is_authorized': False},
+        )
+    try:
+        _auto_log_violation(
+            vehicle,
+            f'Overstay: exceeded allowed {rule.max_stay_minutes} min stay by {overstay} min '
+            f'(rule: {rule.name})',
+            gate_id,
+            vtype=Violation.Type.TIME_EXCEED,
+            evidence_bytes=evidence_bytes,
+        )
+    except Exception:
+        pass
+    return overstay
+
+
 def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None) -> int:
     """
     Mark today's ACTIVE visitor pass for this plate as exited — called from every
@@ -790,6 +843,15 @@ class ExitLogView(APIView):
             duration_minutes = int(delta.total_seconds() / 60)
             entry_scanned_at = exit_log.paired_entry.scanned_at
 
+        # Stay-limit enforcement (fetcher / supplier rules)
+        if duration_minutes is not None:
+            if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher':
+                overstay_minutes = max(overstay_minutes, _check_stay_limit(
+                    plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
+            elif SupplierPlate.objects.filter(plate_number=plate_number, supplier__is_active=True).exists():
+                overstay_minutes = max(overstay_minutes, _check_stay_limit(
+                    plate_number, vehicle, 'supplier', duration_minutes, gate_id))
+
         owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unknown'
         guard_name = request.user.full_name
         _audit(
@@ -1069,15 +1131,18 @@ class ManualEntryView(APIView):
                         paired_entry=locked_entry,
                     )
                 duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
+                overstay_minutes = _check_stay_limit(plate_number, None, 'supplier', duration_minutes, gate_id)
+                overstay_note = f' Overstayed by {overstay_minutes} min — violation issued.' if overstay_minutes else ''
                 return Response({
                     'plate_number':      plate_number,
                     'status':            'exited',
                     'allowed':           False,
-                    'message':           f'Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.',
+                    'message':           f'Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.{overstay_note}',
                     'is_supplier':       True,
                     'supplier_name':     supplier_name,
                     'already_inside':    False,
                     'duration_minutes':  duration_minutes,
+                    'overstay_minutes':  overstay_minutes,
                     'gate_id':           gate_id,
                 })
 
@@ -1093,6 +1158,22 @@ class ManualEntryView(APIView):
                     'already_inside':      False,
                     'retry_after_seconds': cooldown_left,
                     'gate_id':             gate_id,
+                })
+
+            deny_msg = _supplier_rule_denial()
+            if deny_msg:
+                AccessLog.objects.create(
+                    plate_number=plate_number, status=AccessLog.Status.DENIED,
+                    denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
+                )
+                return Response({
+                    'plate_number':  plate_number,
+                    'status':        'denied',
+                    'allowed':       False,
+                    'message':       deny_msg,
+                    'is_supplier':   True,
+                    'supplier_name': supplier_name,
+                    'gate_id':       gate_id,
                 })
 
             AccessLog.objects.create(
@@ -1165,6 +1246,9 @@ class ManualEntryView(APIView):
                 )
             duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
             overstay_minutes = _close_active_pass(plate_number, gate_id)
+            if vehicle.user and vehicle.user.owner_type == 'fetcher':
+                overstay_minutes = max(overstay_minutes, _check_stay_limit(
+                    plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
             overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''
             guard_name = request.user.full_name
             _audit(request, AuditLog.Action.VEHICLE_EXITED,
