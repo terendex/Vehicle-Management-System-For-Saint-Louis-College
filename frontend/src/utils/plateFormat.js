@@ -19,12 +19,11 @@ const PH_PLATE_PATTERNS = [
   /^[A-Z]\d{3}[A-Z]{2}$/,        // N123BC
   /^[A-Z]{2}\d{3}[A-Z]$/,        // NB123C
   /^[A-Z]\d{4}[A-Z]$/,           // N1234C
-  /^[A-Z]{1,2}\d{4}[A-Z]{1,2}$/, // AB1234C / A1234BC
-  /^[A-Z]{1,2}\d{3}[A-Z]{1,2}$/, // AB123C  / A123BC
+  /^[A-Z]{2}\d{4}[A-Z]$/,        // AB1234C — exact shapes only; the old flexible
+  /^[A-Z]\d{4}[A-Z]{2}$/,        // A1234BC   {1,2} variants also matched OCR fragments like B194G
   /^\d{7}$/,                      // 0011234  — diplomatic
   /^[A-Z]{2}\d{4}$/,             // AB1234   — motorcycle
   /^[A-Z]{2}\d{5}$/,             // AB12345
-  /^\d{3}[A-Z]{1,3}$/,           // 123AB
   /^\d{2}[A-Z]{3,4}$/,           // 12ABCD
   // Catch-all patterns removed (mirrors backend validator.py): they accepted
   // nearly any letters+digits string and let invalid plates through. The

@@ -11,9 +11,10 @@ PH_PLATE_PATTERNS = [
     re.compile(r'^[A-Z]{2}[0-9]{3}[A-Z]$'),      # NB123C   — private/PUV/govt
     re.compile(r'^[A-Z][0-9]{4}[A-Z]$'),         # N1234C   — private
 
-    # ── Letters-both-ends variants ───────────────────────────────
-    re.compile(r'^[A-Z]{1,2}[0-9]{4}[A-Z]{1,2}$'),  # AB1234C / A1234BC
-    re.compile(r'^[A-Z]{1,2}[0-9]{3}[A-Z]{1,2}$'),  # AB123C  / A123BC
+    # ── Letters-both-ends variants (exact shapes only — the old flexible
+    #    {1,2} quantifiers also matched non-standard shapes like B194G) ──
+    re.compile(r'^[A-Z]{2}[0-9]{4}[A-Z]$'),      # AB1234C
+    re.compile(r'^[A-Z][0-9]{4}[A-Z]{2}$'),      # A1234BC
 
     # ── Diplomatic (7 digits) ────────────────────────────────────
     re.compile(r'^[0-9]{7}$'),                    # 0011234
@@ -21,7 +22,6 @@ PH_PLATE_PATTERNS = [
     # ── Older / other formats ────────────────────────────────────
     re.compile(r'^[A-Z]{2}\s?[0-9]{4}$'),        # AB1234
     re.compile(r'^[A-Z]{2}\s?[0-9]{5}$'),        # AB12345
-    re.compile(r'^[0-9]{3}[A-Z]{1,3}$'),         # 123AB
     re.compile(r'^[0-9]{2}[A-Z]{3,4}$'),         # 12ABCD
     # NOTE: the former catch-all patterns ([0-9]{1,3}[A-Z]{2,4}[0-9]{0,2} and
     # [A-Z]{1,3}[0-9]{1,6}) were removed — they accepted virtually any
