@@ -234,6 +234,17 @@
 
 .sqr-back:hover { color: #2A2B61; }
 
+.sqr-kiosk-tag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #7C80A3;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 .sqr-gate-pill {
   font-size: 12px;
   font-weight: 700;
