@@ -612,7 +612,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     def _check_vehicle(self, plate_number: str, bbox):
         from django.db import close_old_connections
-        from vehicles.models import Vehicle, VehicleRegistration
+        from vehicles.models import Vehicle, VehicleRegistration, SupplierPlate
         from .models import AccessLog
         from .entry_logic import check_entry
         from violations.models import Violation
@@ -632,6 +632,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         gate_id = getattr(self, '_gate_id', 'main')
 
         if not vehicle:
+            # Supplier vehicles have no Vehicle/owner record — permitted by plate list
+            supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
+                plate_number=plate_number, supplier__is_active=True
+            ).first()
+            if supplier_plate:
+                return self._check_supplier(plate_number, supplier_plate, gate_id)
+
             now = timezone.now()
             cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
             recent_unknown = AccessLog.objects.filter(
@@ -684,9 +691,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
                 # Within the 1-minute breathing space — ignore
                 return {
-                    "status":         "duplicate",
+                    "status":         "already_inside",
                     "allowed":        False,
-                    "message":        "Within 1-minute entry window.",
+                    "message":        "Vehicle just entered — within the 1-minute entry window.",
                     "vehicle":        VehicleSerializer(vehicle).data,
                     "has_violations": False,
                     "already_inside": True,
@@ -859,6 +866,128 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "has_violations":  has_violations,
             "already_inside":  already_inside,
             "organizer_event": organizer_event,
+        }
+
+    def _check_supplier(self, plate_number: str, supplier_plate, gate_id: str):
+        """Entry/exit state machine for supplier plates (auto-permitted, no owner account).
+        Mirrors the supplier branch of ManualEntryView so camera and manual paths agree."""
+        from django.db import transaction as _tx
+        from .models import AccessLog
+        from accounts.models import AuditLog
+        from .views import _inside_state, _in_exit_cooldown, _gate_label
+
+        supplier_name = supplier_plate.supplier.company_name
+        inside_status, last_entry = _inside_state(plate_number)
+
+        if inside_status == 'duplicate':
+            return {
+                "status":         "duplicate",
+                "allowed":        False,
+                "message":        "Duplicate scan — already processed within grace period.",
+                "is_supplier":    True,
+                "supplier_name":  supplier_name,
+                "vehicle":        None,
+                "registration":   None,
+                "has_violations": False,
+                "already_inside": True,
+            }
+
+        if inside_status == 'inside':
+            seconds_since_entry = (timezone.now() - last_entry.scanned_at).total_seconds()
+            if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
+                return {
+                    "status":         "already_inside",
+                    "allowed":        False,
+                    "message":        "Supplier vehicle just entered — within the 1-minute entry window.",
+                    "is_supplier":    True,
+                    "supplier_name":  supplier_name,
+                    "vehicle":        None,
+                    "registration":   None,
+                    "has_violations": False,
+                    "already_inside": True,
+                }
+            with _tx.atomic():
+                locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+                if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                    return {
+                        "status":         "duplicate",
+                        "allowed":        False,
+                        "message":        "Duplicate scan — already processed.",
+                        "is_supplier":    True,
+                        "supplier_name":  supplier_name,
+                        "vehicle":        None,
+                        "registration":   None,
+                        "has_violations": False,
+                        "already_inside": False,
+                    }
+                exit_log = AccessLog.objects.create(
+                    plate_number=plate_number,
+                    status=AccessLog.Status.EXITED,
+                    gate_id=gate_id,
+                    scanned_by=self._user,
+                    paired_entry=locked_entry,
+                )
+            delta = exit_log.scanned_at - last_entry.scanned_at
+            duration_minutes = int(delta.total_seconds() / 60)
+            try:
+                AuditLog.objects.create(
+                    actor=self._user,
+                    action="scan",
+                    details=f"Auto-exit (camera) | Supplier plate: {plate_number} | {supplier_name} | "
+                            f"Duration: {duration_minutes} min | Gate: {_gate_label(gate_id)}",
+                )
+            except Exception:
+                pass
+            return {
+                "status":           "exited",
+                "allowed":          False,
+                "message":          f"Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.",
+                "is_supplier":      True,
+                "supplier_name":    supplier_name,
+                "vehicle":          None,
+                "registration":     None,
+                "has_violations":   False,
+                "already_inside":   False,
+                "duration_minutes": duration_minutes,
+            }
+
+        if _in_exit_cooldown(plate_number):
+            return {
+                "status":         "duplicate",
+                "allowed":        False,
+                "message":        "Exit cooldown — entry suppressed for 1 minute after exit.",
+                "is_supplier":    True,
+                "supplier_name":  supplier_name,
+                "vehicle":        None,
+                "registration":   None,
+                "has_violations": False,
+                "already_inside": False,
+            }
+
+        AccessLog.objects.create(
+            plate_number=plate_number,
+            status=AccessLog.Status.AUTHORIZED,
+            gate_id=gate_id,
+            scanned_by=self._user,
+        )
+        try:
+            AuditLog.objects.create(
+                actor=self._user,
+                action="scan",
+                details=f"Supplier entry (camera) | Plate: {plate_number} | {supplier_name} | Gate: {_gate_label(gate_id)}",
+            )
+        except Exception:
+            pass
+        return {
+            "status":         "authorized",
+            "allowed":        True,
+            "message":        f"Supplier vehicle — {supplier_name}. Entry permitted.",
+            "is_supplier":    True,
+            "supplier_name":  supplier_name,
+            "vehicle":        None,
+            "registration":   None,
+            "has_violations": False,
+            "already_inside": False,
         }
 
     def _record_ml_sample(self, raw_bytes, results):
@@ -1424,4 +1553,5 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     _save_snapshot         = ScanLiveConsumer._save_snapshot
     _save_to_db            = ScanLiveConsumer._save_to_db
     _check_vehicle         = ScanLiveConsumer._check_vehicle
+    _check_supplier        = ScanLiveConsumer._check_supplier
     _record_ml_sample      = ScanLiveConsumer._record_ml_sample

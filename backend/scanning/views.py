@@ -49,6 +49,7 @@ def _audit(request, action, details=''):
 # (see _auto_log_violation); the counter resets at midnight local time.
 GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
 EXIT_COOLDOWN_SECONDS = 60           # block new entry for this many seconds after an exit
+ENTRY_BREATHING_SECONDS = 60         # re-check within this window after entry stays informational (no exit flip)
 
 
 def _inside_state(plate_number: str):
@@ -79,16 +80,25 @@ def _inside_state(plate_number: str):
     return ('inside', last_entry)
 
 
-def _in_exit_cooldown(plate_number: str) -> bool:
-    """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
+def _exit_cooldown_remaining(plate_number: str) -> int:
+    """Seconds left in the post-exit cooldown, anchored to the exit row itself —
+    repeated scans during the window never extend it. 0 when not in cooldown."""
     now = timezone.now()
     cutoff = now - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
-    return AccessLog.objects.filter(
+    last_exit = AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.EXITED,
         scanned_at__gte=cutoff,
         scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
-    ).exists()
+    ).order_by('-scanned_at').first()
+    if not last_exit:
+        return 0
+    return max(0, EXIT_COOLDOWN_SECONDS - int((now - last_exit.scanned_at).total_seconds()))
+
+
+def _in_exit_cooldown(plate_number: str) -> bool:
+    """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
+    return _exit_cooldown_remaining(plate_number) > 0
 
 
 def _already_inside(plate_number: str) -> bool:
@@ -1020,6 +1030,23 @@ class ManualEntryView(APIView):
                 })
 
             if inside_status == 'inside':
+                # Single check action toggles state like the camera: within the
+                # breathing window a re-check is informational; past it, it records the exit
+                seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+                if seconds_inside < ENTRY_BREATHING_SECONDS:
+                    window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
+                    return Response({
+                        'plate_number':        plate_number,
+                        'status':              'already_inside',
+                        'allowed':             False,
+                        'message':             f'Supplier vehicle — {supplier_name} just entered. '
+                                               f'Re-check in {window_left}s to record an exit.',
+                        'is_supplier':         True,
+                        'supplier_name':       supplier_name,
+                        'already_inside':      True,
+                        'retry_after_seconds': window_left,
+                        'gate_id':             gate_id,
+                    })
                 from django.db import transaction as _tx
                 with _tx.atomic():
                     locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
@@ -1041,9 +1068,7 @@ class ManualEntryView(APIView):
                         scanned_by=request.user,
                         paired_entry=locked_entry,
                     )
-
-                delta = exit_log.scanned_at - last_entry.scanned_at
-                duration_minutes = int(delta.total_seconds() / 60)
+                duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
                 return Response({
                     'plate_number':      plate_number,
                     'status':            'exited',
@@ -1056,16 +1081,18 @@ class ManualEntryView(APIView):
                     'gate_id':           gate_id,
                 })
 
-            if _in_exit_cooldown(plate_number):
+            cooldown_left = _exit_cooldown_remaining(plate_number)
+            if cooldown_left:
                 return Response({
-                    'plate_number':   plate_number,
-                    'status':         'duplicate',
-                    'allowed':        False,
-                    'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
-                    'is_supplier':    True,
-                    'supplier_name':  supplier_name,
-                    'already_inside': False,
-                    'gate_id':        gate_id,
+                    'plate_number':        plate_number,
+                    'status':              'duplicate',
+                    'allowed':             False,
+                    'message':             f'Exit cooldown — entry suppressed for {cooldown_left}s more.',
+                    'is_supplier':         True,
+                    'supplier_name':       supplier_name,
+                    'already_inside':      False,
+                    'retry_after_seconds': cooldown_left,
+                    'gate_id':             gate_id,
                 })
 
             AccessLog.objects.create(
@@ -1096,6 +1123,23 @@ class ManualEntryView(APIView):
             })
 
         if inside_status == 'inside':
+            # Single check action toggles state like the camera: within the
+            # breathing window a re-check is informational; past it, it records the exit
+            seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            if seconds_inside < ENTRY_BREATHING_SECONDS:
+                window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
+                return Response({
+                    'plate_number':        plate_number,
+                    'status':              'already_inside',
+                    'allowed':             False,
+                    'message':             f'{owner_name} — vehicle just entered. '
+                                           f'Re-check in {window_left}s to record an exit.',
+                    'vehicle':             VehicleSerializer(vehicle).data,
+                    'already_inside':      True,
+                    'retry_after_seconds': window_left,
+                    'gate_id':             gate_id,
+                })
             from django.db import transaction as _tx
             with _tx.atomic():
                 locked_entry = AccessLog.objects.select_for_update().filter(
@@ -1119,15 +1163,12 @@ class ManualEntryView(APIView):
                     scanned_by=request.user,
                     paired_entry=locked_entry,
                 )
-
-            delta = exit_log.scanned_at - last_entry.scanned_at
-            duration_minutes = int(delta.total_seconds() / 60)
+            duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
             overstay_minutes = _close_active_pass(plate_number, gate_id)
             overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''
-            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             guard_name = request.user.full_name
             _audit(request, AuditLog.Action.VEHICLE_EXITED,
-                   f"Auto-exit (re-scan) | Plate: {plate_number} | Owner: {owner_name} | "
+                   f"Exit (re-check) | Plate: {plate_number} | Owner: {owner_name} | "
                    f"Duration: {duration_minutes} min | "
                    + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
                    + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}")
@@ -1143,15 +1184,17 @@ class ManualEntryView(APIView):
                 'gate_id':         gate_id,
             })
 
-        if _in_exit_cooldown(plate_number):
+        cooldown_left = _exit_cooldown_remaining(plate_number)
+        if cooldown_left:
             return Response({
-                'plate_number':   plate_number,
-                'status':         'duplicate',
-                'allowed':        False,
-                'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
-                'vehicle':        VehicleSerializer(vehicle).data,
-                'already_inside': False,
-                'gate_id':        gate_id,
+                'plate_number':        plate_number,
+                'status':              'duplicate',
+                'allowed':             False,
+                'message':             f'Exit cooldown — entry suppressed for {cooldown_left}s more.',
+                'vehicle':             VehicleSerializer(vehicle).data,
+                'already_inside':      False,
+                'retry_after_seconds': cooldown_left,
+                'gate_id':             gate_id,
             })
 
         entry = check_entry(vehicle)

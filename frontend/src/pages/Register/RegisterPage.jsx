@@ -7,9 +7,9 @@ import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 
 function formatRegDate(iso) {
   if (!iso) return null
-  try {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
-  } catch { return iso }
+  const d = new Date(iso + 'T00:00:00')
+  if (isNaN(d)) return iso
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 // Auto-inserts dashes for the LTO format: X00-00-000000.
@@ -71,12 +71,10 @@ const SLC_HEADER = (
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
-  const token = searchParams.get('token')
   const directType = searchParams.get('type') // 'student' | 'employee' | 'fetcher'
   const navigate = useNavigate()
 
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [registrantType, setRegistrantType] = useState(null)
   const vehiclePassFee = registrantType === 'employee' ? 150 : 300
   const [submitted, setSubmitted] = useState(false)
@@ -113,6 +111,8 @@ export default function RegisterPage() {
     student_level: '',
     student_strand: '',
     student_grade: '',
+    student_program: '',
+    student_year: '',
     program_year: '',
     employee_id: '',
     department: '',
@@ -169,40 +169,15 @@ export default function RegisterPage() {
     }
   }, [])
 
-  const validateToken = useCallback(async () => {
+  useEffect(() => {
     fetchRefLists()
-
+    fetchRegStatus()
     if (directType) {
       setRegistrantType(directType)
-      fetchRegStatus()
-      setLoading(false)
       if (directType === 'student') fetchScheduleSlots()
-      return
     }
-
-    if (!token) {
-      fetchRegStatus()
-      setLoading(false)
-      return
-    }
-
-    try {
-      const data = await registrationApi.validateToken(token)
-      setRegistrantType(data.registrant_type)
-      setLoading(false)
-      fetchScheduleSlots()
-    } catch (err) {
-      setError(
-        err.response?.data?.error ||
-        'This registration link is invalid, expired, or has already been used.'
-      )
-      setLoading(false)
-    }
-  }, [token, directType, fetchScheduleSlots, fetchRefLists, fetchRegStatus])
-
-  useEffect(() => {
-    validateToken()
-  }, [validateToken])
+    setLoading(false)
+  }, [directType, fetchScheduleSlots, fetchRefLists, fetchRegStatus])
 
   // Fetch provinces once on mount
   useEffect(() => {
@@ -297,7 +272,12 @@ export default function RegisterPage() {
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
       else if (['last_name', 'first_name', 'middle_name', 'vehicle_color'].includes(name))
         formatted = formatted.toUpperCase()
-      setFormData((prev) => ({ ...prev, [name]: formatted }))
+      setFormData((prev) => ({
+        ...prev,
+        [name]: formatted,
+        // Body number only applies to tricycles — drop it if the type changes
+        ...(name === 'vehicle_type' && formatted !== 'Tricycle' ? { body_number: '' } : {}),
+      }))
       const errorMsg = validateField(name, formatted)
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
       // Stale duplicate hint no longer applies to the value being typed — the debounced
@@ -400,6 +380,24 @@ export default function RegisterPage() {
       setSubmitError('You must agree to the Data Privacy Consent before submitting.')
       return
     }
+    if (registrantType === 'student') {
+      if (!formData.student_level) {
+        setSubmitError('Please select your education level.')
+        return
+      }
+      if (formData.student_level === 'college' && (!formData.student_program.trim() || !formData.student_year)) {
+        setSubmitError('Please select your program and year level.')
+        return
+      }
+      if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
+        setSubmitError('Please select your track/strand and grade level.')
+        return
+      }
+      if (['jhs', 'elementary'].includes(formData.student_level) && !formData.student_grade) {
+        setSubmitError('Please select your grade level.')
+        return
+      }
+    }
     if (registrantType === 'student' && formData.campus_days.length === 0) {
       setSubmitError('Please select at least one campus day.')
       return
@@ -424,9 +422,11 @@ export default function RegisterPage() {
       const address = [formData.house_street, formData.barangay, formData.city_municipality, formData.province]
         .map(s => s.trim()).filter(Boolean).join(', ')
 
-      // Compose program_year from level-specific fields for non-college students
+      // Compose program_year from the level-specific fields
       let program_year = formData.program_year
-      if (registrantType === 'student' && formData.student_level !== 'college') {
+      if (registrantType === 'student' && formData.student_level === 'college') {
+        program_year = `${formData.student_program.trim()} - ${formData.student_year}`
+      } else if (registrantType === 'student' && formData.student_level !== 'college') {
         const grade = formData.student_grade ? `Grade ${formData.student_grade}` : ''
         if (formData.student_level === 'shs') {
           program_year = ['SHS', formData.student_strand, grade].filter(Boolean).join(' - ')
@@ -441,13 +441,7 @@ export default function RegisterPage() {
 
       const payload = { ...formData, full_name, address, program_year, registrant_type: registrantType }
 
-      if (directType) {
-        // Direct open registration
-        await registrationApi.submitOpenRegistration(payload)
-      } else {
-        // Token-based registration
-        await registrationApi.submitRegistration(token, payload)
-      }
+      await registrationApi.submitOpenRegistration(payload)
 
       // Show payment instructions popup before success screen
       setShowPaymentPopup(true)
@@ -477,28 +471,7 @@ export default function RegisterPage() {
     )
   }
 
-  /* ─── Error ─── */
-  if (error) {
-    return (
-      <div className="register-page">
-        {SLC_HEADER}
-        <main className="register-main">
-          <div className="register-card error-card">
-            <div className="card-icon error-card-icon">
-              <AlertTriangle size={48} />
-            </div>
-            <h2 className="card-title">Registration Unavailable</h2>
-            <p className="card-message">{error}</p>
-            <p className="card-help">
-              Please contact the administration office for assistance.
-            </p>
-          </div>
-        </main>
-      </div>
-    )
-  }
-
-  /* ─── Type Selector (no token, no directType) ─── */
+  /* ─── Type Selector (no directType) ─── */
   if (!registrantType) {
     return (
       <div className="register-page">
@@ -615,7 +588,7 @@ export default function RegisterPage() {
               The CDSO office will verify your Official Receipt number before approving your registration.
             </div>
 
-            <button className="card-btn payment-popup-btn" onClick={() => navigate('/login')}>
+            <button className="card-btn payment-popup-btn" onClick={() => { setShowPaymentPopup(false); setSubmitted(true) }}>
               I Understand — Continue
               <ArrowRight size={15} />
             </button>
@@ -690,6 +663,20 @@ export default function RegisterPage() {
   const isEmployee = registrantType === 'employee'
   const regOpen = regStatus?.is_open ?? true
 
+  // The backend program list stores combined "BSIT - 3" entries; split them into
+  // a unique program list and per-program year options for the two separate fields.
+  const stripYear = (p) => p.replace(/\s*-\s*\d+\s*$/, '').trim()
+  const programOptions = [...new Set(programs.map(stripYear))]
+  const yearOptions = (() => {
+    const years = [...new Set(
+      programs
+        .filter(p => stripYear(p) === formData.student_program.trim())
+        .map(p => (p.match(/-\s*(\d+)\s*$/) || [])[1])
+        .filter(Boolean)
+    )]
+    return years.length ? years.sort((a, b) => a - b) : ['1', '2', '3', '4']
+  })()
+
   const TYPE_OPTIONS = [
     { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'Registered SLC student' },
     { id: 'employee', icon: <Car size={24} />,  label: 'Employee',          desc: 'SLC faculty or staff' },
@@ -737,8 +724,8 @@ export default function RegisterPage() {
                 </div>
                 <div className="reg-window-dates">
                   {regStatus.is_open
-                    ? <>Window: <span className="reg-window-range">{regStatus.open_date} – {regStatus.close_date}</span></>
-                    : <>Next window opens approximately on <span className="reg-window-range">{regStatus.open_date}</span>. Submissions are not accepted outside the registration period.</>}
+                    ? <>Window: <span className="reg-window-range">{formatRegDate(regStatus.open_date)} – {formatRegDate(regStatus.close_date)}</span></>
+                    : <>Next window opens approximately on <span className="reg-window-range">{formatRegDate(regStatus.open_date)}</span>. Submissions are not accepted outside the registration period.</>}
                 </div>
               </div>
             </div>
@@ -822,17 +809,19 @@ export default function RegisterPage() {
                 <input type="text" name="vehicle_color" value={formData.vehicle_color} onChange={handleInputChange} required />
               </div>
 
-              <div className="form-group col-span-2">
-                <label>Body Number <span className="field-note">(for tricycle only)</span></label>
-                <input
-                  type="text"
-                  name="body_number"
-                  value={formData.body_number}
-                  onChange={handleInputChange}
-                  disabled={formData.vehicle_type !== 'Tricycle'}
-                  placeholder={formData.vehicle_type !== 'Tricycle' ? 'Only applicable for Tricycle' : ''}
-                />
-              </div>
+              {formData.vehicle_type === 'Tricycle' && (
+                <div className="form-group col-span-2">
+                  <label>Body Number <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="body_number"
+                    value={formData.body_number}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="e.g. 0123"
+                  />
+                </div>
+              )}
             </div>
 
             <hr className="divider" />
@@ -985,6 +974,8 @@ export default function RegisterPage() {
                             student_level: lvl.id,
                             student_strand: '',
                             student_grade: '',
+                            student_program: '',
+                            student_year: '',
                             program_year: '',
                             campus_days: lvl.id === 'sped'
                               ? CAMPUS_DAYS.map(d => d.key)
@@ -1019,19 +1010,33 @@ export default function RegisterPage() {
                     </div>
                   )}
 
-                  {/* College: program + year ComboBox */}
+                  {/* College: separate program + year level fields */}
                   {formData.student_level === 'college' && (
-                    <div className="form-group">
-                      <label>Program &amp; Year Level <span className="required">*</span></label>
-                      <ComboBox
-                        name="program_year"
-                        value={formData.program_year}
-                        onChange={handleInputChange}
-                        options={programs}
-                        placeholder="e.g. BSIT - 3"
-                        required
-                      />
-                    </div>
+                    <>
+                      <div className="form-group">
+                        <label>Program <span className="required">*</span></label>
+                        <ComboBox
+                          name="student_program"
+                          value={formData.student_program}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            student_program: e.target.value,
+                            // Year options depend on the program — reset stale picks
+                            ...(stripYear(e.target.value) !== stripYear(prev.student_program) ? { student_year: '' } : {}),
+                          }))}
+                          options={programOptions}
+                          placeholder="e.g. BSIT"
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Year Level <span className="required">*</span></label>
+                        <select name="student_year" value={formData.student_year} onChange={handleInputChange} required>
+                          <option value="">Select Year</option>
+                          {yearOptions.map(y => <option key={y} value={y}>{`Year ${y}`}</option>)}
+                        </select>
+                      </div>
+                    </>
                   )}
 
                   {/* SHS: strand + grade level */}

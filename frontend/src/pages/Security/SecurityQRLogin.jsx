@@ -338,7 +338,6 @@ export default function SecurityQRLogin() {
                   {useCamera ? (
                     <div className="sqr-camera-wrap">
                       <video ref={videoRef} className="sqr-video" muted playsInline />
-                      <div className="sqr-scan-frame" />
                       <p className="sqr-camera-hint">Point camera at your QR card</p>
                       <button className="sqr-toggle" onClick={() => setUseCamera(false)}>Use text input instead</button>
                     </div>

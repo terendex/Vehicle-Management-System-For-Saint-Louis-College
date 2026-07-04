@@ -141,12 +141,17 @@ class UserUpdateView(generics.UpdateAPIView):
 
 
 class UserDeleteView(generics.DestroyAPIView):
-    """Hard-delete a user."""
+    """Hard-delete a user, along with data that belongs to them (vehicles,
+    registrations). Records that merely reference the user as an actor
+    (audit logs, issued violations, scans, created events/notices) are left
+    intact for accountability history — their FK just goes null."""
     queryset           = User.objects.all()
     serializer_class   = UserSerializer
     permission_classes = [IsAdminRole]
 
     def destroy(self, request, *args, **kwargs):
+        from vehicles.models import Vehicle, VehicleRegistration
+
         user = self.get_object()
         if user.role == 'admin':
             return Response(
@@ -154,6 +159,8 @@ class UserDeleteView(generics.DestroyAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         log_action(request, AuditLog.Action.USER_DELETED, target_user=user)
+        Vehicle.objects.filter(user=user).delete()
+        VehicleRegistration.objects.filter(user=user).delete()
         user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

@@ -51,7 +51,13 @@ export default function SystemSettings() {
       const { data } = await createNotice(noticeForm)
       setNotices((prev) => [data, ...prev])
       setNoticeForm({ title: '', body: '' })
-      toast.success('Notice broadcast to all vehicle owners.')
+      if (data.email_status === 'sent') {
+        toast.success(`Notice posted and emailed to ${data.recipient_count} vehicle owner${data.recipient_count !== 1 ? 's' : ''}.`)
+      } else if (data.email_status === 'no_recipients') {
+        toast.info('Notice posted to the owner portal — no active owners to email.')
+      } else {
+        toast.warning('Notice posted to the owner portal, but the email blast failed. Check SMTP settings.')
+      }
     } catch {
       toast.error('Failed to send notice.')
     } finally {
