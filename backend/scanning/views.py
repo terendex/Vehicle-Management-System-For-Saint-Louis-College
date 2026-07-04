@@ -16,7 +16,7 @@ from .ml.reader import read_plate
 from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
 from vehicles.serializers import VehicleSerializer
-from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer
+from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer, MLTrainingSampleSerializer
 
 
 def get_client_ip(request):

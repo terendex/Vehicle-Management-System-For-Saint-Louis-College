@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -92,12 +92,14 @@ class EntryLogicTests(TestCase):
         self.assertEqual(result['status'], 'denied')
 
     def test_vehicle_with_no_owner_denied(self):
+        """Ownerless vehicles are treated as visitors: denied unless a pass is active."""
         vehicle = Vehicle.objects.create(
             plate_number='NOOWN1', vehicle_type=Vehicle.Type.CAR, is_authorized=True,
         )
         result = check_entry(vehicle)
         self.assertFalse(result['allowed'])
-        self.assertIn('no registered owner', result['message'].lower())
+        self.assertEqual(result['status'], 'no_pass')
+        self.assertIn('visitor pass', result['message'].lower())
 
     def test_fee_imposed_violation_blocks_entry(self):
         _, vehicle = _make_owner('fee@slc.edu.ph', 'FEE001', User.OwnerType.STUDENT, schedule='ANY')
@@ -146,8 +148,14 @@ class EntryLogicTests(TestCase):
         self.assertTrue(result['allowed'])
 
     def test_authorized_fetcher_allowed(self):
+        """Fetcher inside the seeded rule window (Mon–Sat 06:00–19:00) is allowed.
+        Time is frozen to Monday 10:00 because migration 0015 seeds a fetcher rule."""
         _, vehicle = _make_owner('fetch@slc.edu.ph', 'FTECH1', User.OwnerType.FETCHER, schedule='ANY')
-        result = check_entry(vehicle)
+        monday_10am = timezone.make_aware(datetime(2026, 7, 6, 10, 0))
+        with patch('scanning.entry_logic.timezone') as mock_tz:
+            mock_tz.localdate.return_value = date(2026, 7, 6)
+            mock_tz.localtime.return_value = monday_10am
+            result = check_entry(vehicle)
         self.assertTrue(result['allowed'])
         self.assertIn('Fetcher', result['message'])
 
