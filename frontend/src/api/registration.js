@@ -1,42 +1,7 @@
 import api from './axios'
 
 export const registrationApi = {
-  // ── Admin: token management (kept for legacy use) ──
-  generateToken: async (registrantType, expiresAt) => {
-    const { data } = await api.post('/vehicles/tokens/generate/', {
-      registrant_type: registrantType,
-      expires_at: expiresAt,
-    })
-    return data
-  },
-  listTokens: async () => {
-    const { data } = await api.get('/vehicles/tokens/')
-    return data
-  },
-  toggleToken: async (id) => {
-    const { data } = await api.post(`/vehicles/tokens/${id}/toggle/`)
-    return data
-  },
-  deleteToken: async (id) => {
-    const { data } = await api.delete(`/vehicles/tokens/${id}/`)
-    return data
-  },
-  clearTokens: async () => {
-    const { data } = await api.delete('/vehicles/tokens/clear/')
-    return data
-  },
-
-  // ── Token-based registration (legacy) ──
-  validateToken: async (token) => {
-    const { data } = await api.get(`/vehicles/register/validate-token/${token}/`)
-    return data
-  },
-  submitRegistration: async (token, registrationData) => {
-    const { data } = await api.post('/vehicles/register/submit/', { token, ...registrationData })
-    return data
-  },
-
-  // ── Public open registration (no token required) ──
+  // ── Public open registration ──
   getRegistrationStatus: async () => {
     const { data } = await api.get('/vehicles/register/status/')
     return data

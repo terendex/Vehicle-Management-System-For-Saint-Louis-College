@@ -7,7 +7,7 @@ import {
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
-  getRuleConstraints, updateRuleConstraint, getSystemSettings,
+  getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
   getRegistrationPeriods, createRegistrationPeriod,
   activateRegistrationPeriod, deactivateRegistrationPeriod,
 } from '../../api/vehicles'
@@ -132,7 +132,9 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                   <span className="rc-toggle-track" />
                 </label>
                 <span style={{ fontSize: '13px', color: '#4B5563', fontWeight: 500 }}>
-                  {enabled ? 'Enabled — entry is allowed' : 'Disabled — entry is blocked'}
+                  {enabled
+                    ? 'Enabled — day & time restrictions apply at the gate'
+                    : 'Disabled — no schedule restriction (entry not limited by this rule)'}
                 </span>
               </label>
             </div>
@@ -228,9 +230,11 @@ export default function RuleConstraints() {
 
   const handleSave = async (data) => {
     const rule = rules[editingType.key]
-    if (!rule?.id) return
     try {
-      const { data: saved } = await updateRuleConstraint(rule.id, data)
+      // A fresh database may not have a row for this type yet — create it on first save
+      const { data: saved } = rule?.id
+        ? await updateRuleConstraint(rule.id, data)
+        : await createRuleConstraint({ ...data, name: editingType.title, constraint_type: editingType.key })
       setRules((prev) => ({ ...prev, [editingType.key]: saved }))
       toast.success('Schedule updated.')
     } catch (err) {

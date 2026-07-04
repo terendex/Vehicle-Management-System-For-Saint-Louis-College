@@ -509,6 +509,27 @@ def _normalize_plate(plate):
     return (plate or '').strip().upper().replace(' ', '')
 
 
+# Registration forms use a rich vocabulary (Sedan, SUV, Tricycle, …) while the
+# Vehicle model has fixed choices — map form values onto valid Vehicle.Type values.
+_VEHICLE_TYPE_MAP = {
+    'sedan':      Vehicle.Type.CAR,
+    'suv':        Vehicle.Type.CAR,
+    'car':        Vehicle.Type.CAR,
+    'other':      Vehicle.Type.CAR,
+    'motorcycle': Vehicle.Type.MOTORCYCLE,
+    'tricycle':   Vehicle.Type.MOTORCYCLE,
+    'van':        Vehicle.Type.VAN,
+    'truck':      Vehicle.Type.TRUCK,
+    'bus':        Vehicle.Type.BUS,
+}
+
+
+def _vehicle_type_for(registration_vehicle_type):
+    return _VEHICLE_TYPE_MAP.get(
+        (registration_vehicle_type or '').strip().lower(), Vehicle.Type.CAR
+    )
+
+
 def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
@@ -649,7 +670,6 @@ class AcceptRegistrationView(APIView):
         # Record that CDSO knowingly accepted a flagged plate (audit trail)
         if block_count:
             try:
-                from accounts.models import AuditLog
                 AuditLog.objects.create(
                     actor=request.user,
                     action=AuditLog.Action.USER_CREATED,
@@ -669,7 +689,7 @@ class AcceptRegistrationView(APIView):
         vehicle_obj, _ = Vehicle.objects.update_or_create(
             plate_number=plate_normalized,
             defaults={
-                'vehicle_type': registration.vehicle_type,
+                'vehicle_type': _vehicle_type_for(registration.vehicle_type),
                 'color':        registration.vehicle_color,
                 'is_authorized': True,
                 'user':          user,
@@ -791,7 +811,12 @@ class RejectRegistrationView(APIView):
               f"Applicant: {registration.full_name} | Reason: {reason} | By: {request.user.full_name}")
 
         # Send rejection email
-        send_rejection_email(registration, reason)
+        try:
+            send_rejection_email(registration, reason)
+        except Exception as e:
+            import traceback
+            print(f"[EMAIL ERROR] Failed to send rejection email to {registration.email}: {e}")
+            traceback.print_exc()
 
         return Response({"message": "Registration rejected."})
 
@@ -867,7 +892,7 @@ class CdsoDirectRegisterView(APIView):
         vehicle_obj, _ = Vehicle.objects.update_or_create(
             plate_number=plate_normalized,
             defaults={
-                'vehicle_type':  registration.vehicle_type,
+                'vehicle_type':  _vehicle_type_for(registration.vehicle_type),
                 'color':         registration.vehicle_color,
                 'is_authorized': True,
                 'user':          user,
@@ -1032,6 +1057,7 @@ class PublicOpenRegistrationView(APIView):
         for extra in ('last_name', 'first_name', 'middle_name',
                       'house_street', 'barangay', 'city_municipality', 'province',
                       'student_level', 'student_strand', 'student_grade',
+                      'student_program', 'student_year',
                       'privacy_consent'):
             data.pop(extra, None)
 
@@ -1410,13 +1436,14 @@ class ParkingNoticeView(APIView):
 
         # Email blast to all active vehicle owners
         from accounts.models import User as UserModel
-        from django.core.mail import send_mail
+        from django.core.mail import EmailMultiAlternatives
         from django.conf import settings
 
         recipients = list(
             UserModel.objects.filter(role='vehicle_owner', is_active=True)
             .values_list('email', flat=True)
         )
+        email_status = 'no_recipients'
         if recipients:
             html_msg = f"""
             <html>
@@ -1436,16 +1463,28 @@ class ParkingNoticeView(APIView):
               </body>
             </html>
             """
-            send_mail(
-                subject=f"SLC Parking Notice: {notice.title}",
-                message=f"Parking Notice\n\n{notice.title}\n\n{notice.body}",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=recipients,
-                html_message=html_msg,
-                fail_silently=True,
-            )
+            # BCC so owners never see each other's addresses
+            try:
+                email = EmailMultiAlternatives(
+                    subject=f"SLC Parking Notice: {notice.title}",
+                    body=f"Parking Notice\n\n{notice.title}\n\n{notice.body}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[settings.DEFAULT_FROM_EMAIL],
+                    bcc=recipients,
+                )
+                email.attach_alternative(html_msg, 'text/html')
+                email.send(fail_silently=False)
+                email_status = 'sent'
+            except Exception as e:
+                import traceback
+                print(f"[EMAIL ERROR] Parking notice broadcast failed: {e}")
+                traceback.print_exc()
+                email_status = 'failed'
 
-        return Response(ParkingNoticeSerializer(notice).data, status=201)
+        data = ParkingNoticeSerializer(notice).data
+        data['email_status'] = email_status
+        data['recipient_count'] = len(recipients)
+        return Response(data, status=201)
 
 
 class ParkingNoticeDetailView(APIView):
@@ -1564,17 +1603,22 @@ class SupplierListCreateView(APIView):
         if Supplier.objects.filter(company_name__iexact=company_name).exists():
             return Response({'company_name': 'A supplier with this name already exists.'}, status=400)
 
-        plate_numbers = [
-            p.strip().upper() for p in (request.data.get('plates') or []) if p.strip()
-        ]
+        # Store plates in the same normalized form scans use (no spaces),
+        # otherwise gate lookups can never match them
+        plate_numbers = list(dict.fromkeys(
+            _normalize_plate(p) for p in (request.data.get('plates') or []) if p and p.strip()
+        ))
         if plate_numbers:
             existing = SupplierPlate.objects.filter(plate_number__in=plate_numbers).values_list('plate_number', flat=True)
             if existing:
                 return Response({'plates': f"Plate(s) already registered: {', '.join(existing)}."}, status=400)
 
         supplier = Supplier.objects.create(company_name=company_name)
+        SupplierPlate.objects.bulk_create(
+            SupplierPlate(supplier=supplier, plate_number=p) for p in plate_numbers
+        )
         audit(request, AuditLog.Action.RECORD_CREATED,
-              f"Supplier added | {supplier.company_name} | By: {request.user.full_name}")
+              f"Supplier added | {supplier.company_name} | Plates: {', '.join(plate_numbers) or 'none'} | By: {request.user.full_name}")
         return Response(SupplierSerializer(supplier).data, status=201)
 
 
@@ -1610,7 +1654,8 @@ class SupplierPlateView(APIView):
 
     def post(self, request, pk):
         supplier = get_object_or_404(Supplier, pk=pk)
-        plate_number = (request.data.get('plate_number') or '').strip().upper()
+        # Same normalized form scans use (no spaces) so gate lookups match
+        plate_number = _normalize_plate(request.data.get('plate_number'))
         if not plate_number:
             return Response({'plate_number': 'Plate number is required.'}, status=400)
         if SupplierPlate.objects.filter(plate_number=plate_number).exists():

@@ -8,7 +8,7 @@ import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import {
   manualEntry, getAccessLogs, getOffices,
-  createVisitorPass, overrideEntry, logExit,
+  createVisitorPass, overrideEntry,
   getVisitorPasses, extendVisitorPass,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
@@ -28,6 +28,8 @@ const STATUS_META = {
   disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   exited:     { label: 'Exited',                 Icon: LogOut,        cls: 'exited',     logCls: 'exited'     },
+  duplicate:      { label: 'Duplicate Scan', Icon: Clock,       cls: 'exited',    logCls: 'exited'    },
+  already_inside: { label: 'Already Inside', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -448,7 +450,6 @@ export default function SecurityEntryManagement() {
 
   const [plateInput, setPlateInput]   = useState('')
   const [loading, setLoading]         = useState(false)
-  const [exitLoading, setExitLoading] = useState(false)
   const [scanQueue, setScanQueue]     = useState([]) // [{id, result, cooldownKey}]
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
@@ -460,7 +461,7 @@ export default function SecurityEntryManagement() {
 
   const addToQueue = (r, secs = dedupSeconds) => {
     const id = Date.now() + Math.random()
-    setScanQueue(prev => [{ id, result: r, cooldownKey: id, paused: false }, ...prev].slice(0, 4))
+    setScanQueue(prev => [{ id, result: r, cooldownKey: id, paused: false, secs }, ...prev].slice(0, 4))
     queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), secs * 1000))
   }
 
@@ -600,9 +601,21 @@ export default function SecurityEntryManagement() {
     setExitResult(null)
     try {
       const res = await manualEntry({ plate_number: plate })
-      addToQueue(res.data)
+      // Cooldown/window responses report their true remaining time — the card's
+      // ring counts down from that instead of restarting at the full duration
+      addToQueue(res.data, res.data.retry_after_seconds || dedupSeconds)
       const m = getMeta(res.data.status)
-      if (res.data.allowed) {
+      if (res.data.status === 'exited') {
+        // The check action doubles as the exit action once a vehicle is inside
+        setExitResult(res.data)
+        setPlateInput('')
+        const dur = res.data.duration_minutes
+        toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
+        if (res.data.overstay_minutes > 0) {
+          toast.warning(`${plate} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
+        }
+        refreshAll()
+      } else if (res.data.allowed) {
         toast.success(`Entry approved: ${plate}`)
       } else {
         toast.error(`${m.label}: ${plate}`)
@@ -615,30 +628,6 @@ export default function SecurityEntryManagement() {
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Lookup failed.')
     } finally { setLoading(false) }
-  }
-
-  const handleRecordExit = async () => {
-    const plate = plateInput.trim().toUpperCase()
-    if (!plate) return
-    if (!isValidPlateNumber(plate)) {
-      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
-      return
-    }
-    setExitLoading(true)
-    setExitResult(null)
-    try {
-      const res = await logExit({ plate_number: plate })
-      setExitResult(res.data)
-      setPlateInput('')
-      const dur = res.data.duration_minutes
-      toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
-      if (res.data.overstay_minutes > 0) {
-        toast.warning(`${plate} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
-      }
-      refreshAll()
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Failed to record exit.')
-    } finally { setExitLoading(false) }
   }
 
   return (
@@ -765,25 +754,17 @@ export default function SecurityEntryManagement() {
                   }}
                   autoComplete="off"
                 />
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="submit"
-                    className="em-btn em-btn-primary em-btn-lg"
-                    style={{ flex: 1 }}
-                    disabled={loading || exitLoading || !plateInput.trim()}
-                  >
-                    {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Entry</>}
-                  </button>
-                  <button
-                    type="button"
-                    className="em-btn em-btn-lg"
-                    style={{ flex: 1, background: '#f0fdf4', color: '#166534', border: '1.5px solid #bbf7d0' }}
-                    disabled={loading || exitLoading || !plateInput.trim()}
-                    onClick={handleRecordExit}
-                  >
-                    {exitLoading ? <><div className="em-spinner" style={{ borderTopColor: '#166534' }} /> Recording…</> : <><LogOut size={15} /> Log Exit</>}
-                  </button>
-                </div>
+                <button
+                  type="submit"
+                  className="em-btn em-btn-primary em-btn-lg"
+                  style={{ width: '100%' }}
+                  disabled={loading || !plateInput.trim()}
+                >
+                  {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Plate — Entry / Exit</>}
+                </button>
+                <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
+                  Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
+                </p>
               </form>
               {exitResult && (
                 <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
@@ -823,7 +804,7 @@ export default function SecurityEntryManagement() {
                     guardName={user?.full_name}
                     cooldownKey={item.cooldownKey}
                     cooldownActive={!item.paused}
-                    dedupSeconds={dedupSeconds}
+                    dedupSeconds={item.secs ?? dedupSeconds}
                     onDismiss={() => removeFromQueue(item.id)}
                     onPause={() => pauseQueueEntry(item.id)}
                     onResume={() => resumeQueueEntry(item.id)}

@@ -164,7 +164,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[registration.email],
         html_message=html_message,
-        fail_silently=True,
+        fail_silently=False,
     )
 
 
@@ -310,7 +310,7 @@ def send_pending_email(registration):
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[registration.email],
         html_message=html_message,
-        fail_silently=True,
+        fail_silently=False,
     )
 
 
@@ -342,5 +342,5 @@ def send_rejection_email(registration, reason):
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[registration.email],
         html_message=html_message,
-        fail_silently=True,
+        fail_silently=False,
     )

@@ -388,18 +388,6 @@
   background: #000;
 }
 
-.sqr-scan-frame {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 140px;
-  height: 140px;
-  border: 2.5px solid #2A2B61;
-  border-radius: 8px;
-  pointer-events: none;
-}
-
 .sqr-camera-hint {
   font-size: 12px;
   color: #7C80A3;
