@@ -227,26 +227,21 @@ class MyViolationsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        try:
-            reg = VehicleRegistration.objects.filter(
-                user=request.user,
-                status=VehicleRegistration.Status.ACCEPTED,
-            ).latest('reviewed_at')
-        except VehicleRegistration.DoesNotExist:
-            return Response([])
-
-        vehicle = (
-            reg.vehicle
-            or Vehicle.objects.filter(plate_number=reg.plate_number).first()
+        # Every vehicle linked to this owner by FK, plus plate-matched vehicles
+        # from any accepted registration (covers legacy rows never linked by FK).
+        plates = VehicleRegistration.objects.filter(
+            user=request.user,
+            status=VehicleRegistration.Status.ACCEPTED,
+        ).values_list('plate_number', flat=True)
+        vehicles = Vehicle.objects.filter(
+            Q(user=request.user) | Q(plate_number__in=list(plates))
         )
-        if not vehicle:
-            return Response([])
 
         # New-style: always visible (is_released=True on create)
-        # Legacy: show released + all resolved
+        # Legacy: show released + all resolved/cleared (history stays visible)
         violations = Violation.objects.filter(
-            vehicle=vehicle,
+            vehicle__in=vehicles,
         ).filter(
             Q(is_released=True) | Q(is_resolved=True)
-        ).order_by('-issued_at')
+        ).select_related('vehicle__user', 'issued_by').order_by('-issued_at')
         return Response(ViolationSerializer(violations, many=True, context={'request': request}).data)
