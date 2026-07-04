@@ -178,7 +178,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
             </div>
           </div>
           <div className="footer-actions">
-            <button className="action-btn" title="Policy Help">
+            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
               <HelpCircle size={18} />
             </button>
             <button className="logout-btn" onClick={handleLogout}>
