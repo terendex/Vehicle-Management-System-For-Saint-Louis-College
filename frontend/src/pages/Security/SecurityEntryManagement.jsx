@@ -29,7 +29,7 @@ const STATUS_META = {
   unreadable: { label: 'Unreadable Plate',       Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   exited:     { label: 'Exited',                 Icon: LogOut,        cls: 'exited',     logCls: 'exited'     },
   duplicate:      { label: 'Duplicate Scan', Icon: Clock,       cls: 'exited',    logCls: 'exited'    },
-  already_inside: { label: 'Already Inside', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
+  already_inside: { label: 'Previously Scanned', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -530,14 +530,17 @@ export default function SecurityEntryManagement() {
       } else {
         toast.error(`${m.label}: ${r.plate_number}`)
       }
-      setLogs(prev => [{
-        id: Date.now() + Math.random(),
-        plate_number: r.plate_number,
-        status: r.status,
-        scanned_at: new Date().toISOString(),
-        scanned_by_name: user?.full_name,
-        gate_id: user?.gate_assignment,
-      }, ...prev].slice(0, 20))
+      // Previously-scanned re-checks are informational — card only, kept out of recent scans
+      if (r.status !== 'already_inside') {
+        setLogs(prev => [{
+          id: Date.now() + Math.random(),
+          plate_number: r.plate_number,
+          status: r.status,
+          scanned_at: new Date().toISOString(),
+          scanned_by_name: user?.full_name,
+          gate_id: user?.gate_assignment,
+        }, ...prev].slice(0, 20))
+      }
     })
   }, [rtspResults]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -620,11 +623,14 @@ export default function SecurityEntryManagement() {
       } else {
         toast.error(`${m.label}: ${plate}`)
       }
-      setLogs(prev => [{
-        id: Date.now(), plate_number: plate, status: res.data.status,
-        scanned_at: new Date().toISOString(), scanned_by_name: user?.full_name,
-        gate_id: user?.gate_assignment,
-      }, ...prev].slice(0, 20))
+      // Previously-scanned re-checks are informational — card only, kept out of recent scans
+      if (res.data.status !== 'already_inside') {
+        setLogs(prev => [{
+          id: Date.now(), plate_number: plate, status: res.data.status,
+          scanned_at: new Date().toISOString(), scanned_by_name: user?.full_name,
+          gate_id: user?.gate_assignment,
+        }, ...prev].slice(0, 20))
+      }
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Lookup failed.')
     } finally { setLoading(false) }
