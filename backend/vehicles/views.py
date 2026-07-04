@@ -651,7 +651,11 @@ class AcceptRegistrationView(APIView):
 
         # Create user with a secure temporary password
         temp_password = _generate_temp_password()
-        owner_type  = User.OwnerType.STUDENT if registration.registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        owner_type  = {
+            'student':  User.OwnerType.STUDENT,
+            'employee': User.OwnerType.EMPLOYEE,
+            'fetcher':  User.OwnerType.FETCHER,
+        }.get(registration.registrant_type, User.OwnerType.EMPLOYEE)
         schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
         campus_days = registration.campus_days or []
         user = User.objects.create_user(
@@ -871,7 +875,11 @@ class CdsoDirectRegisterView(APIView):
 
         # Build user profile fields
         temp_password = _generate_temp_password()
-        owner_type  = User.OwnerType.STUDENT if registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        owner_type  = {
+            'student':  User.OwnerType.STUDENT,
+            'employee': User.OwnerType.EMPLOYEE,
+            'fetcher':  User.OwnerType.FETCHER,
+        }.get(registrant_type, User.OwnerType.EMPLOYEE)
         schedule    = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
         campus_days = registration.campus_days or []
 
