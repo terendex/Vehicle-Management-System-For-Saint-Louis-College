@@ -23,11 +23,12 @@ PH_PLATE_PATTERNS = [
     re.compile(r'^[A-Z]{2}\s?[0-9]{5}$'),        # AB12345
     re.compile(r'^[0-9]{3}[A-Z]{1,3}$'),         # 123AB
     re.compile(r'^[0-9]{2}[A-Z]{3,4}$'),         # 12ABCD
-    re.compile(r'^[0-9]{4}$'),                    # 1234 (old motorcycle)
     # NOTE: the former catch-all patterns ([0-9]{1,3}[A-Z]{2,4}[0-9]{0,2} and
     # [A-Z]{1,3}[0-9]{1,6}) were removed — they accepted virtually any
     # letters+digits string (C946, PAE81946, …), which let garbled OCR partials
-    # through as "valid" plates.
+    # through as "valid" plates. The pure-4-digit pattern ([0-9]{4}, old
+    # motorcycle) was removed for the same reason: any partial read of a
+    # plate's digit block (AEB946 → "1946") passed as a valid plate.
 ]
 
 def is_valid_ph_plate(text: str) -> bool:

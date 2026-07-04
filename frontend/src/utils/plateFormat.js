@@ -26,9 +26,10 @@ const PH_PLATE_PATTERNS = [
   /^[A-Z]{2}\d{5}$/,             // AB12345
   /^\d{3}[A-Z]{1,3}$/,           // 123AB
   /^\d{2}[A-Z]{3,4}$/,           // 12ABCD
-  /^\d{4}$/,                      // 1234     — old motorcycle
   // Catch-all patterns removed (mirrors backend validator.py): they accepted
-  // nearly any letters+digits string and let invalid plates through.
+  // nearly any letters+digits string and let invalid plates through. The
+  // pure-4-digit pattern (old motorcycle) was removed too — OCR partials of a
+  // plate's digit block (AEB946 → "1946") passed as valid plates.
 ]
 
 // Checks a plate against known Philippine plate formats (ignoring spaces/dashes).
