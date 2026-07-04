@@ -30,6 +30,7 @@ class Violation(models.Model):
         FEE_IMPOSED = 'fee_imposed', 'Fee Imposed'
         CLEARED     = 'cleared',     'Cleared'
 
+    id             = models.BigAutoField(primary_key=True, db_column='violation_id')
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='violations')
     violation_type = models.CharField(max_length=30, choices=Type.choices)
     notes          = models.TextField(blank=True)

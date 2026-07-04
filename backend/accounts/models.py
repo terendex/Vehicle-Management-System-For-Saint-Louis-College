@@ -56,6 +56,7 @@ class User(AbstractUser):
         GATE1 = 'gate1', 'Gate 1'
         GATE4 = 'gate4', 'Gate 4'
 
+    id = models.BigAutoField(primary_key=True, db_column='user_id')
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
@@ -118,6 +119,7 @@ class AuditLog(models.Model):
         RECORD_UPDATED   = 'updated',          'Record Updated'
         RECORD_DELETED   = 'deleted',          'Record Deleted'
 
+    id          = models.BigAutoField(primary_key=True, db_column='audit_log_id')
     actor       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='audit_logs')
     action      = models.CharField(max_length=30, choices=Action.choices)
     target_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='target_logs')

@@ -10,6 +10,7 @@ SCHEDULE_DAYS = {
 }
 
 class Office(models.Model):
+    id      = models.BigAutoField(primary_key=True, db_column='office_id')
     name    = models.CharField(max_length=100)
     contact = models.CharField(max_length=50, blank=True)
     email   = models.EmailField(blank=True)
@@ -24,6 +25,7 @@ class VisitorPass(models.Model):
         EXITED  = 'exited',  'Exited'   # guard scanned exit, visitor has left
         EXPIRED = 'expired', 'Expired'  # valid_date passed without exit scan
 
+    id         = models.BigAutoField(primary_key=True, db_column='visitor_pass_id')
     vehicle    = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='visitor_passes')
     plate_number = models.CharField(max_length=20, blank=True)      # denormalised for quick display
     office     = models.ForeignKey(
@@ -55,6 +57,7 @@ class AccessLog(models.Model):
         UNREADABLE   = 'unreadable',    'Unreadable'
         EXITED       = 'exited',        'Exited'
 
+    id             = models.BigAutoField(primary_key=True, db_column='access_log_id')
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
     plate_number   = models.CharField(max_length=20, blank=True)
     vehicle_type   = models.CharField(max_length=20, blank=True)
@@ -94,6 +97,7 @@ class AccessLog(models.Model):
 
 
 class GuardShift(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column='shift_id')
     guard = models.ForeignKey(
         'accounts.User', on_delete=models.CASCADE, related_name='shifts',
     )
@@ -140,6 +144,7 @@ class MLTrainingSample(models.Model):
         ('rejected',     'Rejected'),
     ]
 
+    id = models.BigAutoField(primary_key=True, db_column='sample_id')
     image = models.ImageField(upload_to='ml_samples/')
     plate_number = models.CharField(max_length=20, blank=True)
     bbox = models.JSONField(default=dict, blank=True)
@@ -157,6 +162,7 @@ class MLTrainingSample(models.Model):
 
 
 class PlateRecognitionRecord(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column='record_id')
     track_id = models.IntegerField(db_index=True)
     plate_text = models.CharField(max_length=20, db_index=True)
     detection_confidence = models.FloatField()

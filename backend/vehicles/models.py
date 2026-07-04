@@ -7,6 +7,7 @@ class ReferenceItem(models.Model):
         DEPARTMENT = 'department', 'Department'
         PROGRAM    = 'program',    'Program'
 
+    id        = models.BigAutoField(primary_key=True, db_column='reference_item_id')
     category  = models.CharField(max_length=20, choices=Category.choices)
     name      = models.CharField(max_length=200)
     is_active = models.BooleanField(default=True)
@@ -28,6 +29,7 @@ class Vehicle(models.Model):
         VAN        = 'van',        'Van'
         BUS        = 'bus',        'Bus'
 
+    id            = models.BigAutoField(primary_key=True, db_column='vehicle_id')
     plate_number  = models.CharField(max_length=20, unique=True, db_index=True)
     vehicle_type  = models.CharField(max_length=20, choices=Type.choices, default=Type.CAR)
     model         = models.CharField(max_length=100, blank=True)
@@ -71,6 +73,7 @@ class VehicleRegistration(models.Model):
         TEACHING     = 'teaching',     'Teaching'
         NON_TEACHING = 'non_teaching', 'Non-Teaching'
 
+    id = models.BigAutoField(primary_key=True, db_column='registration_id')
     user = models.ForeignKey(
         'accounts.User',
         null=True, blank=True,
@@ -152,6 +155,7 @@ class RuleConstraint(models.Model):
         FETCHER         = 'fetcher',          'Fetcher / Drop & Go'
         SUPPLIER        = 'supplier',         'Supplier'
 
+    id              = models.BigAutoField(primary_key=True, db_column='rule_constraint_id')
     name            = models.CharField(max_length=120)
     constraint_type = models.CharField(max_length=20, choices=ConstraintType.choices)
     days            = models.JSONField(default=list)
@@ -178,6 +182,7 @@ class ParkingZone(models.Model):
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
         CAR        = 'car',        'Car'
 
+    id                = models.BigAutoField(primary_key=True, db_column='zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
@@ -197,6 +202,7 @@ class ParkingZone(models.Model):
 
 class SystemSettings(models.Model):
     """Singleton row (pk=1) for CDSO/admin-configurable system-wide parameters."""
+    id                   = models.BigAutoField(primary_key=True, db_column='settings_id')
     retention_years      = models.IntegerField(
         default=5,
         validators=[MinValueValidator(1), MaxValueValidator(10)],
@@ -241,6 +247,7 @@ class SystemSettings(models.Model):
 
 class RegistrationPeriod(models.Model):
     """One row per registration window. Only one row may be active at a time."""
+    id         = models.BigAutoField(primary_key=True, db_column='period_id')
     label      = models.CharField(max_length=150)
     start_date = models.DateField()
     end_date   = models.DateField()
@@ -261,6 +268,7 @@ class RegistrationPeriod(models.Model):
 
 class Event(models.Model):
     """A campus event. Organizer plates are noted temporarily; activating closes parts of parking."""
+    id               = models.BigAutoField(primary_key=True, db_column='event_id')
     name             = models.CharField(max_length=200)
     date             = models.DateField()
     is_active        = models.BooleanField(default=False)
@@ -281,6 +289,7 @@ class Event(models.Model):
 
 class ParkingNotice(models.Model):
     """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
+    id         = models.BigAutoField(primary_key=True, db_column='notice_id')
     title      = models.CharField(max_length=200)
     body       = models.TextField()
     is_active  = models.BooleanField(default=True)
@@ -298,6 +307,7 @@ class ParkingNotice(models.Model):
 
 
 class ParkingSpace(models.Model):
+    id           = models.BigAutoField(primary_key=True, db_column='space_id')
     zone         = models.ForeignKey(
         ParkingZone, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='spaces',
@@ -322,6 +332,7 @@ class ParkingSpace(models.Model):
 
 class Supplier(models.Model):
     """A supplier company whose vehicles are automatically permitted entry."""
+    id           = models.BigAutoField(primary_key=True, db_column='supplier_id')
     company_name = models.CharField(max_length=200, unique=True)
     is_active    = models.BooleanField(default=True)
     created_at   = models.DateTimeField(auto_now_add=True)
@@ -336,6 +347,7 @@ class Supplier(models.Model):
 
 class SupplierPlate(models.Model):
     """A license plate registered under a supplier."""
+    id           = models.BigAutoField(primary_key=True, db_column='supplier_plate_id')
     supplier     = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name='plates')
     plate_number = models.CharField(max_length=20, unique=True, db_index=True)
     created_at   = models.DateTimeField(auto_now_add=True)
@@ -356,6 +368,7 @@ class Camera(models.Model):
         GATE1 = 'gate1', 'Gate 1'
         GATE4 = 'gate4', 'Gate 4'
 
+    id         = models.BigAutoField(primary_key=True, db_column='camera_id')
     cam_number = models.PositiveIntegerField(unique=True)
     name       = models.CharField(max_length=50)
     ip         = models.CharField(max_length=100)
