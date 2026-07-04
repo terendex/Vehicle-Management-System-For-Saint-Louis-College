@@ -90,7 +90,11 @@ class UserListView(generics.ListAPIView):
         qs = User.objects.exclude(role='admin').prefetch_related('registrations').order_by('-id')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(full_name__icontains=search)
+            qs = qs.filter(
+                Q(full_name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(user_code__icontains=search)
+            )
 
         role = self.request.query_params.get('role', '').strip()
         if role in ['security', 'vehicle_owner']:
@@ -265,13 +269,17 @@ class DashboardStatsView(APIView):
                 status=VehicleRegistration.Status.PENDING
             ).count()
 
-            today_scans      = AccessLog.objects.filter(scanned_at__date=today).count()
+            # One aggregate query gives the full per-status picture for today
+            today_by_status = {
+                row['status']: row['count']
+                for row in AccessLog.objects.filter(scanned_at__date=today)
+                                            .values('status').annotate(count=Count('id'))
+            }
+            today_scans      = sum(today_by_status.values())
             week_scans       = AccessLog.objects.filter(scanned_at__date__gte=week_ago).count()
-            authorized_today = AccessLog.objects.filter(scanned_at__date=today, status='authorized').count()
-            denied_today     = AccessLog.objects.filter(
-                scanned_at__date=today, status__in=['denied', 'wrong_day']
-            ).count()
-            unknown_today    = AccessLog.objects.filter(scanned_at__date=today, status='unknown').count()
+            authorized_today = today_by_status.get('authorized', 0)
+            denied_today     = today_by_status.get('denied', 0) + today_by_status.get('wrong_day', 0)
+            unknown_today    = today_by_status.get('unknown', 0)
 
             # Day distribution: authorized entries per weekday (Mon–Sat)
             # Django ExtractWeekDay: 1=Sunday, 2=Monday, …, 7=Saturday
@@ -290,6 +298,15 @@ class DashboardStatsView(APIView):
                 for wd in sorted(DAY_MAP.keys())
             ]
             authorized_week = sum(day_dist_map.values())
+
+            # Violations & visitor passes — surfaced on the dashboard KPI strip
+            from violations.models import Violation
+            from scanning.models import VisitorPass
+            open_violations = Violation.objects.filter(is_resolved=False).count()
+            fee_imposed     = Violation.objects.filter(status=Violation.Status.FEE_IMPOSED).count()
+            active_passes   = VisitorPass.objects.filter(
+                valid_date=today, status=VisitorPass.Status.ACTIVE
+            ).count()
 
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='admin'
@@ -322,6 +339,14 @@ class DashboardStatsView(APIView):
                     'authorized_week':  authorized_week,
                     'denied_today':     denied_today,
                     'unknown_today':    unknown_today,
+                    'today_by_status':  today_by_status,
+                },
+                'violations': {
+                    'open':        open_violations,
+                    'fee_imposed': fee_imposed,
+                },
+                'visitor_passes': {
+                    'active_today': active_passes,
                 },
                 'day_distribution': day_distribution,
                 'recent_activity': {

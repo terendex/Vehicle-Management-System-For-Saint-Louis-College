@@ -150,12 +150,18 @@ class RuleConstraint(models.Model):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
         EMPLOYEE        = 'employee',         'Employee'
         FETCHER         = 'fetcher',          'Fetcher / Drop & Go'
+        SUPPLIER        = 'supplier',         'Supplier'
 
     name            = models.CharField(max_length=120)
     constraint_type = models.CharField(max_length=20, choices=ConstraintType.choices)
     days            = models.JSONField(default=list)
     start_time      = models.CharField(max_length=5, default='06:00')
     end_time        = models.CharField(max_length=5, default='20:00')
+    max_stay_minutes = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Maximum allowed stay in minutes. Exceeding it on exit auto-issues a "
+                  "time-exceed violation. Blank = no stay limit.",
+    )
     enabled         = models.BooleanField(default=True)
     created_at      = models.DateTimeField(auto_now_add=True)
     updated_at      = models.DateTimeField(auto_now=True)

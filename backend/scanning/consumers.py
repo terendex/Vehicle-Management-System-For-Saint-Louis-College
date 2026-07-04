@@ -619,7 +619,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from vehicles.serializers import VehicleSerializer
         from accounts.models import AuditLog
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
-                            _auto_log_violation, _close_active_pass, _gate_label)
+                            _auto_log_violation, _close_active_pass, _gate_label,
+                            _check_stay_limit)
         close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
@@ -726,6 +727,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             overstay_minutes = _close_active_pass(
                 plate_number, gate_id,
                 evidence_bytes=getattr(self, '_last_frame_jpeg', None))
+            if vehicle.user and vehicle.user.owner_type == 'fetcher':
+                overstay_minutes = max(overstay_minutes, _check_stay_limit(
+                    plate_number, vehicle, 'fetcher', duration_minutes, gate_id,
+                    evidence_bytes=getattr(self, '_last_frame_jpeg', None)))
             overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
             try:
@@ -874,7 +879,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from django.db import transaction as _tx
         from .models import AccessLog
         from accounts.models import AuditLog
-        from .views import _inside_state, _in_exit_cooldown, _gate_label
+        from .views import (_inside_state, _in_exit_cooldown, _gate_label,
+                            _check_stay_limit, _supplier_rule_denial)
 
         supplier_name = supplier_plate.supplier.company_name
         inside_status, last_entry = _inside_state(plate_number)
@@ -929,19 +935,25 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            overstay_minutes = _check_stay_limit(
+                plate_number, None, 'supplier', duration_minutes, gate_id,
+                evidence_bytes=getattr(self, '_last_frame_jpeg', None))
+            overstay_note = f" Overstayed by {overstay_minutes} min — violation issued." if overstay_minutes else ""
             try:
                 AuditLog.objects.create(
                     actor=self._user,
                     action="scan",
                     details=f"Auto-exit (camera) | Supplier plate: {plate_number} | {supplier_name} | "
-                            f"Duration: {duration_minutes} min | Gate: {_gate_label(gate_id)}",
+                            f"Duration: {duration_minutes} min"
+                            + (f" | OVERSTAYED by {overstay_minutes} min" if overstay_minutes else "")
+                            + f" | Gate: {_gate_label(gate_id)}",
                 )
             except Exception:
                 pass
             return {
                 "status":           "exited",
                 "allowed":          False,
-                "message":          f"Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.",
+                "message":          f"Supplier vehicle — {supplier_name}. Exit recorded. Duration: {duration_minutes} min.{overstay_note}",
                 "is_supplier":      True,
                 "supplier_name":    supplier_name,
                 "vehicle":          None,
@@ -949,6 +961,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "has_violations":   False,
                 "already_inside":   False,
                 "duration_minutes": duration_minutes,
+                "overstay_minutes": overstay_minutes,
             }
 
         if _in_exit_cooldown(plate_number):
@@ -956,6 +969,32 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "status":         "duplicate",
                 "allowed":        False,
                 "message":        "Exit cooldown — entry suppressed for 1 minute after exit.",
+                "is_supplier":    True,
+                "supplier_name":  supplier_name,
+                "vehicle":        None,
+                "registration":   None,
+                "has_violations": False,
+                "already_inside": False,
+            }
+
+        deny_msg = _supplier_rule_denial()
+        if deny_msg:
+            # DB-backed dedup so an idling supplier truck doesn't flood the log
+            now = timezone.now()
+            cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
+            recent_denied = AccessLog.objects.filter(
+                plate_number=plate_number, status=AccessLog.Status.DENIED,
+                scanned_at__gte=cutoff, scanned_at__lte=now,
+            ).exists()
+            if not recent_denied:
+                AccessLog.objects.create(
+                    plate_number=plate_number, status=AccessLog.Status.DENIED,
+                    denied_reason=deny_msg, gate_id=gate_id, scanned_by=self._user,
+                )
+            return {
+                "status":         "denied",
+                "allowed":        False,
+                "message":        deny_msg,
                 "is_supplier":    True,
                 "supplier_name":  supplier_name,
                 "vehicle":        None,

@@ -165,24 +165,43 @@ function SectionLabel({ children, live }) {
   )
 }
 
+function relativeTime(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const mins = Math.round(diffMs / 60000)
+  if (mins < 1)   return 'just now'
+  if (mins < 60)  return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 function ActivityItem({ log }) {
-  const time = new Date(log.created_at).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
+  // Audit details are pipe-delimited ("Plate: X | Owner: Y | …") — render as chips
+  const chips = (log.details || '').split('|').map(s => s.trim()).filter(Boolean)
   return (
     <div className="ad-activity-item">
       <div className="ad-activity-dot" />
       <div className="ad-activity-content">
         <span className="ad-activity-text">
           <strong>{log.actor_name || 'Unknown'}</strong> — {log.action_label || log.action}
+          <span className="ad-activity-time" style={{ marginLeft: 8 }}>{relativeTime(log.created_at)}</span>
         </span>
         {log.target_name && (
           <span className="ad-activity-target">Target: {log.target_name}</span>
         )}
-        {log.details && (
-          <span className="ad-activity-details">{log.details}</span>
+        {chips.length > 0 && (
+          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+            {chips.map((c, i) => (
+              <span key={i} style={{
+                fontSize: 10.5, lineHeight: 1.4, padding: '2px 7px', borderRadius: 5,
+                background: '#F0F2F7', color: '#5A5F72', border: '1px solid #E5E8F0',
+                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {c}
+              </span>
+            ))}
+          </span>
         )}
-        <span className="ad-activity-time">{time}</span>
       </div>
     </div>
   )
@@ -219,6 +238,12 @@ export default function AdminDashboard() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Keep the dashboard live — silent refresh every 60s (spinner only shows on first load)
+  useEffect(() => {
+    const timer = setInterval(fetchData, 60000)
+    return () => clearInterval(timer)
+  }, [fetchData])
+
   const lastUpdatedStr = lastUpdated
     ? lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     : null
@@ -246,21 +271,23 @@ export default function AdminDashboard() {
   ].filter(s => s.value > 0) : []
 
   const scanSlices = stats ? (() => {
-    const auth   = stats.scans?.authorized_today ?? 0
-    const denied = stats.scans?.denied_today     ?? 0
-    const other  = Math.max(0, (stats.scans?.today ?? 0) - auth - denied)
+    const s = stats.scans?.today_by_status ?? {}
     return [
-      { name: 'Authorized', value: auth,   color: '#059669' },
-      { name: 'Denied',     value: denied, color: '#DC2626' },
-      { name: 'Other',      value: other,  color: '#8892A4' },
-    ].filter(s => s.value > 0)
+      { name: 'Authorized',        value: s.authorized ?? 0,                       color: '#059669' },
+      { name: 'Denied',            value: s.denied ?? 0,                           color: '#DC2626' },
+      { name: 'Wrong Day',         value: s.wrong_day ?? 0,                        color: '#EA580C' },
+      { name: 'Exited',            value: s.exited ?? 0,                           color: '#2563EB' },
+      { name: 'Unknown / Visitor', value: s.unknown ?? 0,                          color: '#7C3AED' },
+      { name: 'Unreadable',        value: s.unreadable ?? 0,                       color: '#8892A4' },
+    ].filter(sl => sl.value > 0)
   })() : []
 
   const kpiItems = stats ? [
     { icon: Users,        label: 'Total Users',      value: stats.users?.total,            color: '#2A2B61', sub: `${stats.users?.active ?? 0} active` },
     { icon: CarIcon,      label: 'Registered Vehicles', value: stats.vehicles?.total,       color: '#059669', sub: `${stats.vehicles?.authorized ?? 0} authorized` },
-    { icon: AlertTriangle, label: 'Unauthorized',    value: stats.vehicles?.unauthorized,   color: '#DC2626', sub: 'need clearance' },
     { icon: ClipboardList, label: 'Pending Reviews', value: stats.registrations?.pending,  color: '#D97706', sub: 'awaiting approval' },
+    { icon: AlertTriangle, label: 'Open Violations', value: stats.violations?.open,         color: '#DC2626', sub: `${stats.violations?.fee_imposed ?? 0} with fee imposed` },
+    { icon: ShieldCheck,  label: 'Visitor Passes',   value: stats.visitor_passes?.active_today, color: '#2563EB', sub: 'active today' },
     { icon: Activity,     label: "Today's Scans",    value: stats.scans?.today,             color: '#7C3AED', sub: `${stats.scans?.week ?? 0} this week` },
   ] : []
 
