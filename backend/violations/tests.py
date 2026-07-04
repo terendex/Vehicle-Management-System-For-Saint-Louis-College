@@ -1,5 +1,6 @@
 from decimal import Decimal
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from vehicles.models import Vehicle
@@ -95,3 +96,65 @@ class LegacyFineTests(TestCase):
             )
         fine = Violation.compute_fine(self.vehicle)
         self.assertEqual(fine, FINE_REPEAT)
+
+
+class MyViolationsViewTests(TestCase):
+    """GET /api/violations/my/ — owner sees violations across ALL their vehicles,
+    resolved/cleared history included."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            email='multi@slc.edu.ph', full_name='Multi Vehicle Owner',
+            password='SecurePassword123!', role='vehicle_owner',
+            owner_type=User.OwnerType.STUDENT,
+        )
+        self.car = Vehicle.objects.create(
+            plate_number='MULTI1', vehicle_type=Vehicle.Type.CAR,
+            is_authorized=True, user=self.owner,
+        )
+        self.moto = Vehicle.objects.create(
+            plate_number='MULTI2', vehicle_type=Vehicle.Type.MOTORCYCLE,
+            is_authorized=True, user=self.owner,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.owner)
+
+    def _get(self):
+        resp = self.client.get('/api/violations/my/')
+        self.assertEqual(resp.status_code, 200)
+        return resp.data
+
+    def test_sees_violations_from_all_owned_vehicles(self):
+        Violation.objects.create(vehicle=self.car,  violation_type='double_parking',
+                                 offense_number=1, is_released=True)
+        Violation.objects.create(vehicle=self.moto, violation_type='unauthorized_entry',
+                                 offense_number=1, is_released=True)
+        plates = {v['plate_number'] for v in self._get()}
+        self.assertEqual(plates, {'MULTI1', 'MULTI2'})
+
+    def test_resolved_violation_still_visible_as_history(self):
+        Violation.objects.create(
+            vehicle=self.car, violation_type='unauthorized_entry',
+            offense_number=3, status=Violation.Status.CLEARED,
+            is_released=True, is_resolved=True, official_receipt='OR-123',
+        )
+        data = self._get()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['status'], 'cleared')
+        self.assertTrue(data[0]['is_resolved'])
+
+    def test_resolved_but_never_released_legacy_violation_visible(self):
+        Violation.objects.create(vehicle=self.car, violation_type='unauthorized',
+                                 is_released=False, is_resolved=True)
+        self.assertEqual(len(self._get()), 1)
+
+    def test_unreleased_unresolved_legacy_violation_hidden(self):
+        Violation.objects.create(vehicle=self.car, violation_type='unauthorized',
+                                 is_released=False, is_resolved=False)
+        self.assertEqual(len(self._get()), 0)
+
+    def test_other_owners_violations_not_visible(self):
+        other_vehicle = _make_vehicle('OTHER1')
+        Violation.objects.create(vehicle=other_vehicle, violation_type='double_parking',
+                                 offense_number=1, is_released=True)
+        self.assertEqual(len(self._get()), 0)
