@@ -54,8 +54,8 @@ def _export_ml_samples(limit: int = 500) -> int:
     from django.utils import timezone
     from scanning.models import MLTrainingSample
 
-    dataset_img = UNPLATED_DIR / "images" / "train"
-    dataset_lbl = UNPLATED_DIR / "labels" / "train"
+    dataset_img = PLATE_DS_DIR / "images" / "train"
+    dataset_lbl = PLATE_DS_DIR / "labels" / "train"
     dataset_img.mkdir(parents=True, exist_ok=True)
     dataset_lbl.mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +237,7 @@ def train(
         freeze:        If True, freeze the first `freeze_layers` backbone layers.
                        Strongly recommended when fine-tuning from existing best.pt.
         freeze_layers: Number of backbone layers to freeze (YOLOv8n/s: 10 is safe).
-        data_yaml:     Path to a custom data.yaml. Defaults to unplated_ds/data.yaml.
+        data_yaml:     Path to a custom data.yaml. Defaults to motorcycle_ds/data.yaml.
     """
     import django
     django.setup()
