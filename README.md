@@ -43,6 +43,24 @@ When a scan is denied, an `UNAUTHORIZED` violation is auto-created (deduplicated
 
 The live WebSocket stream (webcam and RTSP) deduplicates repeated scans of the same plate within a configurable window (`SystemSettings.scan_dedup_seconds`, default 60 s). Manual plate entry and photo upload have no cooldown — every call is logged.
 
+### Vehicle Registration & Pass Applications
+
+Applicants apply for a vehicle pass through the public **`/register`** form — no login required:
+
+- **Self-service** — from the Login page, *Apply for a Vehicle Pass* opens the form, or *Scan to apply on your phone* shows a QR code that opens `/register` on a mobile device.
+- **Walk-in** — at the CDSO office, an admin opens **Vehicle Registration Management → Registration Form QR** to display or print a QR code that walk-in applicants scan to register from their own phone.
+
+Submitted applications land in **Vehicle Registration Management**, where Admin/CDSO review them (filterable by status and date range), then accept or reject. Accepted registrations issue the owner a vehicle QR pass.
+
+### Security Guard Login (Gate Kiosks)
+
+Guards sign in via credentials or QR at the security login link:
+
+- **[http://localhost:5173/security/guard-login](http://localhost:5173/security/guard-login)** — standard guard login (pick a gate on screen).
+- **[http://localhost:5173/security/guard-login/gate1](http://localhost:5173/security/guard-login/gate1)** / **[/gate4](http://localhost:5173/security/guard-login/gate4)** — kiosk mode, which pins the station to that gate (back-button trapped, gate switching disabled).
+
+Legacy `/security/qr-login` links redirect automatically.
+
 ---
 
 ## Project Structure
