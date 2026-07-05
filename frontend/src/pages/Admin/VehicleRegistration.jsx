@@ -117,7 +117,7 @@ export default function VehicleRegistration() {
       <p>Scan this QR code with your phone camera to open the vehicle registration form.</p>
       ${svg.outerHTML}
       <p class="link">${qrDisplayData.payload}</p>
-      <script>window.onload = function () { window.print() }<\/script>
+      <script>window.onload = function () { window.print() }</script>
     </body></html>`)
     win.document.close()
   }

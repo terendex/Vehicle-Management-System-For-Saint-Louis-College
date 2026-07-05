@@ -18,6 +18,7 @@ export default function SecurityQRLogin() {
   const kioskGate = GATE_LABELS[gateParam] ? gateParam : null
 
   const [selectedGate, setSelectedGate] = useState(kioskGate)
+  const [prevKioskGate, setPrevKioskGate] = useState(kioskGate)
   const [method, setMethod]             = useState('credentials') // credentials | qr
   const [email, setEmail]               = useState('')
   const [password, setPassword]         = useState('')
@@ -50,10 +51,13 @@ export default function SecurityQRLogin() {
     if (gateParam && !kioskGate) navigate('/security/guard-login', { replace: true })
   }, [gateParam, kioskGate, navigate])
 
-  // Keep the locked gate in sync if the kiosk URL changes
-  useEffect(() => {
-    if (kioskGate) setSelectedGate(kioskGate)
-  }, [kioskGate])
+  // Kiosk URL is the source of truth for the gate. If the param changes while
+  // mounted (/guard-login/gate1 → /guard-login/gate4, no remount), re-lock the
+  // gate during render — cheaper than syncing in an effect.
+  if (kioskGate && kioskGate !== prevKioskGate) {
+    setPrevKioskGate(kioskGate)
+    setSelectedGate(kioskGate)
+  }
 
   useEffect(() => {
     if (selectedGate && method === 'qr' && !useCamera) inputRef.current?.focus()
