@@ -48,6 +48,15 @@ class Vehicle(models.Model):
 import uuid
 from django.utils import timezone
 
+def _normalize_plate(value):
+    """Canonical plate form used for uniqueness: upper-cased, no spaces."""
+    return (value or '').strip().upper().replace(' ', '')
+
+
+def _normalize_email(value):
+    return (value or '').strip().lower()
+
+
 class VehicleRegistration(models.Model):
     class Status(models.TextChoices):
         PENDING  = 'pending',  'Pending'
@@ -144,8 +153,54 @@ class VehicleRegistration(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
+    def save(self, *args, **kwargs):
+        # Canonicalize so both the application-layer conflict checks and the
+        # DB unique constraints below compare like-for-like values.
+        self.plate_number = _normalize_plate(self.plate_number)
+        self.email = _normalize_email(self.email)
+        self.student_id = (self.student_id or '').strip()
+        self.employee_id = (self.employee_id or '').strip()
+        self.drivers_license = (self.drivers_license or '').strip().upper()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.full_name} - {self.plate_number} ({self.status})"
+
+    class Meta:
+        # A plate and an email may each belong to at most ONE active
+        # (pending/accepted) registration — enforcing a 1:1 email↔plate pairing
+        # at the database level. Rejected registrations are exempt so a
+        # previously declined plate/email can be re-submitted.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['plate_number'],
+                condition=models.Q(status__in=['pending', 'accepted']),
+                name='uniq_active_registration_plate',
+            ),
+            models.UniqueConstraint(
+                fields=['email'],
+                condition=models.Q(status__in=['pending', 'accepted']),
+                name='uniq_active_registration_email',
+            ),
+            # student ID / employee ID / driver's license are optional per row
+            # (blank for other registrant types), so blanks are excluded — only
+            # a *provided* value must be unique among active registrations.
+            models.UniqueConstraint(
+                fields=['student_id'],
+                condition=models.Q(status__in=['pending', 'accepted']) & ~models.Q(student_id=''),
+                name='uniq_active_registration_student_id',
+            ),
+            models.UniqueConstraint(
+                fields=['employee_id'],
+                condition=models.Q(status__in=['pending', 'accepted']) & ~models.Q(employee_id=''),
+                name='uniq_active_registration_employee_id',
+            ),
+            models.UniqueConstraint(
+                fields=['drivers_license'],
+                condition=models.Q(status__in=['pending', 'accepted']) & ~models.Q(drivers_license=''),
+                name='uniq_active_registration_drivers_license',
+            ),
+        ]
 
 
 class RuleConstraint(models.Model):

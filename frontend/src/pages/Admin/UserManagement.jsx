@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import AdminLayout from '../../components/Layout/AdminLayout'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
 import {
@@ -122,6 +123,9 @@ export default function UserManagement() {
     const timer = setTimeout(fetchUsers, 300)
     return () => clearTimeout(timer)
   }, [fetchUsers])
+
+  // Live-refresh the user list on any user/vehicle change
+  useLiveUpdates(fetchUsers, ['user', 'vehicle', 'vehicleregistration'])
 
   /* ── user stats ── */
   const totalUsers    = users.length

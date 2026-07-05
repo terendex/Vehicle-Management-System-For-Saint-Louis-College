@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
@@ -575,6 +576,9 @@ export default function SecurityEntryManagement() {
     }).catch(() => {})
 
   const refreshAll = () => { refreshLogs(); refreshPasses() }
+
+  // Instant refresh on new gate scans / visitor-pass changes
+  useLiveUpdates(refreshAll)
 
   useEffect(() => {
     refreshPasses()

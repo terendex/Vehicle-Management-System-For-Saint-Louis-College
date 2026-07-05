@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, CalendarDays, RefreshCw, Filter,
@@ -71,6 +72,9 @@ export default function SecurityAuditLogPage() {
   }, [date, user?.gate_assignment])
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
+
+  // New gate scans appear instantly
+  useLiveUpdates(fetchLogs, ['accesslog'])
 
   const filtered = statusFilter
     ? logs.filter(l => {

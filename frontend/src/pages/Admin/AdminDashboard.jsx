@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Users, ShieldCheck, ClipboardList,
@@ -237,6 +238,9 @@ export default function AdminDashboard() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Instant refresh on any data change (dashboard aggregates everything)
+  useLiveUpdates(fetchData)
 
   // Keep the dashboard live — silent refresh every 60s (spinner only shows on first load)
   useEffect(() => {
