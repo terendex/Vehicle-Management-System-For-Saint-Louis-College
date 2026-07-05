@@ -1,10 +1,9 @@
-import { createContext, useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import useAuthStore from '../stores/authStore'
+import { LiveUpdatesContext } from './LiveUpdatesContext'
 
 const WS_BASE =
   (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace('http', 'ws')
-
-export const LiveUpdatesContext = createContext({ subscribe: () => () => {} })
 
 /**
  * Maintains ONE WebSocket to /ws/updates/ for the whole app. The backend pushes
