@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -83,6 +83,43 @@ export default function VehicleRegistration() {
     } catch (error) {
       console.error('Failed to fetch registrations:', error)
     }
+  }
+
+  const qrPrintRef = useRef(null)
+
+  // QR of the public registration form URL — shown/printed at CDSO so
+  // walk-in applicants can scan it and register on their own phone
+  const handleViewRegistrationFormQR = () => {
+    const link = `${window.location.origin}/register`
+    setQrDisplayData({
+      type: 'register-link',
+      payload: link,
+      title: 'Registration Form QR',
+      subtitle: 'Walk-in applicants scan this to open the vehicle registration form',
+    })
+    setIsQRModalOpen(true)
+  }
+
+  const handlePrintQR = () => {
+    const svg = qrPrintRef.current?.querySelector('svg')
+    if (!svg || !qrDisplayData) return
+    const win = window.open('', '_blank', 'width=480,height=640')
+    if (!win) return
+    win.document.write(`<!DOCTYPE html><html><head><title>${qrDisplayData.title}</title>
+      <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 40px; }
+        h1 { font-size: 20px; color: #2A2B61; margin-bottom: 8px; }
+        p { color: #555; font-size: 13px; margin: 4px 0; }
+        svg { width: 300px; height: 300px; margin: 24px 0; }
+        .link { font-size: 12px; word-break: break-all; color: #333; margin-top: 8px; }
+      </style></head><body>
+      <h1>Vehicle Registration — Saint Louis College</h1>
+      <p>Scan this QR code with your phone camera to open the vehicle registration form.</p>
+      ${svg.outerHTML}
+      <p class="link">${qrDisplayData.payload}</p>
+      <script>window.onload = function () { window.print() }<\/script>
+    </body></html>`)
+    win.document.close()
   }
 
   const handleViewVehicleQR = () => {
@@ -194,9 +231,14 @@ export default function VehicleRegistration() {
   return (
     <AdminLayout>
       <div className="vehicle-registration-page">
-        <div className="page-header">
-          <h1 className="page-title">Vehicle Registration Management</h1>
-          <p className="page-subtitle">Review and process vehicle pass applications.</p>
+        <div className="page-header vr-header-row">
+          <div>
+            <h1 className="page-title">Vehicle Registration Management</h1>
+            <p className="page-subtitle">Review and process vehicle pass applications.</p>
+          </div>
+          <button className="btn-primary" onClick={handleViewRegistrationFormQR}>
+            <QrCode size={18} /> Registration Form QR
+          </button>
         </div>
 
         {/* SECTION: Registrations */}
@@ -628,16 +670,25 @@ export default function VehicleRegistration() {
               <button className="modal-close-btn" onClick={() => setIsQRModalOpen(false)}><X size={24} /></button>
             </div>
             <p className="qr-viewer-subtitle">{qrDisplayData.subtitle}</p>
-            <div className="qr-display-wrapper">
+            <div className="qr-display-wrapper" ref={qrPrintRef}>
               <QRCodeSVG value={qrDisplayData.payload} size={220} level="H" includeMargin={true} />
             </div>
             <div className="qr-data-box">
-              <p className="qr-label">Encoded Data</p>
+              <p className="qr-label">{qrDisplayData.type === 'register-link' ? 'Registration Link' : 'Encoded Data'}</p>
               <code className="qr-code-data">{qrDisplayData.payload}</code>
             </div>
-            <button className="btn-primary" onClick={handleCopyQRData} style={{ width: '100%', justifyContent: 'center' }}>
-              {qrViewerCopied ? <><Check size={16} />Copied!</> : <><Copy size={16} /> Copy Data</>}
-            </button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn-primary" onClick={handleCopyQRData} style={{ flex: 1, justifyContent: 'center' }}>
+                {qrViewerCopied
+                  ? <><Check size={16} />Copied!</>
+                  : <><Copy size={16} /> {qrDisplayData.type === 'register-link' ? 'Copy Link' : 'Copy Data'}</>}
+              </button>
+              {qrDisplayData.type === 'register-link' && (
+                <button className="btn-outline" onClick={handlePrintQR} style={{ flex: 1, justifyContent: 'center' }}>
+                  <Printer size={16} /> Print
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

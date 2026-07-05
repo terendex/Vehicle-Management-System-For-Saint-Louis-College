@@ -248,7 +248,8 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   const [showChangeShift,  setShowChangeShift]  = useState(false)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
-  const handleLogout = () => { logout('/security/qr-login') }
+  // Return kiosks to their own gate's login URL after logout
+  const handleLogout = () => { logout(gate ? `/security/guard-login/${gate}` : '/security/guard-login') }
 
   const entryPath = gate ? `/security/gate/${gate}/entries` : '/security/entries'
 
