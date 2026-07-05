@@ -742,36 +742,34 @@ export default function SecurityEntryManagement() {
             )}
 
             {/* Combined Plate Input */}
-            <div className="em-card-head" style={{ borderTop: '1px solid #f3f4f6' }}>
-              <span className="em-card-label"><Search size={14} /> Plate Number</span>
-            </div>
-            <div style={{ padding: '12px 16px 14px' }}>
-              <form onSubmit={handleCheckEntry}>
+            <div style={{ padding: '8px 16px 10px', borderTop: '1px solid #f3f4f6' }}>
+              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate Number</span>
+              <form onSubmit={handleCheckEntry} style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                 <input
                   className="em-plate-input"
                   value={plateInput}
                   onChange={e => { setPlateInput(formatPlateNumber(e.target.value)); setExitResult(null) }}
                   placeholder="E.G. ABC 123"
                   style={{
-                    width: '100%', padding: '11px 14px', border: '2px solid #E2E6EE',
-                    borderRadius: 10, fontSize: 16, fontWeight: 700, letterSpacing: 2,
+                    flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #E2E6EE',
+                    borderRadius: 9, fontSize: 14, fontWeight: 700, letterSpacing: 2,
                     textTransform: 'uppercase', outline: 'none', fontFamily: 'monospace',
-                    boxSizing: 'border-box', marginBottom: 8,
+                    boxSizing: 'border-box',
                   }}
                   autoComplete="off"
                 />
                 <button
                   type="submit"
-                  className="em-btn em-btn-primary em-btn-lg"
-                  style={{ width: '100%' }}
+                  className="em-btn em-btn-primary"
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
                   disabled={loading || !plateInput.trim()}
                 >
                   {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Plate — Entry / Exit</>}
                 </button>
-                <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
-                  Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
-                </p>
               </form>
+              <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
+                Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
+              </p>
               {exitResult && (
                 <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
                   <strong>{exitResult.plate_number}</strong> exited
