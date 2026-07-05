@@ -4,6 +4,7 @@ import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -84,6 +85,9 @@ export default function VehicleRegistration() {
       console.error('Failed to fetch registrations:', error)
     }
   }
+
+  // Live-refresh when a registration is created/approved/rejected anywhere
+  useLiveUpdates(fetchRegistrations, ['vehicleregistration', 'vehicle'])
 
   const qrPrintRef = useRef(null)
 

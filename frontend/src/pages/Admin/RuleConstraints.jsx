@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CalendarDays, Clock, Pencil, X, Settings2,
   Loader2, User, Car, Users, ChevronRight, Truck, Timer,
@@ -257,6 +258,25 @@ export default function RuleConstraints() {
 
     return () => { cancelled = true }
   }, [])
+
+  // Live-refresh rules / open-campus mode / registration periods on change
+  const reloadRuleData = () => {
+    getRuleConstraints()
+      .then((res) => {
+        const data = res.data?.results ?? res.data ?? []
+        const map = {}
+        data.forEach((r) => { map[r.constraint_type] = r })
+        setRules(map)
+      })
+      .catch(() => {})
+    getSystemSettings()
+      .then(({ data }) => setSs({ open_campus_mode: data.open_campus_mode ?? false }))
+      .catch(() => {})
+    getRegistrationPeriods()
+      .then(({ data }) => setPeriods(data))
+      .catch(() => {})
+  }
+  useLiveUpdates(reloadRuleData, ['ruleconstraint', 'systemsettings', 'registrationperiod'])
 
   const handleSave = async (data) => {
     const rule = rules[editingType.key]

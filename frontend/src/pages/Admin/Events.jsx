@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
@@ -486,7 +487,7 @@ export default function Events() {
   const [showAdd, setShowAdd]             = useState(false)
   const [showArchived, setShowArchived]   = useState(false)
 
-  useEffect(() => {
+  const loadEventsData = () => {
     Promise.all([
       getSystemSettings(),
       zoneApi.listAll(),
@@ -499,7 +500,12 @@ export default function Events() {
       })
       .catch(() => toast.error('Failed to load events data.'))
       .finally(() => setPageLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadEventsData() }, [])
+
+  // Live-refresh on event / settings / zone changes
+  useLiveUpdates(loadEventsData, ['event', 'systemsettings', 'parkingzone'])
 
   const toggleMode = async (field) => {
     const key = field === 'event_mode_parking' ? 'parking' : 'entry'

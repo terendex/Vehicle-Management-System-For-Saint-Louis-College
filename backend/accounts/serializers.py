@@ -51,8 +51,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment']
 
     def validate_email(self, value):
+        value = value.strip().lower()
         user = self.instance
-        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
+        if User.objects.exclude(pk=user.pk).filter(email__iexact=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -65,6 +66,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         model  = User
         fields = ['full_name', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
         extra_kwargs = {'gate_assignment': {'required': False, 'allow_null': True, 'allow_blank': True}}
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
 
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
@@ -343,7 +350,8 @@ class AdminReplaceSerializer(serializers.Serializer):
         return value.strip()
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 

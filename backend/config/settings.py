@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'vehicles',
     'scanning',
     'violations',
+    'realtime',
 ]
 
 MIDDLEWARE = [

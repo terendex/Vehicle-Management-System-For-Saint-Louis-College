@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
@@ -316,6 +317,7 @@ export default function OperationsCenter() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useLiveUpdates(load)
   useEffect(() => {
     const id = setInterval(load, 30_000)
     return () => clearInterval(id)

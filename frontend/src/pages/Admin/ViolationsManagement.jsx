@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   AlertTriangle, CheckCircle, Filter,
   RotateCcw, Search, Bell, X,
@@ -149,6 +150,9 @@ export default function ViolationsManagement() {
   }
 
   useEffect(() => { fetchAll() }, [])
+
+  // Instant refresh when a violation (or its vehicle) changes
+  useLiveUpdates(fetchAll, ['violation', 'vehicle'])
 
   // Live wiring to gate scanning: new auto-issued violations appear without a
   // manual refresh (silent poll — no loading spinner)
