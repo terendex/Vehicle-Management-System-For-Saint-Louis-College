@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef } from 'react'
-import { LiveUpdatesContext } from './LiveUpdatesProvider'
+import { LiveUpdatesContext } from './LiveUpdatesContext'
 
 /**
  * Re-run `handler` (typically a data refetch) whenever the server signals that
@@ -16,7 +16,8 @@ import { LiveUpdatesContext } from './LiveUpdatesProvider'
 export function useLiveUpdates(handler, resources, options = {}) {
   const { subscribe } = useContext(LiveUpdatesContext)
   const handlerRef = useRef(handler)
-  handlerRef.current = handler
+  // Keep the latest handler without re-subscribing (synced after each render)
+  useEffect(() => { handlerRef.current = handler })
 
   const debounce = options.debounce ?? 250
   // Stable key so the effect doesn't re-subscribe on every render.

@@ -1,4 +1,5 @@
 import re
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, AuditLog
@@ -256,6 +257,33 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('A vehicle with this plate number is already registered.')
         return normalized
 
+    def validate(self, attrs):
+        # Guard against collisions with an existing active registration so a
+        # duplicate is reported as a clean per-field 400 rather than hitting a DB
+        # constraint mid-create (which the atomic create below would roll back).
+        from vehicles.models import VehicleRegistration
+        from vehicles.views import _plate_conflict, _email_conflict, _license_conflict, _id_conflict
+        active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+        qs = VehicleRegistration.objects.filter(status__in=active)
+
+        errors = {}
+        c = _plate_conflict(attrs['plate_number'], qs)
+        if c:
+            errors['plate_number'] = c
+        c = _email_conflict(attrs['email'], qs)
+        if c:
+            errors['email'] = c
+        c = _license_conflict(attrs.get('drivers_license', ''), qs)
+        if c:
+            errors['drivers_license'] = c
+        c = _id_conflict(attrs['registrant_type'], attrs.get('student_id', ''), attrs.get('employee_id', ''), qs)
+        if c:
+            errors['student_id' if attrs['registrant_type'] == 'student' else 'employee_id'] = c
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
         from vehicles.models import Vehicle, VehicleRegistration
 
