@@ -786,6 +786,9 @@ export default function SecurityEntryManagement() {
           scanned_at: new Date().toISOString(), scanned_by_name: user?.full_name,
           gate_id: user?.gate_assignment,
         }, ...prev].slice(0, 20))
+        // Reconcile Recent Scans with the server so the manual entry is backed by
+        // the persisted AccessLog row, not just the optimistic placeholder.
+        refreshLogs()
       }
       return res.data
     } catch (err) {
@@ -853,16 +856,6 @@ export default function SecurityEntryManagement() {
   return (
     <SecurityLayout fillHeight>
       <div className="em-page">
-
-        {openCampus && (
-          <div className="em-open-campus-banner">
-            <DoorOpen size={15} />
-            <span>
-              <strong>Open Campus Mode active</strong> — plates are still scanned and logged at {gateLabel},
-              and every vehicle is granted <strong>Open Entry</strong>.
-            </span>
-          </div>
-        )}
 
         {/* Main grid */}
         <div className="em-grid">

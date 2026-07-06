@@ -49,7 +49,11 @@ function getPeriodStart(period) {
   return d
 }
 
-function toDateStr(d) { return d.toISOString().split('T')[0] }
+// Local calendar date (YYYY-MM-DD). Using toISOString() here would shift to UTC
+// and miss today's rows, since the server filters created_at by its Asia/Manila date.
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export default function AuditLog() {
   const [logs, setLogs]             = useState([])
