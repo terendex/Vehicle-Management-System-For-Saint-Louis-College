@@ -550,7 +550,10 @@ export default function SecurityEntryManagement() {
   useEffect(() => {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
-    camerasApi.list({ assignment: 'entry' })
+    // Only drive the camera(s) for this guard's assigned gate — otherwise a
+    // Gate 4 guard would scan through the Gate 1 camera and every scan would be
+    // tagged gate1, never showing up in the Gate 4 log.
+    camerasApi.list({ assignment: 'entry', ...gateFilter })
       .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
       .catch(() => {})
     getSystemSettings()

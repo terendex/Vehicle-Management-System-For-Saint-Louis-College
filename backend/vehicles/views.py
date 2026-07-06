@@ -388,6 +388,9 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         assignment = self.request.query_params.get('assignment')
         if assignment:
             qs = qs.filter(assignment=assignment)
+        gate_id = self.request.query_params.get('gate_id')
+        if gate_id:
+            qs = qs.filter(gate_id=gate_id)
         return qs
 
 

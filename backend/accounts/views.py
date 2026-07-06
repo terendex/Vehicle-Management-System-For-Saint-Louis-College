@@ -921,6 +921,15 @@ class QRLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Persist the shift gate on the guard's profile. Server-side scan
+        # attribution (manual entry, override, exit, HTTP/WS scans) reads
+        # request.user.gate_assignment to tag each log; without this it stays
+        # None and those scans fall to the orphan 'main' gate, invisible in
+        # every gate's Vehicle Log.
+        if guard.gate_assignment != gate:
+            User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
+            guard.gate_assignment = gate
+
         now = timezone.now()
 
         # Clock out whoever is currently active at this gate (the previous guard)
@@ -941,7 +950,7 @@ class QRLoginView(APIView):
                 'full_name':            guard.full_name,
                 'email':                guard.email,
                 'role':                 guard.role,
-                'gate_assignment':      gate,   # shift gate, not profile default
+                'gate_assignment':      gate,   # current shift gate (also persisted above)
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,
@@ -989,6 +998,15 @@ class GuardCredentialLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Persist the shift gate on the guard's profile. Server-side scan
+        # attribution (manual entry, override, exit, HTTP/WS scans) reads
+        # request.user.gate_assignment to tag each log; without this it stays
+        # None and those scans fall to the orphan 'main' gate, invisible in
+        # every gate's Vehicle Log.
+        if guard.gate_assignment != gate:
+            User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
+            guard.gate_assignment = gate
+
         now = timezone.now()
 
         # Clock out whoever is currently active at this gate (the previous guard)
@@ -1016,7 +1034,7 @@ class GuardCredentialLoginView(APIView):
                 'full_name':            guard.full_name,
                 'email':                guard.email,
                 'role':                 guard.role,
-                'gate_assignment':      gate,   # shift gate, not profile default
+                'gate_assignment':      gate,   # current shift gate (also persisted above)
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,
