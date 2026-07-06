@@ -2,9 +2,16 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell, AlertTriangle, Car, CheckCheck } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { toast } from 'sonner'
 import { getNotifications, markNotificationsRead } from '../api/notifications'
 import { useLiveUpdates } from '../realtime/useLiveUpdates'
 import './NotificationBell.css'
+
+const TOAST_BY_SEVERITY = {
+  critical: toast.error,
+  warning:  toast.warning,
+  info:     toast.info,
+}
 
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) } catch { return '' }
@@ -20,13 +27,34 @@ export default function NotificationBell() {
   const [items, setItems]             = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const wrapRef = useRef(null)
+  const maxSeenIdRef = useRef(null) // highest notification id already shown — null until first load
   const navigate = useNavigate()
 
   const fetchNotifications = useCallback(async () => {
     try {
       const { data } = await getNotifications({ limit: 30 })
-      setItems(data.results || [])
+      const results = data.results || []
+      setItems(results)
       setUnreadCount(data.unread_count || 0)
+
+      // Mini pop-ups for notifications that arrived since the last fetch.
+      // The first load only records the watermark — no toast storm on login.
+      const maxId = results.reduce((m, n) => Math.max(m, n.id), 0)
+      if (maxSeenIdRef.current !== null) {
+        const fresh = results.filter(n => n.id > maxSeenIdRef.current && !n.is_read)
+        if (fresh.length > 3) {
+          toast.info(`${fresh.length} new notifications`, {
+            description: 'Open the bell to review them.',
+          })
+        } else {
+          // results are newest-first; toast oldest-first so they stack in order
+          fresh.slice().reverse().forEach(n => {
+            const show = TOAST_BY_SEVERITY[n.severity] || toast.info
+            show(n.title, { description: n.message || undefined })
+          })
+        }
+      }
+      maxSeenIdRef.current = Math.max(maxSeenIdRef.current ?? 0, maxId)
     } catch {
       /* bell is non-critical — stay quiet on fetch errors */
     }

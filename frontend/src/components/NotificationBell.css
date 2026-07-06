@@ -41,6 +41,18 @@
   text-align: center;
   border: 2px solid #FFFFFF;
   box-sizing: content-box;
+  animation: notif-ping 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Pulsing "ping" ring radiating from the badge while anything is unread */
+@keyframes notif-ping {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notif-badge { animation: none; }
 }
 
 /* Panel opens to the right of the sidebar */
