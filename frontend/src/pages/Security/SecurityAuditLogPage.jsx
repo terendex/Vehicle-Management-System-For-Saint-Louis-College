@@ -91,7 +91,7 @@ export default function SecurityAuditLogPage() {
         {/* Header */}
         <div className="sal-header">
           <div>
-            <h1 className="sal-title"><ClipboardList size={20} /> Audit Log</h1>
+            <h1 className="sal-title"><ClipboardList size={20} /> Vehicle Log</h1>
             <p className="sal-sub">All scans recorded at {gateLabel}</p>
           </div>
           <div className="sal-header-actions">
