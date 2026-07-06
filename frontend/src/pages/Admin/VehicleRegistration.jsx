@@ -421,6 +421,24 @@ export default function VehicleRegistration() {
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
 
+              {/* Authorized driver — set when the student is a minor / non-driver */}
+              {selectedReg.driver_name && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">Authorized Driver (student does not drive)</div>
+                  <div className="detail-value">
+                    {selectedReg.driver_name}
+                    {selectedReg.driver_relationship && (
+                      <span style={{ color: '#7C80A3', fontWeight: 500 }}>
+                        {' '}— {selectedReg.driver_relationship.replace('_', ' ')}
+                      </span>
+                    )}
+                    {selectedReg.driver_contact && (
+                      <span style={{ color: '#7C80A3', fontWeight: 500 }}> · {selectedReg.driver_contact}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {selectedReg.campus_days?.length > 0 && (
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <div className="detail-label">Campus Days</div>

@@ -578,6 +578,65 @@ def _registration_conflict(registrant_type, plate_number, student_id, employee_i
     return _id_conflict(registrant_type, student_id, employee_id, qs)
 
 
+def _license_conflict(drivers_license):
+    """
+    The DB has a partial unique index (uniq_active_registration_drivers_license):
+    one license number per active registration. Pre-check it so applicants get a
+    readable error instead of a 500 from the IntegrityError.
+    Returns an error message string, or None.
+    """
+    if isinstance(drivers_license, list):
+        drivers_license = drivers_license[0] if drivers_license else ''
+    license_clean = (drivers_license or '').strip()
+    if not license_clean:
+        return None
+    active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+    if VehicleRegistration.objects.filter(
+        status__in=active, drivers_license__iexact=license_clean
+    ).exists():
+        return (f"Driver's license {license_clean} is already on an active registration. "
+                "Each license may only be tied to one registered vehicle — please contact "
+                "the CDSO if this vehicle replaces a previous one.")
+    return None
+
+
+# Student levels whose registrants are minors and can never drive themselves
+MINOR_STUDENT_LEVELS = ('jhs', 'elementary')
+
+
+def _validate_authorized_driver(registrant_type, data):
+    """
+    Enforce the registrant/driver split for student registrations.
+    JHS and Elementary students are minors, so an authorized adult driver
+    (parent/guardian/authorized driver) is mandatory and self-driving is
+    rejected even on direct API calls. When driver_name is present,
+    drivers_license is understood to be the driver's license.
+    Returns an error message string, or None if valid.
+    """
+    def _val(key):
+        v = data.get(key, '')
+        if isinstance(v, list):
+            v = v[0] if v else ''
+        return (v or '').strip()
+
+    if registrant_type != 'student':
+        return None
+
+    level       = _val('student_level')
+    driver_name = _val('driver_name')
+
+    if level in MINOR_STUDENT_LEVELS and not driver_name:
+        return ("Junior High and Elementary students are minors and cannot drive. "
+                "An authorized driver (parent/guardian) is required.")
+
+    if driver_name:
+        if not _val('driver_relationship'):
+            return "Please specify the authorized driver's relationship to the student."
+        if not _val('drivers_license'):
+            return "The authorized driver's license number is required."
+    return None
+
+
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -784,6 +843,10 @@ class AcceptRegistrationView(APIView):
                 "department": registration.department.name if registration.department else '',
                 "campus_days": registration.campus_days,
                 "drivers_license": registration.drivers_license,
+                "student_level": registration.student_level,
+                "driver_name": registration.driver_name,
+                "driver_relationship": registration.driver_relationship,
+                "driver_contact": registration.driver_contact,
                 "conduction_number": registration.conduction_number,
             }
         })
@@ -856,6 +919,14 @@ class CdsoDirectRegisterView(APIView):
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
+
+        driver_error = _validate_authorized_driver(registrant_type, request.data)
+        if driver_error:
+            return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        license_error = _license_conflict(request.data.get('drivers_license', ''))
+        if license_error:
+            return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = VehicleRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
@@ -1056,10 +1127,18 @@ class PublicOpenRegistrationView(APIView):
         # Strip fields that are not model columns (e.g. form-only UI fields)
         for extra in ('last_name', 'first_name', 'middle_name',
                       'house_street', 'barangay', 'city_municipality', 'province',
-                      'student_level', 'student_strand', 'student_grade',
+                      'student_strand', 'student_grade',
                       'student_program', 'student_year',
                       'privacy_consent'):
             data.pop(extra, None)
+
+        driver_error = _validate_authorized_driver(registrant_type, data)
+        if driver_error:
+            return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        license_error = _license_conflict(data.get('drivers_license', ''))
+        if license_error:
+            return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
         if registrant_type == 'employee' or registrant_type == 'fetcher':
             data['schedule'] = 'ANY'
