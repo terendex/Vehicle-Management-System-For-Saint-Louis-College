@@ -182,7 +182,8 @@ if os.getenv('USE_R2', 'false').lower() == 'true':
     AWS_DEFAULT_ACL         = 'public-read'
     AWS_S3_FILE_OVERWRITE   = False
     AWS_QUERYSTRING_AUTH    = False
-    MEDIA_URL               = f"https://{os.getenv('R2_PUBLIC_URL')}/"
+    AWS_S3_CUSTOM_DOMAIN    = os.getenv('R2_PUBLIC_URL', '').removeprefix('https://').removeprefix('http://')
+    MEDIA_URL               = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

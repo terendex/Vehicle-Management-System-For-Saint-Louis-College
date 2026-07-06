@@ -1080,7 +1080,8 @@ export default function RegisterPage() {
                         </select>
                       </div>
                     </>
-                  )}
+
+)}
 
                   {/* SHS: strand + grade level */}
                   {formData.student_level === 'shs' && (

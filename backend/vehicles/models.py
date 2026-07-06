@@ -208,7 +208,11 @@ class ParkingZone(models.Model):
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
-    rtsp_url          = models.CharField(max_length=500, blank=True)
+    camera            = models.ForeignKey(
+        'Camera', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='parking_zones',
+        help_text="Physical camera (registered in Device Management) that watches this zone.",
+    )
     capacity_override = models.PositiveIntegerField(
         null=True, blank=True,
         help_text="Event-mode capacity override. If set, overrides the mapped space count as the effective capacity.",
@@ -339,6 +343,11 @@ class ParkingSpace(models.Model):
     y1           = models.FloatField(null=True, blank=True)
     x2           = models.FloatField(null=True, blank=True)
     y2           = models.FloatField(null=True, blank=True)
+    points       = models.JSONField(
+        null=True, blank=True,
+        help_text="Freeform polygon vertices [[x,y], ...] normalized 0-1 (pen tool). "
+                   "x1..y2 still holds the bounding box for quick lookups.",
+    )
     is_occupied  = models.BooleanField(default=False)
     occupied_by  = models.CharField(max_length=20, blank=True)
     updated_at   = models.DateTimeField(auto_now=True)

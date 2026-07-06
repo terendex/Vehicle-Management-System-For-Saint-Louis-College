@@ -86,7 +86,7 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
 
 
 class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
-    queryset           = ParkingZone.objects.prefetch_related('spaces').all()
+    queryset           = ParkingZone.objects.select_related('camera').prefetch_related('spaces').all()
     serializer_class   = ParkingZoneSerializer
     permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Parking Zone'
@@ -119,15 +119,18 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         # Update or create each space (preserving is_occupied / occupied_by)
         result = []
         for s in spaces_data:
+            points = s.get('points')
+            if points:
+                xs, ys = [p[0] for p in points], [p[1] for p in points]
+                bbox = {'x1': min(xs), 'y1': min(ys), 'x2': max(xs), 'y2': max(ys)}
+            else:
+                points = None
+                bbox = {'x1': s.get('x1'), 'y1': s.get('y1'), 'x2': s.get('x2'), 'y2': s.get('y2')}
+
             space, _ = ParkingSpace.objects.update_or_create(
                 zone=zone,
                 space_number=s['space_number'],
-                defaults={
-                    'x1': s.get('x1'),
-                    'y1': s.get('y1'),
-                    'x2': s.get('x2'),
-                    'y2': s.get('y2'),
-                },
+                defaults={**bbox, 'points': points},
             )
             result.append(space)
 
@@ -155,9 +158,9 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='start-camera')
     def start_camera(self, request, pk=None):
         zone = self.get_object()
-        if not zone.rtsp_url:
-            return Response({'error': 'No RTSP URL configured for this zone.'}, status=400)
-        parking_camera.start(zone.id, zone.rtsp_url)
+        if not zone.camera or not zone.camera.rtsp_url:
+            return Response({'error': 'No camera assigned to this zone. Assign one from Device Management.'}, status=400)
+        parking_camera.start(zone.id, zone.camera.rtsp_url)
         return Response({'status': 'started'})
 
     @action(detail=True, methods=['post'], url_path='stop-camera')

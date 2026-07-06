@@ -57,7 +57,7 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ParkingSpace
         fields = ['id', 'zone', 'space_number', 'vehicle_category',
-                  'x1', 'y1', 'x2', 'y2', 'is_occupied', 'occupied_by', 'updated_at']
+                  'x1', 'y1', 'x2', 'y2', 'points', 'is_occupied', 'occupied_by', 'updated_at']
 
     def get_vehicle_category(self, obj):
         return obj.zone.vehicle_category if obj.zone else None
@@ -79,12 +79,22 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
     total_capacity      = serializers.SerializerMethodField()
     occupied_count      = serializers.SerializerMethodField()
     is_full             = serializers.SerializerMethodField()
+    camera_name         = serializers.SerializerMethodField()
 
     class Meta:
         model  = ParkingZone
-        fields = ['id', 'name', 'vehicle_category', 'rtsp_url', 'reference_image',
+        fields = ['id', 'name', 'vehicle_category', 'camera', 'camera_name', 'reference_image',
                   'reference_image_url', 'capacity_override', 'space_count',
                   'total_capacity', 'occupied_count', 'is_full', 'created_at', 'spaces']
+
+    def validate_camera(self, camera):
+        if camera is not None and camera.assignment != Camera.Assignment.PARKING:
+            raise serializers.ValidationError(
+                'Only cameras assigned to Parking in Device Management can be linked to a zone.')
+        return camera
+
+    def get_camera_name(self, obj):
+        return obj.camera.name if obj.camera else None
 
     def get_reference_image_url(self, obj):
         if not obj.reference_image:

@@ -71,6 +71,40 @@
 .pm-btn--camera-on { background: #DC2626; color: #fff; }
 .pm-btn--camera-on:hover:not(:disabled) { background: #B91C1C; }
 
+/* ── Camera assignment (Device Management link) ── */
+.pm-cam-assign {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5A5F72;
+}
+
+.pm-cam-assign-select {
+  padding: 6px 10px;
+  border: 1.5px solid #E2E6EE;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #1A1D2E;
+  background: #fff;
+  cursor: pointer;
+  max-width: 180px;
+}
+.pm-cam-assign-select:focus { outline: none; border-color: #2A2B61; }
+
+.pm-detect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+.pm-detect-badge--on  { background: #DCFCE7; color: #15803D; }
+.pm-detect-badge--off { background: #F1F2F8; color: #7C80A3; }
+
 /* ── Zone tabs ── */
 .pm-zone-tabs {
   display: flex;
