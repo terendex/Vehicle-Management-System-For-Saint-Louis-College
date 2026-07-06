@@ -5,6 +5,7 @@ from accounts.views import QRLoginView
 urlpatterns = [
     path('',                        views.ScanView.as_view(),              name='scan'),
     path('override/',               views.OverrideEntryView.as_view(),     name='scan-override'),
+    path('deny/',                   views.DenyEntryView.as_view(),         name='scan-deny'),
     path('exit/',                   views.ExitLogView.as_view(),           name='scan-exit'),
     path('visitor-pass/',                    views.VisitorPassView.as_view(),       name='visitor-pass'),
     path('visitor-pass/<int:pk>/exit/',      views.ExitScanView.as_view(),          name='visitor-exit'),

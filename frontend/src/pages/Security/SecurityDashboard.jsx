@@ -31,6 +31,7 @@ function ScanRow({ log }) {
   })
   const statusColors = {
     authorized: '#059669',
+    open_entry: '#059669',
     denied:     '#DC2626',
     wrong_day:  '#DC2626',
     pending:    '#D97706',

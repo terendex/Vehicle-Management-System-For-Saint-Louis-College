@@ -2,7 +2,7 @@ import re
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User, AuditLog
+from .models import User, AuditLog, Notification
 
 
 def validate_password_strength(password):
@@ -468,3 +468,9 @@ class AuditLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = AuditLog
         fields = ['id', 'actor', 'actor_name', 'action', 'action_label', 'target_user', 'target_name', 'details', 'ip_address', 'created_at']
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Notification
+        fields = ['id', 'category', 'event', 'severity', 'title', 'message',
+                  'plate_number', 'link', 'is_read', 'created_at']

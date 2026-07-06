@@ -91,11 +91,20 @@ class EntryLogicTests(TestCase):
         self.assertFalse(result['allowed'])
         self.assertEqual(result['status'], 'denied')
 
-    def test_vehicle_with_no_owner_denied(self):
-        """Ownerless vehicles are treated as visitors: denied unless a pass is active."""
+    def test_vehicle_with_no_owner_reads_as_unregistered(self):
+        """Ownerless (gate-created) vehicles with no active pass read as
+        unregistered — same status the plate had before any pass was issued."""
         vehicle = Vehicle.objects.create(
             plate_number='NOOWN1', vehicle_type=Vehicle.Type.CAR, is_authorized=True,
         )
+        result = check_entry(vehicle)
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIn('not registered', result['message'].lower())
+
+    def test_visitor_owner_account_still_gets_no_pass(self):
+        """Registered visitor-type accounts (with a User) keep the 'no_pass' status."""
+        _, vehicle = _make_owner('visacct@slc.edu.ph', 'VISACC1', User.OwnerType.VISITOR)
         result = check_entry(vehicle)
         self.assertFalse(result['allowed'])
         self.assertEqual(result['status'], 'no_pass')
@@ -114,7 +123,8 @@ class EntryLogicTests(TestCase):
         self.assertIn('₱150', result['message'])
 
     def test_open_campus_mode_bypasses_all_rules(self):
-        # Unauthorized vehicle + inactive owner — still allowed in open campus mode
+        # Unauthorized vehicle + inactive owner — still allowed in open campus mode,
+        # with the client-facing status 'open_entry' (displayed as "Open Entry")
         _, vehicle = _make_owner('open@slc.edu.ph', 'OPEN01', User.OwnerType.STUDENT,
                                   is_authorized=False, is_active=False)
         settings = SystemSettings.get()
@@ -122,7 +132,7 @@ class EntryLogicTests(TestCase):
         settings.save()
         result = check_entry(vehicle)
         self.assertTrue(result['allowed'])
-        self.assertEqual(result['status'], 'authorized')
+        self.assertEqual(result['status'], 'open_entry')
 
     def test_student_wrong_campus_day_denied(self):
         """Student registered only on Monday is denied on a Tuesday (2026-07-07)."""
@@ -213,6 +223,70 @@ class ManualEntryAPITests(TestCase):
         self.assertEqual(resp.status_code, 401)
 
 
+# ── Open Campus Mode at the gate (integration) ────────────────────────────────
+
+class OpenCampusModeAPITests(TestCase):
+    """In Open Campus Mode plates are still read and logged, but the lookup
+    status shown at the gate is 'open_entry' ("Open Entry")."""
+
+    def setUp(self):
+        self.guard = _make_guard()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+        settings = SystemSettings.get()
+        settings.open_campus_mode = True
+        settings.save()
+
+    def test_registered_vehicle_gets_open_entry_status(self):
+        _make_owner('oc@slc.edu.ph', 'OCA001', User.OwnerType.STUDENT)
+        resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'OCA001'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['allowed'])
+        self.assertEqual(resp.data['status'], 'open_entry')
+
+    def test_open_entry_logged_as_authorized_for_pairing(self):
+        # The AccessLog row must stay 'authorized' so exit pairing / stats work
+        _make_owner('oc2@slc.edu.ph', 'OCA002', User.OwnerType.STUDENT)
+        self.client.post('/api/scan/manual-entry/', {'plate_number': 'OCA002'}, format='json')
+        log = AccessLog.objects.get(plate_number='OCA002')
+        self.assertEqual(log.status, AccessLog.Status.AUTHORIZED)
+        self.assertEqual(log.gate_id, 'gate1')  # guard's assigned gate
+
+    def test_unregistered_plate_admitted_with_open_entry(self):
+        resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'ZZZ9999'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['allowed'])
+        self.assertEqual(resp.data['status'], 'open_entry')
+        log = AccessLog.objects.get(plate_number='ZZZ9999')
+        self.assertEqual(log.status, AccessLog.Status.AUTHORIZED)
+
+    def test_no_violation_issued_in_open_campus_mode(self):
+        _, vehicle = _make_owner('oc3@slc.edu.ph', 'OCA003', User.OwnerType.STUDENT,
+                                  is_authorized=False)
+        self.client.post('/api/scan/manual-entry/', {'plate_number': 'OCA003'}, format='json')
+        self.assertFalse(Violation.objects.filter(vehicle=vehicle).exists())
+
+    def test_regular_day_unregistered_plate_still_unknown(self):
+        settings = SystemSettings.get()
+        settings.open_campus_mode = False
+        settings.save()
+        resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'ZZZ8888'}, format='json')
+        self.assertFalse(resp.data['allowed'])
+        self.assertEqual(resp.data['status'], 'unknown')
+
+    def test_gate4_guard_scans_land_in_gate4_log(self):
+        guard4 = _make_guard('guard4@slc.edu.ph')
+        guard4.gate_assignment = 'gate4'
+        guard4.save(update_fields=['gate_assignment'])
+        client4 = APIClient()
+        client4.force_authenticate(user=guard4)
+        _make_owner('oc4@slc.edu.ph', 'OCA004', User.OwnerType.STUDENT)
+        resp = client4.post('/api/scan/manual-entry/', {'plate_number': 'OCA004'}, format='json')
+        self.assertEqual(resp.data['status'], 'open_entry')
+        self.assertEqual(resp.data['gate_id'], 'gate4')
+        self.assertEqual(AccessLog.objects.get(plate_number='OCA004').gate_id, 'gate4')
+
+
 # ── Visitor pass API (integration) ────────────────────────────────────────────
 
 class VisitorPassAPITests(TestCase):
@@ -256,3 +330,69 @@ class VisitorPassAPITests(TestCase):
     def test_missing_plate_number_returns_400(self):
         resp = self.client.post('/api/scan/visitor-pass/', {'purpose': 'Visit'}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+    def test_exited_visitor_plate_reverts_to_unregistered(self):
+        """After the pass is used and the visitor exits, the same plate reads
+        as unregistered again — ready for a fresh visitor-pass cycle."""
+        create_resp = self._create_pass('VIS009')
+        pass_id = create_resp.data['id']
+
+        vehicle = Vehicle.objects.get(plate_number='VIS009')
+        self.assertEqual(check_entry(vehicle)['status'], 'authorized')  # pass active
+
+        self.client.post(f'/api/scan/visitor-pass/{pass_id}/exit/')
+        result = check_entry(vehicle)
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['status'], 'unknown')
+
+    def test_unknown_visitor_result_never_issues_violation(self):
+        """An ownerless vehicle scanned without a pass must not be auto-fined."""
+        vehicle = Vehicle.objects.create(
+            plate_number='VIS010', vehicle_type=Vehicle.Type.CAR, is_authorized=False,
+        )
+        self.client.post('/api/scan/manual-entry/', {'plate_number': 'VIS010'}, format='json')
+        self.assertFalse(Violation.objects.filter(vehicle=vehicle).exists())
+
+
+# ── Deny entry API (integration) ──────────────────────────────────────────────
+
+class DenyEntryAPITests(TestCase):
+    """POST /api/scan/deny/ — guard refuses a visitor/unregistered plate."""
+
+    def setUp(self):
+        self.guard = _make_guard()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+
+    def test_deny_creates_denied_log_at_guard_gate(self):
+        resp = self.client.post('/api/scan/deny/',
+                                {'plate_number': 'DNY0001', 'reason': 'No valid purpose'},
+                                format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'denied')
+        log = AccessLog.objects.get(plate_number='DNY0001')
+        self.assertEqual(log.status, AccessLog.Status.DENIED)
+        self.assertIn('No valid purpose', log.denied_reason)
+        self.assertEqual(log.gate_id, 'gate1')
+
+    def test_deny_without_reason_uses_default(self):
+        resp = self.client.post('/api/scan/deny/', {'plate_number': 'DNY0002'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        log = AccessLog.objects.get(plate_number='DNY0002')
+        self.assertIn('denied at gate', log.denied_reason.lower())
+
+    def test_deny_missing_plate_returns_400(self):
+        resp = self.client.post('/api/scan/deny/', {}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_deny_does_not_issue_violation(self):
+        vehicle = Vehicle.objects.create(
+            plate_number='DNY0003', vehicle_type=Vehicle.Type.CAR, is_authorized=False,
+        )
+        self.client.post('/api/scan/deny/', {'plate_number': 'DNY0003'}, format='json')
+        self.assertFalse(Violation.objects.filter(vehicle=vehicle).exists())
+
+    def test_deny_unauthenticated_rejected(self):
+        client = APIClient()
+        resp = client.post('/api/scan/deny/', {'plate_number': 'DNY0004'}, format='json')
+        self.assertEqual(resp.status_code, 401)

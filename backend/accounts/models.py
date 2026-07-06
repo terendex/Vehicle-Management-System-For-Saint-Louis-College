@@ -133,3 +133,35 @@ class AuditLog(models.Model):
     def __str__(self):
         actor_name = self.actor.full_name if self.actor else 'Unknown'
         return f"{actor_name} - {self.get_action_display()} - {self.created_at}"
+
+
+class Notification(models.Model):
+    """Admin notification-bell feed — important system events around
+    violations and vehicle registration. Rows are created by signal handlers
+    (see accounts/notifications.py), never directly by request handlers."""
+
+    class Category(models.TextChoices):
+        VIOLATION    = 'violation',    'Violation'
+        REGISTRATION = 'registration', 'Registration'
+
+    class Severity(models.TextChoices):
+        INFO     = 'info',     'Info'
+        WARNING  = 'warning',  'Warning'
+        CRITICAL = 'critical', 'Critical'
+
+    id           = models.BigAutoField(primary_key=True, db_column='notification_id')
+    category     = models.CharField(max_length=20, choices=Category.choices)
+    event        = models.CharField(max_length=40, blank=True)  # slug, e.g. 'violation_issued'
+    severity     = models.CharField(max_length=10, choices=Severity.choices, default=Severity.INFO)
+    title        = models.CharField(max_length=200)
+    message      = models.TextField(blank=True)
+    plate_number = models.CharField(max_length=20, blank=True)
+    link         = models.CharField(max_length=200, blank=True)  # frontend route, e.g. '/admin/violations'
+    is_read      = models.BooleanField(default=False)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.category}] {self.title}"

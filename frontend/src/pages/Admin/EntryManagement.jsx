@@ -20,6 +20,7 @@ const LOG_LIMIT = 50
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry', Icon: CheckCircle, cls: 'authorized', logCls: 'authorized' },
+  open_entry: { label: 'Open Entry',         Icon: CheckCircle, cls: 'authorized', logCls: 'authorized' },
   wrong_day:  { label: 'Wrong Schedule Day', Icon: XCircle,    cls: 'wrong_day',  logCls: 'wrong_day' },
   denied:     { label: 'Entry Denied',        Icon: XCircle,    cls: 'denied',     logCls: 'denied' },
   pending:    { label: 'Awaiting Approval',   Icon: Clock,      cls: 'pending',    logCls: 'pending' },

@@ -214,3 +214,21 @@
   color: #2A2B61;
   flex-shrink: 0;
 }
+
+/* ─── Open Campus Mode banner ─────────────────────────────────── */
+.em-open-campus-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  background: #F3EEFF;
+  border: 1px solid #D8C9F7;
+  border-left: 4px solid #7C3AED;
+  border-radius: 10px;
+  color: #4C1D95;
+  font-size: 12.5px;
+}
+
+.em-open-campus-banner svg { flex-shrink: 0; color: #7C3AED; }
+.em-open-campus-banner strong { font-weight: 700; }

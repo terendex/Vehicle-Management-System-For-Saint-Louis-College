@@ -3,13 +3,14 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
+  DoorOpen, Ban,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import {
   manualEntry, getAccessLogs, getOffices,
-  createVisitorPass, overrideEntry,
+  createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
@@ -22,6 +23,7 @@ import './SecurityEntryManagement.css'
 
 const STATUS_META = {
   authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
+  open_entry: { label: 'Open Entry',             Icon: DoorOpen,      cls: 'authorized', logCls: 'authorized' },
   wrong_day:  { label: 'Wrong Schedule Day',     Icon: XCircle,       cls: 'wrong_day',  logCls: 'wrong_day'  },
   denied:     { label: 'Entry Denied',           Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   unknown:    { label: 'Visitor / Unregistered', Icon: HelpCircle,    cls: 'visitor',    logCls: 'visitor'    },
@@ -229,6 +231,56 @@ function OverrideModal({ plate, onClose, onOverridden }) {
   )
 }
 
+// ─── DenyEntryModal ────────────────────────────────────────────────────────────
+function DenyEntryModal({ plate, onClose, onDenied }) {
+  const [reason, setReason]   = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirm = async () => {
+    setLoading(true)
+    try {
+      await denyEntry({ plate_number: plate, reason })
+      toast.success(`Entry denied for ${plate}.`)
+      onDenied?.(); onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record the denial.')
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><Ban size={17} style={{ color: '#dc2626' }} /> Deny Entry</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="em-modal-body">
+          <p style={{ margin: '0 0 10px', fontSize: 13, color: '#1A1D2E' }}>
+            Deny entry for <strong>{plate}</strong>? The vehicle will be turned away
+            and the denial logged at this gate.
+          </p>
+          <div className="em-field">
+            <label className="em-label">Reason (optional)</label>
+            <textarea className="em-textarea" placeholder="e.g. No valid purpose of visit…"
+              value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+            This denial will be logged in the audit trail. No violation is issued.
+          </p>
+        </div>
+        <div className="em-modal-foot">
+          <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="em-btn em-btn-primary" disabled={loading}
+            style={{ background: '#dc2626', borderColor: '#dc2626' }}
+            onClick={handleConfirm}>
+            {loading ? <><div className="em-spinner" /> Denying…</> : 'Confirm Denial'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── CircleCountdown ───────────────────────────────────────────────────────────
 function CircleCountdown({ duration = 5, onDismiss }) {
   const R = 18
@@ -295,15 +347,18 @@ function CircleCountdown({ duration = 5, onDismiss }) {
 }
 
 // ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss, onPause, onResume }) {
+function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss, onPause, onResume }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
+  const [showDeny,     setShowDeny]     = useState(false)
 
   // Opening a modal pauses the card's auto-dismiss so the form can't vanish
   const openVisitor   = () => { setShowVisitor(true);   onPause?.() }
   const closeVisitor  = () => { setShowVisitor(false);  onResume?.() }
   const openOverride  = () => { setShowOverride(true);  onPause?.() }
   const closeOverride = () => { setShowOverride(false); onResume?.() }
+  const openDeny      = () => { setShowDeny(true);      onPause?.() }
+  const closeDeny     = () => { setShowDeny(false);     onResume?.() }
 
   if (!result) return (
     <div className="em-card em-result em-result-idle-compact">
@@ -421,6 +476,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
                 <UserPlus size={14} /> Create Visitor Pass
               </button>
             )}
+            {isVisitor && (
+              <button className="em-btn" style={{ width: '100%', background: '#dc2626', color: '#fff', border: 'none', justifyContent: 'center' }}
+                onClick={openDeny}>
+                <Ban size={14} /> Deny Entry
+              </button>
+            )}
             {isDeniable && (
               <button className="em-btn" style={{ width: '100%', background: '#d97706', color: '#fff', border: 'none', justifyContent: 'center' }}
                 onClick={openOverride}>
@@ -440,6 +501,11 @@ function ResultCard({ result, offices, onPassCreated, onOverride, guardName, coo
           onClose={closeOverride}
           onOverridden={() => onOverride?.()} />
       )}
+      {showDeny && (
+        <DenyEntryModal plate={result.plate_number}
+          onClose={closeDeny}
+          onDenied={() => { onDeny?.(); onDismiss?.() }} />
+      )}
     </>
   )
 }
@@ -458,6 +524,7 @@ export default function SecurityEntryManagement() {
   const [passes, setPasses]           = useState([]) // today's ACTIVE visitor passes
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
   const [dedupSeconds, setDedupSeconds] = useState(5)
+  const [openCampus, setOpenCampus]     = useState(false)
   const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
 
   const addToQueue = (r, secs = dedupSeconds) => {
@@ -557,9 +624,20 @@ export default function SecurityEntryManagement() {
       .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
       .catch(() => {})
     getSystemSettings()
-      .then(({ data }) => { if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds) })
+      .then(({ data }) => {
+        if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds)
+        setOpenCampus(!!data?.open_campus_mode)
+      })
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Follow Open Campus Mode toggles live so the banner appears/disappears
+  // without the guard having to reload the page.
+  useLiveUpdates(() => {
+    getSystemSettings()
+      .then(({ data }) => setOpenCampus(!!data?.open_campus_mode))
+      .catch(() => {})
+  }, 'systemsettings')
 
   const refreshLogs = () =>
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
@@ -646,6 +724,16 @@ export default function SecurityEntryManagement() {
   return (
     <SecurityLayout fillHeight>
       <div className="em-page">
+
+        {openCampus && (
+          <div className="em-open-campus-banner">
+            <DoorOpen size={15} />
+            <span>
+              <strong>Open Campus Mode active</strong> — plates are still scanned and logged at {gateLabel},
+              and every vehicle is granted <strong>Open Entry</strong>.
+            </span>
+          </div>
+        )}
 
         {/* Main grid */}
         <div className="em-grid">
@@ -797,6 +885,7 @@ export default function SecurityEntryManagement() {
                 offices={offices}
                 onPassCreated={refreshAll}
                 onOverride={refreshAll}
+                onDeny={refreshAll}
                 guardName={user?.full_name}
                 cooldownKey={0}
                 cooldownActive={false}
@@ -812,6 +901,7 @@ export default function SecurityEntryManagement() {
                     offices={offices}
                     onPassCreated={refreshAll}
                     onOverride={refreshAll}
+                    onDeny={refreshAll}
                     guardName={user?.full_name}
                     cooldownKey={item.cooldownKey}
                     cooldownActive={!item.paused}
