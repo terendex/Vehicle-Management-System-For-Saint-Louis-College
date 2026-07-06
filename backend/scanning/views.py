@@ -679,10 +679,18 @@ class VisitorPassView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
-        vehicle, _ = Vehicle.objects.get_or_create(
+        vehicle, vehicle_created = Vehicle.objects.get_or_create(
             plate_number=plate_number,
             defaults={'vehicle_type': 'car', 'is_authorized': False},
         )
+        # A visitor pass for an unregistered plate auto-creates a Vehicle record —
+        # surface that creation in the audit trail like any other vehicle add.
+        if vehicle_created:
+            _audit(
+                request,
+                AuditLog.Action.RECORD_CREATED,
+                f"Vehicle added | {plate_number} (visitor) | By: {request.user.full_name}",
+            )
 
         office_id = request.data.get('office')
         office = None

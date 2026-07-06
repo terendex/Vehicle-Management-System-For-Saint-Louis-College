@@ -749,38 +749,13 @@ export default function SecurityEntryManagement() {
     }
   }
 
-  // Camera scanner read a QR — must be a visitor slip QR to record an exit.
-  const handleExitQrDetected = async (data) => {
-    const clean = (data || '').trim().toUpperCase()
-    if (!clean.startsWith('SLC-VISITOR:')) {
-      toast.error('Not a visitor slip QR. Scan the QR printed on the visitor slip.')
-      return
-    }
-    setExitScanBusy(true)
-    const ok = await recordVisitorExit(clean)
-    setExitScanBusy(false)
-    if (ok) setShowExitScanner(false)
-  }
-
-  const handleCheckEntry = async (e) => {
-    e?.preventDefault()
-    const plate = plateInput.trim().toUpperCase()
-    if (!plate) return
-
-    // Visitor slip QR scanned into the lookup box (USB scanner or typed):
-    // records the visitor's exit — visitor exits are QR-only, never by plate.
-    if (plate.startsWith('SLC-VISITOR:')) {
-      setLoading(true)
-      setExitResult(null)
-      await recordVisitorExit(plate)
-      setPlateInput('')
-      setLoading(false)
-      return
-    }
-
+  // Run the normal plate entry/exit check. Rules are applied server-side by
+  // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
+  // inside logs the exit. Returns the response data so callers can react.
+  const runPlateCheck = async (plate) => {
     if (!isValidPlateNumber(plate)) {
       toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
-      return
+      return null
     }
     setLoading(true)
     setExitResult(null)
@@ -793,7 +768,6 @@ export default function SecurityEntryManagement() {
       if (res.data.status === 'exited') {
         // The check action doubles as the exit action once a vehicle is inside
         setExitResult(res.data)
-        setPlateInput('')
         const dur = res.data.duration_minutes
         toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
         if (res.data.overstay_minutes > 0) {
@@ -813,9 +787,67 @@ export default function SecurityEntryManagement() {
           gate_id: user?.gate_assignment,
         }, ...prev].slice(0, 20))
       }
+      return res.data
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Lookup failed.')
+      return null
     } finally { setLoading(false) }
+  }
+
+  // Registered vehicle QR pass payload is "VEHICLE:{plate}|ID:{regId}".
+  // Returns the plate, or '' if the string isn't that format.
+  const plateFromVehicleQr = (raw) => {
+    const s = (raw || '').trim().toUpperCase()
+    if (!s.startsWith('VEHICLE:')) return ''
+    return s.slice('VEHICLE:'.length).split('|')[0].trim()
+  }
+
+  // Camera scanner read a QR. Route by payload type:
+  //  • SLC-VISITOR:{id}       → visitor slip exit
+  //  • VEHICLE:{plate}|ID:{n} → registered vehicle entry / exit (rules applied)
+  const handleQrDetected = async (data) => {
+    const upper = (data || '').trim().toUpperCase()
+
+    if (upper.startsWith('SLC-VISITOR:')) {
+      setExitScanBusy(true)
+      const ok = await recordVisitorExit(upper)
+      setExitScanBusy(false)
+      if (ok) setShowExitScanner(false)
+      return
+    }
+
+    const plate = plateFromVehicleQr(upper)
+    if (plate) {
+      setExitScanBusy(true)
+      const res = await runPlateCheck(plate)
+      setExitScanBusy(false)
+      if (res) setShowExitScanner(false)
+      return
+    }
+
+    toast.error('Unrecognized QR. Scan a vehicle QR pass or a visitor slip QR.')
+  }
+
+  const handleCheckEntry = async (e) => {
+    e?.preventDefault()
+    const raw = plateInput.trim().toUpperCase()
+    if (!raw) return
+
+    // Visitor slip QR scanned into the lookup box (USB scanner or typed):
+    // records the visitor's exit — visitor exits are QR-only, never by plate.
+    if (raw.startsWith('SLC-VISITOR:')) {
+      setLoading(true)
+      setExitResult(null)
+      await recordVisitorExit(raw)
+      setPlateInput('')
+      setLoading(false)
+      return
+    }
+
+    // Accept a pasted vehicle QR pass string; otherwise treat the input as a plate.
+    const plate = plateFromVehicleQr(raw) || raw
+    const res = await runPlateCheck(plate)
+    if (res?.status === 'exited') setPlateInput('')
   }
 
   return (
@@ -980,9 +1012,9 @@ export default function SecurityEntryManagement() {
                   className="em-btn em-btn-secondary"
                   style={{ flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 12px' }}
                   onClick={() => setShowExitScanner(true)}
-                  title="Scan a visitor's slip QR to record their exit"
+                  title="Scan a vehicle QR pass or a visitor slip QR — entry / exit"
                 >
-                  <ScanLine size={15} /> Scan Exit QR
+                  <ScanLine size={15} /> Scan QR
                 </button>
               </form>
               <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
@@ -1154,10 +1186,10 @@ export default function SecurityEntryManagement() {
 
         {showExitScanner && (
           <QrScanModal
-            title="Scan Visitor Exit QR"
-            hint="Point the camera at the QR printed on the visitor's slip to record their exit."
+            title="Scan QR — Entry / Exit"
+            hint="Point the camera at a vehicle QR pass (first scan = entry, next = exit) or a visitor slip QR."
             busy={exitScanBusy}
-            onDetected={handleExitQrDetected}
+            onDetected={handleQrDetected}
             onClose={() => setShowExitScanner(false)}
           />
         )}
