@@ -6,7 +6,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
-from .models import User, AuditLog
+from .models import User, AuditLog, Notification
 from .serializers import (
     UserSerializer,
     UserUpdateSerializer,
@@ -16,6 +16,7 @@ from .serializers import (
     AdminOwnerCreateSerializer,
     CustomTokenObtainPairSerializer,
     AuditLogSerializer,
+    NotificationSerializer,
 )
 
 
@@ -51,6 +52,16 @@ class IsAdminRole(permissions.BasePermission):
             request.user
             and request.user.is_authenticated
             and request.user.role == 'admin'
+        )
+
+
+class IsAdminOrCdso(permissions.BasePermission):
+    """Allow access to admin and CDSO staff."""
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ('admin', 'cdso')
         )
 
 
@@ -1066,6 +1077,48 @@ class RegenerateGuardQRView(APIView):
         log_action(request, AuditLog.Action.USER_UPDATED, target_user=guard,
                    details=f'QR token regenerated for {guard.full_name}')
         return Response({'qr_token': str(guard.qr_token)})
+
+
+class NotificationListView(APIView):
+    """Admin/CDSO: notification-bell feed with unread count."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        qs = Notification.objects.all()
+        if request.query_params.get('unread_only') in ('1', 'true'):
+            qs = qs.filter(is_read=False)
+        try:
+            limit = min(int(request.query_params.get('limit', 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+        unread_count = Notification.objects.filter(is_read=False).count()
+        return Response({
+            'results':      NotificationSerializer(qs[:limit], many=True).data,
+            'unread_count': unread_count,
+        })
+
+
+class NotificationMarkReadView(APIView):
+    """Admin/CDSO: mark notifications read — {"ids": [...]} or {"all": true}."""
+    permission_classes = [IsAdminOrCdso]
+
+    def post(self, request):
+        if request.data.get('all'):
+            qs = Notification.objects.filter(is_read=False)
+        else:
+            ids = request.data.get('ids') or []
+            if not isinstance(ids, list) or not ids:
+                return Response({'error': 'Provide "ids" (list) or "all": true.'}, status=400)
+            qs = Notification.objects.filter(pk__in=ids, is_read=False)
+        updated = qs.update(is_read=True)
+        # queryset.update() skips post_save, so tell open pages explicitly
+        if updated:
+            try:
+                from realtime.broadcast import broadcast_change
+                broadcast_change('notification', 'updated')
+            except Exception:
+                pass
+        return Response({'updated': updated})
 
 
 

@@ -12,6 +12,7 @@ import './SecurityAuditLogPage.css'
 
 const STATUS_META = {
   authorized: { label: 'Authorized',        Icon: CheckCircle,   cls: 'authorized' },
+  open_entry: { label: 'Open Entry',        Icon: CheckCircle,   cls: 'authorized' },
   wrong_day:  { label: 'Wrong Day',         Icon: XCircle,       cls: 'denied'     },
   denied:     { label: 'Denied',            Icon: XCircle,       cls: 'denied'     },
   unknown:    { label: 'Visitor',           Icon: HelpCircle,    cls: 'visitor'    },

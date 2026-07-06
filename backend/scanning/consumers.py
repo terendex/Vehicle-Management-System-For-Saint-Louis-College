@@ -584,7 +584,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         status = result.get("status")
         if result.get("error") or status == "duplicate":
             return self._dedup_seconds            # transient — retry soon
-        if status in ("authorized", "exited"):
+        if status in ("authorized", "open_entry", "exited"):
             return CAMERA_ENTRY_COOLDOWN_SECONDS  # breathing space before state can flip
         return NEGATIVE_SCAN_COOLDOWN_SECONDS     # unknown / denied / wrong_day etc.
 
@@ -634,7 +634,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from accounts.models import AuditLog
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
                             _auto_log_violation, _close_active_pass, _gate_label,
-                            _check_stay_limit)
+                            _check_stay_limit, _log_status, _open_campus_unknown_result)
+        from .entry_logic import is_open_campus
         close_old_connections()
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
@@ -653,6 +654,24 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             ).first()
             if supplier_plate:
                 return self._check_supplier(plate_number, supplier_plate, gate_id)
+
+            # Open Campus Mode — unregistered plates are admitted with the full
+            # entry/exit state machine and shown as "Open Entry".
+            if is_open_campus():
+                result = _open_campus_unknown_result(plate_number, gate_id, self._user)
+                result.setdefault("registration", None)
+                result.setdefault("has_violations", False)
+                if result.get("allowed"):
+                    try:
+                        AuditLog.objects.create(
+                            actor=self._user,
+                            action="scan",
+                            details=f"Open entry (camera) | Plate: {plate_number} | "
+                                    f"Unregistered | Gate: {_gate_label(gate_id)}",
+                        )
+                    except Exception:
+                        pass
+                return result
 
             now = timezone.now()
             cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
@@ -781,10 +800,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         entry = check_entry(vehicle)
 
-        # UI-only statuses (e.g. 'no_pass') aren't valid AccessLog statuses —
-        # store those rows as 'denied' while the client still sees the real status
-        log_status = (entry["status"] if entry["status"] in AccessLog.Status.values
-                      else AccessLog.Status.DENIED)
+        # UI-only statuses (e.g. 'no_pass', 'open_entry') aren't valid AccessLog
+        # statuses — store those rows as authorized/denied per the decision while
+        # the client still sees the real status
+        log_status = _log_status(entry)
 
         # Authorized entries are deduped by the grace-period / entry-window checks
         # above; denied/violation statuses get a 1-minute DB-backed cooldown so a
@@ -830,9 +849,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         except Exception:
             pass
 
-        # A visitor waiting for a pass ('no_pass') isn't a violation — only
-        # genuinely denied/wrong-day entries are auto-fined.
-        if not entry["allowed"] and entry["status"] != "no_pass":
+        # A visitor waiting for a pass ('no_pass'/'unknown') isn't a violation —
+        # only genuinely denied/wrong-day entries are auto-fined.
+        if not entry["allowed"] and entry["status"] not in ("no_pass", "unknown"):
             try:
                 _auto_log_violation(
                     vehicle, entry["message"], gate_id,
@@ -1031,10 +1050,14 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             )
         except Exception:
             pass
+        from .entry_logic import is_open_campus
+        open_campus = is_open_campus()
         return {
-            "status":         "authorized",
+            "status":         "open_entry" if open_campus else "authorized",
             "allowed":        True,
-            "message":        f"Supplier vehicle — {supplier_name}. Entry permitted.",
+            "message":        (f"Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted."
+                               if open_campus else
+                               f"Supplier vehicle — {supplier_name}. Entry permitted."),
             "is_supplier":    True,
             "supplier_name":  supplier_name,
             "vehicle":        None,

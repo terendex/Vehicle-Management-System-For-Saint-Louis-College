@@ -14,6 +14,7 @@ const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 const STATUS_META = {
   authorized: { label: 'Approved',  cls: 'authorized', Icon: CheckCircle  },
+  open_entry: { label: 'Open Entry', cls: 'authorized', Icon: CheckCircle },
   denied:     { label: 'Denied',    cls: 'denied',     Icon: XCircle      },
   wrong_day:  { label: 'Wrong Day', cls: 'denied',     Icon: XCircle      },
   unknown:    { label: 'Visitor',   cls: 'visitor',    Icon: HelpCircle   },

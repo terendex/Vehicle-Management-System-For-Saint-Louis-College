@@ -9,6 +9,7 @@ import './GuardMonitor.css'
 
 const STATUS_META = {
   authorized: { label: 'Authorized', cls: 'authorized' },
+  open_entry: { label: 'Open Entry', cls: 'authorized' },
   wrong_day:  { label: 'Wrong Day',  cls: 'denied'     },
   denied:     { label: 'Denied',     cls: 'denied'     },
   unknown:    { label: 'Visitor',    cls: 'visitor'    },

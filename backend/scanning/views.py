@@ -11,7 +11,7 @@ from vehicles.models import Vehicle, SupplierPlate
 from violations.models import Violation
 from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
-from .entry_logic import check_entry, get_organizer_event
+from .entry_logic import check_entry, get_organizer_event, is_open_campus
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
@@ -50,6 +50,15 @@ def _audit(request, action, details=''):
 GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
 EXIT_COOLDOWN_SECONDS = 60           # block new entry for this many seconds after an exit
 ENTRY_BREATHING_SECONDS = 60         # re-check within this window after entry stays informational (no exit flip)
+
+
+def _log_status(entry: dict) -> str:
+    """Map a check_entry result to a valid AccessLog status. Client-facing
+    statuses like 'open_entry' and 'no_pass' aren't AccessLog choices — store
+    those rows as AUTHORIZED/DENIED depending on whether entry was granted."""
+    if entry['status'] in AccessLog.Status.values:
+        return entry['status']
+    return AccessLog.Status.AUTHORIZED if entry['allowed'] else AccessLog.Status.DENIED
 
 
 def _inside_state(plate_number: str):
@@ -127,6 +136,84 @@ def _pair_entry_exit(exit_log) -> None:
     if entry:
         exit_log.paired_entry = entry
         exit_log.save(update_fields=['paired_entry'])
+
+
+def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
+    """
+    Open Campus Mode: admit an unregistered plate at the gate. Runs the same
+    entry/exit state machine registered vehicles use (grace-period dedup, exit
+    pairing, post-exit cooldown) so the plate can enter AND exit cleanly while
+    the mode is on. Rows are stored as AUTHORIZED/EXITED (vehicle=None); the
+    client-facing entry status is 'open_entry', displayed as "Open Entry".
+    """
+    from django.db import transaction as _tx
+
+    inside_status, last_entry = _inside_state(plate_number)
+
+    if inside_status == 'duplicate':
+        return {
+            'status':         'duplicate',
+            'allowed':        False,
+            'message':        'Duplicate scan — already processed within grace period.',
+            'vehicle':        None,
+            'already_inside': True,
+        }
+
+    if inside_status == 'inside':
+        seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+        if seconds_inside < ENTRY_BREATHING_SECONDS:
+            return {
+                'status':         'already_inside',
+                'allowed':        False,
+                'message':        'Vehicle just entered — within the 1-minute entry window.',
+                'vehicle':        None,
+                'already_inside': True,
+            }
+        with _tx.atomic():
+            locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+            if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                return {
+                    'status':         'duplicate',
+                    'allowed':        False,
+                    'message':        'Duplicate scan — already processed.',
+                    'vehicle':        None,
+                    'already_inside': False,
+                }
+            exit_log = AccessLog.objects.create(
+                plate_number=plate_number, status=AccessLog.Status.EXITED,
+                gate_id=gate_id, scanned_by=user, paired_entry=locked_entry,
+            )
+        duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
+        return {
+            'status':           'exited',
+            'allowed':          False,
+            'message':          f'Open Campus — exit recorded. Duration: {duration_minutes} min.',
+            'vehicle':          None,
+            'already_inside':   False,
+            'duration_minutes': duration_minutes,
+        }
+
+    if _in_exit_cooldown(plate_number):
+        return {
+            'status':         'duplicate',
+            'allowed':        False,
+            'message':        'Exit cooldown — entry suppressed for 1 minute after exit.',
+            'vehicle':        None,
+            'already_inside': False,
+        }
+
+    AccessLog.objects.create(
+        plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
+        gate_id=gate_id, scanned_by=user,
+    )
+    return {
+        'status':         'open_entry',
+        'allowed':        True,
+        'message':        'Open Campus Mode active — unregistered plate. Open entry granted.',
+        'vehicle':        None,
+        'has_violations': False,
+        'already_inside': False,
+    }
 
 
 def _supplier_rule_denial() -> str | None:
@@ -333,6 +420,15 @@ class ScanView(APIView):
                 ).first()
 
                 if not supplier_plate:
+                    if is_open_campus():
+                        r = _open_campus_unknown_result(plate, gate_id, request.user)
+                        results.append({
+                            **r,
+                            'plate_number': plate,
+                            'bbox': bbox,
+                            'sample_id': ml_sample.get("sample_id") if ml_sample else None,
+                        })
+                        continue
                     AccessLog.objects.create(plate_number=plate, status='unknown', gate_id=gate_id, scanned_by=request.user)
                     results.append({
                         'plate_number': plate,
@@ -405,11 +501,14 @@ class ScanView(APIView):
                     plate_number=plate, status=AccessLog.Status.AUTHORIZED,
                     gate_id=gate_id, scanned_by=request.user,
                 )
+                open_campus = is_open_campus()
                 results.append({
                     'plate_number':  plate,
-                    'status':        'authorized',
+                    'status':        'open_entry' if open_campus else 'authorized',
                     'allowed':       True,
-                    'message':       f'Supplier vehicle — {supplier_name}. Entry permitted.',
+                    'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
+                                      if open_campus else
+                                      f'Supplier vehicle — {supplier_name}. Entry permitted.'),
                     'is_supplier':   True,
                     'supplier_name': supplier_name,
                     'bbox':          bbox,
@@ -501,7 +600,7 @@ class ScanView(APIView):
             AccessLog.objects.create(
                 plate_number  = plate,
                 vehicle       = vehicle,
-                status        = entry['status'],
+                status        = _log_status(entry),
                 denied_reason = '' if entry['allowed'] else entry['message'],
                 gate_id       = gate_id,
                 scanned_by    = request.user,
@@ -524,7 +623,8 @@ class ScanView(APIView):
                 )
             _audit(request, action, details)
 
-            if not entry['allowed']:
+            # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
+            if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
                 _auto_log_violation(vehicle, entry['message'], gate_id)
 
             resp = {
@@ -815,6 +915,48 @@ class OverrideEntryView(APIView):
         return Response({'status': 'overridden', 'plate_number': plate_number})
 
 
+class DenyEntryView(APIView):
+    """Guard explicitly denies a visitor/unregistered plate at the gate.
+    Logs a DENIED access row with the reason and an audit entry — no violation
+    is issued (turning away a visitor is not an offense)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
+        if not plate_number:
+            return Response({'error': 'plate_number is required.'}, status=400)
+
+        reason = (request.data.get('reason') or '').strip() or 'Entry denied at gate by guard.'
+
+        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
+        AccessLog.objects.create(
+            plate_number  = plate_number,
+            vehicle       = vehicle,
+            status        = AccessLog.Status.DENIED,
+            denied_reason = reason,
+            gate_id       = gate_id,
+            scanned_by    = request.user,
+        )
+
+        guard_name = request.user.full_name
+        owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unregistered'
+        _audit(
+            request,
+            AuditLog.Action.SCAN,
+            f"Entry denied by guard | Plate: {plate_number} | Owner: {owner_name} | "
+            f"Reason: {reason} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
+        )
+
+        return Response({
+            'plate_number': plate_number,
+            'status':       'denied',
+            'allowed':      False,
+            'message':      f'Entry denied by guard. {reason}',
+            'gate_id':      gate_id,
+        })
+
+
 class ExitLogView(APIView):
     """Guard records a vehicle exit and auto-pairs it to the matching entry."""
     permission_classes = [permissions.IsAuthenticated]
@@ -1067,6 +1209,9 @@ class ManualEntryView(APIView):
             ).first()
 
             if not supplier_plate:
+                if is_open_campus():
+                    r = _open_campus_unknown_result(plate_number, gate_id, request.user)
+                    return Response({**r, 'plate_number': plate_number, 'gate_id': gate_id})
                 AccessLog.objects.create(
                     plate_number=plate_number,
                     status=AccessLog.Status.UNKNOWN,
@@ -1185,11 +1330,14 @@ class ManualEntryView(APIView):
                 plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
                 gate_id=gate_id, scanned_by=request.user,
             )
+            open_campus = is_open_campus()
             return Response({
                 'plate_number':  plate_number,
-                'status':        'authorized',
+                'status':        'open_entry' if open_campus else 'authorized',
                 'allowed':       True,
-                'message':       f'Supplier vehicle — {supplier_name}. Entry permitted.',
+                'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
+                                  if open_campus else
+                                  f'Supplier vehicle — {supplier_name}. Entry permitted.'),
                 'is_supplier':   True,
                 'supplier_name': supplier_name,
                 'gate_id':       gate_id,
@@ -1289,13 +1437,11 @@ class ManualEntryView(APIView):
         entry = check_entry(vehicle)
         has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
 
-        # UI-only statuses (e.g. 'no_pass') aren't valid AccessLog statuses
-        log_status = (entry['status'] if entry['status'] in AccessLog.Status.values
-                      else AccessLog.Status.DENIED)
+        # UI-only statuses (e.g. 'no_pass', 'open_entry') aren't valid AccessLog statuses
         AccessLog.objects.create(
             plate_number  = plate_number,
             vehicle       = vehicle,
-            status        = log_status,
+            status        = _log_status(entry),
             gate_id       = gate_id,
             denied_reason = '' if entry['allowed'] else entry['message'],
             scanned_by    = request.user,
@@ -1309,8 +1455,8 @@ class ManualEntryView(APIView):
             f"Plate: {plate_number} | Owner: {owner_name} | Gate: {_gate_label(gate_id)} | Guard: {guard_name} | Status: {entry['status']}",
         )
 
-        # 'no_pass' means a visitor awaiting a pass — not a violation
-        if not entry['allowed'] and entry['status'] != 'no_pass':
+        # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
+        if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
             _auto_log_violation(vehicle, entry['message'], gate_id)
 
         return Response({
