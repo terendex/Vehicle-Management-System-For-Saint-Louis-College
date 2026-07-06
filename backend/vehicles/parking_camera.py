@@ -30,6 +30,19 @@ _cameras: dict[int, "ParkingCameraThread"] = {}
 _lock = threading.Lock()
 
 
+def _point_in_polygon(x: float, y: float, points: list[list[float]]) -> bool:
+    """Standard ray-casting point-in-polygon test (points are normalised [x, y] pairs)."""
+    inside = False
+    x1, y1 = points[-1]
+    for x2, y2 in points:
+        if (y1 > y) != (y2 > y):
+            x_at_y = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < x_at_y:
+                inside = not inside
+        x1, y1 = x2, y2
+    return inside
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def start(zone_id: int, rtsp_url: str) -> "ParkingCameraThread":
@@ -150,8 +163,11 @@ class ParkingCameraThread(threading.Thread):
                 b  = det["bbox"]
                 cx = b["x"] + b["width"]  / 2
                 cy = b["y"] + b["height"] / 2
-                if sp.x1 <= cx <= sp.x2 and sp.y1 <= cy <= sp.y2:
-                    hit = True
+                if sp.points:
+                    hit = _point_in_polygon(cx, cy, sp.points)
+                else:
+                    hit = sp.x1 <= cx <= sp.x2 and sp.y1 <= cy <= sp.y2
+                if hit:
                     break
 
             prev = self._hyst.get(sp.id, 0)
