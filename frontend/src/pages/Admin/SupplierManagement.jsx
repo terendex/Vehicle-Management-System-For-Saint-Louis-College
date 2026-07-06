@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag,
@@ -328,12 +329,17 @@ export default function SupplierManagement() {
   const [pageLoading, setPageLoading] = useState(true)
   const [showAdd, setShowAdd]         = useState(false)
 
-  useEffect(() => {
+  const loadSuppliers = () => {
     getSuppliers()
       .then(({ data }) => setSuppliers(data))
       .catch(() => toast.error('Failed to load suppliers.'))
       .finally(() => setPageLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadSuppliers() }, [])
+
+  // Live-refresh supplier list on supplier/plate changes
+  useLiveUpdates(loadSuppliers, ['supplier', 'supplierplate'])
 
   const handleCreated  = (s)  => setSuppliers(prev => [s, ...prev])
   const handleUpdated  = (s)  => setSuppliers(prev => prev.map(x => x.id === s.id ? s : x))

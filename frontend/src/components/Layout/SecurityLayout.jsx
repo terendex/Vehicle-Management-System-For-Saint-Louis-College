@@ -256,7 +256,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   const navItems = [
     { name: 'Entry Management', path: entryPath,            icon: <ShieldCheck size={18} /> },
     { name: 'Parking',          path: '/security/parking',  icon: <ParkingCircle size={18} /> },
-    { name: 'Audit Log',        path: '/security/audit',    icon: <ClipboardList size={18} /> },
+    { name: 'Vehicle Log',      path: '/security/audit',    icon: <ClipboardList size={18} /> },
   ]
 
   return (

@@ -302,7 +302,12 @@ class ScanView(APIView):
                 'sample_id': ml_sample.get("sample_id") if ml_sample else None,
             })
 
-        gate_id = (request.data.get('gate_id') or request.query_params.get('gate_id') or 'main').strip()
+        # A gate explicitly supplied by the camera/client wins; otherwise fall
+        # back to the scanning guard's own gate so the scan lands in that gate's
+        # log rather than the orphan 'main' bucket (visible in no gate's view).
+        gate_id = (request.data.get('gate_id') or request.query_params.get('gate_id') or '').strip()
+        if not gate_id or gate_id == 'main':
+            gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
 
         for plate_info in plates:
             plate = plate_info["plate_text"]

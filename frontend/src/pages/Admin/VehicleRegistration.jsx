@@ -4,6 +4,7 @@ import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -85,6 +86,9 @@ export default function VehicleRegistration() {
     }
   }
 
+  // Live-refresh when a registration is created/approved/rejected anywhere
+  useLiveUpdates(fetchRegistrations, ['vehicleregistration', 'vehicle'])
+
   const qrPrintRef = useRef(null)
 
   // QR of the public registration form URL — shown/printed at CDSO so
@@ -117,7 +121,7 @@ export default function VehicleRegistration() {
       <p>Scan this QR code with your phone camera to open the vehicle registration form.</p>
       ${svg.outerHTML}
       <p class="link">${qrDisplayData.payload}</p>
-      <script>window.onload = function () { window.print() }<\/script>
+      <script>window.onload = function () { window.print() }</script>
     </body></html>`)
     win.document.close()
   }

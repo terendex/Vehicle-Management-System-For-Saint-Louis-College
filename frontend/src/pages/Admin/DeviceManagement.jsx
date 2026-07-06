@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
   ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
@@ -313,6 +314,9 @@ export default function DeviceManagement() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Live-refresh device list on camera changes
+  useLiveUpdates(load, ['camera'])
 
   // Camera CRUD is audited server-side (CameraViewSet) — no client-side audit posts.
 

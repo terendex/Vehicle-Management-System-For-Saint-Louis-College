@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 SNAPSHOT_DIR = "snapshots"
 
+
+def _resolve_gate(raw, user) -> str:
+    """Decide which gate a scan belongs to.
+
+    A camera explicitly configured with a gate wins. Otherwise fall back to the
+    scanning guard's own gate_assignment so the scan still lands in that gate's
+    log instead of the orphan 'main' bucket (which shows in no gate's view).
+    """
+    gid = (raw or '').strip()
+    if gid and gid != 'main':
+        return gid
+    return getattr(user, 'gate_assignment', None) or 'main'
+
 # Serialise VideoCapture construction so concurrent camera connections don't
 # race on os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"].  On Windows, putenv()
 # is not guaranteed thread-safe, and one camera's options can clobber another's
@@ -84,11 +97,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             return
 
         # Read gate_id from query string, e.g. ?token=...&gate=gate1
-        self._gate_id = 'main'
+        raw_gate = ''
         for part in qs.split('&'):
             if part.startswith('gate='):
-                self._gate_id = part[5:] or 'main'
+                raw_gate = part[5:]
                 break
+        self._gate_id = _resolve_gate(raw_gate, self._user)
 
         self._tracker = ProximityTracker()
         self._frame_counter = 0
@@ -1278,7 +1292,9 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
             self._dedup_seconds = cfg.scan_dedup_seconds
         except Exception:
             self._dedup_seconds = _DEFAULT_DEDUP_SECONDS
-        self._gate_id               = 'main'
+        # Default to the guard's own gate; a camera-configured gate (sent in the
+        # 'start' message) overrides this below.
+        self._gate_id               = _resolve_gate('', self._user)
         self._loop                  = asyncio.get_running_loop()
         self._worker_sid            = str(id(self))
 
@@ -1317,7 +1333,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 await self.send_json({"type": "error", "message": "Invalid or missing RTSP URL."})
                 return
             if content.get("gate_id"):
-                self._gate_id = content["gate_id"]
+                self._gate_id = _resolve_gate(content["gate_id"], self._user)
             await self._cancel_stream()
             # Reset tracker state for fresh stream
             self._tracker       = ProximityTracker()

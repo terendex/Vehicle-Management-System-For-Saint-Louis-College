@@ -265,9 +265,32 @@ class DashboardStatsView(APIView):
             total_vehicles        = Vehicle.objects.count()
             authorized_vehicles   = Vehicle.objects.filter(is_authorized=True).count()
             unauthorized_vehicles = total_vehicles - authorized_vehicles
-            pending_registrations = VehicleRegistration.objects.filter(
-                status=VehicleRegistration.Status.PENDING
-            ).count()
+
+            # Registration outcomes (pending / accepted / rejected) for the status pie
+            reg_by_status = {
+                row['status']: row['count']
+                for row in VehicleRegistration.objects.values('status').annotate(count=Count('id'))
+            }
+            pending_registrations  = reg_by_status.get(VehicleRegistration.Status.PENDING, 0)
+            accepted_registrations = reg_by_status.get(VehicleRegistration.Status.ACCEPTED, 0)
+            rejected_registrations = reg_by_status.get(VehicleRegistration.Status.REJECTED, 0)
+
+            # Vehicle-owner category breakdown (active owners split by owner_type,
+            # plus a disabled slice) for the owners pie. Active-by-type + disabled
+            # are mutually exclusive so they sum cleanly in a donut.
+            owner_qs = User.objects.filter(role='vehicle_owner')
+            owners_active_by_type = {
+                row['owner_type']: row['count']
+                for row in owner_qs.filter(is_active=True)
+                                   .values('owner_type').annotate(count=Count('id'))
+            }
+            owners_disabled = owner_qs.filter(is_active=False).count()
+
+            # Suppliers are their own model (not User owners) but form a registered
+            # vehicle category alongside students/employees/fetchers. Counted by
+            # plate (supplier vehicles), scoped to active supplier companies.
+            from vehicles.models import SupplierPlate
+            active_suppliers = SupplierPlate.objects.filter(supplier__is_active=True).count()
 
             # One aggregate query gives the full per-status picture for today
             today_by_status = {
@@ -280,6 +303,13 @@ class DashboardStatsView(APIView):
             authorized_today = today_by_status.get('authorized', 0)
             denied_today     = today_by_status.get('denied', 0) + today_by_status.get('wrong_day', 0)
             unknown_today    = today_by_status.get('unknown', 0)
+
+            # Split today's authorized entries into registered owners vs visitor-pass
+            # entries (visitor passes create an ownerless vehicle, so user is null).
+            visitor_today    = AccessLog.objects.filter(
+                scanned_at__date=today, status='authorized', vehicle__user__isnull=True,
+            ).count()
+            registered_today = authorized_today - visitor_today
 
             # Day distribution: authorized entries per weekday (Mon–Sat)
             # Django ExtractWeekDay: 1=Sunday, 2=Monday, …, 7=Saturday
@@ -330,13 +360,29 @@ class DashboardStatsView(APIView):
                     'unauthorized': unauthorized_vehicles,
                 },
                 'registrations': {
-                    'pending': pending_registrations,
+                    'pending':  pending_registrations,
+                    'accepted': accepted_registrations,
+                    'rejected': rejected_registrations,
+                    'total':    pending_registrations + accepted_registrations + rejected_registrations,
+                },
+                'owners': {
+                    'student':  owners_active_by_type.get('student', 0),
+                    'employee': owners_active_by_type.get('employee', 0),
+                    'fetcher':  owners_active_by_type.get('fetcher', 0),
+                    'visitor':  owners_active_by_type.get('visitor', 0),
+                    'disabled': owners_disabled,
+                    'total':    vehicle_owner_count,
+                },
+                'suppliers': {
+                    'active': active_suppliers,
                 },
                 'scans': {
                     'today':            today_scans,
                     'week':             week_scans,
                     'authorized_today': authorized_today,
                     'authorized_week':  authorized_week,
+                    'registered_today': registered_today,
+                    'visitor_today':    visitor_today,
                     'denied_today':     denied_today,
                     'unknown_today':    unknown_today,
                     'today_by_status':  today_by_status,
@@ -875,6 +921,15 @@ class QRLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Persist the shift gate on the guard's profile. Server-side scan
+        # attribution (manual entry, override, exit, HTTP/WS scans) reads
+        # request.user.gate_assignment to tag each log; without this it stays
+        # None and those scans fall to the orphan 'main' gate, invisible in
+        # every gate's Vehicle Log.
+        if guard.gate_assignment != gate:
+            User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
+            guard.gate_assignment = gate
+
         now = timezone.now()
 
         # Clock out whoever is currently active at this gate (the previous guard)
@@ -895,7 +950,7 @@ class QRLoginView(APIView):
                 'full_name':            guard.full_name,
                 'email':                guard.email,
                 'role':                 guard.role,
-                'gate_assignment':      gate,   # shift gate, not profile default
+                'gate_assignment':      gate,   # current shift gate (also persisted above)
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,
@@ -943,6 +998,15 @@ class GuardCredentialLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Persist the shift gate on the guard's profile. Server-side scan
+        # attribution (manual entry, override, exit, HTTP/WS scans) reads
+        # request.user.gate_assignment to tag each log; without this it stays
+        # None and those scans fall to the orphan 'main' gate, invisible in
+        # every gate's Vehicle Log.
+        if guard.gate_assignment != gate:
+            User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
+            guard.gate_assignment = gate
+
         now = timezone.now()
 
         # Clock out whoever is currently active at this gate (the previous guard)
@@ -970,7 +1034,7 @@ class GuardCredentialLoginView(APIView):
                 'full_name':            guard.full_name,
                 'email':                guard.email,
                 'role':                 guard.role,
-                'gate_assignment':      gate,   # shift gate, not profile default
+                'gate_assignment':      gate,   # current shift gate (also persisted above)
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,

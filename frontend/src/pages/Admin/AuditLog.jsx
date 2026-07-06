@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
@@ -111,6 +112,9 @@ export default function AuditLog() {
   useEffect(() => {
     fetchLogs(page, search)
   }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // New audit entries appear instantly (keeps current page/search)
+  useLiveUpdates(() => fetchLogs(page, search), 'auditlog')
 
   const applyPeriod = (period) => {
     setDatePeriod(period)

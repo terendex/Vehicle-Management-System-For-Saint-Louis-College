@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
@@ -115,6 +116,9 @@ export default function ParkingManagement() {
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
+  // Live-refresh zones/occupancy on parking changes
+  useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])
 
   // Load parking cameras once on mount — persists across navigation
   useEffect(() => {

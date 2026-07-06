@@ -1,4 +1,5 @@
 import re
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, AuditLog
@@ -51,8 +52,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment']
 
     def validate_email(self, value):
+        value = value.strip().lower()
         user = self.instance
-        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
+        if User.objects.exclude(pk=user.pk).filter(email__iexact=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -65,6 +67,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         model  = User
         fields = ['full_name', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
         extra_kwargs = {'gate_assignment': {'required': False, 'allow_null': True, 'allow_blank': True}}
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
 
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
@@ -249,6 +257,33 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('A vehicle with this plate number is already registered.')
         return normalized
 
+    def validate(self, attrs):
+        # Guard against collisions with an existing active registration so a
+        # duplicate is reported as a clean per-field 400 rather than hitting a DB
+        # constraint mid-create (which the atomic create below would roll back).
+        from vehicles.models import VehicleRegistration
+        from vehicles.views import _plate_conflict, _email_conflict, _license_conflict, _id_conflict
+        active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+        qs = VehicleRegistration.objects.filter(status__in=active)
+
+        errors = {}
+        c = _plate_conflict(attrs['plate_number'], qs)
+        if c:
+            errors['plate_number'] = c
+        c = _email_conflict(attrs['email'], qs)
+        if c:
+            errors['email'] = c
+        c = _license_conflict(attrs.get('drivers_license', ''), qs)
+        if c:
+            errors['drivers_license'] = c
+        c = _id_conflict(attrs['registrant_type'], attrs.get('student_id', ''), attrs.get('employee_id', ''), qs)
+        if c:
+            errors['student_id' if attrs['registrant_type'] == 'student' else 'employee_id'] = c
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
         from vehicles.models import Vehicle, VehicleRegistration
 
@@ -343,7 +378,8 @@ class AdminReplaceSerializer(serializers.Serializer):
         return value.strip()
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 

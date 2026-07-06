@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
@@ -93,6 +94,12 @@ export default function OwnerDashboard() {
     fetchViolations()
     fetchNotices()
   }, [])
+
+  // Live-refresh when the owner's registration, violations or notices change
+  useLiveUpdates(
+    () => { fetchReg(); fetchViolations(); fetchNotices() },
+    ['vehicleregistration', 'violation', 'parkingnotice', 'vehicle'],
+  )
 
   const fetchNotices = async () => {
     setNoticesLoading(true)

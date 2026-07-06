@@ -22,10 +22,10 @@ export const registrationApi = {
     const { data } = await api.post('/vehicles/register/open/', registrationData)
     return data
   },
-  // Live duplicate check for the registration form's plate/student/employee ID fields
-  checkAvailability: async ({ plate_number, student_id, employee_id }) => {
+  // Live duplicate check for the registration form's plate/email/license/student/employee ID fields
+  checkAvailability: async ({ plate_number, email, drivers_license, student_id, employee_id }) => {
     const { data } = await api.get('/vehicles/register/availability/', {
-      params: { plate_number, student_id, employee_id },
+      params: { plate_number, email, drivers_license, student_id, employee_id },
     })
     return data
   },
