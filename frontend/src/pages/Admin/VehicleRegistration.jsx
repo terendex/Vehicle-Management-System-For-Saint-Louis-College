@@ -60,6 +60,7 @@ export default function VehicleRegistration() {
   const [orNumber, setOrNumber] = useState('')
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
   const [specialCaseReason, setSpecialCaseReason] = useState('')
+  const [scheduleSlots, setScheduleSlots] = useState(null) // per-day remaining student slots
 
   const orValid = orNumber.trim().length >= 6 && orNumber.trim().length <= 7
 
@@ -212,6 +213,12 @@ export default function VehicleRegistration() {
     setOrNumber('')
     setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
     setSpecialCaseReason('')
+    // Per-day remaining student slots — so the admin can see capacity before
+    // assigning campus days (same slot counts shown on the public register form).
+    setScheduleSlots(null)
+    if (reg.registrant_type === 'student') {
+      registrationApi.getScheduleSlots().then(setScheduleSlots).catch(() => {})
+    }
   }
   const openRejectModal = () => setIsRejectModalOpen(true)
 
@@ -582,6 +589,8 @@ export default function VehicleRegistration() {
                         {ALL_DAYS.map(day => {
                           const sel = daysOverride.includes(day)
                           const isAdded = sel && !originalDays.includes(day)
+                          const slot = scheduleSlots?.[day]
+                          const isFull = slot && slot.available === 0 && !sel
                           return (
                             <button
                               key={day}
@@ -590,13 +599,21 @@ export default function VehicleRegistration() {
                               onClick={() => setDaysOverride(prev =>
                                 prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
                               )}
-                              className={`day-override-btn${sel ? ' selected' : ''}${isAdded ? ' added' : ''}`}
+                              className={`day-override-btn${sel ? ' selected' : ''}${isAdded ? ' added' : ''}${isFull ? ' full' : ''}`}
+                              title={slot ? `${slot.used}/${slot.limit} slots used — ${slot.available} available` : undefined}
                             >
-                              {DAY_SHORT[day]}
+                              <span>{DAY_SHORT[day]}</span>
+                              <span className="day-override-slots">
+                                {slot ? (isFull ? 'FULL' : `${slot.available} left`) : '—'}
+                              </span>
                             </button>
                           )
                         })}
                       </div>
+                      <p className="form-hint" style={{ marginTop: 0, marginBottom: 6 }}>
+                        Numbers show remaining student slots per day. Assigning a <strong>full</strong> day
+                        is allowed for special cases but exceeds the day's capacity.
+                      </p>
                       {daysOverride.length > 0 ? (
                         <p className="form-hint">Assigned: <strong>{daysOverride.join(', ')}</strong></p>
                       ) : (

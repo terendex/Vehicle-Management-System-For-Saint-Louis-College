@@ -6,3 +6,7 @@ export const getNotifications = (params = {}) =>
 
 export const markNotificationsRead = (payload) =>
   api.post('/accounts/notifications/mark-read/', payload)
+
+// Clear (delete) notifications. Pass { read_only: true } to keep unread ones.
+export const clearNotifications = (payload = {}) =>
+  api.post('/accounts/notifications/clear/', payload)

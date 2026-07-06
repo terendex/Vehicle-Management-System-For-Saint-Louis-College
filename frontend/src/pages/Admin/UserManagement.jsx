@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
+import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
+import { jsPDF } from 'jspdf'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
@@ -53,6 +54,67 @@ export default function UserManagement() {
   const [qrUser,    setQrUser]    = useState(null)
   const [qrToken,   setQrToken]   = useState(null)
   const [qrLoading, setQrLoading] = useState(false)
+  const qrCanvasRef = useRef(null)  // hidden high-res canvas used to embed the QR into the PDF
+
+  const gateLabel = (u) =>
+    u?.gate_assignment === 'gate1' ? 'Gate 1'
+    : u?.gate_assignment === 'gate4' ? 'Gate 4'
+    : 'Gate selected at login'
+
+  /* ── Guard badge → PDF download ── */
+  const downloadBadgePdf = () => {
+    if (!qrUser || !qrToken) return
+    const canvas = qrCanvasRef.current?.querySelector('canvas')
+    if (!canvas) { toast.error('QR not ready yet — try again in a moment.'); return }
+    const qrDataUrl = canvas.toDataURL('image/png')
+
+    // ID-card sized portrait badge (85.6mm × 54mm landscape → use portrait 54×86)
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [54, 86] })
+    const W = 54
+    const navy = [42, 43, 97]
+
+    // Header band
+    doc.setFillColor(...navy)
+    doc.rect(0, 0, W, 16, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text('SAINT LOUIS COLLEGE', W / 2, 7, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(6)
+    doc.text('Vehicle Management System', W / 2, 11.5, { align: 'center' })
+
+    // Badge type
+    doc.setTextColor(...navy)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.5)
+    doc.text('SECURITY GUARD BADGE', W / 2, 22, { align: 'center' })
+
+    // QR
+    const qrSize = 32
+    doc.addImage(qrDataUrl, 'PNG', (W - qrSize) / 2, 25, qrSize, qrSize)
+
+    // Name + code + gate
+    doc.setTextColor(20, 20, 30)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text(qrUser.full_name || '—', W / 2, 63, { align: 'center', maxWidth: W - 6 })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(6.5)
+    doc.setTextColor(90, 95, 114)
+    doc.text(qrUser.user_code || '', W / 2, 68, { align: 'center' })
+    doc.text(gateLabel(qrUser), W / 2, 72, { align: 'center' })
+
+    // Footer note
+    doc.setDrawColor(226, 230, 238)
+    doc.line(4, 76, W - 4, 76)
+    doc.setFontSize(5)
+    doc.setTextColor(140, 143, 163)
+    doc.text('Scan to log in at the gate. Do not share digitally.', W / 2, 80, { align: 'center', maxWidth: W - 6 })
+
+    const safeName = (qrUser.full_name || 'guard').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+    doc.save(`guard-badge-${safeName}.pdf`)
+  }
 
   // A guard's QR badge stays locked until they log in with their credentials
   // and replace the temporary password (clears must_change_password).
@@ -938,6 +1000,10 @@ export default function UserManagement() {
                   <div style={{ padding: 14, background: '#fff', border: '2px solid #E2E6EE', borderRadius: 14, boxShadow: '0 2px 12px rgba(42,43,97,0.08)' }}>
                     <QRCodeSVG value={qrToken} size={190} level="M" />
                   </div>
+                  {/* Hidden high-res canvas — source for the PDF badge export */}
+                  <div ref={qrCanvasRef} style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', opacity: 0, pointerEvents: 'none' }} aria-hidden="true">
+                    <QRCodeCanvas value={qrToken} size={512} level="M" />
+                  </div>
                   {qrUser.role === 'security' ? (
                     <>
                       <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 320 }}>
@@ -955,7 +1021,18 @@ export default function UserManagement() {
                 </>
               ) : null}
             </div>
-            <div className="um-modal-footer" style={{ justifyContent: 'flex-end' }}>
+            <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
+              {qrUser.role === 'security' && (
+                <button
+                  className="um-btn-primary"
+                  onClick={downloadBadgePdf}
+                  disabled={qrLoading || !qrToken}
+                  title="Download this guard's name & QR badge as a PDF"
+                >
+                  <QrCode size={15} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  Download PDF
+                </button>
+              )}
               <button className="um-btn-secondary" onClick={() => setQrUser(null)}>Close</button>
             </div>
           </div>
