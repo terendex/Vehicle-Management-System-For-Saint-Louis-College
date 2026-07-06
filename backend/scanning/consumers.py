@@ -634,7 +634,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from accounts.models import AuditLog
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
                             _auto_log_violation, _close_active_pass, _gate_label,
-                            _check_stay_limit, _log_status, _open_campus_unknown_result)
+                            _check_stay_limit, _log_status, _open_campus_unknown_result,
+                            _is_standby_fetcher)
         from .entry_logic import is_open_campus
         close_old_connections()
 
@@ -721,6 +722,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             }
 
         if inside_status == 'inside':
+            # Visitor vehicles exit by scanning the printed slip QR, never by plate.
+            from .views import _active_visitor_pass
+            if _active_visitor_pass(plate_number):
+                return {
+                    "status":         "visitor_pass_required",
+                    "allowed":        False,
+                    "message":        "Visitor is inside on an active pass. Scan the QR on the "
+                                      "printed visitor slip to record the exit.",
+                    "vehicle":        VehicleSerializer(vehicle).data,
+                    "has_violations": False,
+                    "already_inside": True,
+                }
             seconds_since_entry = (timezone.now() - last_entry.scanned_at).total_seconds()
             if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
                 # Within the 1-minute breathing space — ignore
@@ -760,7 +773,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             overstay_minutes = _close_active_pass(
                 plate_number, gate_id,
                 evidence_bytes=getattr(self, '_last_frame_jpeg', None))
-            if vehicle.user and vehicle.user.owner_type == 'fetcher':
+            if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id,
                     evidence_bytes=getattr(self, '_last_frame_jpeg', None)))

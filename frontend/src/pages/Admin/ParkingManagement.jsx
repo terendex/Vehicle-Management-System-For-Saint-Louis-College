@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
-  ParkingCircle, Bike, Car, Plus, RefreshCw, Upload, Save,
+  ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
-  AlertTriangle, CheckCircle,
+  AlertTriangle, CheckCircle, Square, PenTool,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -30,7 +30,20 @@ function svgPt(e, el) {
   }
 }
 
-function inside(pt, s) {
+function pointInPolygon(pt, points) {
+  let inside = false
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i]
+    const [xj, yj] = points[j]
+    const intersect = ((yi > pt.y) !== (yj > pt.y)) &&
+      (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+function hitTest(pt, s) {
+  if (s.points && s.points.length >= 3) return pointInPolygon(pt, s.points)
   return pt.x >= s.x1 && pt.x <= s.x2 && pt.y >= s.y1 && pt.y <= s.y2
 }
 
@@ -41,11 +54,17 @@ function autoLabel(list, cat) {
   return `${pre}${String(n).padStart(2, '0')}`
 }
 
-export default function ParkingManagement() {
+// `embedded` renders the content without its own AdminLayout so the page can
+// live as a tab inside Parking Space Management.
+export default function ParkingManagement({ embedded = false }) {
+  const Wrapper = embedded ? Fragment : AdminLayout
   const [zones,        setZones]        = useState([])
   const [selId,        setSelId]        = useState(null)
   const [mode,         setMode]         = useState('live')
   const [drafts,       setDrafts]       = useState([])
+  const [tool,         setTool]         = useState('box') // 'box' | 'pen' (Edit Layout only)
+  const [penPoints,    setPenPoints]    = useState([])
+  const [penCursor,    setPenCursor]    = useState(null)
   const [selDraft,     setSelDraft]     = useState(null)
   const [draftLabel,   setDraftLabel]   = useState('')
   const [rubberBand,   setRubberBand]   = useState(null)
@@ -60,6 +79,12 @@ export default function ParkingManagement() {
   const [resultModal,  setResultModal]  = useState(null) // { type: 'success'|'error', message }
   // Live-view RTSP cameras panel
   const [showCamPanel, setShowCamPanel] = useState(false)
+  // Device Management cameras assignable to a zone, and per-zone detection status
+  const [deviceCams,   setDeviceCams]   = useState([])
+  const [camRunning,   setCamRunning]   = useState({})
+  const [assigning,    setAssigning]    = useState(false)
+  const [toggling,     setToggling]     = useState(false)
+  const [capturing,    setCapturing]    = useState(false)
 
   const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
@@ -70,12 +95,13 @@ export default function ParkingManagement() {
     if (!pkActiveCamId && parkingCams.length > 0) setPkActiveCam(parkingCams[0].id)
   }) // intentionally no deps — runs after every render until activeCamId is set
 
-  const svgEl     = useRef(null)
-  const fileRef   = useRef(null)
-  const dragStart = useRef(null)
-  const dragging  = useRef(false)
-  const rbRef     = useRef(null)
-  const draftsRef = useRef([])
+  const svgEl       = useRef(null)
+  const fileRef     = useRef(null)
+  const dragStart   = useRef(null)
+  const dragging    = useRef(false)
+  const rbRef       = useRef(null)
+  const draftsRef   = useRef([])
+  const camCanvasRefs = useRef({})
 
   useEffect(() => { draftsRef.current = drafts }, [drafts])
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
@@ -100,9 +126,23 @@ export default function ParkingManagement() {
   // Load parking cameras once on mount — persists across navigation
   useEffect(() => {
     camerasApi.list({ assignment: 'parking' })
-      .then(cams => cams.forEach(c => addPkCamera(c.name, c.rtsp_url, 'parking')))
+      .then(cams => {
+        setDeviceCams(cams)
+        cams.forEach(c => addPkCamera(c.name, c.rtsp_url, 'parking'))
+      })
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll detection (auto-camera) status for all zones
+  const refreshCamStatus = useCallback(async () => {
+    try { setCamRunning(await zoneApi.getCameraStatus()) } catch { /* silent */ }
+  }, [])
+
+  useEffect(() => {
+    refreshCamStatus()
+    const t = setInterval(refreshCamStatus, 8000)
+    return () => clearInterval(t)
+  }, [refreshCamStatus])
 
   // Live occupancy polling (always on in live mode)
   const refreshZone = useCallback(async () => {
@@ -125,7 +165,19 @@ export default function ParkingManagement() {
       setDrafts(selZone.spaces.map(s => ({ ...s, _id: s.id })))
       setSelDraft(null)
     }
+    setTool('box')
+    setPenPoints([])
+    setPenCursor(null)
   }, [mode, selId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Escape cancels an in-progress pen shape
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && tool === 'pen' && penPoints.length > 0) setPenPoints([])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tool, penPoints])
 
   // ── Zone CRUD ───────────────────────────────────────────────────
   const handleAddZone = async (e) => {
@@ -164,6 +216,58 @@ export default function ParkingManagement() {
     }
   }
 
+  // ── Camera assignment (Device Management) ──────────────────────
+  const handleAssignCamera = async (e) => {
+    const cameraId = e.target.value ? Number(e.target.value) : null
+    if (!selId) return
+    setAssigning(true)
+    try {
+      const z = await zoneApi.update(selId, { camera: cameraId })
+      setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
+    } catch {
+      setResultModal({ type: 'error', message: 'Failed to assign camera. Please try again.' })
+    } finally { setAssigning(false) }
+  }
+
+  const toggleDetection = async () => {
+    if (!selZone) return
+    setToggling(true)
+    try {
+      if (camRunning[selZone.id]) {
+        await zoneApi.stopCamera(selZone.id)
+      } else {
+        await zoneApi.startCamera(selZone.id)
+      }
+      await refreshCamStatus()
+    } catch (err) {
+      setResultModal({
+        type: 'error',
+        message: err?.response?.data?.error || 'Failed to toggle camera detection.',
+      })
+    } finally { setToggling(false) }
+  }
+
+  // ── Capture a still frame from the live feed as the reference image ─────
+  const handleCapture = async () => {
+    if (!selId || !pkActiveCam) return
+    const canvas = camCanvasRefs.current[pkActiveCam.id]
+    if (!canvas || !pkActiveCam.streamConnected) {
+      setResultModal({ type: 'error', message: 'Camera is not connected yet — wait for the live feed then try again.' })
+      return
+    }
+    setCapturing(true)
+    try {
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+      if (!blob) throw new Error('empty capture')
+      const file = new File([blob], `zone-${selId}-capture.jpg`, { type: 'image/jpeg' })
+      const z    = await zoneApi.uploadImage(selId, file)
+      setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
+      toast.success('Captured frame set as reference image.')
+    } catch {
+      setResultModal({ type: 'error', message: 'Failed to capture frame. Please try again.' })
+    } finally { setCapturing(false) }
+  }
+
   // ── Image upload ────────────────────────────────────────────────
   const onImageFile = async (e) => {
     const f = e.target.files?.[0]
@@ -177,7 +281,7 @@ export default function ParkingManagement() {
 
   // ── SVG drawing (edit mode) ─────────────────────────────────────
   const onMouseDown = (e) => {
-    if (mode !== 'edit') return
+    if (mode !== 'edit' || tool !== 'box') return
     e.preventDefault()
     const pt = svgPt(e, svgEl.current)
     dragStart.current = pt
@@ -186,6 +290,10 @@ export default function ParkingManagement() {
   }
 
   const onMouseMove = (e) => {
+    if (mode === 'edit' && tool === 'pen') {
+      if (penPoints.length > 0) setPenCursor(svgPt(e, svgEl.current))
+      return
+    }
     if (!dragStart.current) return
     const pt = svgPt(e, svgEl.current)
     const dx = Math.abs(pt.x - dragStart.current.x)
@@ -199,6 +307,7 @@ export default function ParkingManagement() {
   }
 
   const onMouseUp = (e) => {
+    if (tool !== 'box') return
     if (!dragStart.current) return
     const pt          = svgPt(e, svgEl.current)
     const wasDragging = dragging.current
@@ -210,7 +319,7 @@ export default function ParkingManagement() {
     rbRef.current = null
 
     if (!wasDragging) {
-      const hit = [...draftsRef.current].reverse().find(s => inside(pt, s))
+      const hit = [...draftsRef.current].reverse().find(s => hitTest(pt, s))
       if (hit) { setSelDraft(hit._id); setDraftLabel(hit.space_number) }
       else      setSelDraft(null)
       return
@@ -228,6 +337,7 @@ export default function ParkingManagement() {
       space_number: label,
       vehicle_category: selZone?.vehicle_category,
       x1: nx1, y1: ny1, x2: nx2, y2: ny2,
+      points: null,
       is_occupied: false, occupied_by: '',
     }])
     setSelDraft(id)
@@ -235,9 +345,40 @@ export default function ParkingManagement() {
   }
 
   const onMouseLeave = () => {
+    setPenCursor(null)
     if (!dragStart.current) return
     dragStart.current = null; dragging.current = false
     setRubberBand(null); rbRef.current = null
+  }
+
+  // ── Pen tool (freeform polygon spaces) ───────────────────────────
+  const finalizePenShape = (points) => {
+    if (points.length < 3) return
+    const xs = points.map(p => p.x), ys = points.map(p => p.y)
+    const id    = tid()
+    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
+    setDrafts(p => [...p, {
+      _id: id, id: null,
+      space_number: label,
+      vehicle_category: selZone?.vehicle_category,
+      x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
+      points: points.map(p => [p.x, p.y]),
+      is_occupied: false, occupied_by: '',
+    }])
+    setSelDraft(id)
+    setDraftLabel(label)
+  }
+
+  const onSvgClick = (e) => {
+    if (mode !== 'edit' || tool !== 'pen') return
+    const pt = svgPt(e, svgEl.current)
+    if (penPoints.length >= 3 && Math.hypot(pt.x - penPoints[0].x, pt.y - penPoints[0].y) < 0.02) {
+      finalizePenShape(penPoints)
+      setPenPoints([])
+      setPenCursor(null)
+      return
+    }
+    setPenPoints(prev => [...prev, pt])
   }
 
   const commitLabel = () => {
@@ -255,7 +396,10 @@ export default function ParkingManagement() {
     if (!selId) return
     setSaving(true)
     try {
-      const payload = drafts.map(s => ({ space_number: s.space_number, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 }))
+      const payload = drafts.map(s => ({
+        space_number: s.space_number, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
+        points: s.points ?? null,
+      }))
       const saved   = await zoneApi.saveLayout(selId, payload)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: saved } : z))
       setDrafts(saved.map(s => ({ ...s, _id: s.id })))
@@ -297,7 +441,7 @@ export default function ParkingManagement() {
 
   // ════════════════════════════════════════════════════════════════
   return (
-    <AdminLayout>
+    <Wrapper>
       <div className="pm-page">
 
         {/* Header */}
@@ -377,6 +521,43 @@ export default function ParkingManagement() {
                   </button>
                 </div>
 
+                <div className="pm-cam-assign">
+                  <Video size={13} />
+                  <select
+                    className="pm-cam-assign-select"
+                    value={selZone.camera ?? ''}
+                    onChange={handleAssignCamera}
+                    disabled={assigning}
+                  >
+                    <option value="">No camera assigned</option>
+                    {deviceCams.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {deviceCams.length === 0 && (
+                    <span style={{ color: '#A8ACC4' }}>None registered — add one in Device Management</span>
+                  )}
+                </div>
+
+                {mode === 'live' && selZone.camera != null && (
+                  <button
+                    className="pm-btn pm-btn--outline"
+                    onClick={toggleDetection}
+                    disabled={toggling}
+                  >
+                    {toggling
+                      ? <Loader2 size={13} className="pm-spin" />
+                      : <Video size={13} />}
+                    {camRunning[selZone.id] ? 'Stop Detection' : 'Start Detection'}
+                  </button>
+                )}
+
+                {mode === 'live' && (
+                  <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
+                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Auto-detect off'}
+                  </span>
+                )}
+
                 {mode === 'live' && (
                   <div className="pm-summary">
                     <span className="pm-sum-free">{sumFr} free</span>
@@ -388,7 +569,47 @@ export default function ParkingManagement() {
                 )}
 
                 {mode === 'edit' && (
+                  <div className="pm-mode-toggle">
+                    <button
+                      className={`pm-mode-btn${tool === 'box' ? ' pm-mode-btn--active' : ''}`}
+                      onClick={() => { setTool('box'); setPenPoints([]) }}
+                    >
+                      <Square size={13} /> Box
+                    </button>
+                    <button
+                      className={`pm-mode-btn${tool === 'pen' ? ' pm-mode-btn--active' : ''}`}
+                      onClick={() => setTool('pen')}
+                    >
+                      <PenTool size={13} /> Pen
+                    </button>
+                  </div>
+                )}
+
+                {mode === 'edit' && tool === 'box' && (
                   <span className="pm-edit-hint">Click-drag on the image to draw a space box</span>
+                )}
+
+                {mode === 'edit' && tool === 'pen' && (
+                  <>
+                    <span className="pm-edit-hint">
+                      {penPoints.length === 0
+                        ? 'Click to place points, then click the first (yellow) point to close the shape'
+                        : `${penPoints.length} point${penPoints.length === 1 ? '' : 's'} placed — click the yellow point to close, or Esc to cancel`}
+                    </span>
+                    {penPoints.length >= 3 && (
+                      <button
+                        className="pm-btn pm-btn--outline"
+                        onClick={() => { finalizePenShape(penPoints); setPenPoints([]) }}
+                      >
+                        <CheckCircle2 size={13} /> Finish Shape
+                      </button>
+                    )}
+                    {penPoints.length > 0 && (
+                      <button className="pm-btn pm-btn--outline" onClick={() => setPenPoints([])}>
+                        <X size={13} /> Cancel
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -434,6 +655,7 @@ export default function ParkingManagement() {
                 onMouseMove={onMouseMove}
                 onMouseUp={onMouseUp}
                 onMouseLeave={onMouseLeave}
+                onClick={onSvgClick}
               >
                 {/* Parking space boxes */}
                 {spaceList.map(s => {
@@ -453,14 +675,24 @@ export default function ParkingManagement() {
                       }
                       style={{ cursor: 'pointer' }}
                     >
-                      <rect
-                        x={x} y={y} width={w} height={h}
-                        fill={fill}
-                        stroke={stroke}
-                        strokeWidth={sel ? 0.006 : 0.003}
-                        strokeDasharray={sel ? '0.015 0.007' : undefined}
-                        rx={0.004}
-                      />
+                      {s.points && s.points.length >= 3 ? (
+                        <polygon
+                          points={s.points.map(p => p.join(',')).join(' ')}
+                          fill={fill}
+                          stroke={stroke}
+                          strokeWidth={sel ? 0.006 : 0.003}
+                          strokeDasharray={sel ? '0.015 0.007' : undefined}
+                        />
+                      ) : (
+                        <rect
+                          x={x} y={y} width={w} height={h}
+                          fill={fill}
+                          stroke={stroke}
+                          strokeWidth={sel ? 0.006 : 0.003}
+                          strokeDasharray={sel ? '0.015 0.007' : undefined}
+                          rx={0.004}
+                        />
+                      )}
                       <text
                         x={x + w/2}
                         y={y + h/2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}
@@ -499,6 +731,32 @@ export default function ParkingManagement() {
                     />
                   )
                 })()}
+
+                {/* In-progress pen shape */}
+                {mode === 'edit' && tool === 'pen' && penPoints.length > 0 && (
+                  <g>
+                    <polyline
+                      points={
+                        penPoints.map(p => `${p.x},${p.y}`).join(' ')
+                        + (penCursor ? ` ${penCursor.x},${penCursor.y}` : '')
+                      }
+                      fill="none"
+                      stroke="#2A2B61"
+                      strokeWidth={0.003}
+                      strokeDasharray="0.01 0.006"
+                    />
+                    {penPoints.map((p, i) => (
+                      <circle
+                        key={i}
+                        cx={p.x} cy={p.y}
+                        r={i === 0 ? 0.01 : 0.006}
+                        fill={i === 0 ? '#FBBF24' : '#2A2B61'}
+                        stroke="#fff"
+                        strokeWidth={0.0015}
+                      />
+                    ))}
+                  </g>
+                )}
               </svg>
 
               {/* Space label popover (edit mode) */}
@@ -533,7 +791,9 @@ export default function ParkingManagement() {
               <span className="pm-legend-note">
                 {mode === 'live'
                   ? 'Click a space to toggle manually · auto-refreshes every 8 s'
-                  : 'Click-drag to draw · click a box to rename or delete'}
+                  : tool === 'pen'
+                    ? 'Click to trace a freeform shape · click a space to rename or delete'
+                    : 'Click-drag to draw · click a box to rename or delete'}
               </span>
             </div>
           </div>{/* /pm-canvas-area */}
@@ -571,7 +831,7 @@ export default function ParkingManagement() {
                         style={{ display: pkActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
                       >
                         <canvas
-                          ref={el => registerPkCanvas(cam.id, el)}
+                          ref={el => { registerPkCanvas(cam.id, el); camCanvasRefs.current[cam.id] = el }}
                           style={{ width: '100%', display: 'block', background: '#000', minHeight: 180 }}
                         />
                       </div>
@@ -599,6 +859,19 @@ export default function ParkingManagement() {
                   </div>
                 )}
               </div>
+
+              {parkingCams.length > 0 && (
+                <button
+                  className="pm-btn pm-btn--primary"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                  onClick={handleCapture}
+                  disabled={capturing || !pkActiveCam?.streamConnected}
+                  title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
+                >
+                  {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
+                  Use as Reference Image
+                </button>
+              )}
 
               {/* Thumbnail strip — only when 2+ cameras */}
               {parkingCams.length > 1 && (
@@ -760,6 +1033,6 @@ export default function ParkingManagement() {
         </div>
       )}
 
-    </AdminLayout>
+    </Wrapper>
   )
 }

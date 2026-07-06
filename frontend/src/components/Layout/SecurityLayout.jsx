@@ -11,16 +11,18 @@ import {
   X,
   CheckCircle,
   AlertCircle,
-  ScanLine,
   LogIn,
   Eye,
   EyeOff,
+  KeyRound,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
+import { usersApi } from '../../api/users'
+import { authApi } from '../../api/auth'
 import './AdminLayout.css'
 import './SecurityLayout.css'
 
@@ -46,7 +48,7 @@ function shiftDuration(clockedInAt) {
 
 // ── Change Shift Overlay ──────────────────────────────────────────────────────
 function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
-  const { qrLogin } = useAuthStore()
+  const { qrLogin, guardLogin, isLoading } = useAuthStore()
 
   const [status,     setStatus]     = useState('idle')  // idle | scanning | success | error
   const [guardInfo,  setGuardInfo]  = useState(null)
@@ -56,13 +58,37 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
   const [showToken,  setShowToken]  = useState(false)
   const [cameraErr,  setCameraErr]  = useState('')
 
+  // Incoming guard signs in with credentials; the QR scanner appears below the
+  // form once their typed email belongs to a guard whose badge is usable.
+  const [qrAvailable, setQrAvailable]   = useState(false)
+  const [email, setEmail]               = useState('')
+  const [password, setPassword]         = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [credError, setCredError]       = useState('')
+
   const videoRef  = useRef(null)
   const streamRef = useRef(null)
   const inputRef  = useRef(null)
 
+  // Same rule as the gate login page: debounced per-guard badge check on the typed email
+  useEffect(() => {
+    const clean = email.trim()
+    if (!clean || !clean.includes('@')) {
+      setQrAvailable(false)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      authApi.guardQrAvailable(clean)
+        .then(ok => { if (!cancelled) setQrAvailable(ok) })
+        .catch(() => { if (!cancelled) setQrAvailable(false) })
+    }, 400)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [email])
+
   // QR camera scanning loop
   useEffect(() => {
-    if (!useCamera || status !== 'idle') return
+    if (!useCamera || status !== 'idle' || !qrAvailable) return
     let animFrame
     const canvas = document.createElement('canvas')
     const ctx    = canvas.getContext('2d', { willReadFrequently: true })
@@ -104,7 +130,7 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
       cancelAnimationFrame(animFrame)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [useCamera, status]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useCamera, status, qrAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopCamera = () => streamRef.current?.getTracks().forEach(t => t.stop())
 
@@ -145,6 +171,23 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
     }
   }
 
+  const handleCredentialLogin = async (e) => {
+    e?.preventDefault()
+    if (!email.trim() || !password || isLoading) return
+    setCredError('')
+    try {
+      const guard = await guardLogin(email.trim(), password, gate)
+      setGuardInfo(guard)
+      setStatus('success')
+      toast.success(`Shift handed over to ${guard.full_name} at ${gateLabel}.`)
+      onSuccess?.()
+      setTimeout(() => { onClose() }, 2200)
+    } catch (err) {
+      setCredError(err.message || 'Login failed. Please check your credentials.')
+      setPassword('')
+    }
+  }
+
   return (
     <div className="cs-overlay" onClick={e => e.target === e.currentTarget && handleClose()}>
       <div className="cs-modal">
@@ -182,56 +225,244 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
             <p>Verifying QR badge…</p>
           </div>
 
-        ) : useCamera ? (
-          <>
-            <p className="cs-instruction">
-              Scan the incoming guard's QR badge to hand over the shift at <strong>{gateLabel}</strong>
-            </p>
-            <div className="cs-camera-wrap">
-              <video ref={videoRef} className="cs-video" muted playsInline />
-              <div className="cs-scan-frame" />
-              <p className="cs-camera-hint">Point camera at QR badge</p>
-            </div>
-            <button className="cs-toggle-btn" onClick={() => { stopCamera(); setUseCamera(false) }}>
-              Use text input instead
-            </button>
-          </>
-
         ) : (
           <>
             <p className="cs-instruction">
-              Enter the incoming guard's QR token manually, or use a USB barcode scanner
+              Incoming guard: sign in with your credentials to take over the shift at <strong>{gateLabel}</strong>
             </p>
-            <div className="cs-input-row">
+            <form onSubmit={handleCredentialLogin} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {credError && <p className="cs-err-text" role="alert">{credError}</p>}
               <input
-                ref={inputRef}
-                autoFocus
                 className="cs-input"
-                type={showToken ? 'text' : 'password'}
-                value={inputToken}
-                onChange={e => setInputToken(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleScan(inputToken)}
-                placeholder="QR token…"
-                autoComplete="off"
-                spellCheck={false}
+                style={{ fontFamily: 'inherit' }}
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Email address"
+                autoComplete="username"
+                required
               />
-              <button type="button" className="cs-eye" onClick={() => setShowToken(v => !v)}>
-                {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-              <button
-                className="cs-submit"
-                disabled={!inputToken.trim()}
-                onClick={() => handleScan(inputToken)}
-              >
-                <LogIn size={16} />
-              </button>
-            </div>
-            {cameraErr && <p className="cs-err-text">{cameraErr}</p>}
-            <button className="cs-toggle-btn" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
-              Use camera instead
-            </button>
+              <div className="cs-input-row">
+                <input
+                  className="cs-input"
+                  style={{ fontFamily: 'inherit' }}
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Password"
+                  autoComplete="current-password"
+                  required
+                />
+                <button type="button" className="cs-eye" onClick={() => setShowPassword(v => !v)}>
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+                <button
+                  type="submit"
+                  className="cs-submit"
+                  disabled={!email.trim() || !password || isLoading}
+                >
+                  <LogIn size={16} />
+                </button>
+              </div>
+            </form>
+
+            {/* QR scanner appears once the typed email matches a badge-eligible guard */}
+            {qrAvailable && (
+              <>
+                <div className="cs-divider"><span>or scan your QR badge</span></div>
+                {useCamera ? (
+                  <>
+                    <div className="cs-camera-wrap">
+                      <video ref={videoRef} className="cs-video" muted playsInline />
+                      <div className="cs-scan-frame" />
+                      <p className="cs-camera-hint">Point camera at QR badge</p>
+                    </div>
+                    <button className="cs-toggle-btn" onClick={() => { stopCamera(); setUseCamera(false) }}>
+                      Use text input instead
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="cs-input-row">
+                      <input
+                        ref={inputRef}
+                        className="cs-input"
+                        type={showToken ? 'text' : 'password'}
+                        value={inputToken}
+                        onChange={e => setInputToken(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleScan(inputToken)}
+                        placeholder="QR token…"
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      <button type="button" className="cs-eye" onClick={() => setShowToken(v => !v)}>
+                        {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                      <button
+                        className="cs-submit"
+                        disabled={!inputToken.trim()}
+                        onClick={() => handleScan(inputToken)}
+                      >
+                        <LogIn size={16} />
+                      </button>
+                    </div>
+                    {cameraErr && <p className="cs-err-text">{cameraErr}</p>}
+                    <button className="cs-toggle-btn" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
+                      Use camera instead
+                    </button>
+                  </>
+                )}
+              </>
+            )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Forced Password Change ────────────────────────────────────────────────────
+// Shown on a guard's first credentials login (must_change_password is set).
+// The guard cannot use the dashboard — and their QR badge stays locked — until
+// the temporary password is replaced.
+function ForcePasswordModal({ onLogout }) {
+  const { clearMustChangePassword } = useAuthStore()
+
+  const [form, setForm]             = useState({ current: '', new: '', confirm: '' })
+  const [showPw, setShowPw]         = useState(false)
+  const [error, setError]           = useState(null)
+  const [errors, setErrors]         = useState([])
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (submitting) return
+    setError(null)
+    setErrors([])
+    if (form.new !== form.confirm) {
+      setError('New passwords do not match.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await usersApi.changePassword(form.current, form.new, form.confirm)
+      clearMustChangePassword()
+      toast.success('Password changed! Your QR badge can now be issued by the admin.')
+    } catch (err) {
+      const data = err.response?.data
+      if (data?.errors) setErrors(data.errors)
+      else setError(data?.error || 'Failed to change password.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const fieldStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
+  const labelStyle = { fontSize: 12, fontWeight: 600, color: '#5A5F72' }
+
+  return (
+    <div className="cs-overlay">
+      <div className="cs-modal" style={{ maxWidth: 380 }}>
+        <div className="cs-modal-head">
+          <div className="cs-modal-head-left">
+            <KeyRound size={15} />
+            <span className="cs-modal-title">Change Your Password</span>
+          </div>
+        </div>
+
+        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.5 }}>
+          You are using a temporary password. Set a new one to continue — your QR badge
+          stays locked until you do.
+        </p>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          <div style={fieldStyle}>
+            <label style={labelStyle} htmlFor="fp-current">Current (Temporary) Password</label>
+            <input
+              id="fp-current"
+              className="cs-input"
+              type={showPw ? 'text' : 'password'}
+              value={form.current}
+              onChange={e => setForm({ ...form, current: e.target.value })}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div style={fieldStyle}>
+            <label style={labelStyle} htmlFor="fp-new">New Password</label>
+            <input
+              id="fp-new"
+              className="cs-input"
+              type={showPw ? 'text' : 'password'}
+              value={form.new}
+              onChange={e => setForm({ ...form, new: e.target.value })}
+              autoComplete="new-password"
+              required
+            />
+          </div>
+          <div style={fieldStyle}>
+            <label style={labelStyle} htmlFor="fp-confirm">Confirm New Password</label>
+            <input
+              id="fp-confirm"
+              className="cs-input"
+              type={showPw ? 'text' : 'password'}
+              value={form.confirm}
+              onChange={e => setForm({ ...form, confirm: e.target.value })}
+              autoComplete="new-password"
+              required
+            />
+          </div>
+
+          <button
+            type="button"
+            className="cs-toggle-btn"
+            style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 5 }}
+            onClick={() => setShowPw(v => !v)}
+          >
+            {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
+            {showPw ? 'Hide passwords' : 'Show passwords'}
+          </button>
+
+          <p style={{ margin: 0, fontSize: 11.5, color: '#9ca3af', lineHeight: 1.45 }}>
+            At least 8 characters with an uppercase letter, lowercase letter, number and special character.
+          </p>
+
+          {error && <p className="cs-err-text" style={{ margin: 0 }}>{error}</p>}
+          {errors.length > 0 && (
+            <div className="cs-err-text" style={{ margin: 0 }}>
+              {errors.map((msg, i) => <div key={i}>• {msg}</div>)}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button
+              type="button"
+              style={{
+                flex: 1, height: 38, border: '1.5px solid #E2E6EE', borderRadius: 8,
+                background: '#fff', color: '#374151', fontSize: 13, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+              onClick={onLogout}
+            >
+              <LogOut size={14} /> Log Out
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                flex: 1.4, height: 38, border: 'none', borderRadius: 8,
+                background: '#2A2B61', color: '#fff', fontSize: 13, fontWeight: 600,
+                cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.7 : 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 6, fontFamily: 'inherit',
+              }}
+            >
+              <KeyRound size={14} />
+              {submitting ? 'Saving…' : 'Set New Password'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
@@ -340,6 +571,11 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           {children}
         </div>
       </main>
+
+      {/* Forced password change — first credentials login with a temporary password */}
+      {user?.role === 'security' && user?.must_change_password && (
+        <ForcePasswordModal onLogout={handleLogout} />
+      )}
 
       {/* Change Shift Overlay */}
       {showChangeShift && gate && (

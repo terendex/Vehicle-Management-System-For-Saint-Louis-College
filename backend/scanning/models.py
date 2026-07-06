@@ -9,6 +9,30 @@ SCHEDULE_DAYS = {
     'ANY':  [0, 1, 2, 3, 4, 5, 6],
 }
 
+class Gate(models.Model):
+    """A campus entry gate. Seeded with gate1/gate4; admins can add more from
+    System Settings as the school expands. gate_id is the stable slug stored
+    on shifts, access logs and camera assignments (e.g. 'gate2')."""
+    id         = models.BigAutoField(primary_key=True, db_column='gate_pk')
+    gate_id    = models.SlugField(max_length=20, unique=True)
+    label      = models.CharField(max_length=100)
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['gate_id']
+
+    def __str__(self):
+        return f"{self.label} ({self.gate_id})"
+
+    @classmethod
+    def active_ids(cls):
+        """Slugs of active gates; falls back to the two founding gates so login
+        never locks out if the table is empty."""
+        ids = list(cls.objects.filter(is_active=True).values_list('gate_id', flat=True))
+        return ids or ['gate1', 'gate4']
+
+
 class Office(models.Model):
     id      = models.BigAutoField(primary_key=True, db_column='office_id')
     name    = models.CharField(max_length=100)
@@ -40,8 +64,16 @@ class VisitorPass(models.Model):
     allowed_duration = models.PositiveIntegerField(default=60, help_text="Allowed time inside in minutes")
     valid_date = models.DateField(default=timezone.now)
     entered_at = models.DateTimeField(auto_now_add=True)
+    # Set when the guard confirms the thermal slip was printed — the visitor's
+    # entry is only logged in the AccessLog at that moment.
+    printed_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     exited_at  = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def qr_payload(self):
+        """Encoded in the QR printed on the slip; scanned at the gate to record exit."""
+        return f'SLC-VISITOR:{self.pk}'
 
     def __str__(self):
         office_name = self.office.name if self.office else 'No office'
