@@ -1,37 +1,6 @@
-/* ── Parking Space Management tab bar ── */
-.psm-tabs {
-  display: flex;
-  gap: 6px;
-  background: #F2F4FA;
-  border: 1px solid #E2E6EE;
-  border-radius: 12px;
-  padding: 4px;
-  margin-bottom: 18px;
-  max-width: 420px;
-}
-
-.psm-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 9px 14px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  color: #6B7080;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.psm-tab:hover { color: #2A2B61; }
-
-.psm-tab.active {
-  background: #FFFFFF;
-  color: #2A2B61;
-  box-shadow: 0 1px 4px rgba(26, 29, 46, 0.1);
+/* ── Parking Space Management ── */
+.psm-section-divider {
+  height: 1px;
+  background: #E2E6EE;
+  margin: 28px 0;
 }
