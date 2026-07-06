@@ -91,12 +91,19 @@ def get_organizer_event(plate_number: str):
     return None
 
 
+def is_open_campus() -> bool:
+    """True while Open Campus Mode is enabled in system settings."""
+    return SystemSettings.get().open_campus_mode
+
+
 def check_entry(vehicle) -> dict:
-    # Open Campus Mode — bypass all rules, allow everything
+    # Open Campus Mode — bypass all rules, allow everything. The client-facing
+    # status is 'open_entry' (displayed as "Open Entry"); the AccessLog row is
+    # still stored as AUTHORIZED so entry/exit pairing and stats keep working.
     settings = SystemSettings.get()
     if settings.open_campus_mode:
         owner_name = vehicle.user.full_name if vehicle.user else vehicle.plate_number
-        return _result('authorized', True, f'Open Campus Mode active — {owner_name}. Entry granted.', None)
+        return _result('open_entry', True, f'Open Campus Mode active — {owner_name}. Open entry granted.', None)
 
     # Block entry if there is an active fee-imposed violation (3rd offense, unpaid)
     from violations.models import Violation
@@ -126,6 +133,11 @@ def check_entry(vehicle) -> dict:
                 'Visitor pass expired — create a new pass to grant entry.', None)
         if pass_:
             return _result('authorized', True, 'Visitor pass active. Entry granted.', None)
+        if not user:
+            # Gate-created vehicle row (made when a visitor pass was issued).
+            # Once that pass is exited, the plate reads as unregistered again —
+            # the same lookup status it had before the pass existed.
+            return _result('unknown', False, 'Plate not registered.', None)
         return _result('no_pass', False,
             'No active visitor pass for today. Create a visitor pass to grant entry.', None)
 

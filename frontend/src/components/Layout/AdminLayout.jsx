@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
+import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
 function buildNavGroups(isAdmin, isCdso) {
@@ -115,6 +116,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
           <span className="brand-text">SLC Admin</span>
+          <NotificationBell />
         </div>
 
         <nav className="sidebar-nav">
