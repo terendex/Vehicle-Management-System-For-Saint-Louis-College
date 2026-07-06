@@ -28,7 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type']
+        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type', 'contact', 'address']
 
     def get_photo_url(self, obj):
         if not obj.photo:

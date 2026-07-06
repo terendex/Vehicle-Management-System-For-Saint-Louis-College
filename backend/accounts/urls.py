@@ -19,6 +19,7 @@ urlpatterns = [
     path('dashboard/stats/',            views.DashboardStatsView.as_view(),    name='dashboard-stats'),
     path('password-reset/request/',     views.PasswordResetRequestView.as_view(),  name='password-reset-request'),
     path('password-reset/confirm/',     views.PasswordResetConfirmView.as_view(),  name='password-reset-confirm'),
+    path('guard-qr-available/',         views.GuardQrAvailabilityView.as_view(),   name='guard-qr-available'),
     path('users/<int:pk>/qr/',          views.GuardQRView.as_view(),               name='guard-qr'),
     path('users/<int:pk>/regenerate-qr/', views.RegenerateGuardQRView.as_view(),   name='guard-regenerate-qr'),
     path('admin/create-guard/',         views.AdminCreateGuardView.as_view(),      name='admin-create-guard'),
