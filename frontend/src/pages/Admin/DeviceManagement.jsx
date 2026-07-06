@@ -8,6 +8,7 @@ import {
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
+import { getGates } from '../../api/scanning'
 import { useCameraContext } from '../../context/CameraContext'
 import './DeviceManagement.css'
 
@@ -37,6 +38,7 @@ function AssignmentBadge({ value, gateId }) {
 
 // ── Camera Form Modal ─────────────────────────────────────────────────────────
 
+// Fallback until the dynamic gate list loads — gates are managed in System Settings
 const GATE_OPTIONS = [
   { value: 'gate1', label: 'Gate 1' },
   { value: 'gate4', label: 'Gate 4' },
@@ -70,6 +72,17 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
   const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
+  const [gateOptions, setGateOptions] = useState(GATE_OPTIONS)
+
+  useEffect(() => {
+    getGates()
+      .then(({ data }) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setGateOptions(data.map(g => ({ value: g.gate_id, label: g.label.split('—')[0].trim() })))
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // Live duplicate check — warns as soon as the IP/Device ID matches an existing camera
   const ipDupe = cameras.find(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
@@ -202,7 +215,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
               <div className="form-group" style={{ marginTop: '14px' }}>
                 <label className="form-label">Gate <span className="required">*</span></label>
                 <div className="dm-gate-row">
-                  {GATE_OPTIONS.map(({ value, label }) => (
+                  {gateOptions.map(({ value, label }) => (
                     <button
                       key={value}
                       type="button"

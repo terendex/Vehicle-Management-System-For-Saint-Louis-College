@@ -13,11 +13,10 @@ import UserManagement from './pages/Admin/UserManagement'
 import OperationsCenter from './pages/Admin/OperationsCenter'
 import RuleConstraints from './pages/Admin/RuleConstraints'
 import AuditLog from './pages/Admin/AuditLog'
-import ParkingManagement from './pages/Admin/ParkingManagement'
+import ParkingSpaceManagement from './pages/Admin/ParkingSpaceManagement'
 import DeviceManagement from './pages/Admin/DeviceManagement'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
-import Events from './pages/Admin/Events'
 import SupplierManagement from './pages/Admin/SupplierManagement'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
@@ -77,9 +76,10 @@ export default function App() {
         <Route element={<ProtectedRoute allowedRoles={['admin', 'cdso']} />}>
           <Route path="/admin/settings"    element={<SystemSettings />} />
           <Route path="/admin/entries"     element={<OperationsCenter />} />
-          <Route path="/admin/parking"     element={<ParkingManagement />} />
+          <Route path="/admin/parking"     element={<ParkingSpaceManagement />} />
           <Route path="/admin/violations"  element={<ViolationsManagement />} />
-          <Route path="/admin/events"      element={<Events />} />
+          {/* Legacy URL — Events now lives inside Parking Space Management */}
+          <Route path="/admin/events"      element={<Navigate to="/admin/parking" replace />} />
         </Route>
 
         {/* CDSO Routes — landing redirects to settings */}

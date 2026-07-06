@@ -94,6 +94,10 @@ class VehicleRegistration(models.Model):
         GUARDIAN          = 'guardian',          'Guardian'
         AUTHORIZED_DRIVER = 'authorized_driver', 'Authorized Driver'
 
+    class FetcherType(models.TextChoices):
+        DROP_AND_GO = 'drop_and_go', 'Fetcher / Drop & Go'
+        STANDBY     = 'standby',     'Standby'
+
     id = models.BigAutoField(primary_key=True, db_column='registration_id')
     user = models.ForeignKey(
         'accounts.User',
@@ -138,6 +142,14 @@ class VehicleRegistration(models.Model):
         related_name='registrations',
         limit_choices_to={'category': 'program'},
     )
+
+    # Fetcher-specific — classification plus the students being fetched.
+    # drop_and_go: entry only during the allotted drop-off/pick-up windows.
+    # standby:     allowed to park inside campus while waiting.
+    fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
+    # [{full_name, student_id, student_level, program_year}, ...] — at least one
+    # entry is required for fetcher registrations (validated in the views).
+    fetcher_students = models.JSONField(default=list, blank=True)
 
     # Employee-specific
     employee_id     = models.CharField(max_length=50, blank=True)
@@ -462,7 +474,9 @@ class Camera(models.Model):
     password   = models.CharField(max_length=100)
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
-    gate_id    = models.CharField(max_length=10, choices=GateId.choices, null=True, blank=True,
+    # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows
+    # in scanning.Gate so admins can add new ones from System Settings.
+    gate_id    = models.CharField(max_length=10, null=True, blank=True,
                                   help_text='Required when assignment is Entry. Identifies which gate this camera covers.')
     is_active  = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

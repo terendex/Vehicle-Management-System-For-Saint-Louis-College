@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
@@ -54,7 +54,10 @@ function autoLabel(list, cat) {
   return `${pre}${String(n).padStart(2, '0')}`
 }
 
-export default function ParkingManagement() {
+// `embedded` renders the content without its own AdminLayout so the page can
+// live as a tab inside Parking Space Management.
+export default function ParkingManagement({ embedded = false }) {
+  const Wrapper = embedded ? Fragment : AdminLayout
   const [zones,        setZones]        = useState([])
   const [selId,        setSelId]        = useState(null)
   const [mode,         setMode]         = useState('live')
@@ -438,7 +441,7 @@ export default function ParkingManagement() {
 
   // ════════════════════════════════════════════════════════════════
   return (
-    <AdminLayout>
+    <Wrapper>
       <div className="pm-page">
 
         {/* Header */}
@@ -1030,6 +1033,6 @@ export default function ParkingManagement() {
         </div>
       )}
 
-    </AdminLayout>
+    </Wrapper>
   )
 }

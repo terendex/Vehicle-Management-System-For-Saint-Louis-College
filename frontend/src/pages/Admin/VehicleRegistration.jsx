@@ -406,6 +406,34 @@ export default function VehicleRegistration() {
                     <div className="detail-value">{selectedReg.department}</div>
                   </div>
                 </>
+              ) : selectedReg.registrant_type === 'fetcher' ? (
+                <>
+                  <div className="detail-item">
+                    <div className="detail-label">Fetcher Classification</div>
+                    <div className="detail-value">
+                      {selectedReg.fetcher_type === 'standby'
+                        ? 'Standby — may park inside campus'
+                        : selectedReg.fetcher_type === 'drop_and_go'
+                          ? 'Fetcher / Drop & Go — allotted times only'
+                          : '—'}
+                    </div>
+                  </div>
+                  {(selectedReg.fetcher_students || []).length > 0 && (
+                    <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                      <div className="detail-label">Students to Fetch ({selectedReg.fetcher_students.length})</div>
+                      <div className="detail-value" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                        {selectedReg.fetcher_students.map((s, i) => (
+                          <div key={i} style={{ padding: '6px 12px', background: '#F5F6FF', border: '1px solid #E2E6EE', borderRadius: 8, fontSize: 13 }}>
+                            <strong>{s.full_name}</strong>
+                            {s.student_id && <span style={{ color: '#7C80A3' }}> · ID: {s.student_id}</span>}
+                            {s.student_level && <span style={{ color: '#7C80A3' }}> · {s.student_level.toUpperCase()}</span>}
+                            {s.program_year && <span style={{ color: '#7C80A3' }}> · {s.program_year}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : null}
 
               <div className="detail-item">

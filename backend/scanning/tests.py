@@ -309,9 +309,29 @@ class VisitorPassAPITests(TestCase):
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.data['plate_number'], 'VIS001')
 
-    def test_create_pass_auto_logs_entry(self):
-        self._create_pass('VIS002')
-        self.assertTrue(AccessLog.objects.filter(plate_number='VIS002').exists())
+    def test_create_pass_does_not_log_entry_until_printed(self):
+        """The visitor's entry is only logged once the guard confirms the slip
+        printed — creating the pass alone must not create an AccessLog."""
+        resp = self._create_pass('VIS002')
+        self.assertFalse(AccessLog.objects.filter(plate_number='VIS002').exists())
+
+        printed = self.client.post(f"/api/scan/visitor-pass/{resp.data['id']}/printed/")
+        self.assertEqual(printed.status_code, 200)
+        self.assertTrue(AccessLog.objects.filter(plate_number='VIS002', status='authorized').exists())
+
+    def test_visitor_exit_by_slip_qr(self):
+        """Scanning the slip QR (SLC-VISITOR:{id}) records the exit."""
+        resp = self._create_pass('VIS010')
+        pass_id = resp.data['id']
+        self.client.post(f'/api/scan/visitor-pass/{pass_id}/printed/')
+        exit_resp = self.client.post(
+            '/api/scan/visitor-pass/exit-scan/',
+            {'qr_data': f'SLC-VISITOR:{pass_id}'},
+            format='json',
+        )
+        self.assertEqual(exit_resp.status_code, 200)
+        self.assertEqual(exit_resp.data['status'], 'exited')
+        self.assertTrue(AccessLog.objects.filter(plate_number='VIS010', status='exited').exists())
 
     def test_exit_visitor_pass_marks_exited(self):
         create_resp = self._create_pass('VIS003')

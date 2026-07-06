@@ -3,7 +3,7 @@ from datetime import timedelta
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
-from rest_framework import permissions
+from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
@@ -234,6 +234,14 @@ def _supplier_rule_denial() -> str | None:
     return None
 
 
+def _is_standby_fetcher(user) -> bool:
+    """Standby fetchers are allowed to park inside campus while waiting, so the
+    fetcher max-stay limit does not apply to them (only to Drop & Go)."""
+    return bool(user) and user.registrations.filter(
+        status='accepted', registrant_type='fetcher', fetcher_type='standby',
+    ).exists()
+
+
 def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
                       duration_minutes: int, gate_id: str = '', evidence_bytes=None) -> int:
     """
@@ -267,6 +275,16 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
     except Exception:
         pass
     return overstay
+
+
+def _active_visitor_pass(plate_number: str):
+    """Today's ACTIVE visitor pass for this plate, or None. Vehicles on an
+    active pass must exit via the slip-QR scan, not by plate."""
+    return VisitorPass.objects.filter(
+        plate_number=plate_number,
+        valid_date=timezone.localdate(),
+        status=VisitorPass.Status.ACTIVE,
+    ).order_by('-entered_at').first()
 
 
 def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None) -> int:
@@ -689,17 +707,12 @@ class VisitorPassView(APIView):
             expires_at=now + timedelta(minutes=allowed_duration),
         )
 
-        # Log entry in AccessLog so the visitor appears in "Recent Scans"
+        # NOTE: the visitor's entry is NOT logged here. The AccessLog entry is
+        # only created once the slip is confirmed printed (VisitorPassPrintedView)
+        # — a visitor without a printed slip is not considered inside.
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
-        AccessLog.objects.create(
-            plate_number=plate_number,
-            vehicle=vehicle,
-            status=AccessLog.Status.AUTHORIZED,
-            gate_id=gate_id,
-            scanned_by=request.user,
-        )
 
         guard_name  = request.user.full_name
         office_name = office.name if office else 'N/A'
@@ -721,6 +734,79 @@ class VisitorPassView(APIView):
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
+class VisitorPassPrintedView(APIView):
+    """Confirm the visitor slip was printed. Only at this point is the visitor's
+    entry recorded in the AccessLog — a visitor whose slip was never printed is
+    not considered inside. Idempotent: re-confirming does nothing."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        pass_ = get_object_or_404(VisitorPass, pk=pk)
+        if pass_.printed_at:
+            return Response(VisitorPassSerializer(pass_).data)
+
+        pass_.printed_at = timezone.now()
+        pass_.save(update_fields=['printed_at'])
+
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
+        AccessLog.objects.create(
+            plate_number=pass_.plate_number,
+            vehicle=pass_.vehicle,
+            status=AccessLog.Status.AUTHORIZED,
+            gate_id=gate_id,
+            scanned_by=request.user,
+        )
+        _audit(
+            request,
+            AuditLog.Action.VISITOR_ISSUED,
+            f"Visitor slip printed — entry logged | Plate: {pass_.plate_number} | "
+            f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
+        )
+        return Response(VisitorPassSerializer(pass_).data)
+
+
+def _record_visitor_exit(request, pass_, gate_id):
+    """Shared exit logic for slip-QR scans. Marks the pass exited, logs the
+    exit AccessLog, and issues an overstay violation when applicable."""
+    now = timezone.now()
+    pass_.status    = VisitorPass.Status.EXITED
+    pass_.exited_at = now
+    pass_.save(update_fields=['status', 'exited_at'])
+
+    AccessLog.objects.create(
+        vehicle=pass_.vehicle,
+        plate_number=pass_.plate_number,
+        status=AccessLog.Status.EXITED,
+        gate_id=gate_id,
+        scanned_by=request.user,
+    )
+
+    duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
+    overstay_minutes = (int((now - pass_.expires_at).total_seconds() / 60)
+                        if pass_.expires_at and now > pass_.expires_at else 0)
+    if overstay_minutes:
+        try:
+            _auto_log_violation(
+                pass_.vehicle,
+                f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
+                gate_id,
+                vtype=Violation.Type.TIME_EXCEED,
+            )
+        except Exception:
+            pass
+    _audit(
+        request,
+        AuditLog.Action.VISITOR_EXITED,
+        f"Visitor exited (slip QR) | Plate: {pass_.plate_number} | "
+        f"Duration: {duration_minutes} min | "
+        + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+        + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
+    )
+    return duration_minutes, overstay_minutes
+
+
 class ExitScanView(APIView):
     """
     Guard scans the QR code on the returned thermal pass to record exit.
@@ -737,44 +823,40 @@ class ExitScanView(APIView):
                 status=400,
             )
 
-        now = timezone.now()
-        pass_.status    = VisitorPass.Status.EXITED
-        pass_.exited_at = now
-        pass_.save()
-
         gate_id = request.data.get('gate_id', 'main')
-        AccessLog.objects.create(
-            vehicle=pass_.vehicle,
-            plate_number=pass_.plate_number,
-            status=AccessLog.Status.EXITED,
-            gate_id=gate_id,
-            scanned_by=request.user,
-        )
-
-        duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
-        overstay_minutes = (int((now - pass_.expires_at).total_seconds() / 60)
-                            if pass_.expires_at and now > pass_.expires_at else 0)
-        if overstay_minutes:
-            try:
-                _auto_log_violation(
-                    pass_.vehicle,
-                    f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
-                    request.data.get('gate_id', ''),
-                    vtype=Violation.Type.TIME_EXCEED,
-                )
-            except Exception:
-                pass
-        guard_name = request.user.full_name
-        _audit(
-            request,
-            AuditLog.Action.VISITOR_EXITED,
-            f"Visitor exited | Plate: {pass_.plate_number} | "
-            f"Duration: {duration_minutes} min | "
-            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
-            + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
-        )
-
+        _record_visitor_exit(request, pass_, gate_id)
         return Response(VisitorPassSerializer(pass_).data)
+
+
+class VisitorQrExitView(APIView):
+    """Record a visitor exit by scanning the QR on the printed slip.
+    QR payload: SLC-VISITOR:{pass_id}. Visitor exits are recorded only through
+    this scan — plate-based exit is refused for vehicles on an active pass."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        qr_data = (request.data.get('qr_data') or '').strip()
+        if not qr_data.startswith('SLC-VISITOR:'):
+            return Response({'error': 'Not a visitor slip QR.'}, status=400)
+        try:
+            pk = int(qr_data.split(':', 1)[1])
+        except (ValueError, IndexError):
+            return Response({'error': 'Malformed visitor slip QR.'}, status=400)
+
+        pass_ = VisitorPass.objects.filter(pk=pk).select_related('vehicle', 'office').first()
+        if not pass_:
+            return Response({'error': 'Visitor pass not found.'}, status=404)
+        if pass_.status != VisitorPass.Status.ACTIVE:
+            return Response({'error': f'Pass is already marked as {pass_.status}.'}, status=400)
+
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
+        duration_minutes, overstay_minutes = _record_visitor_exit(request, pass_, gate_id)
+        data = VisitorPassSerializer(pass_).data
+        data['duration_minutes'] = duration_minutes
+        data['overstay_minutes'] = overstay_minutes
+        return Response(data)
 
 
 class OfficeListView(APIView):
@@ -783,6 +865,73 @@ class OfficeListView(APIView):
     def get(self, request):
         offices = Office.objects.all()
         return Response(OfficeSerializer(offices, many=True).data)
+
+
+def _gate_dict(g):
+    return {'id': g.id, 'gate_id': g.gate_id, 'label': g.label, 'is_active': g.is_active}
+
+
+class GateListView(APIView):
+    """List gates. Public (the guard gate-login kiosk needs it pre-auth) —
+    returns active gates only unless an admin/CDSO asks for ?all=1.
+    POST (admin/CDSO): create a new gate for school expansion."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from .models import Gate
+        qs = Gate.objects.all()
+        is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')
+        if not (is_staff and request.query_params.get('all')):
+            qs = qs.filter(is_active=True)
+        return Response([_gate_dict(g) for g in qs])
+
+    def post(self, request):
+        from .models import Gate
+        import re as _re
+        if not (request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')):
+            return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
+
+        gate_id = (request.data.get('gate_id') or '').strip().lower()
+        label   = (request.data.get('label') or '').strip()
+        if not _re.fullmatch(r'gate\d{1,3}', gate_id):
+            return Response({'error': "Gate ID must look like 'gate2', 'gate5', etc."}, status=status.HTTP_400_BAD_REQUEST)
+        if not label:
+            return Response({'error': 'A display label is required (e.g. "Gate 2 — North Entrance").'}, status=status.HTTP_400_BAD_REQUEST)
+        if Gate.objects.filter(gate_id=gate_id).exists():
+            return Response({'error': f'{gate_id} already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        gate = Gate.objects.create(gate_id=gate_id, label=label)
+        AuditLog.objects.create(
+            actor=request.user, action=AuditLog.Action.RECORD_UPDATED,
+            details=f'Gate created: {gate.label} ({gate.gate_id})',
+        )
+        return Response(_gate_dict(gate), status=status.HTTP_201_CREATED)
+
+
+class GateDetailView(APIView):
+    """Admin/CDSO: rename a gate or toggle it active/inactive."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        from .models import Gate
+        if getattr(request.user, 'role', '') not in ('admin', 'cdso'):
+            return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            gate = Gate.objects.get(pk=pk)
+        except Gate.DoesNotExist:
+            return Response({'error': 'Gate not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        label = (request.data.get('label') or '').strip()
+        if label:
+            gate.label = label
+        if 'is_active' in request.data:
+            gate.is_active = bool(request.data.get('is_active'))
+        gate.save(update_fields=['label', 'is_active'])
+        AuditLog.objects.create(
+            actor=request.user, action=AuditLog.Action.RECORD_UPDATED,
+            details=f'Gate updated: {gate.label} ({gate.gate_id}) — active={gate.is_active}',
+        )
+        return Response(_gate_dict(gate))
 
 
 class AccessLogListView(APIView):
@@ -969,6 +1118,14 @@ class ExitLogView(APIView):
         if not is_valid_ph_plate(plate_number):
             return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
 
+        # Visitor vehicles exit by scanning the printed slip QR, never by plate.
+        if _active_visitor_pass(plate_number):
+            return Response({
+                'error': 'This vehicle is on an active visitor pass. '
+                         'Scan the QR on the printed visitor slip to record the exit.',
+                'visitor_pass_required': True,
+            }, status=409)
+
         vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
 
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
@@ -992,7 +1149,7 @@ class ExitLogView(APIView):
 
         # Stay-limit enforcement (fetcher / supplier rules)
         if duration_minutes is not None:
-            if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher':
+            if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
             elif SupplierPlate.objects.filter(plate_number=plate_number, supplier__is_active=True).exists():
@@ -1361,6 +1518,18 @@ class ManualEntryView(APIView):
             # breathing window a re-check is informational; past it, it records the exit
             seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            # Visitor vehicles exit by scanning the printed slip QR, never by plate.
+            if _active_visitor_pass(plate_number):
+                return Response({
+                    'plate_number':   plate_number,
+                    'status':         'visitor_pass_required',
+                    'allowed':        False,
+                    'message':        'Visitor is inside on an active pass. Scan the QR on the '
+                                      'printed visitor slip to record the exit.',
+                    'vehicle':        VehicleSerializer(vehicle).data,
+                    'already_inside': True,
+                    'gate_id':        gate_id,
+                })
             if seconds_inside < ENTRY_BREATHING_SECONDS:
                 window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
                 return Response({
@@ -1399,7 +1568,7 @@ class ManualEntryView(APIView):
                 )
             duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
             overstay_minutes = _close_active_pass(plate_number, gate_id)
-            if vehicle.user and vehicle.user.owner_type == 'fetcher':
+            if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
             overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''

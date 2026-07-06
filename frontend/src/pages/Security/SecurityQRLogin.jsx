@@ -5,18 +5,26 @@ import { toast } from 'sonner'
 import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
+import { getGates } from '../../api/scanning'
 import slcLogo from '../../assets/slclogo.jpg'
 import './SecurityQRLogin.css'
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
+
+// Fallback list shown until the dynamic gate list loads (or if it fails)
+const DEFAULT_GATES = [
+  { gate_id: 'gate1', label: 'Gate 1 — Main Entrance' },
+  { gate_id: 'gate4', label: 'Gate 4 — Side Entrance' },
+]
 
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
   const { gateParam }                            = useParams()
   const { qrLogin, guardLogin, isLoading, user } = useAuthStore()
 
-  // Kiosk mode: /security/guard-login/gate1 or /security/guard-login/gate4 locks the gate
-  const kioskGate = GATE_LABELS[gateParam] ? gateParam : null
+  // Kiosk mode: /security/guard-login/gate1, /security/guard-login/gate4, … locks the gate.
+  // Gates are dynamic (admin can add more), so accept any gateN slug.
+  const kioskGate = /^gate\d{1,3}$/.test(gateParam || '') ? gateParam : null
 
   const [selectedGate, setSelectedGate] = useState(kioskGate)
   const [prevKioskGate, setPrevKioskGate] = useState(kioskGate)
@@ -34,6 +42,21 @@ export default function SecurityQRLogin() {
   // The QR Badge tab appears once the typed email belongs to a guard whose
   // badge is usable (first credentials login + password change completed).
   const [qrAvailable, setQrAvailable]   = useState(false)
+  // Dynamic gate list (admin can add gates in System Settings)
+  const [gates, setGates]               = useState(DEFAULT_GATES)
+
+  useEffect(() => {
+    getGates()
+      .then(({ data }) => { if (Array.isArray(data) && data.length > 0) setGates(data) })
+      .catch(() => {})
+  }, [])
+
+  // Short display name, e.g. 'Gate 2' from 'Gate 2 — North Entrance'
+  const gateName = (id) => {
+    const g = gates.find(x => x.gate_id === id)
+    if (g) return g.label.split('—')[0].trim()
+    return GATE_LABELS[id] || id
+  }
 
   const inputRef  = useRef(null)
   const videoRef  = useRef(null)
@@ -140,7 +163,7 @@ export default function SecurityQRLogin() {
       const guard = await qrLogin(clean, selectedGate)
       setGuardInfo(guard)
       setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${GATE_LABELS[guard.gate_assignment] || guard.gate_assignment}.`)
+      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
       setTimeout(() => navigate('/security/entries'), 1800)
     } catch (err) {
       setErrorMsg(err.message || 'QR scan failed.')
@@ -158,7 +181,7 @@ export default function SecurityQRLogin() {
       const guard = await guardLogin(email.trim(), password, selectedGate)
       setGuardInfo(guard)
       setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${GATE_LABELS[guard.gate_assignment] || guard.gate_assignment}.`)
+      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
       setTimeout(() => navigate('/security/entries'), 1800)
     } catch (err) {
       setCredError(err.message || 'Login failed. Please check your credentials.')
@@ -210,22 +233,19 @@ export default function SecurityQRLogin() {
               </div>
 
               <div className="sqr-gate-list">
-                <button className="sqr-gate-item" onClick={() => setSelectedGate('gate1')}>
-                  <div className="sqr-gate-icon">1</div>
-                  <div className="sqr-gate-text">
-                    <span className="sqr-gate-label">Gate 1</span>
-                    <span className="sqr-gate-desc">Main Entrance</span>
-                  </div>
-                  <ChevronLeft size={16} className="sqr-gate-arrow" />
-                </button>
-                <button className="sqr-gate-item" onClick={() => setSelectedGate('gate4')}>
-                  <div className="sqr-gate-icon">4</div>
-                  <div className="sqr-gate-text">
-                    <span className="sqr-gate-label">Gate 4</span>
-                    <span className="sqr-gate-desc">Side Entrance</span>
-                  </div>
-                  <ChevronLeft size={16} className="sqr-gate-arrow" />
-                </button>
+                {gates.map(g => {
+                  const [main, desc] = g.label.split('—').map(s => s.trim())
+                  return (
+                    <button key={g.gate_id} className="sqr-gate-item" onClick={() => setSelectedGate(g.gate_id)}>
+                      <div className="sqr-gate-icon">{g.gate_id.replace(/\D/g, '')}</div>
+                      <div className="sqr-gate-text">
+                        <span className="sqr-gate-label">{main || g.gate_id}</span>
+                        <span className="sqr-gate-desc">{desc || 'Campus gate'}</span>
+                      </div>
+                      <ChevronLeft size={16} className="sqr-gate-arrow" />
+                    </button>
+                  )
+                })}
               </div>
 
               {user?.role === 'security' && (
@@ -233,7 +253,7 @@ export default function SecurityQRLogin() {
                   <span className="sqr-active-dot" />
                   <span>
                     Active: <strong>{user.full_name}</strong>
-                    {user.gate_assignment && ` — ${GATE_LABELS[user.gate_assignment] || user.gate_assignment}`}
+                    {user.gate_assignment && ` — ${gateName(user.gate_assignment)}`}
                   </span>
                   <button className="sqr-dash-link" onClick={handleGoToDashboard}>
                     Go to dashboard →
@@ -249,7 +269,7 @@ export default function SecurityQRLogin() {
                   <div className="sqr-state-icon success"><CheckCircle size={32} /></div>
                   <h2 className="sqr-state-title">Welcome, {guardInfo.full_name}!</h2>
                   <p className="sqr-state-sub">
-                    Clocked in at <strong>{GATE_LABELS[guardInfo.gate_assignment] || guardInfo.gate_assignment}</strong>
+                    Clocked in at <strong>{gateName(guardInfo.gate_assignment)}</strong>
                   </p>
                   <p className="sqr-state-hint">Redirecting to dashboard…</p>
                 </div>
@@ -275,7 +295,7 @@ export default function SecurityQRLogin() {
                         <ChevronLeft size={15} /> Change gate
                       </button>
                     )}
-                    <span className="sqr-gate-pill">{GATE_LABELS[selectedGate]}</span>
+                    <span className="sqr-gate-pill">{gateName(selectedGate)}</span>
                   </div>
 
                   <div className="sqr-card-header">
@@ -283,7 +303,7 @@ export default function SecurityQRLogin() {
                     <div>
                       <h1 className="sqr-card-title">Guard Login</h1>
                       <p className="sqr-card-subtitle">
-                        Sign in with your guard credentials to clock in at <strong>{GATE_LABELS[selectedGate]}</strong>
+                        Sign in with your guard credentials to clock in at <strong>{gateName(selectedGate)}</strong>
                       </p>
                     </div>
                   </div>

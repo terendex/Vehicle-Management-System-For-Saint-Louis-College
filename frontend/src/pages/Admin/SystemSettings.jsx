@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
+import { getGates, createGate, updateGate } from '../../api/scanning'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
@@ -20,6 +21,13 @@ export default function SystemSettings() {
   const [removingId, setRemovingId]         = useState(null)
   const [confirmDeactivate, setConfirmDeactivate] = useState(null) // { id, title }
 
+  // Gates state
+  const [gates, setGates]               = useState([])
+  const [gatesLoading, setGatesLoading] = useState(true)
+  const [gateForm, setGateForm]         = useState({ number: '', label: '' })
+  const [addingGate, setAddingGate]     = useState(false)
+  const [togglingGateId, setTogglingGateId] = useState(null)
+
   useEffect(() => {
     getSystemSettings()
       .then(({ data }) => {
@@ -33,7 +41,50 @@ export default function SystemSettings() {
       .catch(() => toast.error('Failed to load system settings.'))
       .finally(() => setLoading(false))
     fetchNotices()
+    fetchGates()
   }, [])
+
+  const fetchGates = () => {
+    setGatesLoading(true)
+    getGates(true)
+      .then(({ data }) => setGates(data))
+      .catch(() => toast.error('Failed to load gates.'))
+      .finally(() => setGatesLoading(false))
+  }
+
+  const handleAddGate = async (e) => {
+    e.preventDefault()
+    const num = gateForm.number.trim().replace(/^gate/i, '')
+    if (!/^\d{1,3}$/.test(num)) {
+      toast.error('Gate number must be numeric, e.g. 2.')
+      return
+    }
+    if (!gateForm.label.trim()) return
+    setAddingGate(true)
+    try {
+      const { data } = await createGate({ gate_id: `gate${num}`, label: gateForm.label.trim() })
+      setGates((prev) => [...prev, data].sort((a, b) => a.gate_id.localeCompare(b.gate_id, undefined, { numeric: true })))
+      setGateForm({ number: '', label: '' })
+      toast.success(`${data.label} created. It is now available on the guard gate-login page.`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to create gate.')
+    } finally {
+      setAddingGate(false)
+    }
+  }
+
+  const handleToggleGate = async (gate) => {
+    setTogglingGateId(gate.id)
+    try {
+      const { data } = await updateGate(gate.id, { is_active: !gate.is_active })
+      setGates((prev) => prev.map((g) => (g.id === data.id ? data : g)))
+      toast.success(`${data.label} ${data.is_active ? 'activated' : 'deactivated'}.`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update gate.')
+    } finally {
+      setTogglingGateId(null)
+    }
+  }
 
   const fetchNotices = () => {
     setNoticesLoading(true)
@@ -218,6 +269,105 @@ export default function SystemSettings() {
 
           </div>
         )}
+
+        {/* ── Campus Gates ──────────────────────────────────────────── */}
+        <div className="ss-notice-section">
+          <div className="ss-card">
+            <div className="ss-card-head">
+              <div className="ss-card-icon ss-icon-blue">
+                <DoorOpen size={16} />
+              </div>
+              <div>
+                <h2 className="ss-card-title">Campus Gates</h2>
+                <p className="ss-card-desc">
+                  Add new gates as the school expands. Active gates immediately appear on the guard
+                  gate-login page and can be assigned entry cameras in Device Management.
+                </p>
+              </div>
+            </div>
+
+            <form className="ss-notice-form" onSubmit={handleAddGate}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div className="ss-field" style={{ flex: '0 0 140px' }}>
+                  <label className="ss-label" htmlFor="gate-number">Gate Number</label>
+                  <input
+                    id="gate-number"
+                    className="ss-text-input"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="e.g. 2"
+                    maxLength={3}
+                    value={gateForm.number}
+                    onChange={(e) => setGateForm((p) => ({ ...p, number: e.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="ss-field" style={{ flex: 1, minWidth: 220 }}>
+                  <label className="ss-label" htmlFor="gate-label">Display Label</label>
+                  <input
+                    id="gate-label"
+                    className="ss-text-input"
+                    type="text"
+                    placeholder="e.g. Gate 2 — North Entrance"
+                    maxLength={100}
+                    value={gateForm.label}
+                    onChange={(e) => setGateForm((p) => ({ ...p, label: e.target.value }))}
+                    required
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="ss-broadcast-btn"
+                disabled={addingGate || !gateForm.number.trim() || !gateForm.label.trim()}
+              >
+                {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
+                {addingGate ? 'Adding…' : 'Add Gate'}
+              </button>
+            </form>
+
+            <div className="ss-notices-list-head">
+              <span>Gates ({gatesLoading ? '…' : gates.length})</span>
+            </div>
+            {gatesLoading ? (
+              <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading gates…</span></div>
+            ) : gates.length === 0 ? (
+              <p className="ss-no-notices">No gates configured.</p>
+            ) : (
+              <div className="ss-notices-list">
+                {gates.map((g) => (
+                  <div
+                    key={g.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 14px', border: '1px solid #E2E6EE', borderRadius: 10, marginBottom: 8,
+                      background: g.is_active ? '#fff' : '#FAFAFA',
+                    }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: 13.5, color: '#1A1D2E' }}>{g.label}</strong>
+                      <span style={{ marginLeft: 8, fontSize: 12, color: '#9CA3AF', fontFamily: 'monospace' }}>{g.gate_id}</span>
+                      {!g.is_active && (
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#B45309', background: '#FEF3C7', padding: '2px 8px', borderRadius: 6 }}>
+                          Inactive
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="ss-save-btn"
+                      style={{ padding: '6px 12px', fontSize: 12 }}
+                      disabled={togglingGateId === g.id}
+                      onClick={() => handleToggleGate(g)}
+                    >
+                      {togglingGateId === g.id ? 'Saving…' : g.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* ── Parking Notices ────────────────────────────────────────── */}
         <div className="ss-notice-section">

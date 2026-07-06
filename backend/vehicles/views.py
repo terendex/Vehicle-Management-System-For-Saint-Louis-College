@@ -1189,6 +1189,46 @@ class PublicOpenRegistrationView(APIView):
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
+        if registrant_type == 'fetcher':
+            # Classification is required: drop_and_go (allotted times only) or
+            # standby (allowed to park inside campus while waiting).
+            fetcher_type = (data.get('fetcher_type') or '').strip()
+            if fetcher_type not in ('drop_and_go', 'standby'):
+                return Response(
+                    {"error": "Please choose a fetcher classification: Fetcher/Drop & Go or Standby."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # At least one student must be listed
+            students = data.get('fetcher_students') or []
+            if not isinstance(students, list) or len(students) == 0:
+                return Response(
+                    {"error": "At least one student must be listed on a fetcher registration."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            valid_levels = {c[0] for c in VehicleRegistration.StudentLevel.choices}
+            cleaned_students = []
+            for s in students:
+                if not isinstance(s, dict):
+                    return Response({"error": "Invalid student entry."}, status=status.HTTP_400_BAD_REQUEST)
+                entry = {
+                    'full_name':     (s.get('full_name') or '').strip(),
+                    'student_id':    (s.get('student_id') or '').strip(),
+                    'student_level': (s.get('student_level') or '').strip(),
+                    'program_year':  (s.get('program_year') or '').strip(),
+                }
+                if not entry['full_name'] or not entry['student_id'] or not entry['student_level']:
+                    return Response(
+                        {"error": "Each student needs a full name, student ID and education level."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if entry['student_level'] not in valid_levels:
+                    return Response({"error": "Invalid education level for a listed student."}, status=status.HTTP_400_BAD_REQUEST)
+                cleaned_students.append(entry)
+            data['fetcher_students'] = cleaned_students
+        else:
+            data.pop('fetcher_type', None)
+            data.pop('fetcher_students', None)
+
         if registrant_type == 'employee' or registrant_type == 'fetcher':
             data['schedule'] = 'ANY'
             data['campus_days'] = []

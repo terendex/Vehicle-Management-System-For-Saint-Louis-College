@@ -340,6 +340,21 @@ class DashboardStatsView(APIView):
             ]
             authorized_week = sum(day_dist_map.values())
 
+            # Per-day registration load (Mon–Sat): how many active registrations
+            # include each campus day, split accepted/pending, against the daily
+            # slot capacity used by the public registration form.
+            from vehicles.views import SCHEDULE_SLOT_LIMIT
+            WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            day_registrations = []
+            for _day in WEEK_DAYS:
+                _day_qs = VehicleRegistration.objects.filter(campus_days__contains=[_day])
+                day_registrations.append({
+                    'day':      _day,
+                    'accepted': _day_qs.filter(status=VehicleRegistration.Status.ACCEPTED).count(),
+                    'pending':  _day_qs.filter(status=VehicleRegistration.Status.PENDING).count(),
+                    'capacity': SCHEDULE_SLOT_LIMIT,
+                })
+
             # Violations & visitor passes — surfaced on the dashboard KPI strip
             from violations.models import Violation
             from scanning.models import VisitorPass
@@ -406,6 +421,7 @@ class DashboardStatsView(APIView):
                     'active_today': active_passes,
                 },
                 'day_distribution': day_distribution,
+                'day_registrations': day_registrations,
                 'recent_activity': {
                     'admin':    AuditLogSerializer(recent_admin_logs, many=True).data,
                     'security': AuditLogSerializer(recent_security_logs, many=True).data,
@@ -946,7 +962,8 @@ class QRLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        valid_gates = ('gate1', 'gate4')
+        from scanning.models import Gate
+        valid_gates = Gate.active_ids()
         gate = gate_param if gate_param in valid_gates else guard.gate_assignment
         if not gate or gate not in valid_gates:
             return Response(
@@ -1023,7 +1040,8 @@ class GuardCredentialLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        valid_gates = ('gate1', 'gate4')
+        from scanning.models import Gate
+        valid_gates = Gate.active_ids()
         gate = gate_param if gate_param in valid_gates else guard.gate_assignment
         if not gate or gate not in valid_gates:
             return Response(
@@ -1106,25 +1124,6 @@ class GuardQRView(APIView):
             'full_name': guard.full_name,
             'qr_token': str(guard.qr_token),
         })
-
-
-class RegenerateGuardQRView(APIView):
-    """Admin only: regenerate a guard's QR token (invalidates old badge)."""
-    permission_classes = [IsAdminRole]
-
-    def post(self, request, pk):
-        import uuid as _uuid
-        guard = get_object_or_404(User, pk=pk, role='security')
-        if guard.must_change_password:
-            return Response(
-                {'detail': 'QR badge is locked — this guard must log in with their credentials and change their temporary password first.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        guard.qr_token = _uuid.uuid4()
-        guard.save(update_fields=['qr_token'])
-        log_action(request, AuditLog.Action.USER_UPDATED, target_user=guard,
-                   details=f'QR token regenerated for {guard.full_name}')
-        return Response({'qr_token': str(guard.qr_token)})
 
 
 class NotificationListView(APIView):
