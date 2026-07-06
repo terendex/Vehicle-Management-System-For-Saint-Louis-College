@@ -73,6 +73,18 @@ class VehicleRegistration(models.Model):
         TEACHING     = 'teaching',     'Teaching'
         NON_TEACHING = 'non_teaching', 'Non-Teaching'
 
+    class StudentLevel(models.TextChoices):
+        COLLEGE    = 'college',    'College'
+        SHS        = 'shs',        'Senior High School'
+        JHS        = 'jhs',        'Junior High School'
+        ELEMENTARY = 'elementary', 'Elementary'
+        SPED       = 'sped',       'Special Education'
+
+    class DriverRelationship(models.TextChoices):
+        PARENT            = 'parent',            'Parent'
+        GUARDIAN          = 'guardian',          'Guardian'
+        AUTHORIZED_DRIVER = 'authorized_driver', 'Authorized Driver'
+
     id = models.BigAutoField(primary_key=True, db_column='registration_id')
     user = models.ForeignKey(
         'accounts.User',
@@ -99,8 +111,18 @@ class VehicleRegistration(models.Model):
     schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
     # Student-specific
-    student_id   = models.CharField(max_length=50, blank=True)
-    program_year = models.CharField(max_length=100, blank=True)
+    student_id    = models.CharField(max_length=50, blank=True)
+    student_level = models.CharField(max_length=20, choices=StudentLevel.choices, blank=True)
+    program_year  = models.CharField(max_length=100, blank=True)
+
+    # Authorized driver — filled when the registrant is not the one driving
+    # (JHS/Elementary are always minors; some SpEd students cannot drive).
+    # When set, drivers_license holds THIS person's license, not the student's.
+    driver_name         = models.CharField(max_length=255, blank=True)
+    driver_relationship = models.CharField(
+        max_length=30, choices=DriverRelationship.choices, blank=True,
+    )
+    driver_contact      = models.CharField(max_length=100, blank=True)
     program      = models.ForeignKey(
         ReferenceItem, null=True, blank=True,
         on_delete=models.SET_NULL,

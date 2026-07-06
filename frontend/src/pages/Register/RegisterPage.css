@@ -921,6 +921,14 @@
   color: #2A2B61;
 }
 
+/* Minor student — locked to an authorized adult driver */
+.driver-minor-note {
+  background: #FFF7E8;
+  border-color: #EBD3A1;
+  color: #7A5A17;
+  margin-bottom: 0;
+}
+
 /* Limit reached (3-day max) */
 .campus-day-btn--limit {
   opacity: 0.3;
