@@ -82,6 +82,22 @@ class VehicleRegistration(models.Model):
         TEACHING     = 'teaching',     'Teaching'
         NON_TEACHING = 'non_teaching', 'Non-Teaching'
 
+    class StudentLevel(models.TextChoices):
+        COLLEGE    = 'college',    'College'
+        SHS        = 'shs',        'Senior High School'
+        JHS        = 'jhs',        'Junior High School'
+        ELEMENTARY = 'elementary', 'Elementary'
+        SPED       = 'sped',       'Special Education'
+
+    class DriverRelationship(models.TextChoices):
+        PARENT            = 'parent',            'Parent'
+        GUARDIAN          = 'guardian',          'Guardian'
+        AUTHORIZED_DRIVER = 'authorized_driver', 'Authorized Driver'
+
+    class FetcherType(models.TextChoices):
+        DROP_AND_GO = 'drop_and_go', 'Fetcher / Drop & Go'
+        STANDBY     = 'standby',     'Standby'
+
     id = models.BigAutoField(primary_key=True, db_column='registration_id')
     user = models.ForeignKey(
         'accounts.User',
@@ -108,14 +124,32 @@ class VehicleRegistration(models.Model):
     schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
     # Student-specific
-    student_id   = models.CharField(max_length=50, blank=True)
-    program_year = models.CharField(max_length=100, blank=True)
+    student_id    = models.CharField(max_length=50, blank=True)
+    student_level = models.CharField(max_length=20, choices=StudentLevel.choices, blank=True)
+    program_year  = models.CharField(max_length=100, blank=True)
+
+    # Authorized driver — filled when the registrant is not the one driving
+    # (JHS/Elementary are always minors; some SpEd students cannot drive).
+    # When set, drivers_license holds THIS person's license, not the student's.
+    driver_name         = models.CharField(max_length=255, blank=True)
+    driver_relationship = models.CharField(
+        max_length=30, choices=DriverRelationship.choices, blank=True,
+    )
+    driver_contact      = models.CharField(max_length=100, blank=True)
     program      = models.ForeignKey(
         ReferenceItem, null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name='registrations',
         limit_choices_to={'category': 'program'},
     )
+
+    # Fetcher-specific — classification plus the students being fetched.
+    # drop_and_go: entry only during the allotted drop-off/pick-up windows.
+    # standby:     allowed to park inside campus while waiting.
+    fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
+    # [{full_name, student_id, student_level, program_year}, ...] — at least one
+    # entry is required for fetcher registrations (validated in the views).
+    fetcher_students = models.JSONField(default=list, blank=True)
 
     # Employee-specific
     employee_id     = models.CharField(max_length=50, blank=True)
@@ -241,7 +275,11 @@ class ParkingZone(models.Model):
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
-    rtsp_url          = models.CharField(max_length=500, blank=True)
+    camera            = models.ForeignKey(
+        'Camera', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='parking_zones',
+        help_text="Physical camera (registered in Device Management) that watches this zone.",
+    )
     capacity_override = models.PositiveIntegerField(
         null=True, blank=True,
         help_text="Event-mode capacity override. If set, overrides the mapped space count as the effective capacity.",
@@ -372,6 +410,11 @@ class ParkingSpace(models.Model):
     y1           = models.FloatField(null=True, blank=True)
     x2           = models.FloatField(null=True, blank=True)
     y2           = models.FloatField(null=True, blank=True)
+    points       = models.JSONField(
+        null=True, blank=True,
+        help_text="Freeform polygon vertices [[x,y], ...] normalized 0-1 (pen tool). "
+                   "x1..y2 still holds the bounding box for quick lookups.",
+    )
     is_occupied  = models.BooleanField(default=False)
     occupied_by  = models.CharField(max_length=20, blank=True)
     updated_at   = models.DateTimeField(auto_now=True)
@@ -431,7 +474,9 @@ class Camera(models.Model):
     password   = models.CharField(max_length=100)
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
-    gate_id    = models.CharField(max_length=10, choices=GateId.choices, null=True, blank=True,
+    # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows
+    # in scanning.Gate so admins can add new ones from System Settings.
+    gate_id    = models.CharField(max_length=10, null=True, blank=True,
                                   help_text='Required when assignment is Entry. Identifies which gate this camera covers.')
     is_active  = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

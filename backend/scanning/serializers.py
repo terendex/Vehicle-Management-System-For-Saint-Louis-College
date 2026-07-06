@@ -9,6 +9,7 @@ class OfficeSerializer(serializers.ModelSerializer):
 class VisitorPassSerializer(serializers.ModelSerializer):
     office_name    = serializers.CharField(source='office.name',         read_only=True, default=None)
     issued_by_name = serializers.CharField(source='issued_by.full_name', read_only=True, default=None)
+    qr_payload     = serializers.CharField(read_only=True)
 
     class Meta:
         model  = VisitorPass

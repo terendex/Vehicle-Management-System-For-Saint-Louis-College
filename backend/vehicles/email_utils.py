@@ -21,6 +21,23 @@ def _generate_qr_base64(data):
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+def _authorized_driver_row(registration, pad='8px'):
+    """Table row naming the authorized adult driver — present when the
+    registrant is a minor / non-driving student. Empty string otherwise."""
+    if not registration.driver_name:
+        return ''
+    rel = registration.get_driver_relationship_display() if registration.driver_relationship else ''
+    val = registration.driver_name
+    if rel:
+        val += f' ({rel})'
+    if registration.driver_contact:
+        val += f' &middot; {registration.driver_contact}'
+    return (
+        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;">Authorized Driver</td>'
+        f'<td style="padding:{pad} 0;font-weight:600;">{val}</td></tr>'
+    )
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code
     qr_data = f"VEHICLE:{registration.plate_number}|ID:{registration.id}"
@@ -109,6 +126,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Contact</td><td style="padding:8px 0;font-weight:600;">{contact_val}</td></tr>
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Address</td><td style="padding:8px 0;font-weight:600;">{address_val}</td></tr>
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:8px 0;font-weight:600;">{license_val}</td></tr>
+                        {_authorized_driver_row(registration)}
                         {campus_days_row}
                     </table>
                 </div>
@@ -255,6 +273,7 @@ def send_pending_email(registration):
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Contact No.</td><td style="padding:7px 0;font-weight:600;">{registration.contact_number or "—"}</td></tr>
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Address</td><td style="padding:7px 0;font-weight:600;">{registration.address or "—"}</td></tr>
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:7px 0;font-weight:600;">{registration.drivers_license or "—"}</td></tr>
+                        {_authorized_driver_row(registration, pad='7px')}
                         {id_rows}
                         {schedule_row}
                     </table>

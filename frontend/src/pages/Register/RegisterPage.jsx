@@ -54,6 +54,18 @@ const CAMPUS_DAYS = [
   { key: 'Saturday', short: 'Sat' },
 ]
 
+// Fetcher registrations must list at least one student being fetched.
+// Same info as a student registration except email, contact number and age.
+const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '' }
+
+const FETCHER_STUDENT_LEVELS = [
+  { id: 'college',    label: 'College' },
+  { id: 'shs',        label: 'Senior High School' },
+  { id: 'jhs',        label: 'Junior High School' },
+  { id: 'elementary', label: 'Elementary' },
+  { id: 'sped',       label: 'Special Education' },
+]
+
 
 const SLC_HEADER = (
   <header className="register-header">
@@ -122,6 +134,10 @@ export default function RegisterPage() {
     contact_number: '',
     age: '',
     drivers_license: '',
+    who_drives: '',            // 'self' | 'guardian' — form-only, not sent to the API
+    driver_name: '',
+    driver_relationship: '',
+    driver_contact: '',
     campus_days: [],
     plate_number: '',
     conduction_number: '',
@@ -130,6 +146,14 @@ export default function RegisterPage() {
     body_number: '',
     privacy_consent: false,
   })
+
+  // Fetcher-specific: classification + the students being fetched (at least one)
+  const [fetcherType, setFetcherType] = useState('')
+  const [fetcherStudents, setFetcherStudents] = useState([{ ...EMPTY_FETCHER_STUDENT }])
+
+  const updateFetcherStudent = (index, field, value) => {
+    setFetcherStudents(prev => prev.map((s, i) => (i === index ? { ...s, [field]: value } : s)))
+  }
 
   const fetchScheduleSlots = useCallback(async () => {
     setLoadingSlots(true)
@@ -232,6 +256,11 @@ export default function RegisterPage() {
       message: 'Invalid number. Use +639XXXXXXXXX',
       hint: 'e.g. +639XXXXXXXXX',
     },
+    driver_contact: {
+      regex: /^\+639\d{9}$/,
+      message: 'Invalid number. Use +639XXXXXXXXX',
+      hint: 'e.g. +639XXXXXXXXX',
+    },
     drivers_license: {
       // LTO format: 1 office letter + 2-digit district + dash + 2-digit year + dash + 6-digit serial
       // e.g. N01-20-123456  (Non-prof, district 01, year 2020, serial 123456)
@@ -269,7 +298,7 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
-      else if (['last_name', 'first_name', 'middle_name', 'vehicle_color'].includes(name))
+      else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
       setFormData((prev) => ({
         ...prev,
@@ -369,7 +398,7 @@ export default function RegisterPage() {
     }
 
     // Run all format validations before submitting
-    const fieldsToValidate = ['email', 'plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'student_id', 'employee_id']
+    const fieldsToValidate = ['email', 'plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'driver_contact', 'student_id', 'employee_id']
     const newErrors = {}
     fieldsToValidate.forEach(name => {
       const err = validateField(name, formData[name])
@@ -407,6 +436,31 @@ export default function RegisterPage() {
       if (['jhs', 'elementary'].includes(formData.student_level) && !formData.student_grade) {
         setSubmitError('Please select your grade level.')
         return
+      }
+      // Minors are locked to guardian-driven; SpEd defaults to it. Either way,
+      // a guardian-driven registration needs the driver's details.
+      if (formData.who_drives === 'guardian') {
+        if (!formData.driver_name.trim()) {
+          setSubmitError("Please enter the authorized driver's full name.")
+          return
+        }
+        if (!formData.driver_relationship) {
+          setSubmitError("Please select the driver's relationship to the student.")
+          return
+        }
+      }
+    }
+    if (registrantType === 'fetcher') {
+      if (!fetcherType) {
+        setSubmitError('Please choose your fetcher classification: Fetcher/Drop & Go or Standby.')
+        return
+      }
+      for (let i = 0; i < fetcherStudents.length; i++) {
+        const s = fetcherStudents[i]
+        if (!s.full_name.trim() || !s.student_id.trim() || !s.student_level) {
+          setSubmitError(`Student #${i + 1}: full name, student ID and education level are required.`)
+          return
+        }
       }
     }
     if (registrantType === 'student' && formData.campus_days.length === 0) {
@@ -450,7 +504,30 @@ export default function RegisterPage() {
         }
       }
 
-      const payload = { ...formData, full_name, address, program_year, registrant_type: registrantType }
+      const guardian = registrantType === 'student' && formData.who_drives === 'guardian'
+      const payload = {
+        ...formData,
+        full_name,
+        address,
+        program_year,
+        registrant_type: registrantType,
+        student_level: registrantType === 'student' ? formData.student_level : '',
+        // Driver fields only apply to guardian-driven student registrations
+        driver_name:         guardian ? formData.driver_name.trim() : '',
+        driver_relationship: guardian ? formData.driver_relationship : '',
+        driver_contact:      guardian ? formData.driver_contact.trim() : '',
+        // Fetcher classification + students being fetched
+        fetcher_type:     registrantType === 'fetcher' ? fetcherType : '',
+        fetcher_students: registrantType === 'fetcher'
+          ? fetcherStudents.map(s => ({
+              full_name:     s.full_name.trim(),
+              student_id:    s.student_id.trim(),
+              student_level: s.student_level,
+              program_year:  s.program_year.trim(),
+            }))
+          : [],
+      }
+      delete payload.who_drives
 
       await registrationApi.submitOpenRegistration(payload)
 
@@ -615,6 +692,10 @@ export default function RegisterPage() {
   const isFetcher = registrantType === 'fetcher'
   const isEmployee = registrantType === 'employee'
   const regOpen = regStatus?.is_open ?? true
+
+  // Minors (JHS/Elementary) can never drive themselves; SpEd may or may not.
+  const isMinorLevel = isStudent && ['jhs', 'elementary'].includes(formData.student_level)
+  const guardianDriven = isStudent && formData.who_drives === 'guardian'
 
   // The backend program list stores combined "BSIT - 3" entries; split them into
   // a unique program list and per-program year options for the two separate fields.
@@ -823,18 +904,6 @@ export default function RegisterPage() {
               {/* Address */}
               <div className="form-subsection col-span-2"><span>Address</span></div>
 
-              <div className="form-group col-span-2">
-                <label>House / Unit No. &amp; Street <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="house_street"
-                  value={formData.house_street}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="e.g. 123 Rizal Street"
-                />
-              </div>
-
               <div className="form-group">
                 <label>Province <span className="required">*</span></label>
                 <select
@@ -887,6 +956,18 @@ export default function RegisterPage() {
                 </select>
               </div>
 
+              <div className="form-group col-span-2">
+                <label>House / Unit No. &amp; Street <span className="required">*</span></label>
+                <input
+                  type="text"
+                  name="house_street"
+                  value={formData.house_street}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="e.g. 123 Rizal Street"
+                />
+              </div>
+
               {/* Other Information */}
               <div className="form-subsection col-span-2"><span>Other Information</span></div>
 
@@ -932,6 +1013,11 @@ export default function RegisterPage() {
                             student_program: '',
                             student_year: '',
                             program_year: '',
+                            // Minors can never drive; SpEd defaults to a guardian driver
+                            // but stays selectable; College/SHS default to self-driving.
+                            who_drives: ['jhs', 'elementary'].includes(lvl.id)
+                              ? 'guardian'
+                              : lvl.id === 'sped' ? 'guardian' : 'self',
                             campus_days: lvl.id === 'sped'
                               ? CAMPUS_DAYS.map(d => d.key)
                               : prev.student_level === 'sped'
@@ -992,7 +1078,8 @@ export default function RegisterPage() {
                         </select>
                       </div>
                     </>
-                  )}
+
+)}
 
                   {/* SHS: strand + grade level */}
                   {formData.student_level === 'shs' && (
@@ -1130,27 +1217,119 @@ export default function RegisterPage() {
               </div>
 
               <div className="form-group">
-                <label>Age</label>
-                <input type="number" name="age" min="15" max="99" value={formData.age} onChange={handleInputChange} />
+                <label>{guardianDriven ? "Student's Age" : 'Age'}</label>
+                <input type="number" name="age" min={guardianDriven ? 3 : 15} max="99" value={formData.age} onChange={handleInputChange} />
               </div>
 
-              <div className="form-group col-span-2">
-                <label>Driver's License Number <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="drivers_license"
-                  value={formData.drivers_license}
-                  onChange={handleInputChange}
-                  required
-                  maxLength={13}
-                  placeholder={FIELD_PATTERNS.drivers_license.hint}
-                  className={formErrors.drivers_license || dupErrors.drivers_license ? 'input-error' : ''}
-                />
-                <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
-                {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
-                {!formErrors.drivers_license && dupErrors.drivers_license && <span className="field-error-msg">{dupErrors.drivers_license}</span>}
-                {!formErrors.drivers_license && dupChecking.drivers_license && <span className="field-checking-msg">Checking availability…</span>}
-              </div>
+              {/* Who drives — students only. Minors are locked to a guardian/driver. */}
+              {isStudent && formData.student_level && (
+                <div className="form-group col-span-2">
+                  <label>Who will drive this vehicle? <span className="required">*</span></label>
+                  {isMinorLevel ? (
+                    <div className="schedule-note driver-minor-note">
+                      <Info size={13} />
+                      <span>
+                        {formData.student_level === 'jhs' ? 'Junior High School' : 'Elementary'} students are minors
+                        and are not allowed to drive. A <strong>parent, guardian, or authorized driver</strong> must
+                        be registered as this vehicle's driver.
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="student-level-picker">
+                        {[
+                          { id: 'self',     label: 'Student drives (self)' },
+                          { id: 'guardian', label: 'Parent / Guardian / Authorized driver' },
+                        ].map(opt => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            className={`student-level-btn${formData.who_drives === opt.id ? ' active' : ''}`}
+                            onClick={() => setFormData(prev => ({
+                              ...prev,
+                              who_drives: opt.id,
+                              ...(opt.id === 'self' ? { driver_name: '', driver_relationship: '', driver_contact: '' } : {}),
+                            }))}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      {formData.student_level === 'sped' && (
+                        <span className="field-hint">Select “Student drives” only if the student holds a valid driver's license.</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {guardianDriven ? (
+                <>
+                  <div className="form-group">
+                    <label>Driver's Full Name <span className="required">*</span></label>
+                    <input
+                      type="text"
+                      name="driver_name"
+                      value={formData.driver_name}
+                      onChange={handleInputChange}
+                      required
+                      placeholder="e.g. DELA CRUZ, JUAN"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Relationship to Student <span className="required">*</span></label>
+                    <select name="driver_relationship" value={formData.driver_relationship} onChange={handleInputChange} required>
+                      <option value="">Select Relationship</option>
+                      <option value="parent">Parent</option>
+                      <option value="guardian">Guardian</option>
+                      <option value="authorized_driver">Authorized Driver</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Driver's License Number <span className="required">*</span></label>
+                    <input
+                      type="text"
+                      name="drivers_license"
+                      value={formData.drivers_license}
+                      onChange={handleInputChange}
+                      required
+                      maxLength={13}
+                      placeholder={FIELD_PATTERNS.drivers_license.hint}
+                      className={formErrors.drivers_license ? 'input-error' : ''}
+                    />
+                    <span className="field-hint">The authorized driver's LTO license — {FIELD_PATTERNS.drivers_license.hint}</span>
+                    {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
+                  </div>
+                  <div className="form-group">
+                    <label>Driver's Contact Number</label>
+                    <input
+                      type="text"
+                      name="driver_contact"
+                      value={formData.driver_contact}
+                      onChange={handleInputChange}
+                      placeholder={FIELD_PATTERNS.driver_contact.hint}
+                      className={formErrors.driver_contact ? 'input-error' : ''}
+                    />
+                    {formErrors.driver_contact && <span className="field-error-msg">{formErrors.driver_contact}</span>}
+                  </div>
+                </>
+              ) : (
+                <div className="form-group col-span-2">
+                  <label>Driver's License Number <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="drivers_license"
+                    value={formData.drivers_license}
+                    onChange={handleInputChange}
+                    required
+                    maxLength={13}
+                    placeholder={FIELD_PATTERNS.drivers_license.hint}
+                    className={formErrors.drivers_license ? 'input-error' : ''}
+                  />
+                  <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
+                  {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
+                </div>
+              )}
 
               {/* Campus day selector — students only */}
               {isStudent && (
@@ -1245,17 +1424,116 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              {/* Fetcher — all days but time-limited */}
+              {/* Fetcher — all days; entry rules depend on classification */}
               {isFetcher && (
                 <div className="form-group col-span-2">
                   <p className="campus-day-anyday-note fetcher-note">
                     <Info size={13} />
-                    Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only.
-                    Entry outside these hours will be restricted.
+                    {fetcherType === 'standby'
+                      ? <>Standby fetchers may enter on <strong>any day</strong> and are allowed to park inside the campus while waiting.</>
+                      : <>Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
                   </p>
                 </div>
               )}
             </div>
+
+            {/* ── Fetcher Classification & Students ── */}
+            {isFetcher && (
+              <>
+                <hr className="divider" />
+                <h3 className="section-heading">Fetcher Classification <span className="required">*</span></h3>
+                <div className="reg-type-inline">
+                  <button
+                    type="button"
+                    className={`reg-type-inline-btn${fetcherType === 'drop_and_go' ? ' selected' : ''}`}
+                    onClick={() => setFetcherType('drop_and_go')}
+                  >
+                    <span className="reg-type-inline-icon"><Clock size={24} /></span>
+                    <span className="reg-type-inline-label">Fetcher / Drop &amp; Go</span>
+                    <span className="reg-type-inline-desc">Entry only during the allotted drop-off &amp; pick-up times</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`reg-type-inline-btn${fetcherType === 'standby' ? ' selected' : ''}`}
+                    onClick={() => setFetcherType('standby')}
+                  >
+                    <span className="reg-type-inline-icon"><Car size={24} /></span>
+                    <span className="reg-type-inline-label">Standby</span>
+                    <span className="reg-type-inline-desc">Allowed to park inside the campus while waiting</span>
+                  </button>
+                </div>
+
+                <hr className="divider" />
+                <h3 className="section-heading">Students to Fetch <span className="required">*</span></h3>
+                <p className="field-hint" style={{ display: 'block', marginBottom: 12 }}>
+                  List at least one student you will be fetching. Use "Add another student" if you fetch more than one.
+                </p>
+                {fetcherStudents.map((s, i) => (
+                  <div key={i} className="fetcher-student-card">
+                    <div className="fetcher-student-head">
+                      <span>Student #{i + 1}</span>
+                      {fetcherStudents.length > 1 && (
+                        <button
+                          type="button"
+                          className="fetcher-student-remove"
+                          onClick={() => setFetcherStudents(prev => prev.filter((_, j) => j !== i))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label>Full Name <span className="required">*</span></label>
+                        <input
+                          type="text"
+                          value={s.full_name}
+                          onChange={e => updateFetcherStudent(i, 'full_name', e.target.value)}
+                          placeholder="Last Name, First Name, Middle Name"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Student ID <span className="required">*</span></label>
+                        <input
+                          type="text"
+                          value={s.student_id}
+                          onChange={e => updateFetcherStudent(i, 'student_id', e.target.value)}
+                          placeholder="e.g. 2024-00123"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Education Level <span className="required">*</span></label>
+                        <select
+                          value={s.student_level}
+                          onChange={e => updateFetcherStudent(i, 'student_level', e.target.value)}
+                        >
+                          <option value="">Select level…</option>
+                          {FETCHER_STUDENT_LEVELS.map(lvl => (
+                            <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>Program / Grade Level</label>
+                        <input
+                          type="text"
+                          value={s.program_year}
+                          onChange={e => updateFetcherStudent(i, 'program_year', e.target.value)}
+                          placeholder="e.g. BSIT - 3 or Grade 7"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="fetcher-add-student-btn"
+                  onClick={() => setFetcherStudents(prev => [...prev, { ...EMPTY_FETCHER_STUDENT }])}
+                >
+                  + Add another student
+                </button>
+              </>
+            )}
 
             <hr className="divider" />
 

@@ -64,7 +64,9 @@ class User(AbstractUser):
     must_change_password = models.BooleanField(default=False)
 
     # Security guard fields
-    gate_assignment = models.CharField(max_length=10, choices=Gate.choices, null=True, blank=True)
+    # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows
+    # in scanning.Gate so admins can add new ones from System Settings.
+    gate_assignment = models.CharField(max_length=10, null=True, blank=True)
     agency = models.CharField(max_length=150, null=True, blank=True)
     qr_token = models.UUIDField(default=uuid.uuid4, unique=True)
 

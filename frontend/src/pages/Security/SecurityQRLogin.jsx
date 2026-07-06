@@ -1,25 +1,33 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ScanLine, ShieldCheck, KeyRound, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
+import { ShieldCheck, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
+import { authApi } from '../../api/auth'
+import { getGates } from '../../api/scanning'
 import slcLogo from '../../assets/slclogo.jpg'
 import './SecurityQRLogin.css'
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
+
+// Fallback list shown until the dynamic gate list loads (or if it fails)
+const DEFAULT_GATES = [
+  { gate_id: 'gate1', label: 'Gate 1 — Main Entrance' },
+  { gate_id: 'gate4', label: 'Gate 4 — Side Entrance' },
+]
 
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
   const { gateParam }                            = useParams()
   const { qrLogin, guardLogin, isLoading, user } = useAuthStore()
 
-  // Kiosk mode: /security/guard-login/gate1 or /security/guard-login/gate4 locks the gate
-  const kioskGate = GATE_LABELS[gateParam] ? gateParam : null
+  // Kiosk mode: /security/guard-login/gate1, /security/guard-login/gate4, … locks the gate.
+  // Gates are dynamic (admin can add more), so accept any gateN slug.
+  const kioskGate = /^gate\d{1,3}$/.test(gateParam || '') ? gateParam : null
 
   const [selectedGate, setSelectedGate] = useState(kioskGate)
   const [prevKioskGate, setPrevKioskGate] = useState(kioskGate)
-  const [method, setMethod]             = useState('credentials') // credentials | qr
   const [email, setEmail]               = useState('')
   const [password, setPassword]         = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -31,6 +39,24 @@ export default function SecurityQRLogin() {
   const [errorMsg, setErrorMsg]         = useState('')
   const [useCamera, setUseCamera]       = useState(true)
   const [cameraErr, setCameraErr]       = useState('')
+  // The QR Badge tab appears once the typed email belongs to a guard whose
+  // badge is usable (first credentials login + password change completed).
+  const [qrAvailable, setQrAvailable]   = useState(false)
+  // Dynamic gate list (admin can add gates in System Settings)
+  const [gates, setGates]               = useState(DEFAULT_GATES)
+
+  useEffect(() => {
+    getGates()
+      .then(({ data }) => { if (Array.isArray(data) && data.length > 0) setGates(data) })
+      .catch(() => {})
+  }, [])
+
+  // Short display name, e.g. 'Gate 2' from 'Gate 2 — North Entrance'
+  const gateName = (id) => {
+    const g = gates.find(x => x.gate_id === id)
+    if (g) return g.label.split('—')[0].trim()
+    return GATE_LABELS[id] || id
+  }
 
   const inputRef  = useRef(null)
   const videoRef  = useRef(null)
@@ -59,16 +85,30 @@ export default function SecurityQRLogin() {
     setSelectedGate(kioskGate)
   }
 
+  // Debounced per-guard check: as the guard types their email, ask the backend
+  // whether that account's QR badge is usable and reveal the scanner if so.
   useEffect(() => {
-    if (selectedGate && method === 'qr' && !useCamera) inputRef.current?.focus()
-  }, [selectedGate, method, useCamera])
+    const clean = email.trim()
+    if (!clean || !clean.includes('@')) {
+      setQrAvailable(false)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      authApi.guardQrAvailable(clean)
+        .then(ok => { if (!cancelled) setQrAvailable(ok) })
+        .catch(() => { if (!cancelled) setQrAvailable(false) })
+    }, 400)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [email])
 
   const handleGoToDashboard = () => navigate('/security/entries')
 
   // Camera-based QR detection using jsQR (works in all browsers).
-  // Only starts once a gate is selected so the scan callback always has a valid gate.
+  // Only starts once a gate is selected (valid gate for the scan callback)
+  // and the typed email unlocked the scanner.
   useEffect(() => {
-    if (!useCamera || !selectedGate || method !== 'qr') return
+    if (!useCamera || !selectedGate || !qrAvailable) return
     let animFrame
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
@@ -111,7 +151,7 @@ export default function SecurityQRLogin() {
       cancelAnimationFrame(animFrame)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [useCamera, selectedGate, method]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useCamera, selectedGate, qrAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQRScan = async (token) => {
     if (status === 'scanning') return
@@ -123,7 +163,7 @@ export default function SecurityQRLogin() {
       const guard = await qrLogin(clean, selectedGate)
       setGuardInfo(guard)
       setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${GATE_LABELS[guard.gate_assignment] || guard.gate_assignment}.`)
+      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
       setTimeout(() => navigate('/security/entries'), 1800)
     } catch (err) {
       setErrorMsg(err.message || 'QR scan failed.')
@@ -141,22 +181,12 @@ export default function SecurityQRLogin() {
       const guard = await guardLogin(email.trim(), password, selectedGate)
       setGuardInfo(guard)
       setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${GATE_LABELS[guard.gate_assignment] || guard.gate_assignment}.`)
+      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
       setTimeout(() => navigate('/security/entries'), 1800)
     } catch (err) {
       setCredError(err.message || 'Login failed. Please check your credentials.')
       setPassword('')
     }
-  }
-
-  const switchMethod = (next) => {
-    setMethod(next)
-    setCredError('')
-    setErrorMsg('')
-    setStatus('idle')
-    setInputToken('')
-    if (next === 'qr') setUseCamera(true)
-    else streamRef.current?.getTracks().forEach(t => t.stop())
   }
 
   const handleBackToGateSelect = () => {
@@ -167,7 +197,6 @@ export default function SecurityQRLogin() {
     setCredError('')
     setEmail('')
     setPassword('')
-    setMethod('credentials')
     setUseCamera(true)
     streamRef.current?.getTracks().forEach(t => t.stop())
   }
@@ -204,22 +233,19 @@ export default function SecurityQRLogin() {
               </div>
 
               <div className="sqr-gate-list">
-                <button className="sqr-gate-item" onClick={() => setSelectedGate('gate1')}>
-                  <div className="sqr-gate-icon">1</div>
-                  <div className="sqr-gate-text">
-                    <span className="sqr-gate-label">Gate 1</span>
-                    <span className="sqr-gate-desc">Main Entrance</span>
-                  </div>
-                  <ChevronLeft size={16} className="sqr-gate-arrow" />
-                </button>
-                <button className="sqr-gate-item" onClick={() => setSelectedGate('gate4')}>
-                  <div className="sqr-gate-icon">4</div>
-                  <div className="sqr-gate-text">
-                    <span className="sqr-gate-label">Gate 4</span>
-                    <span className="sqr-gate-desc">Side Entrance</span>
-                  </div>
-                  <ChevronLeft size={16} className="sqr-gate-arrow" />
-                </button>
+                {gates.map(g => {
+                  const [main, desc] = g.label.split('—').map(s => s.trim())
+                  return (
+                    <button key={g.gate_id} className="sqr-gate-item" onClick={() => setSelectedGate(g.gate_id)}>
+                      <div className="sqr-gate-icon">{g.gate_id.replace(/\D/g, '')}</div>
+                      <div className="sqr-gate-text">
+                        <span className="sqr-gate-label">{main || g.gate_id}</span>
+                        <span className="sqr-gate-desc">{desc || 'Campus gate'}</span>
+                      </div>
+                      <ChevronLeft size={16} className="sqr-gate-arrow" />
+                    </button>
+                  )
+                })}
               </div>
 
               {user?.role === 'security' && (
@@ -227,7 +253,7 @@ export default function SecurityQRLogin() {
                   <span className="sqr-active-dot" />
                   <span>
                     Active: <strong>{user.full_name}</strong>
-                    {user.gate_assignment && ` — ${GATE_LABELS[user.gate_assignment] || user.gate_assignment}`}
+                    {user.gate_assignment && ` — ${gateName(user.gate_assignment)}`}
                   </span>
                   <button className="sqr-dash-link" onClick={handleGoToDashboard}>
                     Go to dashboard →
@@ -243,7 +269,7 @@ export default function SecurityQRLogin() {
                   <div className="sqr-state-icon success"><CheckCircle size={32} /></div>
                   <h2 className="sqr-state-title">Welcome, {guardInfo.full_name}!</h2>
                   <p className="sqr-state-sub">
-                    Clocked in at <strong>{GATE_LABELS[guardInfo.gate_assignment] || guardInfo.gate_assignment}</strong>
+                    Clocked in at <strong>{gateName(guardInfo.gate_assignment)}</strong>
                   </p>
                   <p className="sqr-state-hint">Redirecting to dashboard…</p>
                 </div>
@@ -269,139 +295,111 @@ export default function SecurityQRLogin() {
                         <ChevronLeft size={15} /> Change gate
                       </button>
                     )}
-                    <span className="sqr-gate-pill">{GATE_LABELS[selectedGate]}</span>
+                    <span className="sqr-gate-pill">{gateName(selectedGate)}</span>
                   </div>
 
-                  <div className="sqr-method-tabs">
-                    <button
-                      className={`sqr-method-tab ${method === 'credentials' ? 'active' : ''}`}
-                      onClick={() => switchMethod('credentials')}
-                    >
-                      <KeyRound size={15} /> Credentials
-                    </button>
-                    <button
-                      className={`sqr-method-tab ${method === 'qr' ? 'active' : ''}`}
-                      onClick={() => switchMethod('qr')}
-                    >
-                      <ScanLine size={15} /> QR Badge
-                    </button>
-                  </div>
-
-                  {method === 'credentials' ? (
-                    <>
-                      <div className="sqr-card-header">
-                        <ShieldCheck size={22} className="sqr-card-icon" />
-                        <div>
-                          <h1 className="sqr-card-title">Guard Login</h1>
-                          <p className="sqr-card-subtitle">
-                            Sign in with your guard credentials to clock in at <strong>{GATE_LABELS[selectedGate]}</strong>
-                          </p>
-                        </div>
-                      </div>
-
-                      <form className="sqr-cred-form" onSubmit={handleCredentialLogin}>
-                        {credError && (
-                          <div className="sqr-cred-error" role="alert">
-                            <AlertCircle size={15} />
-                            <span>{credError}</span>
-                          </div>
-                        )}
-                        <div className="sqr-cred-group">
-                          <label className="sqr-cred-label" htmlFor="guard-email">Email</label>
-                          <input
-                            id="guard-email"
-                            className="sqr-input"
-                            type="email"
-                            value={email}
-                            onChange={e => setEmail(e.target.value)}
-                            placeholder="Enter your email address"
-                            autoComplete="username"
-                            required
-                          />
-                        </div>
-                        <div className="sqr-cred-group">
-                          <label className="sqr-cred-label" htmlFor="guard-password">Password</label>
-                          <div className="sqr-input-wrap">
-                            <input
-                              id="guard-password"
-                              className="sqr-input"
-                              type={showPassword ? 'text' : 'password'}
-                              value={password}
-                              onChange={e => setPassword(e.target.value)}
-                              placeholder="••••••••"
-                              autoComplete="current-password"
-                              required
-                            />
-                            <button type="button" className="sqr-eye" onClick={() => setShowPassword(v => !v)}>
-                              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          type="submit"
-                          className="sqr-cred-submit"
-                          disabled={!email.trim() || !password || isLoading}
-                        >
-                          {isLoading ? <span className="sqr-btn-spinner" /> : <LogIn size={17} />}
-                          {isLoading ? 'Signing in…' : 'Login & Clock In'}
-                        </button>
-                      </form>
-                    </>
-                  ) : (
-                    <>
                   <div className="sqr-card-header">
-                    <ScanLine size={22} className="sqr-card-icon" />
+                    <ShieldCheck size={22} className="sqr-card-icon" />
                     <div>
-                      <h1 className="sqr-card-title">Scan Your QR Badge</h1>
+                      <h1 className="sqr-card-title">Guard Login</h1>
                       <p className="sqr-card-subtitle">
-                        Hold your QR card to the scanner to clock in at <strong>{GATE_LABELS[selectedGate]}</strong>
+                        Sign in with your guard credentials to clock in at <strong>{gateName(selectedGate)}</strong>
                       </p>
                     </div>
                   </div>
 
-                  {useCamera ? (
-                    <div className="sqr-camera-wrap">
-                      <video ref={videoRef} className="sqr-video" muted playsInline />
-                      <p className="sqr-camera-hint">Point camera at your QR card</p>
-                      <button className="sqr-toggle" onClick={() => setUseCamera(false)}>Use text input instead</button>
-                    </div>
-                  ) : (
-                    <div className="sqr-input-section">
-                      <div className="sqr-scan-pulse">
-                        <ScanLine size={36} className="sqr-scan-anim" />
+                  <form className="sqr-cred-form" onSubmit={handleCredentialLogin}>
+                    {credError && (
+                      <div className="sqr-cred-error" role="alert">
+                        <AlertCircle size={15} />
+                        <span>{credError}</span>
                       </div>
-                      <p className="sqr-input-hint">USB scanner auto-fills and submits on Enter</p>
-                      <div className="sqr-input-row">
-                        <div className="sqr-input-wrap">
-                          <input
-                            ref={inputRef}
-                            className="sqr-input"
-                            type={showToken ? 'text' : 'password'}
-                            value={inputToken}
-                            onChange={e => setInputToken(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="QR token…"
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
-                          <button type="button" className="sqr-eye" onClick={() => setShowToken(v => !v)}>
-                            {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                          </button>
-                        </div>
-                        <button
-                          className="sqr-submit"
-                          disabled={!inputToken.trim() || isLoading}
-                          onClick={() => handleQRScan(inputToken)}
-                        >
-                          <LogIn size={18} />
+                    )}
+                    <div className="sqr-cred-group">
+                      <label className="sqr-cred-label" htmlFor="guard-email">Email</label>
+                      <input
+                        id="guard-email"
+                        className="sqr-input"
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        placeholder="Enter your email address"
+                        autoComplete="username"
+                        required
+                      />
+                    </div>
+                    <div className="sqr-cred-group">
+                      <label className="sqr-cred-label" htmlFor="guard-password">Password</label>
+                      <div className="sqr-input-wrap">
+                        <input
+                          id="guard-password"
+                          className="sqr-input"
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          autoComplete="current-password"
+                          required
+                        />
+                        <button type="button" className="sqr-eye" onClick={() => setShowPassword(v => !v)}>
+                          {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                         </button>
                       </div>
-                      {cameraErr && <p className="sqr-err-text">{cameraErr}</p>}
-                      <button className="sqr-toggle" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
-                        Use camera instead
-                      </button>
                     </div>
-                  )}
+                    <button
+                      type="submit"
+                      className="sqr-cred-submit"
+                      disabled={!email.trim() || !password || isLoading}
+                    >
+                      {isLoading ? <span className="sqr-btn-spinner" /> : <LogIn size={17} />}
+                      {isLoading ? 'Signing in…' : 'Login & Clock In'}
+                    </button>
+                  </form>
+
+                  {/* QR scanner appears once the typed email matches a badge-eligible guard */}
+                  {qrAvailable && (
+                    <>
+                      <div className="sqr-divider"><span>or scan your QR badge</span></div>
+                      {useCamera ? (
+                        <div className="sqr-camera-wrap">
+                          <video ref={videoRef} className="sqr-video" muted playsInline />
+                          <p className="sqr-camera-hint">Point camera at your QR card</p>
+                          <button className="sqr-toggle" onClick={() => setUseCamera(false)}>Use text input instead</button>
+                        </div>
+                      ) : (
+                        <div className="sqr-input-section">
+                          <p className="sqr-input-hint">USB scanner auto-fills and submits on Enter</p>
+                          <div className="sqr-input-row">
+                            <div className="sqr-input-wrap">
+                              <input
+                                ref={inputRef}
+                                className="sqr-input"
+                                type={showToken ? 'text' : 'password'}
+                                value={inputToken}
+                                onChange={e => setInputToken(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="QR token…"
+                                autoComplete="off"
+                                spellCheck={false}
+                              />
+                              <button type="button" className="sqr-eye" onClick={() => setShowToken(v => !v)}>
+                                {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                              </button>
+                            </div>
+                            <button
+                              className="sqr-submit"
+                              disabled={!inputToken.trim() || isLoading}
+                              onClick={() => handleQRScan(inputToken)}
+                            >
+                              <LogIn size={18} />
+                            </button>
+                          </div>
+                          {cameraErr && <p className="sqr-err-text">{cameraErr}</p>}
+                          <button className="sqr-toggle" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
+                            Use camera instead
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </>

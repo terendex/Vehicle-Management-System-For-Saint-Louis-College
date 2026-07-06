@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
@@ -478,7 +478,10 @@ function ZoneCapacityRow({ zone, onSaved }) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────
-export default function Events() {
+// `embedded` renders the content without its own AdminLayout so the page can
+// live as a tab inside Parking Space Management.
+export default function Events({ embedded = false }) {
+  const Wrapper = embedded ? Fragment : AdminLayout
   const [settings, setSettings]           = useState(null)
   const [modeLoading, setModeLoading]     = useState({ parking: false, entry: false })
   const [zones, setZones]                 = useState([])
@@ -530,7 +533,7 @@ export default function Events() {
   const handleEventDeleted = (id) => setEvents(prev => prev.filter(e => e.id !== id))
 
   return (
-    <AdminLayout>
+    <Wrapper>
       <div className="ev-page">
 
         {/* ── Header ─────────────────────────────── */}
@@ -680,6 +683,6 @@ export default function Events() {
           onCreated={handleEventCreated}
         />
       )}
-    </AdminLayout>
+    </Wrapper>
   )
 }

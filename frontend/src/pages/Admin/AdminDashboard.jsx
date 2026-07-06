@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer,
+  CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import './AdminDashboard.css'
 
@@ -111,6 +111,75 @@ function DayBarChart({ data, weekTotal }) {
           <Bar dataKey="count" name="Entries" fill="#2A2B61" radius={[6, 6, 0, 0]} maxBarSize={48} />
         </BarChart>
       </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ── Registrations-by-day Chart ────────────────────────────────────────────────
+// Stacked accepted/pending registrations per campus day (Mon–Sat) against the
+// daily slot capacity (dashed line).
+
+const DAY_ABBREV = {
+  Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed',
+  Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat',
+}
+
+function DayRegistrationChart({ data }) {
+  if (!data || data.length === 0) {
+    return <div className="ad-chart-empty">No registration data</div>
+  }
+  const capacity = data[0]?.capacity ?? 0
+  const rows = data.map(d => ({ ...d, label: DAY_ABBREV[d.day] || d.day }))
+  return (
+    <div className="ad-bar-wrap">
+      <div className="ad-bar-summary">
+        <span className="ad-bar-summary-val">{capacity}</span>
+        <span className="ad-bar-summary-label">slots per day</span>
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F7" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 11.5, fill: '#8892A4', fontWeight: 600 }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: '#B0B8CC' }}
+            axisLine={false}
+            tickLine={false}
+            allowDecimals={false}
+            domain={[0, dataMax => Math.max(dataMax, capacity)]}
+          />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            cursor={{ fill: '#F0F2F7', radius: 4 }}
+            formatter={(val, name) => [val, name]}
+            labelFormatter={(label, payload) => {
+              const row = payload?.[0]?.payload
+              return row ? `${row.day} — ${row.accepted + row.pending}/${row.capacity} slots used` : label
+            }}
+          />
+          <Bar dataKey="accepted" stackId="regs" name="Accepted" fill="#059669" maxBarSize={48} />
+          <Bar dataKey="pending"  stackId="regs" name="Pending"  fill="#F59E0B" radius={[6, 6, 0, 0]} maxBarSize={48} />
+          <ReferenceLine y={capacity} stroke="#DC2626" strokeDasharray="4 4" />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="ad-donut-legend" style={{ marginTop: 8 }}>
+        <div className="ad-donut-legend-item">
+          <span className="ad-donut-legend-dot" style={{ background: '#059669' }} />
+          <span className="ad-donut-legend-label">Accepted</span>
+        </div>
+        <div className="ad-donut-legend-item">
+          <span className="ad-donut-legend-dot" style={{ background: '#F59E0B' }} />
+          <span className="ad-donut-legend-label">Pending</span>
+        </div>
+        <div className="ad-donut-legend-item">
+          <span className="ad-donut-legend-dot" style={{ background: '#DC2626' }} />
+          <span className="ad-donut-legend-label">Capacity ({capacity})</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -370,6 +439,14 @@ export default function AdminDashboard() {
                   data={stats?.day_distribution}
                   weekTotal={stats?.scans?.authorized_week}
                 />
+              </ChartCard>
+
+              <ChartCard
+                icon={BarChart2}
+                title="Registrations by Campus Day"
+                subtitle="Accepted + pending vs daily capacity"
+              >
+                <DayRegistrationChart data={stats?.day_registrations} />
               </ChartCard>
 
             </div>

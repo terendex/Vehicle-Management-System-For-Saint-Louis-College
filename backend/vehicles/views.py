@@ -86,7 +86,7 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
 
 
 class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
-    queryset           = ParkingZone.objects.prefetch_related('spaces').all()
+    queryset           = ParkingZone.objects.select_related('camera').prefetch_related('spaces').all()
     serializer_class   = ParkingZoneSerializer
     permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Parking Zone'
@@ -119,15 +119,18 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         # Update or create each space (preserving is_occupied / occupied_by)
         result = []
         for s in spaces_data:
+            points = s.get('points')
+            if points:
+                xs, ys = [p[0] for p in points], [p[1] for p in points]
+                bbox = {'x1': min(xs), 'y1': min(ys), 'x2': max(xs), 'y2': max(ys)}
+            else:
+                points = None
+                bbox = {'x1': s.get('x1'), 'y1': s.get('y1'), 'x2': s.get('x2'), 'y2': s.get('y2')}
+
             space, _ = ParkingSpace.objects.update_or_create(
                 zone=zone,
                 space_number=s['space_number'],
-                defaults={
-                    'x1': s.get('x1'),
-                    'y1': s.get('y1'),
-                    'x2': s.get('x2'),
-                    'y2': s.get('y2'),
-                },
+                defaults={**bbox, 'points': points},
             )
             result.append(space)
 
@@ -155,9 +158,9 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='start-camera')
     def start_camera(self, request, pk=None):
         zone = self.get_object()
-        if not zone.rtsp_url:
-            return Response({'error': 'No RTSP URL configured for this zone.'}, status=400)
-        parking_camera.start(zone.id, zone.rtsp_url)
+        if not zone.camera or not zone.camera.rtsp_url:
+            return Response({'error': 'No camera assigned to this zone. Assign one from Device Management.'}, status=400)
+        parking_camera.start(zone.id, zone.camera.rtsp_url)
         return Response({'status': 'started'})
 
     @action(detail=True, methods=['post'], url_path='stop-camera')
@@ -612,6 +615,70 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     return _id_conflict(registrant_type, student_id, employee_id, qs)
 
 
+def _license_db_conflict(drivers_license):
+    """
+    The DB has a partial unique index (uniq_active_registration_drivers_license):
+    one license number per active registration. Pre-check it so applicants get a
+    readable error instead of a 500 from the IntegrityError.
+
+    Distinct from _license_conflict(drivers_license, qs) above: that one is
+    scoped to an explicitly-built queryset (used inside _registration_conflict
+    and the availability-check endpoint); this one queries the live table
+    directly as a belt-and-suspenders check right before save().
+    Returns an error message string, or None.
+    """
+    if isinstance(drivers_license, list):
+        drivers_license = drivers_license[0] if drivers_license else ''
+    license_clean = (drivers_license or '').strip()
+    if not license_clean:
+        return None
+    active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
+    if VehicleRegistration.objects.filter(
+        status__in=active, drivers_license__iexact=license_clean
+    ).exists():
+        return (f"Driver's license {license_clean} is already on an active registration. "
+                "Each license may only be tied to one registered vehicle — please contact "
+                "the CDSO if this vehicle replaces a previous one.")
+    return None
+
+
+# Student levels whose registrants are minors and can never drive themselves
+MINOR_STUDENT_LEVELS = ('jhs', 'elementary')
+
+
+def _validate_authorized_driver(registrant_type, data):
+    """
+    Enforce the registrant/driver split for student registrations.
+    JHS and Elementary students are minors, so an authorized adult driver
+    (parent/guardian/authorized driver) is mandatory and self-driving is
+    rejected even on direct API calls. When driver_name is present,
+    drivers_license is understood to be the driver's license.
+    Returns an error message string, or None if valid.
+    """
+    def _val(key):
+        v = data.get(key, '')
+        if isinstance(v, list):
+            v = v[0] if v else ''
+        return (v or '').strip()
+
+    if registrant_type != 'student':
+        return None
+
+    level       = _val('student_level')
+    driver_name = _val('driver_name')
+
+    if level in MINOR_STUDENT_LEVELS and not driver_name:
+        return ("Junior High and Elementary students are minors and cannot drive. "
+                "An authorized driver (parent/guardian) is required.")
+
+    if driver_name:
+        if not _val('driver_relationship'):
+            return "Please specify the authorized driver's relationship to the student."
+        if not _val('drivers_license'):
+            return "The authorized driver's license number is required."
+    return None
+
+
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -670,15 +737,14 @@ class AcceptRegistrationView(APIView):
         schedule_override    = request.data.get('schedule', '').strip()
         special_case_reason  = request.data.get('special_case_reason', '').strip()
 
-        # Early validation: if admin is adding days beyond the original, a reason is required
+        # Early validation: up to 3 campus days is the normal allowance — granting
+        # more than 3 makes it a special case that requires a reason.
         if campus_days_override is not None and isinstance(campus_days_override, list):
             valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
             _cleaned_check = [d for d in campus_days_override if d in valid_days]
-            _original_days = set(registration.campus_days or [])
-            _added_days    = set(_cleaned_check) - _original_days
-            if _added_days and not special_case_reason:
+            if len(_cleaned_check) > 3 and not special_case_reason:
                 return Response(
-                    {"error": "A reason is required when adding days not in the original schedule."},
+                    {"error": "A reason is required when granting more than 3 campus days."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -752,10 +818,8 @@ class AcceptRegistrationView(APIView):
             valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
             cleaned = [d for d in campus_days_override if d in valid_days]
 
-            # Mark as special case if days were added beyond original request
-            original_days = set(registration.campus_days or [])
-            added_days    = set(cleaned) - original_days
-            if added_days:
+            # More than 3 campus days is a special case (validated above)
+            if len(cleaned) > 3:
                 registration.is_special_case     = True
                 registration.special_case_reason = special_case_reason
 
@@ -824,6 +888,10 @@ class AcceptRegistrationView(APIView):
                 "department": registration.department.name if registration.department else '',
                 "campus_days": registration.campus_days,
                 "drivers_license": registration.drivers_license,
+                "student_level": registration.student_level,
+                "driver_name": registration.driver_name,
+                "driver_relationship": registration.driver_relationship,
+                "driver_contact": registration.driver_contact,
                 "conduction_number": registration.conduction_number,
             }
         })
@@ -895,6 +963,14 @@ class CdsoDirectRegisterView(APIView):
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
+
+        driver_error = _validate_authorized_driver(registrant_type, request.data)
+        if driver_error:
+            return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        license_error = _license_db_conflict(request.data.get('drivers_license', ''))
+        if license_error:
+            return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = VehicleRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
@@ -1105,10 +1181,58 @@ class PublicOpenRegistrationView(APIView):
         # Strip fields that are not model columns (e.g. form-only UI fields)
         for extra in ('last_name', 'first_name', 'middle_name',
                       'house_street', 'barangay', 'city_municipality', 'province',
-                      'student_level', 'student_strand', 'student_grade',
+                      'student_strand', 'student_grade',
                       'student_program', 'student_year',
                       'privacy_consent'):
             data.pop(extra, None)
+
+        driver_error = _validate_authorized_driver(registrant_type, data)
+        if driver_error:
+            return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        license_error = _license_db_conflict(data.get('drivers_license', ''))
+        if license_error:
+            return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        if registrant_type == 'fetcher':
+            # Classification is required: drop_and_go (allotted times only) or
+            # standby (allowed to park inside campus while waiting).
+            fetcher_type = (data.get('fetcher_type') or '').strip()
+            if fetcher_type not in ('drop_and_go', 'standby'):
+                return Response(
+                    {"error": "Please choose a fetcher classification: Fetcher/Drop & Go or Standby."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # At least one student must be listed
+            students = data.get('fetcher_students') or []
+            if not isinstance(students, list) or len(students) == 0:
+                return Response(
+                    {"error": "At least one student must be listed on a fetcher registration."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            valid_levels = {c[0] for c in VehicleRegistration.StudentLevel.choices}
+            cleaned_students = []
+            for s in students:
+                if not isinstance(s, dict):
+                    return Response({"error": "Invalid student entry."}, status=status.HTTP_400_BAD_REQUEST)
+                entry = {
+                    'full_name':     (s.get('full_name') or '').strip(),
+                    'student_id':    (s.get('student_id') or '').strip(),
+                    'student_level': (s.get('student_level') or '').strip(),
+                    'program_year':  (s.get('program_year') or '').strip(),
+                }
+                if not entry['full_name'] or not entry['student_id'] or not entry['student_level']:
+                    return Response(
+                        {"error": "Each student needs a full name, student ID and education level."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if entry['student_level'] not in valid_levels:
+                    return Response({"error": "Invalid education level for a listed student."}, status=status.HTTP_400_BAD_REQUEST)
+                cleaned_students.append(entry)
+            data['fetcher_students'] = cleaned_students
+        else:
+            data.pop('fetcher_type', None)
+            data.pop('fetcher_students', None)
 
         if registrant_type == 'employee' or registrant_type == 'fetcher':
             data['schedule'] = 'ANY'
