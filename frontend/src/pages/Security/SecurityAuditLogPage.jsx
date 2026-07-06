@@ -45,9 +45,16 @@ function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
+// Local (browser/Manila) calendar date as YYYY-MM-DD. Using the UTC date here
+// hides today's scans during early-morning hours because the server filters
+// scanned_at by its own (Asia/Manila) date, not UTC.
+function localDateStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export default function SecurityAuditLogPage() {
   const { user } = useAuthStore()
-  const today = new Date().toISOString().split('T')[0]
+  const today = localDateStr()
   const gateLabel = { gate1: 'Gate 1', gate4: 'Gate 4' }[user?.gate_assignment] || 'Gate'
 
   const [logs, setLogs]           = useState([])
