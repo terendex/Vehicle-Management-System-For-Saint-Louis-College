@@ -7,11 +7,14 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
+import { QRCodeSVG } from 'qrcode.react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
+  confirmVisitorSlipPrinted, visitorQrExit,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -33,6 +36,7 @@ const STATUS_META = {
   exited:     { label: 'Exited',                 Icon: LogOut,        cls: 'exited',     logCls: 'exited'     },
   duplicate:      { label: 'Duplicate Scan', Icon: Clock,       cls: 'exited',    logCls: 'exited'    },
   already_inside: { label: 'Previously Scanned', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
+  visitor_pass_required: { label: 'Scan Visitor Slip QR', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -51,9 +55,13 @@ function passTimeInfo(p) {
   return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
 }
 
-function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration }) {
+function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration, qrPayload }) {
   const w = window.open('', '_blank', 'width=320,height=520')
   if (!w) return
+  // QR scanned at the gate to record the visitor's exit (payload: SLC-VISITOR:{id})
+  const qrSvg = qrPayload
+    ? renderToStaticMarkup(<QRCodeSVG value={qrPayload} size={130} level="M" />)
+    : ''
   const fmt = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>Visitor Slip</title>
@@ -82,6 +90,8 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
 <div class="row"><span class="label">Expires:</span><span>${fmt(expiresAt)}</span></div>
 <div class="row"><span class="label">Guard:</span><span>${guardName || 'N/A'}</span></div>
 <hr/>
+${qrSvg ? `<div style="text-align:center;margin:8px 0;">${qrSvg}</div>
+<div class="warn">SCAN THIS QR AT THE GATE TO EXIT</div>` : ''}
 <div class="warn">RETURN THIS SLIP UPON EXIT</div>
 <div class="footer">Unauthorized possession is subject to penalty.</div>
 </body></html>`)
@@ -96,6 +106,17 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
   const [duration, setDuration] = useState(60)
   const [loading, setLoading]   = useState(false)
   const [createdPass, setCreatedPass] = useState(null)
+  const [confirming, setConfirming]   = useState(false)
+  const [entryLogged, setEntryLogged] = useState(false)
+
+  const doPrint = (pass) => {
+    const officeName = offices.find(o => String(o.id) === String(officeId))?.name
+    printVisitorSlip({
+      plate, purpose, officeName, guardName,
+      issuedAt: pass.entered_at, expiresAt: pass.expires_at, duration,
+      qrPayload: pass.qr_payload || `SLC-VISITOR:${pass.id}`,
+    })
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -105,32 +126,54 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
       const res = await createVisitorPass({ plate_number: plate, office: officeId, purpose, allowed_duration: duration })
       const pass = res.data
       setCreatedPass(pass)
-      toast.success('Visitor pass created.')
-      onCreated()
-      const officeName = offices.find(o => String(o.id) === String(officeId))?.name
-      printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt: pass.entered_at, expiresAt: pass.expires_at, duration })
+      doPrint(pass)
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
     } finally { setLoading(false) }
   }
 
+  // The visitor's entry is only logged once the guard confirms the slip printed
+  const handleConfirmPrinted = async () => {
+    if (!createdPass || confirming) return
+    setConfirming(true)
+    try {
+      await confirmVisitorSlipPrinted(createdPass.id)
+      setEntryLogged(true)
+      toast.success(`Slip confirmed — visitor entry logged for ${plate}.`)
+      onCreated()
+      onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to confirm the printed slip.')
+    } finally { setConfirming(false) }
+  }
+
   if (createdPass) return (
-    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="em-overlay">
       <div className="em-modal">
         <div className="em-modal-head">
-          <span className="em-modal-title"><CheckCircle size={17} style={{ color: '#10b981' }} /> Pass Created</span>
+          <span className="em-modal-title"><CheckCircle size={17} style={{ color: '#10b981' }} /> Pass Created — Confirm Print</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
         <div className="em-modal-body">
-          <p style={{ margin: 0, fontSize: 13, color: '#166534' }}>
-            Visitor slip printed for <strong>{plate}</strong> — valid for <strong>{duration} min</strong>.
+          <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>
+            Slip sent to the printer for <strong>{plate}</strong> — valid for <strong>{duration} min</strong>.
+            The slip includes the exit QR the visitor must present when leaving.
+          </p>
+          <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+            The visitor's entry is <strong>not logged yet</strong>. Confirm the slip printed to log the entry,
+            or reprint if it failed.
           </p>
           <p style={{ margin: '6px 0 0', fontSize: 12, color: '#6b7280' }}>
             Expires: {createdPass.expires_at ? new Date(createdPass.expires_at).toLocaleTimeString() : '—'}
           </p>
         </div>
         <div className="em-modal-foot">
-          <button type="button" className="em-btn em-btn-primary" onClick={onClose}>Done</button>
+          <button type="button" className="em-btn em-btn-secondary" onClick={() => doPrint(createdPass)}>
+            Reprint Slip
+          </button>
+          <button type="button" className="em-btn em-btn-primary" disabled={confirming || entryLogged} onClick={handleConfirmPrinted}>
+            {confirming ? <><div className="em-spinner" /> Logging…</> : 'Slip Printed — Log Entry'}
+          </button>
         </div>
       </div>
     </div>
@@ -681,6 +724,27 @@ export default function SecurityEntryManagement() {
     e?.preventDefault()
     const plate = plateInput.trim().toUpperCase()
     if (!plate) return
+
+    // Visitor slip QR scanned into the lookup box (USB scanner or typed):
+    // records the visitor's exit — visitor exits are QR-only, never by plate.
+    if (plate.startsWith('SLC-VISITOR:')) {
+      setLoading(true)
+      setExitResult(null)
+      try {
+        const res = await visitorQrExit(plate)
+        setPlateInput('')
+        const dur = res.data.duration_minutes
+        toast.success(`Visitor exit recorded for ${res.data.plate_number}${dur != null ? ` — inside for ${dur} min` : ''}.`)
+        if (res.data.overstay_minutes > 0) {
+          toast.warning(`${res.data.plate_number} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
+        }
+        refreshAll()
+      } catch (err) {
+        toast.error(err?.response?.data?.error || 'Failed to record visitor exit.')
+      } finally { setLoading(false) }
+      return
+    }
+
     if (!isValidPlateNumber(plate)) {
       toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
       return
@@ -843,7 +907,12 @@ export default function SecurityEntryManagement() {
                 <input
                   className="em-plate-input"
                   value={plateInput}
-                  onChange={e => { setPlateInput(formatPlateNumber(e.target.value)); setExitResult(null) }}
+                  onChange={e => {
+                    const raw = e.target.value
+                    // Visitor slip QRs (SLC-VISITOR:{id}) must not be plate-formatted
+                    setPlateInput(/^SLC/i.test(raw.trim()) ? raw.toUpperCase() : formatPlateNumber(raw))
+                    setExitResult(null)
+                  }}
                   placeholder="E.G. ABC 123"
                   style={{
                     flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #E2E6EE',

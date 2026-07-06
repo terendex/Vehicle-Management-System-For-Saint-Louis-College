@@ -54,6 +54,18 @@ const CAMPUS_DAYS = [
   { key: 'Saturday', short: 'Sat' },
 ]
 
+// Fetcher registrations must list at least one student being fetched.
+// Same info as a student registration except email, contact number and age.
+const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '' }
+
+const FETCHER_STUDENT_LEVELS = [
+  { id: 'college',    label: 'College' },
+  { id: 'shs',        label: 'Senior High School' },
+  { id: 'jhs',        label: 'Junior High School' },
+  { id: 'elementary', label: 'Elementary' },
+  { id: 'sped',       label: 'Special Education' },
+]
+
 
 const SLC_HEADER = (
   <header className="register-header">
@@ -134,6 +146,14 @@ export default function RegisterPage() {
     body_number: '',
     privacy_consent: false,
   })
+
+  // Fetcher-specific: classification + the students being fetched (at least one)
+  const [fetcherType, setFetcherType] = useState('')
+  const [fetcherStudents, setFetcherStudents] = useState([{ ...EMPTY_FETCHER_STUDENT }])
+
+  const updateFetcherStudent = (index, field, value) => {
+    setFetcherStudents(prev => prev.map((s, i) => (i === index ? { ...s, [field]: value } : s)))
+  }
 
   const fetchScheduleSlots = useCallback(async () => {
     setLoadingSlots(true)
@@ -430,6 +450,19 @@ export default function RegisterPage() {
         }
       }
     }
+    if (registrantType === 'fetcher') {
+      if (!fetcherType) {
+        setSubmitError('Please choose your fetcher classification: Fetcher/Drop & Go or Standby.')
+        return
+      }
+      for (let i = 0; i < fetcherStudents.length; i++) {
+        const s = fetcherStudents[i]
+        if (!s.full_name.trim() || !s.student_id.trim() || !s.student_level) {
+          setSubmitError(`Student #${i + 1}: full name, student ID and education level are required.`)
+          return
+        }
+      }
+    }
     if (registrantType === 'student' && formData.campus_days.length === 0) {
       setSubmitError('Please select at least one campus day.')
       return
@@ -483,6 +516,16 @@ export default function RegisterPage() {
         driver_name:         guardian ? formData.driver_name.trim() : '',
         driver_relationship: guardian ? formData.driver_relationship : '',
         driver_contact:      guardian ? formData.driver_contact.trim() : '',
+        // Fetcher classification + students being fetched
+        fetcher_type:     registrantType === 'fetcher' ? fetcherType : '',
+        fetcher_students: registrantType === 'fetcher'
+          ? fetcherStudents.map(s => ({
+              full_name:     s.full_name.trim(),
+              student_id:    s.student_id.trim(),
+              student_level: s.student_level,
+              program_year:  s.program_year.trim(),
+            }))
+          : [],
       }
       delete payload.who_drives
 
@@ -1381,17 +1424,116 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              {/* Fetcher — all days but time-limited */}
+              {/* Fetcher — all days; entry rules depend on classification */}
               {isFetcher && (
                 <div className="form-group col-span-2">
                   <p className="campus-day-anyday-note fetcher-note">
                     <Info size={13} />
-                    Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only.
-                    Entry outside these hours will be restricted.
+                    {fetcherType === 'standby'
+                      ? <>Standby fetchers may enter on <strong>any day</strong> and are allowed to park inside the campus while waiting.</>
+                      : <>Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
                   </p>
                 </div>
               )}
             </div>
+
+            {/* ── Fetcher Classification & Students ── */}
+            {isFetcher && (
+              <>
+                <hr className="divider" />
+                <h3 className="section-heading">Fetcher Classification <span className="required">*</span></h3>
+                <div className="reg-type-inline">
+                  <button
+                    type="button"
+                    className={`reg-type-inline-btn${fetcherType === 'drop_and_go' ? ' selected' : ''}`}
+                    onClick={() => setFetcherType('drop_and_go')}
+                  >
+                    <span className="reg-type-inline-icon"><Clock size={24} /></span>
+                    <span className="reg-type-inline-label">Fetcher / Drop &amp; Go</span>
+                    <span className="reg-type-inline-desc">Entry only during the allotted drop-off &amp; pick-up times</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`reg-type-inline-btn${fetcherType === 'standby' ? ' selected' : ''}`}
+                    onClick={() => setFetcherType('standby')}
+                  >
+                    <span className="reg-type-inline-icon"><Car size={24} /></span>
+                    <span className="reg-type-inline-label">Standby</span>
+                    <span className="reg-type-inline-desc">Allowed to park inside the campus while waiting</span>
+                  </button>
+                </div>
+
+                <hr className="divider" />
+                <h3 className="section-heading">Students to Fetch <span className="required">*</span></h3>
+                <p className="field-hint" style={{ display: 'block', marginBottom: 12 }}>
+                  List at least one student you will be fetching. Use "Add another student" if you fetch more than one.
+                </p>
+                {fetcherStudents.map((s, i) => (
+                  <div key={i} className="fetcher-student-card">
+                    <div className="fetcher-student-head">
+                      <span>Student #{i + 1}</span>
+                      {fetcherStudents.length > 1 && (
+                        <button
+                          type="button"
+                          className="fetcher-student-remove"
+                          onClick={() => setFetcherStudents(prev => prev.filter((_, j) => j !== i))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label>Full Name <span className="required">*</span></label>
+                        <input
+                          type="text"
+                          value={s.full_name}
+                          onChange={e => updateFetcherStudent(i, 'full_name', e.target.value)}
+                          placeholder="Last Name, First Name, Middle Name"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Student ID <span className="required">*</span></label>
+                        <input
+                          type="text"
+                          value={s.student_id}
+                          onChange={e => updateFetcherStudent(i, 'student_id', e.target.value)}
+                          placeholder="e.g. 2024-00123"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Education Level <span className="required">*</span></label>
+                        <select
+                          value={s.student_level}
+                          onChange={e => updateFetcherStudent(i, 'student_level', e.target.value)}
+                        >
+                          <option value="">Select level…</option>
+                          {FETCHER_STUDENT_LEVELS.map(lvl => (
+                            <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>Program / Grade Level</label>
+                        <input
+                          type="text"
+                          value={s.program_year}
+                          onChange={e => updateFetcherStudent(i, 'program_year', e.target.value)}
+                          placeholder="e.g. BSIT - 3 or Grade 7"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="fetcher-add-student-btn"
+                  onClick={() => setFetcherStudents(prev => [...prev, { ...EMPTY_FETCHER_STUDENT }])}
+                >
+                  + Add another student
+                </button>
+              </>
+            )}
 
             <hr className="divider" />
 

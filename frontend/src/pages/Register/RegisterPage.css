@@ -1746,3 +1746,53 @@
   line-height: 1.5;
   margin-bottom: 12px;
 }
+
+/* ── Fetcher: students to fetch ── */
+.fetcher-student-card {
+  border: 1.5px solid #E2E6EE;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: #FAFBFE;
+}
+
+.fetcher-student-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  color: #2A2B61;
+}
+
+.fetcher-student-remove {
+  background: none;
+  border: none;
+  color: #DC2626;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.fetcher-add-student-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: 1.5px dashed #2A2B61;
+  border-radius: 10px;
+  background: #F5F6FF;
+  color: #2A2B61;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.fetcher-add-student-btn:hover {
+  background: #EEF0FA;
+}

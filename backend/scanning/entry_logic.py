@@ -194,11 +194,17 @@ def check_entry(vehicle) -> dict:
                 f'Not allowed on campus today ({day_name}). '
                 f'Registered days: {day_list}.',
                 rule.name if rule else None)
-        if rule and not _is_within_window(rule, now):
+        # Standby fetchers are allowed to park inside campus while waiting, so
+        # the drop-off/pick-up time window only restricts Drop & Go fetchers.
+        is_standby = user.registrations.filter(
+            status='accepted', registrant_type='fetcher', fetcher_type='standby',
+        ).exists()
+        if rule and not is_standby and not _is_within_window(rule, now):
             return _result('denied', False,
                 f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name)
-        return _result('authorized', True, f'Fetcher — {user.full_name}. Entry granted.', rule.name if rule else None)
+        label = 'Fetcher (Standby)' if is_standby else 'Fetcher'
+        return _result('authorized', True, f'{label} — {user.full_name}. Entry granted.', rule.name if rule else None)
 
     return _result('denied', False, 'Unknown owner type.', None)
 

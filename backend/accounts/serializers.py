@@ -49,7 +49,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment']
+        fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment', 'agency', 'contact', 'address']
 
     def validate_email(self, value):
         value = value.strip().lower()

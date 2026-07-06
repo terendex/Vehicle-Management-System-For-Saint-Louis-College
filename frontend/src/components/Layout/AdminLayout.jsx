@@ -15,7 +15,6 @@ import {
   HelpCircle,
   ChevronDown,
   Briefcase,
-  CalendarDays,
   Truck,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
@@ -49,9 +48,8 @@ function buildNavGroups(isAdmin, isCdso) {
       icon: <TowerControl size={18} />,
       children: [
         ...(isAdmin ? [{ name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> }] : []),
-        { name: 'Parking',    path: '/admin/parking',    icon: <ParkingCircle size={18} /> },
+        { name: 'Parking Space Management', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
         { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
-        { name: 'Events',     path: '/admin/events',     icon: <CalendarDays size={18} /> },
       ],
     })
   }

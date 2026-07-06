@@ -44,6 +44,14 @@ export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
 export const extendVisitorPass = (id, extra_minutes) =>
   api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
 
+// Confirm the visitor slip was printed — this is what logs the visitor's entry
+export const confirmVisitorSlipPrinted = (id, gate_id) =>
+  api.post(`/scan/visitor-pass/${id}/printed/`, { gate_id })
+
+// Record a visitor exit by scanning the slip QR (payload: SLC-VISITOR:{id})
+export const visitorQrExit = (qr_data, gate_id) =>
+  api.post('/scan/visitor-pass/exit-scan/', { qr_data, gate_id })
+
 // Admin: live guard activity monitor (now includes gate + shift + cross-gate data)
 export const getGuardMonitor = () => api.get('/scan/guard-monitor/')
 
@@ -52,6 +60,15 @@ export const qrLogin = (qr_token, gate) => api.post('/auth/qr-login/', { qr_toke
 
 // Current active shifts per gate
 export const getCurrentShifts = () => api.get('/scan/current-shifts/')
+
+// Gates — public list of active gates; admin can pass all=true to include inactive
+export const getGates = (all = false) => api.get('/scan/gates/', { params: all ? { all: 1 } : {} })
+
+// Admin/CDSO: create a new gate (school expansion)
+export const createGate = (payload) => api.post('/scan/gates/', payload)
+
+// Admin/CDSO: rename a gate or toggle it active/inactive
+export const updateGate = (id, payload) => api.patch(`/scan/gates/${id}/`, payload)
 
 // Shift history (admin) — optional params: gate, guard, date
 export const getShifts = (params) => api.get('/scan/shifts/', { params })

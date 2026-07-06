@@ -7,13 +7,14 @@ import useAuthStore from '../../stores/authStore'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
-  MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
+  MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
   Shield, Info, Lock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
 
-const EMPTY_GUARD = { full_name: '', email: '', agency: '' }
+const DEFAULT_AGENCY = 'RANNIAG'
+const EMPTY_GUARD = { full_name: '', email: '', agency: DEFAULT_AGENCY }
 const EMPTY_ADMIN = { full_name: '', email: '' }
 
 /* ─── Main Component ───────────────────────────────────────────── */
@@ -40,6 +41,13 @@ export default function UserManagement() {
   /* ── per-type form state ── */
   const [guardForm, setGuardForm] = useState(EMPTY_GUARD)
   const [adminForm, setAdminForm] = useState(EMPTY_ADMIN)
+  // 'RANNIAG' uses the default agency as-is; 'other' reveals a free-text input
+  const [agencyMode, setAgencyMode] = useState(DEFAULT_AGENCY)
+
+  /* ── profile edit state ── */
+  const [editMode, setEditMode]           = useState(false)
+  const [editForm, setEditForm]           = useState(null)
+  const [editAgencyMode, setEditAgencyMode] = useState(DEFAULT_AGENCY)
 
   /* ── QR state ── */
   const [qrUser,    setQrUser]    = useState(null)
@@ -71,20 +79,6 @@ export default function UserManagement() {
       }
     } else {
       setQrToken(user.user_code || user.email || String(user.id))
-      setQrLoading(false)
-    }
-  }
-
-  const handleRegenerateQR = async () => {
-    if (!qrUser || qrUser.role !== 'security') return
-    setQrLoading(true)
-    try {
-      const data = await usersApi.regenerateGuardQR(qrUser.id)
-      setQrToken(data.qr_token)
-      toast.success('QR badge regenerated. Old badge is now invalid.')
-    } catch {
-      toast.error('Failed to regenerate QR.')
-    } finally {
       setQrLoading(false)
     }
   }
@@ -152,16 +146,67 @@ export default function UserManagement() {
     setAddType('guard')
     setGuardForm(EMPTY_GUARD)
     setAdminForm(EMPTY_ADMIN)
+    setAgencyMode(DEFAULT_AGENCY)
     setFormErrors({})
     setModal('add')
   }
   const switchAddType = (t) => { setAddType(t); setFormErrors({}) }
-  const openView   = (user) => { setSelectedUser(user); setModal('view') }
+  const openView   = (user) => { setSelectedUser(user); setEditMode(false); setModal('view') }
   const openDelete = (user) => { setSelectedUser(user); setModal('delete') }
   const openToggle = (user) => { setSelectedUser(user); setModal('toggle') }
   const closeModal = () => {
     setModal(null); setSelectedUser(null)
-    setSubmitting(false); setFormErrors({})
+    setSubmitting(false); setFormErrors({}); setEditMode(false)
+  }
+
+  /* ── profile edit ── */
+  const startEdit = () => {
+    setEditForm({
+      full_name: selectedUser.full_name || '',
+      email:     selectedUser.email || '',
+      agency:    selectedUser.agency || DEFAULT_AGENCY,
+      contact:   selectedUser.contact || '',
+      address:   selectedUser.address || '',
+    })
+    setEditAgencyMode(
+      !selectedUser.agency || selectedUser.agency === DEFAULT_AGENCY ? DEFAULT_AGENCY : 'other'
+    )
+    setFormErrors({})
+    setEditMode(true)
+  }
+
+  const handleSaveEdit = async () => {
+    const errors = {}
+    if (!editForm.full_name.trim()) errors.full_name = 'Full name is required.'
+    if (!editForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())) errors.email = 'Enter a valid email address.'
+    if (selectedUser.role === 'security' && !editForm.agency.trim()) errors.agency = 'Agency is required.'
+    setFormErrors(errors)
+    if (Object.keys(errors).length > 0) return
+    setSubmitting(true)
+    try {
+      const payload = {
+        full_name: editForm.full_name.trim(),
+        email:     editForm.email.trim(),
+      }
+      if (selectedUser.role === 'security') payload.agency = editForm.agency.trim()
+      if (selectedUser.role === 'vehicle_owner') {
+        payload.contact = editForm.contact.trim()
+        payload.address = editForm.address.trim()
+      }
+      await usersApi.updateUser(selectedUser.id, payload)
+      setSelectedUser({ ...selectedUser, ...payload })
+      setEditMode(false)
+      fetchUsers()
+      toast.success('User details updated.')
+    } catch (err) {
+      const data = err.response?.data
+      const fieldErrors = {}
+      for (const f of ['full_name', 'email', 'agency', 'contact', 'address']) {
+        if (data?.[f]) fieldErrors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
+      }
+      if (Object.keys(fieldErrors).length > 0) setFormErrors(fieldErrors)
+      else toast.error('Failed to update user.')
+    } finally { setSubmitting(false) }
   }
 
   /* ── guard validation & submit ── */
@@ -509,7 +554,7 @@ export default function UserManagement() {
                   <div className="um-info-banner">
                     <Info size={14} />
                     A temporary password will be auto-generated and emailed to the guard.
-                    They must change it on first login. Their QR badge (alternative login) will be shown immediately after creation.
+                    They must change it on first login. Their QR badge (alternative login) unlocks after that first login and password change.
                   </div>
                   <div className="um-form-group">
                     <label>Full Name <span className="um-required">*</span></label>
@@ -530,10 +575,25 @@ export default function UserManagement() {
                   </div>
                   <div className="um-form-group">
                     <label>Agency <span className="um-required">*</span></label>
-                    <input className={`um-form-input ${formErrors.agency ? 'error' : ''}`}
-                      value={guardForm.agency}
-                      onChange={e => setGuardForm({ ...guardForm, agency: e.target.value })}
-                      placeholder="e.g. SLC Security Office" />
+                    <select
+                      className="um-form-select"
+                      value={agencyMode}
+                      onChange={e => {
+                        const mode = e.target.value
+                        setAgencyMode(mode)
+                        setGuardForm({ ...guardForm, agency: mode === 'other' ? '' : DEFAULT_AGENCY })
+                      }}
+                    >
+                      <option value={DEFAULT_AGENCY}>{DEFAULT_AGENCY} (default)</option>
+                      <option value="other">Other…</option>
+                    </select>
+                    {agencyMode === 'other' && (
+                      <input className={`um-form-input ${formErrors.agency ? 'error' : ''}`}
+                        style={{ marginTop: 8 }}
+                        value={guardForm.agency}
+                        onChange={e => setGuardForm({ ...guardForm, agency: e.target.value })}
+                        placeholder="Enter agency name" />
+                    )}
                     {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                   </div>
                 </>
@@ -620,49 +680,144 @@ export default function UserManagement() {
                   {roleLabel(selectedUser)}
                 </span>
               </div>
-              <div className="um-profile-grid">
-                <div className="um-profile-item">
-                  <span className="um-profile-label">Email</span>
-                  <span className="um-profile-value">{selectedUser.email || '—'}</span>
-                </div>
-                <div className="um-profile-item">
-                  <span className="um-profile-label">Status</span>
-                  <span className={`um-status-badge ${selectedUser.is_active ? 'active' : 'disabled'}`}>
-                    <span className="status-dot" />{selectedUser.is_active ? 'Active' : 'Disabled'}
-                  </span>
-                </div>
-                <div className="um-profile-item">
-                  <span className="um-profile-label">Date Joined</span>
-                  <span className="um-profile-value">{formatDate(selectedUser.date_joined)}</span>
-                </div>
-                <div className="um-profile-item">
-                  <span className="um-profile-label">User ID</span>
-                  <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61' }}>
-                    {selectedUser.user_code || `#${selectedUser.id}`}
-                  </span>
-                </div>
-                {selectedUser.role === 'security' && (
+              {editMode && editForm ? (
+                <>
+                  <div className="um-form-group">
+                    <label>Full Name <span className="um-required">*</span></label>
+                    <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
+                      value={editForm.full_name}
+                      onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
+                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
+                  </div>
+                  <div className="um-form-group">
+                    <label>Email <span className="um-required">*</span></label>
+                    <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
+                      type="email"
+                      value={editForm.email}
+                      onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
+                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
+                  </div>
+                  {selectedUser.role === 'security' && (
+                    <div className="um-form-group">
+                      <label>Agency <span className="um-required">*</span></label>
+                      <select
+                        className="um-form-select"
+                        value={editAgencyMode}
+                        onChange={e => {
+                          const mode = e.target.value
+                          setEditAgencyMode(mode)
+                          setEditForm({ ...editForm, agency: mode === 'other' ? '' : DEFAULT_AGENCY })
+                        }}
+                      >
+                        <option value={DEFAULT_AGENCY}>{DEFAULT_AGENCY} (default)</option>
+                        <option value="other">Other…</option>
+                      </select>
+                      {editAgencyMode === 'other' && (
+                        <input className={`um-form-input ${formErrors.agency ? 'error' : ''}`}
+                          style={{ marginTop: 8 }}
+                          value={editForm.agency}
+                          onChange={e => setEditForm({ ...editForm, agency: e.target.value })}
+                          placeholder="Enter agency name" />
+                      )}
+                      {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
+                    </div>
+                  )}
+                  {selectedUser.role === 'vehicle_owner' && (
+                    <>
+                      <div className="um-form-group">
+                        <label>Contact Number</label>
+                        <input className="um-form-input"
+                          value={editForm.contact}
+                          onChange={e => setEditForm({ ...editForm, contact: e.target.value })}
+                          placeholder="e.g. 09xxxxxxxxx" />
+                      </div>
+                      <div className="um-form-group">
+                        <label>Address</label>
+                        <input className="um-form-input"
+                          value={editForm.address}
+                          onChange={e => setEditForm({ ...editForm, address: e.target.value })}
+                          placeholder="Home address" />
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <div className="um-profile-grid">
                   <div className="um-profile-item">
-                    <span className="um-profile-label">Last Gate Login</span>
-                    <span className="um-profile-value">
-                      {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
-                        : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
-                        : 'Not yet logged in'}
+                    <span className="um-profile-label">Email</span>
+                    <span className="um-profile-value">{selectedUser.email || '—'}</span>
+                  </div>
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">Status</span>
+                    <span className={`um-status-badge ${selectedUser.is_active ? 'active' : 'disabled'}`}>
+                      <span className="status-dot" />{selectedUser.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </div>
-                )}
-              </div>
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">Date Joined</span>
+                    <span className="um-profile-value">{formatDate(selectedUser.date_joined)}</span>
+                  </div>
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">User ID</span>
+                    <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61' }}>
+                      {selectedUser.user_code || `#${selectedUser.id}`}
+                    </span>
+                  </div>
+                  {selectedUser.role === 'security' && (
+                    <>
+                      <div className="um-profile-item">
+                        <span className="um-profile-label">Agency</span>
+                        <span className="um-profile-value">{selectedUser.agency || '—'}</span>
+                      </div>
+                      <div className="um-profile-item">
+                        <span className="um-profile-label">Last Gate Login</span>
+                        <span className="um-profile-value">
+                          {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
+                            : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
+                            : selectedUser.gate_assignment || 'Not yet logged in'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {selectedUser.role === 'vehicle_owner' && (
+                    <>
+                      <div className="um-profile-item">
+                        <span className="um-profile-label">Contact Number</span>
+                        <span className="um-profile-value">{selectedUser.contact || '—'}</span>
+                      </div>
+                      <div className="um-profile-item">
+                        <span className="um-profile-label">Address</span>
+                        <span className="um-profile-value">{selectedUser.address || '—'}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div className="um-modal-footer">
-              <button className="um-btn-secondary" onClick={closeModal}>Close</button>
-              <button
-                className="um-btn-primary"
-                disabled={badgeLocked(selectedUser)}
-                title={badgeLocked(selectedUser) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                onClick={() => { closeModal(); openQrModal(selectedUser) }}
-              >
-                {badgeLocked(selectedUser) ? <Lock size={15} /> : <QrCode size={15} />} View QR
-              </button>
+              {editMode ? (
+                <>
+                  <button className="um-btn-secondary" disabled={submitting} onClick={() => { setEditMode(false); setFormErrors({}) }}>Cancel</button>
+                  <button className="um-btn-primary" disabled={submitting} onClick={handleSaveEdit}>
+                    <CheckCircle size={15} /> {submitting ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="um-btn-secondary" onClick={closeModal}>Close</button>
+                  <button className="um-btn-secondary" onClick={startEdit}>
+                    <Pencil size={15} /> Edit Details
+                  </button>
+                  <button
+                    className="um-btn-primary"
+                    disabled={badgeLocked(selectedUser)}
+                    title={badgeLocked(selectedUser) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                    onClick={() => { closeModal(); openQrModal(selectedUser) }}
+                  >
+                    {badgeLocked(selectedUser) ? <Lock size={15} /> : <QrCode size={15} />} View QR
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -800,15 +955,8 @@ export default function UserManagement() {
                 </>
               ) : null}
             </div>
-            <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
+            <div className="um-modal-footer" style={{ justifyContent: 'flex-end' }}>
               <button className="um-btn-secondary" onClick={() => setQrUser(null)}>Close</button>
-              {qrUser.role === 'security' && (
-                <button className="um-btn-warning" disabled={qrLoading} onClick={handleRegenerateQR}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <RefreshCw size={14} />
-                  {qrLoading ? 'Regenerating…' : 'Regenerate Badge'}
-                </button>
-              )}
             </div>
           </div>
         </div>
