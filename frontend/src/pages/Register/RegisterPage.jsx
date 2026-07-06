@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, Banknote, User, Users, ChevronRight, Mail, Clock, ArrowRight } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
@@ -80,7 +80,6 @@ export default function RegisterPage() {
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
-  const [showPaymentPopup, setShowPaymentPopup] = useState(false)
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
   const [formErrors, setFormErrors] = useState({})
@@ -291,7 +290,7 @@ export default function RegisterPage() {
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
       // Stale duplicate hint no longer applies to the value being typed — the debounced
       // check below will repopulate it once the new value settles
-      if (name === 'plate_number' || name === 'student_id' || name === 'employee_id')
+      if (['plate_number', 'email', 'drivers_license', 'student_id', 'employee_id'].includes(name))
         setDupErrors((prev) => ({ ...prev, [name]: null }))
       setSubmitError(null)
     }
@@ -300,18 +299,24 @@ export default function RegisterPage() {
   // Debounced live duplicate check — warns in the field hint before the user submits
   useEffect(() => {
     const plate = formData.plate_number?.trim()
+    const email = formData.email?.trim()
+    const license = formData.drivers_license?.trim()
     const studentId = formData.student_id?.trim()
     const employeeId = formData.employee_id?.trim()
 
     const plateValid = plate && isValidPlateNumber(plate)
+    const emailValid = !!email && FIELD_PATTERNS.email.regex.test(email)
+    const licenseValid = !!license && FIELD_PATTERNS.drivers_license.regex.test(license)
     const studentIdValid = registrantType === 'student' && /^\d{8}$/.test(studentId || '')
     const employeeIdValid = registrantType === 'employee' && /^\d{8}$/.test(employeeId || '')
 
-    if (!plateValid && !studentIdValid && !employeeIdValid) return
+    if (!plateValid && !emailValid && !licenseValid && !studentIdValid && !employeeIdValid) return
 
     setDupChecking(prev => ({
       ...prev,
       plate_number: plateValid || prev.plate_number,
+      email: emailValid || prev.email,
+      drivers_license: licenseValid || prev.drivers_license,
       student_id: studentIdValid || prev.student_id,
       employee_id: employeeIdValid || prev.employee_id,
     }))
@@ -320,12 +325,16 @@ export default function RegisterPage() {
       try {
         const result = await registrationApi.checkAvailability({
           plate_number: plateValid ? plate : '',
+          email: emailValid ? email : '',
+          drivers_license: licenseValid ? license : '',
           student_id: studentIdValid ? studentId : '',
           employee_id: employeeIdValid ? employeeId : '',
         })
         setDupErrors(prev => ({
           ...prev,
           ...(plateValid && { plate_number: result.plate_number }),
+          ...(emailValid && { email: result.email }),
+          ...(licenseValid && { drivers_license: result.drivers_license }),
           ...(studentIdValid && { student_id: result.student_id }),
           ...(employeeIdValid && { employee_id: result.employee_id }),
         }))
@@ -335,13 +344,15 @@ export default function RegisterPage() {
         setDupChecking(prev => ({
           ...prev,
           ...(plateValid && { plate_number: false }),
+          ...(emailValid && { email: false }),
+          ...(licenseValid && { drivers_license: false }),
           ...(studentIdValid && { student_id: false }),
           ...(employeeIdValid && { employee_id: false }),
         }))
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [formData.plate_number, formData.student_id, formData.employee_id, registrantType])
+  }, [formData.plate_number, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType])
 
   const toggleDay = (dayKey) => {
     setFormData(prev => {
@@ -380,7 +391,7 @@ export default function RegisterPage() {
     }
 
     // Block on already-known duplicates from the live check (the backend re-checks regardless)
-    if (dupErrors.plate_number || dupErrors.student_id || dupErrors.employee_id) {
+    if (dupErrors.plate_number || dupErrors.email || dupErrors.drivers_license || dupErrors.student_id || dupErrors.employee_id) {
       setSubmitError('Please resolve the duplicate entries highlighted in the form before submitting.')
       return
     }
@@ -477,8 +488,8 @@ export default function RegisterPage() {
 
       await registrationApi.submitOpenRegistration(payload)
 
-      // Show payment instructions popup before success screen
-      setShowPaymentPopup(true)
+      // Go straight to the success screen
+      setSubmitted(true)
     } catch (err) {
       const errData = err.response?.data
       const msg = errData?.error
@@ -567,64 +578,6 @@ export default function RegisterPage() {
 
             <button className="reg-back-btn" onClick={() => navigate('/login')}>
               Back to Login
-            </button>
-          </div>
-        </main>
-      </div>
-    )
-  }
-
-  /* ─── Payment popup modal (shown after successful submit, before success screen) ─── */
-  if (showPaymentPopup) {
-    return (
-      <div className="register-page">
-        {SLC_HEADER}
-        <main className="register-main">
-          <div className="register-card payment-popup-card">
-
-            {/* Email sent notice */}
-            <div className="popup-email-sent">
-              <Mail size={16} />
-              <span>A confirmation email was sent to <strong>{formData.email}</strong></span>
-            </div>
-
-            <div className="card-icon payment-popup-icon">
-              <Banknote size={44} />
-            </div>
-            <h2 className="card-title" style={{ color: '#D97706' }}>Action Required</h2>
-            <p className="payment-popup-intro">
-              Your application is <strong>pending review</strong>. Complete these steps to get your registration processed:
-            </p>
-
-            <div className="payment-steps">
-              <div className="payment-step">
-                <div className="payment-step-num">1</div>
-                <div className="payment-step-text">
-                  <strong>Pay ₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong> for your Vehicle Pass.
-                </div>
-              </div>
-              <div className="payment-step">
-                <div className="payment-step-num">2</div>
-                <div className="payment-step-text">
-                  Present your <strong>Official Receipt (OR)</strong> at the <strong>CDSO Office</strong> for processing.
-                </div>
-              </div>
-              <div className="payment-step">
-                <div className="payment-step-num">3</div>
-                <div className="payment-step-text">
-                  <strong>Check your email</strong> — you will be notified once your registration is approved or declined.
-                </div>
-              </div>
-            </div>
-
-            <div className="payment-popup-note">
-              <Info size={14} />
-              The CDSO office will verify your Official Receipt number before approving your registration.
-            </div>
-
-            <button className="card-btn payment-popup-btn" onClick={() => { setShowPaymentPopup(false); setSubmitted(true) }}>
-              I Understand — Continue
-              <ArrowRight size={15} />
             </button>
           </div>
         </main>
@@ -984,9 +937,11 @@ export default function RegisterPage() {
                   onChange={handleInputChange}
                   required
                   placeholder={FIELD_PATTERNS.email.hint}
-                  className={formErrors.email ? 'input-error' : ''}
+                  className={formErrors.email || dupErrors.email ? 'input-error' : ''}
                 />
                 {formErrors.email && <span className="field-error-msg">{formErrors.email}</span>}
+                {!formErrors.email && dupErrors.email && <span className="field-error-msg">{dupErrors.email}</span>}
+                {!formErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
               </div>
 
               {/* Student-specific */}

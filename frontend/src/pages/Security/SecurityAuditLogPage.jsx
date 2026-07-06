@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, CalendarDays, RefreshCw, Filter,
@@ -72,6 +73,9 @@ export default function SecurityAuditLogPage() {
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
+  // New gate scans appear instantly
+  useLiveUpdates(fetchLogs, ['accesslog'])
+
   const filtered = statusFilter
     ? logs.filter(l => {
         if (statusFilter === 'denied') return ['denied', 'wrong_day', 'disabled'].includes(l.status)
@@ -87,7 +91,7 @@ export default function SecurityAuditLogPage() {
         {/* Header */}
         <div className="sal-header">
           <div>
-            <h1 className="sal-title"><ClipboardList size={20} /> Audit Log</h1>
+            <h1 className="sal-title"><ClipboardList size={20} /> Vehicle Log</h1>
             <p className="sal-sub">All scans recorded at {gateLabel}</p>
           </div>
           <div className="sal-header-actions">

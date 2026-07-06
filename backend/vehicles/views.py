@@ -391,6 +391,9 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         assignment = self.request.query_params.get('assignment')
         if assignment:
             qs = qs.filter(assignment=assignment)
+        gate_id = self.request.query_params.get('gate_id')
+        if gate_id:
+            qs = qs.filter(gate_id=gate_id)
         return qs
 
 
@@ -548,6 +551,30 @@ def _plate_conflict(plate_number, qs):
     return None
 
 
+def _email_conflict(email, qs):
+    email_norm = (email or '').strip().lower()
+    if not email_norm:
+        return None
+    # Stored emails are normalized on save, but compare defensively anyway
+    existing_emails = qs.exclude(email='').values_list('email', flat=True)
+    if any((e or '').strip().lower() == email_norm for e in existing_emails):
+        return "This email address already has an active registration."
+    # An email tied to an existing account can't start a new pass (1:1 email↔plate)
+    if User.objects.filter(email__iexact=email_norm).exists():
+        return "This email address is already tied to an existing account."
+    return None
+
+
+def _license_conflict(drivers_license, qs):
+    lic = (drivers_license or '').strip().upper()
+    if not lic:
+        return None
+    existing = qs.exclude(drivers_license='').values_list('drivers_license', flat=True)
+    if any((d or '').strip().upper() == lic for d in existing):
+        return "This driver's license already has an active registration."
+    return None
+
+
 def _id_conflict(registrant_type, student_id, employee_id, qs):
     student_id = (student_id or '').strip()
     if registrant_type == 'student' and student_id:
@@ -562,11 +589,12 @@ def _id_conflict(registrant_type, student_id, employee_id, qs):
     return None
 
 
-def _registration_conflict(registrant_type, plate_number, student_id, employee_id,
-                           statuses=None, exclude_pk=None):
+def _registration_conflict(registrant_type, plate_number, email, student_id, employee_id,
+                           drivers_license='', statuses=None, exclude_pk=None):
     """
-    Enforce 1:1 rules for registrations: a plate number and a student/employee ID
-    may each belong to at most one active (pending/accepted) registration.
+    Enforce 1:1 rules for registrations: plate number, email, driver's license,
+    and student/employee ID may each belong to at most one active
+    (pending/accepted) registration.
     Returns an error message string, or None if there is no conflict.
     """
     if statuses is None:
@@ -576,6 +604,12 @@ def _registration_conflict(registrant_type, plate_number, student_id, employee_i
         qs = qs.exclude(pk=exclude_pk)
 
     conflict = _plate_conflict(plate_number, qs)
+    if conflict:
+        return conflict
+    conflict = _email_conflict(email, qs)
+    if conflict:
+        return conflict
+    conflict = _license_conflict(drivers_license, qs)
     if conflict:
         return conflict
     return _id_conflict(registrant_type, student_id, employee_id, qs)
@@ -648,14 +682,16 @@ class AcceptRegistrationView(APIView):
         if registration.status != VehicleRegistration.Status.PENDING:
             return Response({"error": "Only pending registrations can be accepted."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1:1 guard — the plate / student ID / employee ID must not already belong
+        # 1:1 guard — the plate / email / student ID / employee ID must not already belong
         # to another accepted registration (covers duplicate pendings submitted
         # before this rule existed).
         conflict = _registration_conflict(
             registration.registrant_type,
             registration.plate_number,
+            registration.email,
             registration.student_id,
             registration.employee_id,
+            drivers_license=registration.drivers_license,
             statuses=[VehicleRegistration.Status.ACCEPTED],
             exclude_pk=registration.pk,
         )
@@ -713,7 +749,11 @@ class AcceptRegistrationView(APIView):
 
         # Create user with a secure temporary password
         temp_password = _generate_temp_password()
-        owner_type  = User.OwnerType.STUDENT if registration.registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        owner_type  = {
+            'student':  User.OwnerType.STUDENT,
+            'employee': User.OwnerType.EMPLOYEE,
+            'fetcher':  User.OwnerType.FETCHER,
+        }.get(registration.registrant_type, User.OwnerType.EMPLOYEE)
         schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
         campus_days = registration.campus_days or []
         user = User.objects.create_user(
@@ -909,16 +949,15 @@ class CdsoDirectRegisterView(APIView):
         if not or_number.isdigit() or len(or_number) > 7:
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
-        email = request.data.get('email', '').strip()
-        if User.objects.filter(email=email).exists():
-            return Response({"error": "A user with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 1:1 guard — plate and student/employee ID must not already have an active registration
+        # 1:1 guard — plate, email and student/employee ID must not already have an active
+        # registration (also blocks an email already tied to an existing account)
         conflict = _registration_conflict(
             registrant_type,
             request.data.get('plate_number', ''),
+            request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
+            drivers_license=request.data.get('drivers_license', ''),
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
@@ -945,7 +984,11 @@ class CdsoDirectRegisterView(APIView):
 
         # Build user profile fields
         temp_password = _generate_temp_password()
-        owner_type  = User.OwnerType.STUDENT if registrant_type == 'student' else User.OwnerType.EMPLOYEE
+        owner_type  = {
+            'student':  User.OwnerType.STUDENT,
+            'employee': User.OwnerType.EMPLOYEE,
+            'fetcher':  User.OwnerType.FETCHER,
+        }.get(registrant_type, User.OwnerType.EMPLOYEE)
         schedule    = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
         campus_days = registration.campus_days or []
 
@@ -1072,17 +1115,21 @@ class RegistrationAvailabilityView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        plate_number = request.query_params.get('plate_number', '')
-        student_id   = request.query_params.get('student_id', '')
-        employee_id  = request.query_params.get('employee_id', '')
+        plate_number    = request.query_params.get('plate_number', '')
+        email           = request.query_params.get('email', '')
+        drivers_license = request.query_params.get('drivers_license', '')
+        student_id      = request.query_params.get('student_id', '')
+        employee_id     = request.query_params.get('employee_id', '')
 
         statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
         qs = VehicleRegistration.objects.filter(status__in=statuses)
 
         return Response({
-            'plate_number': _plate_conflict(plate_number, qs),
-            'student_id':   _id_conflict('student', student_id, '', qs),
-            'employee_id':  _id_conflict('employee', '', employee_id, qs),
+            'plate_number':    _plate_conflict(plate_number, qs),
+            'email':           _email_conflict(email, qs),
+            'drivers_license': _license_conflict(drivers_license, qs),
+            'student_id':      _id_conflict('student', student_id, '', qs),
+            'employee_id':     _id_conflict('employee', '', employee_id, qs),
         })
 
 
@@ -1101,12 +1148,14 @@ class PublicOpenRegistrationView(APIView):
         if registrant_type not in ['student', 'employee', 'fetcher']:
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1:1 guard — plate and student/employee ID must not already have an active registration
+        # 1:1 guard — plate, email and student/employee ID must not already have an active registration
         conflict = _registration_conflict(
             registrant_type,
             request.data.get('plate_number', ''),
+            request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
+            drivers_license=request.data.get('drivers_license', ''),
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)

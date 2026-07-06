@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
@@ -8,7 +9,7 @@ import {
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
-import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor } from '../../api/scanning'
+import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import './OperationsCenter.css'
@@ -21,7 +22,7 @@ const STATUS_META = {
   authorized: { label: 'Authorized', cls: 'authorized', Icon: CheckCircle  },
   denied:     { label: 'Denied',     cls: 'denied',     Icon: XCircle      },
   wrong_day:  { label: 'Wrong Day',  cls: 'denied',     Icon: XCircle      },
-  unknown:    { label: 'Visitor',    cls: 'visitor',    Icon: HelpCircle   },
+  unknown:    { label: 'Unregistered', cls: 'visitor',  Icon: HelpCircle   },
   no_pass:    { label: 'No Pass',    cls: 'visitor',    Icon: HelpCircle   },
   disabled:   { label: 'Disabled',   cls: 'denied',     Icon: XCircle      },
   unreadable: { label: 'Unreadable', cls: 'visitor',    Icon: HelpCircle   },
@@ -40,6 +41,14 @@ function shiftDur(start) {
   const mins = Math.floor((Date.now() - new Date(start).getTime()) / 60000)
   if (mins < 60) return `${mins}m`
   return `${Math.floor(mins / 60)}h ${mins % 60}m`
+}
+
+// Time-left / overstay for an active visitor pass (mirrors the guard entry page)
+function passTimeInfo(p) {
+  if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
+  const diffMin = Math.round((new Date(p.expires_at).getTime() - Date.now()) / 60000)
+  if (diffMin >= 0) return { label: `${diffMin}m left`, overdue: false, soon: diffMin <= 10 }
+  return { label: `Overstay +${-diffMin}m`, overdue: true, soon: false }
 }
 
 // ─── Pager (matches the violations table pagination) ──────────────────────────
@@ -258,6 +267,7 @@ export default function OperationsCenter() {
   const [crossFlags,    setCrossFlags]    = useState([])
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
+  const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState(null)
   const [shiftPage,     setShiftPage]     = useState(1)
@@ -266,12 +276,13 @@ export default function OperationsCenter() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [shiftsRes, monitorRes, gate1Res, gate4Res, historyRes] = await Promise.allSettled([
+      const [shiftsRes, monitorRes, gate1Res, gate4Res, historyRes, passesRes] = await Promise.allSettled([
         getCurrentShifts(),
         getGuardMonitor(),
         getAccessLogs({ gate_id: 'gate1', limit: 12 }),
         getAccessLogs({ gate_id: 'gate4', limit: 12 }),
         getShifts({ limit: 100 }),
+        getVisitorPasses(),
       ])
 
       if (shiftsRes.status === 'fulfilled')
@@ -291,6 +302,12 @@ export default function OperationsCenter() {
       if (historyRes.status === 'fulfilled')
         setShiftHistory(historyRes.value.data?.results ?? historyRes.value.data ?? [])
 
+      if (passesRes.status === 'fulfilled') {
+        const list = (passesRes.value.data?.results ?? passesRes.value.data ?? [])
+          .filter(p => p.status === 'active')
+        setVisitorPasses(list)
+      }
+
       setLastRefresh(new Date())
     } catch {
       toast.error('Failed to load operations data.')
@@ -300,6 +317,7 @@ export default function OperationsCenter() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useLiveUpdates(load)
   useEffect(() => {
     const id = setInterval(load, 30_000)
     return () => clearInterval(id)
@@ -401,6 +419,56 @@ export default function OperationsCenter() {
             <GuardTable guards={guards.filter(g => g.is_active)} />
           </div>
         )}
+
+        {/* ── Active Visitors (vehicles currently inside on a visitor pass) ── */}
+        <div className="oc-section">
+          <div className="oc-section-head">
+            <UserCheck size={15} />
+            <span>Active Visitors</span>
+            <span className="oc-duty-count">{visitorPasses.length} inside</span>
+          </div>
+          <div className="oc-card">
+            {visitorPasses.length === 0 ? (
+              <div className="oc-clear">
+                <CheckCircle size={18} />
+                <span>No visitors currently inside</span>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+                {visitorPasses.map(p => {
+                  const t = passTimeInfo(p)
+                  return (
+                    <div
+                      key={p.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8,
+                        background: t.overdue ? '#fef2f2' : '#f8fafc',
+                        border: `1px solid ${t.overdue ? '#fecaca' : '#e6e8f0'}`,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span className="oc-log-plate">{p.plate_number}</span>
+                        <div style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                        </div>
+                        {p.issued_by_name && (
+                          <div style={{ fontSize: 10.5, color: '#9ca3af' }}>Issued by {p.issued_by_name}</div>
+                        )}
+                      </div>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+                        color: t.overdue ? '#dc2626' : t.soon ? '#d97706' : '#059669',
+                      }}>
+                        {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
+                        {t.label}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* ── Bottom row: discrepancies + shift history ── */}
         <div className="oc-bottom-row">

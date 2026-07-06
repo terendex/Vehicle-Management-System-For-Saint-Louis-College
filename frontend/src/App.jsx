@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-
 import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
+import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
 import LoginPage from './pages/Login/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
@@ -42,6 +43,7 @@ export default function App() {
   }, [])
 
   return (
+    <LiveUpdatesProvider>
     <CameraProvider>
     <BrowserRouter>
       <Toaster richColors position="top-right" />
@@ -104,5 +106,6 @@ export default function App() {
       </Routes>
     </BrowserRouter>
     </CameraProvider>
+    </LiveUpdatesProvider>
   )
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X,
@@ -166,6 +167,9 @@ export default function SecurityParkingView() {
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
+  // Live-refresh zones/occupancy on parking changes
+  useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])
 
   // ── Live occupancy polling ──────────────────────────────────────
   const refreshZone = useCallback(async () => {

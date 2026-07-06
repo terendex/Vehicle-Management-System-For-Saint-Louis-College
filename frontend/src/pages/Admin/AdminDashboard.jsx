@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '../../components/Layout/AdminLayout'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Users, ShieldCheck, ClipboardList,
@@ -238,6 +239,9 @@ export default function AdminDashboard() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Instant refresh on any data change (dashboard aggregates everything)
+  useLiveUpdates(fetchData)
+
   // Keep the dashboard live — silent refresh every 60s (spinner only shows on first load)
   useEffect(() => {
     const timer = setInterval(fetchData, 60000)
@@ -254,31 +258,32 @@ export default function AdminDashboard() {
 
   // ── Derived chart data ───────────────────────────────────────────────────────
 
+  // Registration outcome breakdown (accepted / pending / denied)
   const vehicleSlices = stats ? [
-    { name: 'Authorized',   value: stats.vehicles?.authorized   ?? 0, color: '#059669' },
-    { name: 'Unauthorized', value: stats.vehicles?.unauthorized ?? 0, color: '#DC2626' },
-    { name: 'Pending',
-      value: Math.max(0, (stats.vehicles?.total ?? 0) - (stats.vehicles?.authorized ?? 0) - (stats.vehicles?.unauthorized ?? 0)),
-      color: '#D97706' },
+    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: '#059669' },
+    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: '#D97706' },
+    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: '#DC2626' },
   ].filter(s => s.value > 0) : []
 
+  // Registered categories: owner types + suppliers, plus a disabled slice
   const userSlices = stats ? [
-    { name: 'Vehicle Owners', value: stats.users?.vehicle_owner ?? 0, color: '#7C3AED' },
-    { name: 'Security',       value: stats.users?.security      ?? 0, color: '#2563EB' },
-    { name: 'Admin',
-      value: Math.max(0, (stats.users?.total ?? 0) - (stats.users?.security ?? 0) - (stats.users?.vehicle_owner ?? 0)),
-      color: '#2A2B61' },
+    { name: 'Students',  value: stats.owners?.student   ?? 0, color: '#7C3AED' },
+    { name: 'Employees', value: stats.owners?.employee  ?? 0, color: '#0D9488' },
+    { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: '#D97706' },
+    { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: '#DB2777' },
+    { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: '#94A3B8' },
   ].filter(s => s.value > 0) : []
 
   const scanSlices = stats ? (() => {
     const s = stats.scans?.today_by_status ?? {}
     return [
-      { name: 'Authorized',        value: s.authorized ?? 0,                       color: '#059669' },
-      { name: 'Denied',            value: s.denied ?? 0,                           color: '#DC2626' },
-      { name: 'Wrong Day',         value: s.wrong_day ?? 0,                        color: '#EA580C' },
-      { name: 'Exited',            value: s.exited ?? 0,                           color: '#2563EB' },
-      { name: 'Unknown / Visitor', value: s.unknown ?? 0,                          color: '#7C3AED' },
-      { name: 'Unreadable',        value: s.unreadable ?? 0,                       color: '#8892A4' },
+      { name: 'Authorized',   value: stats.scans?.registered_today ?? 0, color: '#059669' },
+      { name: 'Denied',       value: s.denied ?? 0,                      color: '#DC2626' },
+      { name: 'Wrong Day',    value: s.wrong_day ?? 0,                   color: '#EA580C' },
+      { name: 'Exited',       value: s.exited ?? 0,                      color: '#2563EB' },
+      { name: 'Visitor',      value: stats.scans?.visitor_today ?? 0,    color: '#0D9488' },
+      { name: 'Unregistered', value: s.unknown ?? 0,                     color: '#7C3AED' },
+      { name: 'Unreadable',   value: s.unreadable ?? 0,                  color: '#8892A4' },
     ].filter(sl => sl.value > 0)
   })() : []
 
@@ -329,20 +334,19 @@ export default function AdminDashboard() {
               >
                 <DonutChart
                   slices={vehicleSlices}
-                  centerValue={stats?.vehicles?.total}
-                  centerLabel="Vehicles"
+                  centerValue={stats?.registrations?.total}
+                  centerLabel="Registrations"
                 />
               </ChartCard>
 
               <ChartCard
                 icon={Users}
-                title="User Roles Breakdown"
-                subtitle={`${stats?.users?.active ?? 0} active · ${stats?.users?.disabled ?? 0} disabled`}
+                title="Registered Categories"
+                subtitle={`${stats?.owners?.total ?? 0} owners · ${stats?.suppliers?.active ?? 0} supplier plates`}
               >
                 <DonutChart
                   slices={userSlices}
-                  centerValue={stats?.users?.total}
-                  centerLabel="Users"
+                  centerLabel="Registered"
                 />
               </ChartCard>
 
