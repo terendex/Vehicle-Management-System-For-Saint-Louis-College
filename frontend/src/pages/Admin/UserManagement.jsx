@@ -8,7 +8,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, RefreshCw,
-  Shield, Info,
+  Shield, Info, Lock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
@@ -46,8 +46,16 @@ export default function UserManagement() {
   const [qrToken,   setQrToken]   = useState(null)
   const [qrLoading, setQrLoading] = useState(false)
 
+  // A guard's QR badge stays locked until they log in with their credentials
+  // and replace the temporary password (clears must_change_password).
+  const badgeLocked = (u) => u?.role === 'security' && u?.must_change_password
+
   /* ── QR open ── */
   const openQrModal = async (user) => {
+    if (badgeLocked(user)) {
+      toast.info('QR badge is locked until this guard logs in and changes their temporary password.')
+      return
+    }
     setQrUser(user)
     setQrToken(null)
     setQrLoading(true)
@@ -55,8 +63,8 @@ export default function UserManagement() {
       try {
         const data = await usersApi.getGuardQR(user.id)
         setQrToken(data.qr_token)
-      } catch {
-        toast.error('Failed to load QR token.')
+      } catch (err) {
+        toast.error(err.response?.data?.detail || 'Failed to load QR token.')
         setQrUser(null)
       } finally {
         setQrLoading(false)
@@ -177,9 +185,7 @@ export default function UserManagement() {
       })
       fetchUsers()
       closeModal()
-      toast.success(`Guard "${guard.full_name}" created. Login credentials have been emailed.`)
-      // Open QR badge immediately
-      openQrModal(guard)
+      toast.success(`Guard "${guard.full_name}" created. Login credentials have been emailed. The QR badge unlocks after their first login and password change.`)
     } catch (err) {
       const data = err.response?.data
       const fieldErrors = {}
@@ -388,10 +394,15 @@ export default function UserManagement() {
                   <td>
                     <button
                       className="um-qr-btn"
-                      title={u.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'}
+                      disabled={badgeLocked(u)}
+                      title={
+                        badgeLocked(u)
+                          ? 'Locked — guard must log in and change their temporary password first'
+                          : u.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'
+                      }
                       onClick={() => openQrModal(u)}
                     >
-                      <QrCode size={15} />
+                      {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />}
                       <span>{u.role === 'security' ? 'Badge' : 'ID'}</span>
                     </button>
                   </td>
@@ -408,8 +419,13 @@ export default function UserManagement() {
                           <Eye size={15} /> View Profile
                         </button>
                         {u.role === 'security' && (
-                          <button className="um-dropdown-item view" onClick={() => openQrModal(u)}>
-                            <QrCode size={15} /> QR Badge
+                          <button
+                            className="um-dropdown-item view"
+                            disabled={badgeLocked(u)}
+                            title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                            onClick={() => openQrModal(u)}
+                          >
+                            {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
                           </button>
                         )}
                         <button
@@ -639,8 +655,13 @@ export default function UserManagement() {
             </div>
             <div className="um-modal-footer">
               <button className="um-btn-secondary" onClick={closeModal}>Close</button>
-              <button className="um-btn-primary" onClick={() => { closeModal(); openQrModal(selectedUser) }}>
-                <QrCode size={15} /> View QR
+              <button
+                className="um-btn-primary"
+                disabled={badgeLocked(selectedUser)}
+                title={badgeLocked(selectedUser) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                onClick={() => { closeModal(); openQrModal(selectedUser) }}
+              >
+                {badgeLocked(selectedUser) ? <Lock size={15} /> : <QrCode size={15} />} View QR
               </button>
             </div>
           </div>

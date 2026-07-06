@@ -154,15 +154,15 @@ export default function VehicleRegistration() {
   // 3rd-offense violation (backend returns 409 registration_blocked otherwise)
   const confirmAccept = async (acknowledgeBlock = false) => {
     if (!selectedReg) return
-    const originalDays  = selectedReg.campus_days || []
-    const hasAddedDays  = daysOverride.some(d => !originalDays.includes(d))
+    // Up to 3 campus days is the normal allowance; more than 3 is a special case
+    const tooManyDays = daysOverride.length > 3
     setSubmitting(true)
     try {
       const result = await registrationApi.acceptRegistration(
         selectedReg.id,
         orNumber.trim(),
         daysOverride.length > 0 ? daysOverride : undefined,
-        hasAddedDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
+        tooManyDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
         acknowledgeBlock,
       )
       setBlockPrompt(null)
@@ -505,9 +505,9 @@ export default function VehicleRegistration() {
 
             {selectedReg.status === 'pending' && (() => {
               const originalDays = selectedReg.campus_days || []
-              const addedDays    = daysOverride.filter(d => !originalDays.includes(d))
-              const hasAddedDays = addedDays.length > 0
-              const canAccept    = orValid && (!hasAddedDays || specialCaseReason.trim())
+              // Up to 3 campus days is the normal allowance; more than 3 is a special case
+              const tooManyDays  = daysOverride.length > 3
+              const canAccept    = orValid && (!tooManyDays || specialCaseReason.trim())
               return (
                 <div className="accept-inline-section">
                   <h3 className="accept-inline-title">
@@ -577,14 +577,14 @@ export default function VehicleRegistration() {
                     </div>
                   )}
 
-                  {hasAddedDays && (
+                  {tooManyDays && (
                     <div className="form-group special-case-reason-group">
                       <label className="form-label special-case-reason-label">
                         <AlertCircle size={13} />
-                        Reason for Added Days <span className="required">*</span>
+                        Reason for Extra Days <span className="required">*</span>
                       </label>
                       <p className="form-hint special-case-added-hint">
-                        You added <strong>{addedDays.join(', ')}</strong> — not in the original request. Provide a reason; this registration will be flagged as a Special Case.
+                        You assigned <strong>{daysOverride.length} days</strong> — more than the standard 3-day allowance. Provide a reason; this registration will be flagged as a Special Case.
                       </p>
                       <textarea
                         className="form-textarea"
@@ -605,7 +605,7 @@ export default function VehicleRegistration() {
                       className="btn-success"
                       onClick={() => setShowAcceptConfirm(true)}
                       disabled={submitting || !canAccept}
-                      title={!orValid ? 'Enter a valid OR number to enable' : hasAddedDays && !specialCaseReason.trim() ? 'Provide a reason for the added days' : ''}
+                      title={!orValid ? 'Enter a valid OR number to enable' : tooManyDays && !specialCaseReason.trim() ? 'Provide a reason for granting more than 3 days' : ''}
                     >
                       {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
                     </button>

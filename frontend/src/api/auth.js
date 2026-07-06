@@ -21,6 +21,15 @@ export const authApi = {
     return data
   },
 
+  /** Whether a guard has a usable QR badge — controls the QR tab on the gate login page.
+   *  Pass an email to check that specific guard; omit it to check if any guard qualifies. */
+  guardQrAvailable: async (email) => {
+    const { data } = await api.get('/accounts/guard-qr-available/', {
+      params: email ? { email } : {},
+    })
+    return data.qr_available === true
+  },
+
   refreshToken: async (refresh) => {
     const { data } = await api.post('/auth/refresh/', { refresh })
     return data

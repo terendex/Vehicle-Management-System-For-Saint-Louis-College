@@ -732,15 +732,14 @@ class AcceptRegistrationView(APIView):
         schedule_override    = request.data.get('schedule', '').strip()
         special_case_reason  = request.data.get('special_case_reason', '').strip()
 
-        # Early validation: if admin is adding days beyond the original, a reason is required
+        # Early validation: up to 3 campus days is the normal allowance — granting
+        # more than 3 makes it a special case that requires a reason.
         if campus_days_override is not None and isinstance(campus_days_override, list):
             valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
             _cleaned_check = [d for d in campus_days_override if d in valid_days]
-            _original_days = set(registration.campus_days or [])
-            _added_days    = set(_cleaned_check) - _original_days
-            if _added_days and not special_case_reason:
+            if len(_cleaned_check) > 3 and not special_case_reason:
                 return Response(
-                    {"error": "A reason is required when adding days not in the original schedule."},
+                    {"error": "A reason is required when granting more than 3 campus days."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -814,10 +813,8 @@ class AcceptRegistrationView(APIView):
             valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
             cleaned = [d for d in campus_days_override if d in valid_days]
 
-            # Mark as special case if days were added beyond original request
-            original_days = set(registration.campus_days or [])
-            added_days    = set(cleaned) - original_days
-            if added_days:
+            # More than 3 campus days is a special case (validated above)
+            if len(cleaned) > 3:
                 registration.is_special_case     = True
                 registration.special_case_reason = special_case_reason
 

@@ -861,18 +861,6 @@ export default function RegisterPage() {
               {/* Address */}
               <div className="form-subsection col-span-2"><span>Address</span></div>
 
-              <div className="form-group col-span-2">
-                <label>House / Unit No. &amp; Street <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="house_street"
-                  value={formData.house_street}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="e.g. 123 Rizal Street"
-                />
-              </div>
-
               <div className="form-group">
                 <label>Province <span className="required">*</span></label>
                 <select
@@ -923,6 +911,18 @@ export default function RegisterPage() {
                   </option>
                   {barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
                 </select>
+              </div>
+
+              <div className="form-group col-span-2">
+                <label>House / Unit No. &amp; Street <span className="required">*</span></label>
+                <input
+                  type="text"
+                  name="house_street"
+                  value={formData.house_street}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="e.g. 123 Rizal Street"
+                />
               </div>
 
               {/* Other Information */}

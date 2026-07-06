@@ -481,41 +481,25 @@
   .sqr-main { padding: 1.25rem 0.75rem; }
 }
 
-/* ── Login method tabs ── */
-.sqr-method-tabs {
-  display: flex;
-  gap: 6px;
-  background: #F2F4FA;
-  border: 1px solid #E2E6EE;
-  border-radius: 12px;
-  padding: 4px;
-  margin-bottom: 18px;
-}
-
-.sqr-method-tab {
-  flex: 1;
+/* ── "or scan your QR badge" divider ── */
+.sqr-divider {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 9px 12px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  font-size: 13px;
+  gap: 10px;
+  margin: 18px 0 14px;
+  color: #9CA3AF;
+  font-size: 12px;
   font-weight: 600;
-  font-family: inherit;
-  color: #6B7080;
-  cursor: pointer;
-  transition: all 0.2s;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
 
-.sqr-method-tab:hover { color: #2A2B61; }
-
-.sqr-method-tab.active {
-  background: #FFFFFF;
-  color: #2A2B61;
-  box-shadow: 0 1px 4px rgba(26, 29, 46, 0.1);
+.sqr-divider::before,
+.sqr-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #E2E6EE;
 }
 
 /* ── Credentials form ── */
