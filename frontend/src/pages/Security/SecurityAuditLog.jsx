@@ -218,7 +218,6 @@ export default function SecurityAuditLog() {
                     <th>Action</th>
                     <th>Target</th>
                     <th>Details</th>
-                    <th>IP Address</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -233,7 +232,6 @@ export default function SecurityAuditLog() {
                       </td>
                       <td>{log.target_name || '—'}</td>
                       <td className="sal-details">{log.details || '—'}</td>
-                      <td>{log.ip_address || '—'}</td>
                     </tr>
                   ))}
                 </tbody>

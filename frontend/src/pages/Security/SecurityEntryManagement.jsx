@@ -3,13 +3,14 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
-  DoorOpen, Ban,
+  DoorOpen, Ban, ScanLine,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
+import QrScanModal from '../../components/QrScanModal'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
@@ -45,6 +46,23 @@ const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
   catch { return '' }
+}
+
+// Active-visitor panel cache — hydrated instantly on mount so the list never
+// flashes empty when a guard refreshes / hard-refreshes; the server fetch then
+// reconciles it. Scoped to today so stale days never linger.
+const PASS_CACHE_KEY = 'slc_active_passes'
+function loadCachedPasses() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PASS_CACHE_KEY) || 'null')
+    if (raw && raw.date === new Date().toDateString() && Array.isArray(raw.passes)) return raw.passes
+  } catch { /* ignore */ }
+  return []
+}
+function saveCachedPasses(passes) {
+  try {
+    localStorage.setItem(PASS_CACHE_KEY, JSON.stringify({ date: new Date().toDateString(), passes }))
+  } catch { /* ignore */ }
 }
 
 // Time-left / overstay info for an active visitor pass
@@ -103,81 +121,44 @@ ${qrSvg ? `<div style="text-align:center;margin:8px 0;">${qrSvg}</div>
 function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
   const [officeId, setOfficeId] = useState('')
   const [purpose, setPurpose]   = useState('')
-  const [duration, setDuration] = useState(60)
+  const [duration, setDuration] = useState('15')  // typeable string; default 15 min
   const [loading, setLoading]   = useState(false)
-  const [createdPass, setCreatedPass] = useState(null)
-  const [confirming, setConfirming]   = useState(false)
-  const [entryLogged, setEntryLogged] = useState(false)
+
+  const durationNum = Math.max(1, Math.min(480, parseInt(duration, 10) || 15))
 
   const doPrint = (pass) => {
     const officeName = offices.find(o => String(o.id) === String(officeId))?.name
     printVisitorSlip({
       plate, purpose, officeName, guardName,
-      issuedAt: pass.entered_at, expiresAt: pass.expires_at, duration,
+      issuedAt: pass.entered_at, expiresAt: pass.expires_at, duration: durationNum,
       qrPayload: pass.qr_payload || `SLC-VISITOR:${pass.id}`,
     })
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!officeId || !purpose.trim()) { toast.error('Please fill in all fields.'); return }
+    if (!purpose.trim()) { toast.error('Please enter the purpose of visit.'); return }
     setLoading(true)
     try {
-      const res = await createVisitorPass({ plate_number: plate, office: officeId, purpose, allowed_duration: duration })
+      const res = await createVisitorPass({
+        plate_number: plate, office: officeId || null, purpose, allowed_duration: durationNum,
+      })
       const pass = res.data
-      setCreatedPass(pass)
       doPrint(pass)
+      // Auto-log the visitor's entry as soon as the slip is sent to the printer —
+      // no separate manual confirmation step.
+      try {
+        await confirmVisitorSlipPrinted(pass.id)
+        toast.success(`Visitor pass issued & entry logged for ${plate} — valid ${durationNum} min.`)
+      } catch {
+        toast.success(`Visitor pass issued for ${plate}.`)
+      }
+      onCreated()
+      onClose()
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
     } finally { setLoading(false) }
   }
-
-  // The visitor's entry is only logged once the guard confirms the slip printed
-  const handleConfirmPrinted = async () => {
-    if (!createdPass || confirming) return
-    setConfirming(true)
-    try {
-      await confirmVisitorSlipPrinted(createdPass.id)
-      setEntryLogged(true)
-      toast.success(`Slip confirmed — visitor entry logged for ${plate}.`)
-      onCreated()
-      onClose()
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Failed to confirm the printed slip.')
-    } finally { setConfirming(false) }
-  }
-
-  if (createdPass) return (
-    <div className="em-overlay">
-      <div className="em-modal">
-        <div className="em-modal-head">
-          <span className="em-modal-title"><CheckCircle size={17} style={{ color: '#10b981' }} /> Pass Created — Confirm Print</span>
-          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
-        </div>
-        <div className="em-modal-body">
-          <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>
-            Slip sent to the printer for <strong>{plate}</strong> — valid for <strong>{duration} min</strong>.
-            The slip includes the exit QR the visitor must present when leaving.
-          </p>
-          <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
-            The visitor's entry is <strong>not logged yet</strong>. Confirm the slip printed to log the entry,
-            or reprint if it failed.
-          </p>
-          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#6b7280' }}>
-            Expires: {createdPass.expires_at ? new Date(createdPass.expires_at).toLocaleTimeString() : '—'}
-          </p>
-        </div>
-        <div className="em-modal-foot">
-          <button type="button" className="em-btn em-btn-secondary" onClick={() => doPrint(createdPass)}>
-            Reprint Slip
-          </button>
-          <button type="button" className="em-btn em-btn-primary" disabled={confirming || entryLogged} onClick={handleConfirmPrinted}>
-            {confirming ? <><div className="em-spinner" /> Logging…</> : 'Slip Printed — Log Entry'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -193,9 +174,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
               <input className="em-input" value={plate} readOnly />
             </div>
             <div className="em-field">
-              <label className="em-label">Destination Office</label>
-              <select className="em-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)} required>
-                <option value="">Select office…</option>
+              <label className="em-label">Destination Office <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
+              <select className="em-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)}>
+                <option value="">No specific office</option>
                 {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
             </div>
@@ -206,8 +187,13 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
             </div>
             <div className="em-field">
               <label className="em-label">Allowed Duration (minutes)</label>
-              <input className="em-input" type="number" min={1} max={480} value={duration}
-                onChange={(e) => setDuration(Math.max(1, parseInt(e.target.value) || 60))} />
+              <input className="em-input" type="text" inputMode="numeric" value={duration}
+                placeholder="15"
+                onChange={(e) => setDuration(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                onBlur={() => setDuration(String(durationNum))} />
+              <span style={{ fontSize: 11, color: '#9ca3af', marginTop: 4, display: 'block' }}>
+                Defaults to 15 minutes. Guards can extend an active pass by +30 min anytime.
+              </span>
             </div>
           </div>
           <div className="em-modal-foot">
@@ -564,10 +550,12 @@ export default function SecurityEntryManagement() {
   const [exitResult, setExitResult]   = useState(null)
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
-  const [passes, setPasses]           = useState([]) // today's ACTIVE visitor passes
+  const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
   const [dedupSeconds, setDedupSeconds] = useState(5)
   const [openCampus, setOpenCampus]     = useState(false)
+  const [showExitScanner, setShowExitScanner] = useState(false) // camera exit-QR scanner
+  const [exitScanBusy, setExitScanBusy]       = useState(false)
   const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
 
   const addToQueue = (r, secs = dedupSeconds) => {
@@ -690,6 +678,7 @@ export default function SecurityEntryManagement() {
     getVisitorPasses().then(r => {
       const list = (r.data?.results ?? r.data ?? []).filter(p => p.status === 'active')
       setPasses(list)
+      saveCachedPasses(list)
       list.forEach(p => {
         if (p.expires_at && new Date(p.expires_at).getTime() < Date.now()
             && !overstayToasted.current.has(p.id)) {
@@ -720,6 +709,59 @@ export default function SecurityEntryManagement() {
       .catch(err => toast.error(err?.response?.data?.error || 'Failed to extend pass.'))
   }
 
+  // Record a visitor exit from a slip QR (payload SLC-VISITOR:{id}) — shared by
+  // the lookup box (USB scanner-gun / typed) and the camera scanner. Drives the
+  // same on-screen "Exited" feedback as a plate-based exit (result card, green
+  // banner, and a Recent Scans entry).
+  const recordVisitorExit = async (qrData) => {
+    try {
+      const res = await visitorQrExit(qrData)
+      const d = res.data
+      const dur = d.duration_minutes
+
+      // Show the "Exited" result card + green banner, exactly like a plate exit
+      setExitResult(d)
+      addToQueue({
+        plate_number: d.plate_number,
+        status: 'exited',
+        message: dur != null
+          ? `Visitor exited — inside for ${dur} min${d.overstay_minutes > 0 ? `, overstayed ${d.overstay_minutes} min` : ''}.`
+          : 'Visitor exited.',
+      })
+      setLogs(prev => [{
+        id: Date.now() + Math.random(),
+        plate_number: d.plate_number,
+        status: 'exited',
+        scanned_at: new Date().toISOString(),
+        scanned_by_name: user?.full_name,
+        gate_id: user?.gate_assignment,
+      }, ...prev].slice(0, 20))
+
+      toast.success(`Visitor exit recorded for ${d.plate_number}${dur != null ? ` — inside for ${dur} min` : ''}.`)
+      if (d.overstay_minutes > 0) {
+        toast.warning(`${d.plate_number} overstayed by ${d.overstay_minutes} min.`, { duration: 8000 })
+      }
+      refreshAll()
+      return true
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record visitor exit.')
+      return false
+    }
+  }
+
+  // Camera scanner read a QR — must be a visitor slip QR to record an exit.
+  const handleExitQrDetected = async (data) => {
+    const clean = (data || '').trim().toUpperCase()
+    if (!clean.startsWith('SLC-VISITOR:')) {
+      toast.error('Not a visitor slip QR. Scan the QR printed on the visitor slip.')
+      return
+    }
+    setExitScanBusy(true)
+    const ok = await recordVisitorExit(clean)
+    setExitScanBusy(false)
+    if (ok) setShowExitScanner(false)
+  }
+
   const handleCheckEntry = async (e) => {
     e?.preventDefault()
     const plate = plateInput.trim().toUpperCase()
@@ -730,18 +772,9 @@ export default function SecurityEntryManagement() {
     if (plate.startsWith('SLC-VISITOR:')) {
       setLoading(true)
       setExitResult(null)
-      try {
-        const res = await visitorQrExit(plate)
-        setPlateInput('')
-        const dur = res.data.duration_minutes
-        toast.success(`Visitor exit recorded for ${res.data.plate_number}${dur != null ? ` — inside for ${dur} min` : ''}.`)
-        if (res.data.overstay_minutes > 0) {
-          toast.warning(`${res.data.plate_number} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
-        }
-        refreshAll()
-      } catch (err) {
-        toast.error(err?.response?.data?.error || 'Failed to record visitor exit.')
-      } finally { setLoading(false) }
+      await recordVisitorExit(plate)
+      setPlateInput('')
+      setLoading(false)
       return
     }
 
@@ -841,36 +874,48 @@ export default function SecurityEntryManagement() {
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
                     {rtspActiveCam?.name || 'Camera'}
                   </div>
-                  {(() => {
-                    const s = rtspActiveCam?.mlStatus?.stage
-                    const m = rtspActiveCam?.mlStatus?.message
-                    if (!s || s === 'idle') return null
-                    if (s === 'ready') return (
+                  {/* Bottom-left status stack: Open Campus pill sits beside the ML status */}
+                  <div style={{ position: 'absolute', bottom: 10, left: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: 'calc(100% - 20px)' }}>
+                    {openCampus && (
                       <div style={{
-                        position: 'absolute', bottom: 10, left: 10,
-                        background: 'rgba(16,185,129,0.18)', color: '#10b981',
-                        border: '1px solid rgba(16,185,129,0.35)',
+                        background: 'rgba(59,130,246,0.20)', color: '#93c5fd',
+                        border: '1px solid rgba(59,130,246,0.40)',
                         padding: '4px 9px', borderRadius: 7, fontSize: 11,
-                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
+                        fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5,
                         pointerEvents: 'none', backdropFilter: 'blur(4px)',
                       }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0 }} />
-                        Detection Ready
+                        <DoorOpen size={12} /> Open Campus
                       </div>
-                    )
-                    return (
-                      <div style={{
-                        position: 'absolute', bottom: 10, left: 10,
-                        background: 'rgba(0,0,0,0.78)', color: '#fff',
-                        padding: '5px 10px', borderRadius: 7, fontSize: 11,
-                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
-                        pointerEvents: 'none', backdropFilter: 'blur(4px)',
-                      }}>
-                        <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.2)', flexShrink: 0 }} />
-                        {m || 'Initializing…'}
-                      </div>
-                    )
-                  })()}
+                    )}
+                    {(() => {
+                      const s = rtspActiveCam?.mlStatus?.stage
+                      const m = rtspActiveCam?.mlStatus?.message
+                      if (!s || s === 'idle') return null
+                      if (s === 'ready') return (
+                        <div style={{
+                          background: 'rgba(16,185,129,0.18)', color: '#10b981',
+                          border: '1px solid rgba(16,185,129,0.35)',
+                          padding: '4px 9px', borderRadius: 7, fontSize: 11,
+                          fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
+                          pointerEvents: 'none', backdropFilter: 'blur(4px)',
+                        }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0 }} />
+                          Detection Ready
+                        </div>
+                      )
+                      return (
+                        <div style={{
+                          background: 'rgba(0,0,0,0.78)', color: '#fff',
+                          padding: '5px 10px', borderRadius: 7, fontSize: 11,
+                          fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
+                          pointerEvents: 'none', backdropFilter: 'blur(4px)',
+                        }}>
+                          <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.2)', flexShrink: 0 }} />
+                          {m || 'Initializing…'}
+                        </div>
+                      )
+                    })()}
+                  </div>
                 </div>
               ) : (
                 <div className="em-cam-off">
@@ -929,6 +974,15 @@ export default function SecurityEntryManagement() {
                   disabled={loading || !plateInput.trim()}
                 >
                   {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Plate — Entry / Exit</>}
+                </button>
+                <button
+                  type="button"
+                  className="em-btn em-btn-secondary"
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 12px' }}
+                  onClick={() => setShowExitScanner(true)}
+                  title="Scan a visitor's slip QR to record their exit"
+                >
+                  <ScanLine size={15} /> Scan Exit QR
                 </button>
               </form>
               <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
@@ -1097,6 +1151,16 @@ export default function SecurityEntryManagement() {
             </div>
           </div>
         </div>
+
+        {showExitScanner && (
+          <QrScanModal
+            title="Scan Visitor Exit QR"
+            hint="Point the camera at the QR printed on the visitor's slip to record their exit."
+            busy={exitScanBusy}
+            onDetected={handleExitQrDetected}
+            onClose={() => setShowExitScanner(false)}
+          />
+        )}
       </div>
     </SecurityLayout>
   )
