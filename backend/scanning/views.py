@@ -30,8 +30,18 @@ GATE_DISPLAY = {'gate1': 'Gate 1', 'gate4': 'Gate 4', 'main': 'Main'}
 
 
 def _gate_label(gate_id: str) -> str:
-    """Human-readable gate name for audit-log details."""
-    return GATE_DISPLAY.get(gate_id, gate_id or 'Main')
+    """Human-readable gate name for audit-log details. Falls back to the dynamic
+    Gate row's label so gates beyond gate1/gate4 also read nicely."""
+    if gate_id in GATE_DISPLAY:
+        return GATE_DISPLAY[gate_id]
+    try:
+        from .models import Gate
+        g = Gate.objects.filter(gate_id=gate_id).only('label').first()
+        if g:
+            return g.label
+    except Exception:
+        pass
+    return gate_id or 'Main'
 
 
 def _audit(request, action, details=''):
@@ -44,6 +54,29 @@ def _audit(request, action, details=''):
         )
     except Exception:
         pass
+
+
+def _audit_manual_result(request, plate_number, owner_name, gate_id, result):
+    """Audit a manual-entry outcome whose branch already wrote its AccessLog but
+    not an audit entry (unregistered / open-campus / supplier plates). Skips
+    no-op outcomes (duplicate / already_inside) that change no gate state, so
+    every real entry/exit/denial a guard types lands in the audit trail."""
+    status = result.get('status')
+    if status in ('duplicate', 'already_inside'):
+        return
+    if status == 'exited':
+        action = AuditLog.Action.VEHICLE_EXITED
+    elif result.get('allowed'):
+        action = AuditLog.Action.VEHICLE_ENTERED
+    else:
+        action = AuditLog.Action.SCAN
+    dur = result.get('duration_minutes')
+    _audit(
+        request, action,
+        f"Plate: {plate_number} | Owner: {owner_name} | Gate: {_gate_label(gate_id)} | "
+        f"Guard: {getattr(request.user, 'full_name', '')} | Status: {status}"
+        + (f" | Duration: {dur} min" if dur is not None else ""),
+    )
 
 # Auto-violations are issued at most once per type per vehicle per calendar day
 # (see _auto_log_violation); the counter resets at midnight local time.
@@ -1376,6 +1409,7 @@ class ManualEntryView(APIView):
             if not supplier_plate:
                 if is_open_campus():
                     r = _open_campus_unknown_result(plate_number, gate_id, request.user)
+                    _audit_manual_result(request, plate_number, 'Unregistered', gate_id, r)
                     return Response({**r, 'plate_number': plate_number, 'gate_id': gate_id})
                 AccessLog.objects.create(
                     plate_number=plate_number,
@@ -1383,6 +1417,9 @@ class ManualEntryView(APIView):
                     gate_id=gate_id,
                     scanned_by=request.user,
                 )
+                _audit(request, AuditLog.Action.SCAN,
+                       f"Plate: {plate_number} | Owner: Unknown | Gate: {_gate_label(gate_id)} | "
+                       f"Guard: {request.user.full_name} | Status: unknown")
                 return Response({
                     'plate_number': plate_number,
                     'status':       'unknown',
@@ -1448,6 +1485,11 @@ class ManualEntryView(APIView):
                 duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
                 overstay_minutes = _check_stay_limit(plate_number, None, 'supplier', duration_minutes, gate_id)
                 overstay_note = f' Overstayed by {overstay_minutes} min — violation issued.' if overstay_minutes else ''
+                _audit(request, AuditLog.Action.VEHICLE_EXITED,
+                       f"Exit (re-check) | Plate: {plate_number} | Supplier: {supplier_name} | "
+                       f"Duration: {duration_minutes} min | "
+                       + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+                       + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}")
                 return Response({
                     'plate_number':      plate_number,
                     'status':            'exited',
@@ -1481,6 +1523,9 @@ class ManualEntryView(APIView):
                     plate_number=plate_number, status=AccessLog.Status.DENIED,
                     denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
                 )
+                _audit(request, AuditLog.Action.SCAN,
+                       f"Plate: {plate_number} | Supplier: {supplier_name} | Gate: {_gate_label(gate_id)} | "
+                       f"Guard: {request.user.full_name} | Status: denied — {deny_msg}")
                 return Response({
                     'plate_number':  plate_number,
                     'status':        'denied',
@@ -1495,6 +1540,9 @@ class ManualEntryView(APIView):
                 plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
                 gate_id=gate_id, scanned_by=request.user,
             )
+            _audit(request, AuditLog.Action.VEHICLE_ENTERED,
+                   f"Plate: {plate_number} | Supplier: {supplier_name} | Gate: {_gate_label(gate_id)} | "
+                   f"Guard: {request.user.full_name} | Status: entered")
             open_campus = is_open_campus()
             return Response({
                 'plate_number':  plate_number,
@@ -1660,6 +1708,7 @@ class QRLoginView(APIView):
     def post(self, request):
         from rest_framework_simplejwt.tokens import RefreshToken
         from django.utils import timezone as tz
+        from .models import Gate
 
         qr_token = (request.data.get('qr_token') or '').strip()
         if not qr_token:
@@ -1672,7 +1721,7 @@ class QRLoginView(APIView):
 
         # Gate is selected by the guard at the login screen — that selection IS their assignment.
         gate = (request.data.get('gate') or '').strip() or guard.gate_assignment
-        if gate not in ('gate1', 'gate4'):
+        if gate not in Gate.active_ids():
             return Response({'error': 'Please select a valid gate before scanning.'}, status=400)
 
         # Persist the gate the guard logged in at on their profile.
@@ -1697,7 +1746,7 @@ class QRLoginView(APIView):
 
         # Audit
         _audit_ip = get_client_ip(request)
-        gate_label = 'Gate 1' if gate == 'gate1' else 'Gate 4'
+        gate_label = _gate_label(gate)
         try:
             AuditLog.objects.create(
                 actor=guard,
