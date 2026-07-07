@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { Mail, ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react'
 import { authApi } from '../../api/auth'
 import slcLogo from '../../assets/slclogo.jpg'
@@ -8,6 +8,10 @@ import './ForgotPasswordPage.css'
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  // Guards land here from the guard login page, not the admin/owner login —
+  // send them back to where they came from instead of the wrong login form.
+  const backPath = location.state?.from === 'security' ? '/security/guard-login' : '/login'
   const [email, setEmail]       = useState('')
   const [isLoading, setLoading] = useState(false)
   // `sent` swaps the whole card from "form" to "confirmation" view instead of routing away,
@@ -58,7 +62,7 @@ export default function ForgotPasswordPage() {
                 reset link. Check your inbox (and spam folder) — the link expires in{' '}
                 <strong>1 hour</strong>.
               </p>
-              <button className="login-button" onClick={() => navigate('/login')}>
+              <button className="login-button" onClick={() => navigate(backPath)}>
                 <div className="button-content">
                   <ArrowLeft size={17} />
                   <span>Back to Login</span>
@@ -117,7 +121,7 @@ export default function ForgotPasswordPage() {
                   <button
                     type="button"
                     className="forgot-link fp-back-btn"
-                    onClick={() => navigate('/login')}
+                    onClick={() => navigate(backPath)}
                   >
                     <ArrowLeft size={13} />
                     Back to Login

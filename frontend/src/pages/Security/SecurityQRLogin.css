@@ -561,6 +561,19 @@
   cursor: not-allowed;
 }
 
+.sqr-forgot-link {
+  display: block;
+  margin: 4px auto 0;
+  background: none;
+  border: none;
+  color: #2A2B61;
+  font-size: 12px;
+  font-family: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
 .sqr-btn-spinner {
   width: 16px;
   height: 16px;
