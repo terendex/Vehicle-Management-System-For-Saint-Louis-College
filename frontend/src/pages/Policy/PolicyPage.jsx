@@ -20,7 +20,7 @@ export default function PolicyPage() {
         <div className="policy-header-inner">
           <button className="policy-back-btn" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} />
-            <span>Back</span>
+            <span>Return</span>
           </button>
           <div className="policy-header-logo-group">
             <img src={slcLogo} alt="SLC Logo" className="policy-header-logo" />
@@ -461,11 +461,11 @@ export default function PolicyPage() {
           )}
         </div>
 
-        {/* Back to Login */}
+        {/* Back  */}
         <div className="policy-footer">
-          <button className="policy-footer-btn" onClick={() => navigate('/login')}>
+          <button className="policy-footer-btn" onClick={() => navigate(-1)}>
             <ArrowLeft size={15} />
-            Return to Login
+            Return
           </button>
           <span className="policy-footer-note">
             &copy; {new Date().getFullYear()} Saint Louis College. All rights reserved.

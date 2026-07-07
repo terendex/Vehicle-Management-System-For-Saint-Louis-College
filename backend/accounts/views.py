@@ -528,7 +528,7 @@ class AuditLogExportView(APIView):
         ws.title = 'Audit Log'
 
         # Report header
-        ws.merge_cells('A1:G1')
+        ws.merge_cells('A1:F1')
         ws['A1'] = 'Saint Louis College — Vehicle Management System · Audit Log Report'
         ws['A1'].font = Font(bold=True, size=13, color='2A2B61')
 
@@ -539,7 +539,7 @@ class AuditLogExportView(APIView):
             filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
         if search:
             filters_desc.append(f"Search: '{search}'")
-        ws.merge_cells('A2:G2')
+        ws.merge_cells('A2:F2')
         ws['A2'] = (
             f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
             f"by {getattr(request.user, 'full_name', '')} · "
@@ -549,7 +549,7 @@ class AuditLogExportView(APIView):
         ws['A2'].font = Font(size=10, color='666666')
 
         # Column headers
-        headers = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details', 'IP Address']
+        headers = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
         header_fill = PatternFill('solid', fgColor='2A2B61')
         for col, title in enumerate(headers, start=1):
             cell = ws.cell(row=4, column=col, value=title)
@@ -557,7 +557,7 @@ class AuditLogExportView(APIView):
             cell.fill = header_fill
             cell.alignment = Alignment(vertical='center')
 
-        for width, col in zip([5, 21, 24, 12, 20, 95, 15], 'ABCDEFG'):
+        for width, col in zip([5, 21, 24, 12, 20, 95], 'ABCDEF'):
             ws.column_dimensions[col].width = width
         ws.freeze_panes = 'A5'
 
@@ -574,7 +574,6 @@ class AuditLogExportView(APIView):
             ws.cell(row=r, column=5, value=action_labels.get(log.action, log.action))
             c = ws.cell(row=r, column=6, value=log.details or '')
             c.alignment = wrap
-            ws.cell(row=r, column=7, value=log.ip_address or '')
 
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -1166,6 +1165,25 @@ class NotificationMarkReadView(APIView):
             except Exception:
                 pass
         return Response({'updated': updated})
+
+
+class NotificationClearView(APIView):
+    """Admin/CDSO: clear (delete) notifications from the bell feed.
+    Body: {"read_only": true} deletes only already-read items; otherwise all."""
+    permission_classes = [IsAdminOrCdso]
+
+    def post(self, request):
+        qs = Notification.objects.all()
+        if request.data.get('read_only'):
+            qs = qs.filter(is_read=True)
+        deleted, _ = qs.delete()
+        if deleted:
+            try:
+                from realtime.broadcast import broadcast_change
+                broadcast_change('notification', 'updated')
+            except Exception:
+                pass
+        return Response({'deleted': deleted})
 
 
 

@@ -467,7 +467,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = AuditLog
-        fields = ['id', 'actor', 'actor_name', 'action', 'action_label', 'target_user', 'target_name', 'details', 'ip_address', 'created_at']
+        fields = ['id', 'actor', 'actor_name', 'action', 'action_label', 'target_user', 'target_name', 'details', 'created_at']
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:

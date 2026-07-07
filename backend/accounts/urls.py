@@ -25,4 +25,5 @@ urlpatterns = [
     path('admin/create-owner/',         views.AdminCreateOwnerView.as_view(),      name='admin-create-owner'),
     path('notifications/',              views.NotificationListView.as_view(),      name='notification-list'),
     path('notifications/mark-read/',    views.NotificationMarkReadView.as_view(),  name='notification-mark-read'),
+    path('notifications/clear/',        views.NotificationClearView.as_view(),     name='notification-clear'),
 ]
