@@ -615,11 +615,16 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     return _id_conflict(registrant_type, student_id, employee_id, qs)
 
 
-def _license_conflict(drivers_license):
+def _license_db_conflict(drivers_license):
     """
     The DB has a partial unique index (uniq_active_registration_drivers_license):
     one license number per active registration. Pre-check it so applicants get a
     readable error instead of a 500 from the IntegrityError.
+
+    Distinct from _license_conflict(drivers_license, qs) above: that one is
+    scoped to an explicitly-built queryset (used inside _registration_conflict
+    and the availability-check endpoint); this one queries the live table
+    directly as a belt-and-suspenders check right before save().
     Returns an error message string, or None.
     """
     if isinstance(drivers_license, list):
@@ -963,7 +968,7 @@ class CdsoDirectRegisterView(APIView):
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
 
-        license_error = _license_conflict(request.data.get('drivers_license', ''))
+        license_error = _license_db_conflict(request.data.get('drivers_license', ''))
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1185,7 +1190,7 @@ class PublicOpenRegistrationView(APIView):
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
 
-        license_error = _license_conflict(data.get('drivers_license', ''))
+        license_error = _license_db_conflict(data.get('drivers_license', ''))
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 

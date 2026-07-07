@@ -1406,8 +1406,13 @@
 
 /* Day override picker buttons */
 .day-override-btn {
-  padding: 6px 14px;
-  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 58px;
+  padding: 6px 12px;
+  border-radius: 14px;
   border: 2px solid #d1d5db;
   background: #f9fafb;
   color: #374151;
@@ -1415,6 +1420,13 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+.day-override-slots {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.8;
+  letter-spacing: 0.2px;
 }
 
 .day-override-btn:hover:not(:disabled) {
@@ -1432,5 +1444,16 @@
 .day-override-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.day-override-btn.full:not(.selected) {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.day-override-btn.full:not(.selected) .day-override-slots {
+  color: #b91c1c;
+  opacity: 1;
 }
 

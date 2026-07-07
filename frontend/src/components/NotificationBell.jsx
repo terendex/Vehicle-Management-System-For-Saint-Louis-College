@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, AlertTriangle, Car, CheckCheck } from 'lucide-react'
+import { Bell, AlertTriangle, Car, CheckCheck, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
-import { getNotifications, markNotificationsRead } from '../api/notifications'
+import { getNotifications, markNotificationsRead, clearNotifications } from '../api/notifications'
 import { useLiveUpdates } from '../realtime/useLiveUpdates'
 import './NotificationBell.css'
 
@@ -88,6 +88,21 @@ export default function NotificationBell() {
     } catch { /* ignore */ }
   }
 
+  const handleClearAll = async () => {
+    // Optimistic clear so the panel empties instantly; watermark stays so we
+    // don't re-toast anything that gets recreated server-side.
+    setItems([])
+    setUnreadCount(0)
+    try {
+      await clearNotifications()
+      toast.success('Notifications cleared.')
+    } catch {
+      toast.error('Failed to clear notifications.')
+    } finally {
+      fetchNotifications()
+    }
+  }
+
   const handleItemClick = async (n) => {
     if (!n.is_read) {
       try { await markNotificationsRead({ ids: [n.id] }) } catch { /* ignore */ }
@@ -147,6 +162,14 @@ export default function NotificationBell() {
               )
             })}
           </div>
+
+          {items.length > 0 && (
+            <div className="notif-panel-foot">
+              <button className="notif-clear-all" onClick={handleClearAll}>
+                <Trash2 size={14} /> Clear all
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
