@@ -926,7 +926,10 @@ class PasswordResetConfirmView(APIView):
         user.must_change_password = False
         user.save(update_fields=['password', 'must_change_password'])
 
-        return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
+        return Response({
+            'message': 'Password reset successfully. You can now log in with your new password.',
+            'role': user.role,
+        })
 
 
 # ──────────────────────────────────────────────

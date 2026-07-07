@@ -72,6 +72,10 @@ export default function ResetPasswordPage() {
   const [success, setSuccess]               = useState(false)
   const [error, setError]                   = useState('')
   const [fieldErrors, setFieldErrors]       = useState([])
+  const [resetRole, setResetRole]           = useState(null)
+
+  // Guards don't use /login — route them back to the guard sign-in page instead.
+  const loginPath = resetRole === 'security' ? '/security/guard-login' : '/login'
 
   const checks    = useMemo(() => strengthCheck(newPassword), [newPassword])
   const allValid  = Object.values(checks).every(Boolean)
@@ -95,7 +99,8 @@ export default function ResetPasswordPage() {
 
     setLoading(true)
     try {
-      await authApi.confirmPasswordReset(uid, token, newPassword, confirmPassword)
+      const data = await authApi.confirmPasswordReset(uid, token, newPassword, confirmPassword)
+      setResetRole(data?.role || null)
       setSuccess(true)
     } catch (err) {
       const data = err?.response?.data
@@ -154,7 +159,7 @@ export default function ResetPasswordPage() {
               <p className="card-subtitle rp-state-subtitle">
                 Your password has been reset successfully. You can now log in with your new password.
               </p>
-              <button className="login-button" onClick={() => navigate('/login')}>
+              <button className="login-button" onClick={() => navigate(loginPath)}>
                 <div className="button-content">
                   <KeyRound size={17} />
                   <span>Go to Login</span>

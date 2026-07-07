@@ -354,6 +354,13 @@ export default function SecurityQRLogin() {
                       {isLoading ? <span className="sqr-btn-spinner" /> : <LogIn size={17} />}
                       {isLoading ? 'Signing in…' : 'Login & Clock In'}
                     </button>
+                    <button
+                      type="button"
+                      className="sqr-forgot-link"
+                      onClick={() => navigate('/forgot-password', { state: { from: 'security' } })}
+                    >
+                      Forgot password?
+                    </button>
                   </form>
 
                   {/* QR scanner appears once the typed email matches a badge-eligible guard */}
@@ -409,8 +416,8 @@ export default function SecurityQRLogin() {
         </div>
 
         <p className="sqr-footer">
-          Guard credentials and QR badges are managed by the system administrator.
-          Contact admin if you forgot your password or your badge is lost or damaged.
+          Forgot your password? Use the link above to reset it.
+          Contact admin if your badge is lost or damaged.
         </p>
       </main>
     </div>
