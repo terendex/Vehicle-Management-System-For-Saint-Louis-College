@@ -33,6 +33,14 @@
   padding: 1rem 1.25rem;
 }
 
+/* Reserve space for the floating mobile menu toggle below tablet width */
+@media (max-width: 900px) {
+  .security-layout .admin-content,
+  .security-layout .admin-content--fill {
+    padding-top: 4.25rem;
+  }
+}
+
 /* Reduce brand area height to reclaim vertical space */
 .security-layout .sidebar-brand {
   height: 54px;

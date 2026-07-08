@@ -354,7 +354,7 @@
   background: #fff;
   border: 1px solid #E2E6EE;
   border-radius: 14px;
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
 }
 .oc-guard-table {
@@ -516,7 +516,6 @@
   .oc-stats-row    { grid-template-columns: repeat(2, 1fr); }
   .oc-gates-col    { flex-direction: column; }
   .oc-bottom-row   { grid-template-columns: 1fr; }
-  .oc-guard-table-wrap { overflow-x: auto; }
 }
 
 /* ── List pagination (matches violations table) ─────────────────────────────── */

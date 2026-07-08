@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   ShieldCheck,
   ParkingCircle,
@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Menu,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -472,12 +473,18 @@ function ForcePasswordModal({ onLogout }) {
 export default function SecurityLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const gate      = user?.gate_assignment
   const gateLabel = GATE_LABELS[gate] || gate || 'Gate'
   const shift     = useCurrentShift(gate)
 
   const [showChangeShift,  setShowChangeShift]  = useState(false)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
 
   // Return kiosks to their own gate's login URL after logout
   const handleLogout = () => { logout(gate ? `/security/guard-login/${gate}` : '/security/guard-login') }
@@ -493,8 +500,22 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   return (
     <div className="admin-layout security-layout">
 
+      {/* Mobile menu toggle */}
+      <button
+        className="admin-menu-toggle"
+        onClick={() => setSidebarOpen(true)}
+        aria-label="Open menu"
+      >
+        <Menu size={22} />
+      </button>
+
+      {/* Backdrop (mobile only, shown while sidebar is open) */}
+      {sidebarOpen && (
+        <div className="admin-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className="admin-sidebar">
+      <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
           <div>
@@ -508,6 +529,13 @@ export default function SecurityLayout({ children, fillHeight = false }) {
               </div>
             )}
           </div>
+          <button
+            className="admin-sidebar-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="sidebar-nav">
