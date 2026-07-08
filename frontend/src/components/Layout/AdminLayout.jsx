@@ -16,6 +16,8 @@ import {
   ChevronDown,
   Briefcase,
   Truck,
+  Menu,
+  X,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -91,10 +93,15 @@ export default function AdminLayout({ children, fillHeight = false }) {
   const navGroups = buildNavGroups(isAdmin, isCdso)
 
   const [openGroup, setOpenGroup] = useState(() => getGroupForPath(navGroups, location.pathname))
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     const activeId = getGroupForPath(navGroups, location.pathname)
     if (activeId) setOpenGroup(activeId)
+  }, [location.pathname])
+
+  useEffect(() => {
+    setSidebarOpen(false)
   }, [location.pathname])
 
   const toggleGroup = (id) => {
@@ -109,12 +116,33 @@ export default function AdminLayout({ children, fillHeight = false }) {
   return (
     <div className="admin-layout">
 
+      {/* Mobile menu toggle */}
+      <button
+        className="admin-menu-toggle"
+        onClick={() => setSidebarOpen(true)}
+        aria-label="Open menu"
+      >
+        <Menu size={22} />
+      </button>
+
+      {/* Backdrop (mobile only, shown while sidebar is open) */}
+      {sidebarOpen && (
+        <div className="admin-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className="admin-sidebar">
+      <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
           <span className="brand-text">SLC Admin</span>
           <NotificationBell />
+          <button
+            className="admin-sidebar-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="sidebar-nav">

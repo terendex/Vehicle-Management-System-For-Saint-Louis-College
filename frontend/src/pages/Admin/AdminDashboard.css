@@ -141,6 +141,7 @@
 /* ── KPI Strip ──────────────────────────────────────────────── */
 .ad-kpi-strip {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 0;
   background: #FFFFFF;
@@ -513,9 +514,6 @@
 
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .ad-kpi-strip {
-    flex-wrap: wrap;
-  }
   .ad-kpi-item {
     flex: 1 1 calc(33% - 1px);
   }
