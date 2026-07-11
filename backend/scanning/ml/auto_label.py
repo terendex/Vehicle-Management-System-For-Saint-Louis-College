@@ -1,10 +1,13 @@
 """
 auto_label.py — Two-model auto-labeling for vehicle detection.
 
-Uses best.pt for license_plate detection (high-recall mode).
-Uses COCO YOLOv8n for vehicle, motorcycle, bicycle detection.
-Cars, jeeps, trucks, and buses are all labelled as "vehicle" — they share
-the same Philippine plate format and don't need to be distinguished at training time.
+Uses the plate_detector model for license_plate detection (high-recall mode).
+Uses COCO YOLOv8n for vehicle detection: cars, motorcycles, buses, trucks…
+are ALL labelled as the single unified "vehicle" class.
+
+Output label schema: 0 = license_plate, 1 = vehicle.
+(train.py's remap keeps only the vehicle rows when building the
+single-class vehicle dataset, so this output can feed either model.)
 
 Usage:
     python -m scanning.ml.auto_label --frames-dir <path> --output-dir <path>
@@ -27,18 +30,15 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 
 CLASS_NAMES = [
-    "license_plate",  # 0 — from best.pt
-    "vehicle",        # 1 — car, jeep, truck, bus (4-wheel and up)
-    "motor",          # 2 — motorcycle, tricycle
-    "ebike",          # 3 — electric bicycle
-    "escooter",       # 4 — electric scooter
+    "license_plate",  # 0 — from the plate_detector model
+    "vehicle",        # 1 — every motorized vehicle, unified
 ]
 
-# COCO class IDs → our class name
+# COCO class IDs → our class name (everything collapses to "vehicle")
 COCO_VEHICLE_MAP = {
-    1: "motor",      # bicycle → motor (closest proxy until real motor data is collected)
+    1: "vehicle",    # bicycle
     2: "vehicle",    # car
-    3: "motor",      # motorcycle
+    3: "vehicle",    # motorcycle
     5: "vehicle",    # bus
     7: "vehicle",    # truck
 }
@@ -48,11 +48,11 @@ CONF_VEHICLE  = 0.20    # COCO vehicle pass — slightly higher, less noisy
 
 
 def load_models():
-    """Load plate model (best.pt) and COCO vehicle model (auto-downloads yolov8n)."""
+    """Load the plate_detector model and COCO vehicle model (auto-downloads yolov8n)."""
     from ultralytics import YOLO
 
-    best_pt = BASE_DIR / "weights" / "best.pt"
-    model_best = YOLO(str(best_pt)) if best_pt.exists() else None
+    plate_pt = BASE_DIR / "runs" / "plate_detector" / "weights" / "best.pt"
+    model_best = YOLO(str(plate_pt)) if plate_pt.exists() else None
 
     try:
         # "yolov8n.pt" is downloaded automatically by Ultralytics if not cached
@@ -151,7 +151,7 @@ def _detect_plates_tiled(model, img: np.ndarray, img_w: int, img_h: int,
 # ── vehicle detection (COCO yolov8n) ──────────────────────────────────────────
 
 def _detect_vehicles_coco(model_coco, img: np.ndarray, img_w: int, img_h: int) -> list[dict]:
-    """Detect vehicles (car/jeep/truck/bus → vehicle), motorcycles, bicycles using COCO."""
+    """Detect vehicles using COCO — car/motorcycle/bus/truck/bicycle all → "vehicle"."""
     dets = []
     for r in model_coco(img, verbose=False, conf=CONF_VEHICLE, max_det=100, imgsz=1280):
         for box in r.boxes:
@@ -264,7 +264,7 @@ def run_auto_label(model_best, model_coco, frames_dir: Path, output_dir: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-label frames: plates (best.pt) + vehicles (COCO)")
+    parser = argparse.ArgumentParser(description="Auto-label frames: plates (plate_detector) + vehicles (COCO)")
     parser.add_argument("--frames-dir", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--visualize", type=int, default=0,
@@ -283,7 +283,7 @@ def main():
     model_best, model_coco = load_models()
 
     if model_best is None:
-        print("[ERROR] best.pt not found")
+        print("[ERROR] plate_detector weights not found at runs/plate_detector/weights/best.pt")
         return 1
     if model_coco is None:
         print("[WARN] COCO model unavailable — vehicle detection disabled")

@@ -5,9 +5,16 @@ import boto3
 from botocore.exceptions import ClientError
 from django.core.management.base import BaseCommand, CommandError
 
-WEIGHTS_DIR = Path(__file__).resolve().parent.parent.parent / "ml" / "weights"
+ML_DIR = Path(__file__).resolve().parent.parent.parent / "ml"
 R2_PREFIX = "ml-weights"
-WEIGHT_FILES = ["best.pt", "last.pt"]
+# R2 key suffix → local path.  Two independent models:
+#   plate_detector   — license plates (keep in sync for teammates)
+#   vehicle_detector — unified single-class vehicle model
+WEIGHT_FILES = {
+    "plate_detector/best.pt":   ML_DIR / "runs" / "plate_detector"   / "weights" / "best.pt",
+    "vehicle_detector/best.pt": ML_DIR / "runs" / "vehicle_detector" / "weights" / "best.pt",
+    "vehicle_detector/last.pt": ML_DIR / "runs" / "vehicle_detector" / "weights" / "last.pt",
+}
 
 
 def _s3_client():
@@ -50,11 +57,9 @@ class Command(BaseCommand):
     # ── push ──────────────────────────────────────────────────────────────────
 
     def _push(self, s3, bucket, force):
-        WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
         uploaded = skipped = 0
 
-        for fname in WEIGHT_FILES:
-            local = WEIGHTS_DIR / fname
+        for fname, local in WEIGHT_FILES.items():
             if not local.exists():
                 self.stdout.write(f"  SKIP  {fname} (not found locally)")
                 continue
@@ -82,12 +87,11 @@ class Command(BaseCommand):
     # ── pull ──────────────────────────────────────────────────────────────────
 
     def _pull(self, s3, bucket, force):
-        WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
         downloaded = skipped = 0
 
-        for fname in WEIGHT_FILES:
+        for fname, local in WEIGHT_FILES.items():
             r2_key = f"{R2_PREFIX}/{fname}"
-            local = WEIGHTS_DIR / fname
+            local.parent.mkdir(parents=True, exist_ok=True)
 
             if local.exists() and not force:
                 self.stdout.write(f"  SKIP  {fname} (already exists locally — use --force to overwrite)")

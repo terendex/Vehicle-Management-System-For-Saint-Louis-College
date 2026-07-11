@@ -35,7 +35,7 @@ IOU_THRESHOLD = 0.3
 MAX_MISSED_FRAMES = 30
 OCR_INTERVAL = 10
 BUFFER_SIZE = 10
-WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
+WEIGHTS_PATH = Path(__file__).resolve().parent / "runs" / "plate_detector" / "weights" / "best.pt"
 
 
 def detect_plates_standalone(img: np.ndarray, conf: float = 0.25) -> list[dict]:

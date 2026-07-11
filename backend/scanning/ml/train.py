@@ -1,15 +1,28 @@
 """
-scanning/ml/train.py — Train / fine-tune the multi-class YOLOv8 detector.
+scanning/ml/train.py — Train / fine-tune the unified single-class vehicle
+detector (YOLOv8).
+
+The model detects ONE class: "vehicle" (cars, motorcycles, buses, trucks,
+jeepneys… all unified).  License plates are handled by the separate
+plate_detector model and are NOT part of this dataset.
+
+Dataset: a Roboflow "YOLOv8" export, either
+  - unzipped into scanning/ml/vehicle_ds/            (default location), or
+  - ingested from a zip with:  python train.py --zip path/to/roboflow.zip
+
+Whatever class names the Roboflow dataset uses (car, motorcycle, bus, …),
+labels are automatically remapped to the single "vehicle" class (id 0) via
+class_mapping.CLASS_MAPPING before training.  Excluded/unknown labels are
+dropped.
+
+Training output goes to runs/vehicle_detector/weights/best.pt — the exact
+path detection.py loads from, so a finished run is live on next server start.
 
 Supports:
-  --freeze   : Freeze backbone layers and fine-tune the detection head only
-               (recommended when starting from existing best.pt checkpoint)
-  --download : Download + merge Roboflow unplated datasets before training
-  --incremental : Append collected MLTrainingSample records from DB to dataset
+  --freeze : Freeze backbone layers and fine-tune the detection head only
+             (recommended when fine-tuning an existing checkpoint)
 
 Security-camera augmentation profile:
-  - Gaussian blur (sigma 0.5–2.0) simulates soft-focus at distance
-  - Motion blur (kernel 5–15 px) simulates vehicle movement
   - Lighting variations (brightness ±30%, contrast ±20%)
   - Modest geometric augmentation — NO heavy perspective warp
     (camera is fixed-mount, not handheld)
@@ -17,108 +30,130 @@ Security-camera augmentation profile:
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
+import zipfile
 from pathlib import Path
 
-# Configure Django settings module environment variable
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+try:
+    from .class_mapping import CLASS_MAPPING
+except ImportError:  # run as a script: python scanning/ml/train.py
+    from class_mapping import CLASS_MAPPING
 
-BASE_DIR     = Path(__file__).resolve().parent
-# Primary: motorcycle_ds has ~11k images covering license_plate + vehicle + motorcycle
-MOTO_DS_DIR  = BASE_DIR / "motorcycle_ds"
-# Extra plate-only dataset merged in before training
-PLATE_DS_DIR = BASE_DIR / "dataset"
-DATA_YAML    = MOTO_DS_DIR / "data.yaml"
-WEIGHTS_DIR  = BASE_DIR / "weights"
+BASE_DIR       = Path(__file__).resolve().parent
+VEHICLE_DS_DIR = BASE_DIR / "vehicle_ds"
+DATA_YAML      = VEHICLE_DS_DIR / "data.yaml"
+RUNS_DIR       = BASE_DIR / "runs"
+RUN_NAME       = "vehicle_detector"
 
-# ── Label remap: old class IDs → new 3-class IDs ────────────────────────────
-# motorcycle_ds old schema: 0=license_plate 1=vehicle 2=bicycle 3=e_bike 4=electric_scooter 5=motorcycle
-# New 3-class schema:       0=license_plate 1=vehicle 2=motorcycle
-# None means "remove this label"
-_MOTO_DS_REMAP: dict[int, int | None] = {
-    0: 0,    # license_plate → license_plate
-    1: 1,    # vehicle       → vehicle
-    2: None, # bicycle       → removed
-    3: None, # e_bike        → removed
-    4: None, # electric_scooter → removed
-    5: 2,    # motorcycle    → motorcycle (class 2)
-}
+# Splits as named by Roboflow exports ("valid") and plain YOLO layouts ("val")
+_SPLIT_NAMES = ("train", "val", "valid", "test")
 
 
-def _export_ml_samples(limit: int = 500) -> int:
-    """Export verified MLTrainingSample DB records into the training dataset."""
-    import django
-    django.setup()
-
-    from django.utils import timezone
-    from scanning.models import MLTrainingSample
-
-    dataset_img = PLATE_DS_DIR / "images" / "train"
-    dataset_lbl = PLATE_DS_DIR / "labels" / "train"
-    dataset_img.mkdir(parents=True, exist_ok=True)
-    dataset_lbl.mkdir(parents=True, exist_ok=True)
-
-    from django.conf import settings
-
-    qs = MLTrainingSample.objects.filter(
-        status__in=["auto_labeled", "verified"],
-        used_in_training=False,
-    ).exclude(bbox__isnull=True).exclude(plate_number="").order_by("created_at")[:limit]
-
-    exported = 0
-    for sample in qs:
-        try:
-            src = Path(settings.MEDIA_ROOT) / sample.image
-            if not src.exists():
-                continue
-
-            stem = f"ml_{sample.pk}_{timezone.now().strftime('%Y%m%d%H%M%S')}"
-            dst_img = dataset_img / f"{stem}.jpg"
-            shutil.copy2(src, dst_img)
-
-            bboxes = sample.bbox or []
-            lines  = []
-            for bb in bboxes:
-                x  = bb.get("x", 0)
-                y  = bb.get("y", 0)
-                bw = bb.get("width", 0)
-                bh = bb.get("height", 0)
-                # license_plate = class id 0
-                lines.append(f"0 {x} {y} {bw} {bh}")
-
-            with open(dataset_lbl / f"{stem}.txt", "w") as lf:
-                lf.write("\n".join(lines))
-
-            sample.used_in_training = True
-            sample.save(update_fields=["used_in_training"])
-            exported += 1
-        except Exception as exc:
-            print(f"⚠️  Failed to export sample {sample.pk}: {exc}")
-
-    print(f"📥 Exported {exported} ML samples into the YOLO dataset")
-    return exported
+def ingest_zip(zip_path: Path, dest: Path = VEHICLE_DS_DIR) -> None:
+    """Extract a Roboflow YOLOv8 export zip into the dataset directory."""
+    if not zip_path.exists():
+        raise SystemExit(f"❌ Zip not found: {zip_path}")
+    if dest.exists():
+        print(f"🧹 Removing previous dataset at {dest}")
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(dest)
+    # Roboflow zips sometimes nest everything inside a single top-level folder
+    entries = list(dest.iterdir())
+    if len(entries) == 1 and entries[0].is_dir():
+        inner = entries[0]
+        for item in inner.iterdir():
+            shutil.move(str(item), dest / item.name)
+        inner.rmdir()
+    print(f"📦 Extracted {zip_path.name} → {dest}")
 
 
-def _fix_data_yaml_path(yaml_path: Path) -> None:
-    """Ensure data.yaml uses an absolute path for the dataset root."""
+def _label_dirs(dataset_dir: Path) -> list[Path]:
+    """Find label directories for both layouts: labels/<split> and <split>/labels."""
+    dirs = []
+    for split in _SPLIT_NAMES:
+        for cand in (dataset_dir / "labels" / split, dataset_dir / split / "labels"):
+            if cand.exists():
+                dirs.append(cand)
+    return dirs
+
+
+def _build_remap(dataset_dir: Path) -> dict[int, "int | None"]:
+    """
+    Build old-class-id → new-class-id mapping from the dataset's data.yaml.
+    Every name whose canonical class is "vehicle" → 0; everything else
+    (license_plate, excluded, unknown) → None (label row removed).
+    """
     import yaml
+
+    yaml_path = dataset_dir / "data.yaml"
+    if not yaml_path.exists():
+        raise SystemExit(f"❌ data.yaml not found in {dataset_dir} — is this a YOLOv8 export?")
 
     with open(yaml_path) as f:
         cfg = yaml.safe_load(f)
 
-    cfg["path"] = str(yaml_path.parent)
-    with open(yaml_path, "w") as f:
-        yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
+    names = cfg.get("names", [])
+    if isinstance(names, dict):  # names can be {id: name} or [name, ...]
+        names = [names[k] for k in sorted(names)]
+
+    remap: dict[int, int | None] = {}
+    kept, dropped = [], []
+    for i, name in enumerate(names):
+        canonical = CLASS_MAPPING.get(name) or CLASS_MAPPING.get(str(name).lower())
+        if canonical == "vehicle":
+            remap[i] = 0
+            kept.append(name)
+        else:
+            remap[i] = None
+            dropped.append(name)
+
+    print(f"🗺️  Class remap → 'vehicle': {kept or 'none'}")
+    if dropped:
+        print(f"🗑️  Dropped classes: {dropped}")
+    if not kept:
+        raise SystemExit(
+            "❌ No dataset class maps to 'vehicle'. "
+            f"Dataset classes: {names}. Add aliases to class_mapping.CLASS_MAPPING."
+        )
+    return remap
+
+
+def _remap_labels(dataset_dir: Path, remap: dict[int, "int | None"]) -> None:
+    """
+    Rewrite YOLO label files in-place using `remap`:
+      - Old class ID → new class ID (or None = delete that label row)
+    Idempotent — a second run maps 0 → 0 and changes nothing.
+    """
+    changed = 0
+    for lbl_dir in _label_dirs(dataset_dir):
+        for lbl_file in lbl_dir.glob("*.txt"):
+            lines = lbl_file.read_text().strip().splitlines()
+            new_lines = []
+            file_changed = False
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) != 5:
+                    continue
+                old_cls = int(parts[0])
+                new_cls = remap.get(old_cls, None if old_cls != 0 else 0)
+                if new_cls is None:
+                    file_changed = True
+                    continue  # remove this label
+                if new_cls != old_cls:
+                    file_changed = True
+                new_lines.append(f"{new_cls} {' '.join(parts[1:])}")
+            if file_changed:
+                lbl_file.write_text("\n".join(new_lines))
+                changed += 1
+    print(f"🔁 Label remap: updated {changed} label files in {dataset_dir.name}")
 
 
 def _validate_labels(dataset_dir: Path) -> None:
     """Check all YOLO label files for invalid bounding boxes and remove bad ones."""
     bad_files = []
-    for split in ("train", "val"):
-        lbl_dir = dataset_dir / "labels" / split
-        if not lbl_dir.exists():
-            continue
+    for lbl_dir in _label_dirs(dataset_dir):
         for lbl_file in lbl_dir.glob("*.txt"):
             lines = lbl_file.read_text().strip().splitlines()
             clean_lines = []
@@ -150,141 +185,89 @@ def _validate_labels(dataset_dir: Path) -> None:
         print("✅ All label files validated — no invalid bounding boxes found")
 
 
-def _remap_labels(dataset_dir: Path, remap: dict[int, "int | None"]) -> None:
-    """
-    Rewrite YOLO label files in-place using `remap`:
-      - Old class ID → new class ID (or None = delete that label row)
-    Skips files that are already in the target schema (idempotent).
-    """
-    changed = 0
-    for split in ("train", "val"):
-        lbl_dir = dataset_dir / "labels" / split
-        if not lbl_dir.exists():
-            continue
-        for lbl_file in lbl_dir.glob("*.txt"):
-            lines = lbl_file.read_text().strip().splitlines()
-            new_lines = []
-            file_changed = False
-            for line in lines:
-                parts = line.strip().split()
-                if len(parts) != 5:
-                    continue
-                old_cls = int(parts[0])
-                new_cls = remap.get(old_cls, old_cls)  # keep unknown IDs unchanged
-                if new_cls is None:
-                    file_changed = True
-                    continue  # remove this label
-                if new_cls != old_cls:
-                    file_changed = True
-                new_lines.append(f"{new_cls} {' '.join(parts[1:])}")
-            if file_changed:
-                lbl_file.write_text("\n".join(new_lines))
-                changed += 1
-    print(f"🔁 Label remap: updated {changed} label files in {dataset_dir.name}")
+def _rewrite_data_yaml(yaml_path: Path) -> None:
+    """Force single-class schema and absolute dataset path in data.yaml."""
+    import yaml
+
+    with open(yaml_path) as f:
+        cfg = yaml.safe_load(f)
+
+    cfg["path"]  = str(yaml_path.parent)
+    cfg["nc"]    = 1
+    cfg["names"] = ["vehicle"]
+
+    # Roboflow writes relative paths like "../train/images" — normalise them
+    # so they resolve under the absolute `path` set above.
+    for split_key in ("train", "val", "test"):
+        val = cfg.get(split_key)
+        if isinstance(val, str) and val.startswith("../"):
+            cfg[split_key] = val[3:]
+
+    with open(yaml_path, "w") as f:
+        yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
+    print(f"📝 data.yaml normalised: nc=1, names=['vehicle'], path={cfg['path']}")
 
 
-def _merge_plate_dataset(src: Path, dst: Path) -> int:
-    """
-    Copy images + labels from the plate-only `dataset/` folder into the
-    primary training dataset (motorcycle_ds).  Labels are already class 0
-    (license_plate) — no remapping needed.  Skips files already present so
-    this is safe to call on every training run.
-    Uses a short hash for the destination filename to avoid Windows MAX_PATH.
-    """
-    import hashlib
-    copied = 0
-    for split in ("train", "val"):
-        src_img = src / "images" / split
-        src_lbl = src / "labels" / split
-        dst_img = dst / "images" / split
-        dst_lbl = dst / "labels" / split
-        dst_img.mkdir(parents=True, exist_ok=True)
-        dst_lbl.mkdir(parents=True, exist_ok=True)
-
-        if not src_img.exists():
-            continue
-        for img_file in src_img.iterdir():
-            short = hashlib.md5(img_file.name.encode()).hexdigest()[:12]
-            suffix = img_file.suffix or ".jpg"
-            dest_img = dst_img / f"pd_{short}{suffix}"
-            if not dest_img.exists():
-                shutil.copy2(img_file, dest_img)
-                copied += 1
-            lbl_file = src_lbl / (img_file.stem + ".txt")
-            dest_lbl = dst_lbl / f"pd_{short}.txt"
-            if lbl_file.exists() and not dest_lbl.exists():
-                shutil.copy2(lbl_file, dest_lbl)
-
-    print(f"📂 Merged {copied} new plate images from dataset/ into motorcycle_ds/")
-    return copied
+def _count_images(dataset_dir: Path, split_prefixes: tuple[str, ...]) -> int:
+    count = 0
+    for split in split_prefixes:
+        for cand in (dataset_dir / "images" / split, dataset_dir / split / "images"):
+            if cand.exists():
+                count += len(list(cand.glob("*")))
+    return count
 
 
 def train(
-    epochs:       int  = 100,
-    batch:        int  = 8,
-    imgsz:        int  = 640,
-    model_size:   str  = "s",
-    resume:       bool = False,
-    incremental:  bool = False,
-    freeze:       bool = True,
-    freeze_layers: int = 10,
-    data_yaml:    Path | None = None,
+    epochs:        int  = 100,
+    batch:         int  = 16,
+    imgsz:         int  = 640,
+    model_size:    str  = "s",
+    resume:        bool = False,
+    freeze:        bool = True,
+    freeze_layers: int  = 10,
+    data_yaml:     Path | None = None,
 ) -> None:
     """
-    Train or fine-tune the multi-class vehicle detector.
+    Train or fine-tune the single-class vehicle detector.
 
     Args:
         freeze:        If True, freeze the first `freeze_layers` backbone layers.
-                       Strongly recommended when fine-tuning from existing best.pt.
+                       Recommended when fine-tuning from an existing checkpoint.
         freeze_layers: Number of backbone layers to freeze (YOLOv8n/s: 10 is safe).
-        data_yaml:     Path to a custom data.yaml. Defaults to motorcycle_ds/data.yaml.
+        data_yaml:     Path to a custom data.yaml. Defaults to vehicle_ds/data.yaml.
     """
-    import django
-    django.setup()
-
-    if incremental:
-        exported = _export_ml_samples()
-        print(f"🧩 Incremental mode: appended {exported} new samples to the dataset")
-
     from ultralytics import YOLO
 
-    # Resolve dataset — always use absolute paths so YOLO can find images
-    if data_yaml:
-        data_yaml = Path(data_yaml).resolve()
-    dataset_dir = data_yaml.parent if data_yaml else MOTO_DS_DIR
-    global DATA_YAML
-    if data_yaml:
-        DATA_YAML = data_yaml
+    data_yaml   = Path(data_yaml).resolve() if data_yaml else DATA_YAML
+    dataset_dir = data_yaml.parent
 
-    # Remap labels to 3-class schema before training (idempotent — safe to re-run)
-    _remap_labels(dataset_dir, _MOTO_DS_REMAP)
-
-    # Merge plate-only dataset/ into primary dataset for better plate coverage
-    if PLATE_DS_DIR.exists():
-        _merge_plate_dataset(PLATE_DS_DIR, dataset_dir)
-    else:
-        print(f"⚠️  Plate dataset not found at {PLATE_DS_DIR} — skipping merge")
-
-    # Validate dataset
-    train_imgs = dataset_dir / "images" / "train"
-    val_imgs   = dataset_dir / "images" / "val"
-    train_count = len(list(train_imgs.glob("*"))) if train_imgs.exists() else 0
-    val_count   = len(list(val_imgs.glob("*")))   if val_imgs.exists()   else 0
-
-    _validate_labels(dataset_dir)
-
-    if train_count == 0:
+    if not data_yaml.exists():
         print("=" * 60)
-        print("  ERROR: No training images found!")
-        print(f"  Expected images in: {train_imgs}")
+        print("  ERROR: No dataset found!")
+        print(f"  Expected data.yaml at: {data_yaml}")
+        print("  Drop your Roboflow YOLOv8 export into vehicle_ds/,")
+        print("  or run:  python train.py --zip path/to/roboflow.zip")
         print("=" * 60)
         return
 
+    # Remap all vehicle-ish classes → single class 0 (idempotent)
+    _remap_labels(dataset_dir, _build_remap(dataset_dir))
+    _rewrite_data_yaml(data_yaml)
+    _validate_labels(dataset_dir)
+
+    train_count = _count_images(dataset_dir, ("train",))
+    val_count   = _count_images(dataset_dir, ("val", "valid"))
+    if train_count == 0:
+        print("=" * 60)
+        print("  ERROR: No training images found!")
+        print(f"  Expected images under: {dataset_dir}")
+        print("=" * 60)
+        return
     print(f"📦 Dataset:  {train_count} training images, {val_count} validation images")
 
     # Select base model
-    best_ckpt = WEIGHTS_DIR / "best.pt"
-    last_ckpt = WEIGHTS_DIR / "last.pt"
+    best_ckpt = RUNS_DIR / RUN_NAME / "weights" / "best.pt"
+    last_ckpt = RUNS_DIR / RUN_NAME / "weights" / "last.pt"
 
     if resume and last_ckpt.exists():
         print("🔄 Resuming from last checkpoint…")
@@ -299,9 +282,6 @@ def train(
         model = YOLO(f"yolov8{model_size}.pt")
         freeze = False  # Nothing to freeze from scratch
 
-    # Fix absolute path in data.yaml
-    _fix_data_yaml_path(DATA_YAML)
-
     print(f"🧠 Model:    YOLOv8{model_size}  |  {epochs} epochs  |  batch {batch}  |  imgsz {imgsz}")
     if freeze:
         print(f"🧊 Freezing first {freeze_layers} backbone layers")
@@ -311,32 +291,29 @@ def train(
     # Fixed-mount overhead/angled camera — avoid heavy geometric distortion.
     # Focus on blur, lighting, and mild colour shifts.
     augment_kwargs = {
-        # Motion blur — simulates moving vehicles
-        "mixup":           0.1,      # mild mixup helps minority class generalization
         # Colour/exposure variations — lighting changes throughout day
-        "hsv_h":           0.015,    # hue shift ±1.5 %
-        "hsv_s":           0.4,      # saturation ±40 %
-        "hsv_v":           0.3,      # value (brightness) ±30 %
+        "hsv_h":       0.015,    # hue shift ±1.5 %
+        "hsv_s":       0.4,      # saturation ±40 %
+        "hsv_v":       0.3,      # value (brightness) ±30 %
         # Geometric — mild only for fixed-mount camera
-        "degrees":         5.0,      # rotation ±5° (slight tilt)
-        "translate":       0.1,      # translation ±10%
-        "scale":           0.3,      # scale ±30%
-        "shear":           0.0,      # no shear (fixed vantage)
-        "perspective":     0.0,      # no perspective warp (fixed mount)
-        "flipud":          0.0,      # no vertical flip (cameras don't invert)
-        "fliplr":          0.5,      # horizontal flip (vehicles go both ways)
-        "mosaic":          1.0,      # full mosaic mixes rare class instances more often
-        "copy_paste":      0.2,      # copies minority class instances into other images
+        "degrees":     5.0,      # rotation ±5° (slight tilt)
+        "translate":   0.1,      # translation ±10%
+        "scale":       0.3,      # scale ±30%
+        "shear":       0.0,      # no shear (fixed vantage)
+        "perspective": 0.0,      # no perspective warp (fixed mount)
+        "flipud":      0.0,      # no vertical flip (cameras don't invert)
+        "fliplr":      0.5,      # horizontal flip (vehicles go both ways)
+        "mosaic":      1.0,      # mosaic mixes small/distant vehicles more often
     }
 
     train_kwargs = dict(
-        data=str(DATA_YAML),
+        data=str(data_yaml),
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
         workers=2,
-        name="vehicle_unplated_detector",
-        project=str(BASE_DIR / "runs"),
+        name=RUN_NAME,
+        project=str(RUNS_DIR),
         exist_ok=True,
         patience=25,
         save=True,
@@ -352,52 +329,34 @@ def train(
 
     results = model.train(**train_kwargs)
 
-    # Copy best/last weights to canonical location
-    best_src = Path(results.save_dir) / "weights" / "best.pt"
-    last_src = Path(results.save_dir) / "weights" / "last.pt"
-    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    if best_src.exists():
-        shutil.copy2(best_src, WEIGHTS_DIR / "best.pt")
-        print(f"\n✅ Best weights saved to:  {WEIGHTS_DIR / 'best.pt'}")
-
-    if last_src.exists():
-        shutil.copy2(last_src, WEIGHTS_DIR / "last.pt")
-
+    # project/name puts weights directly at runs/vehicle_detector/weights/best.pt —
+    # the canonical path detection.py loads from.  No copy step needed.
     print("🎉 Training complete!")
     print(f"   View results in: {results.save_dir}")
-    _print_class_eval(results)
-
-    # Auto-push new weights to R2 so teammates get them on next docker compose up
-    if os.getenv("R2_ACCESS_KEY_ID") and os.getenv("R2_BUCKET_NAME"):
-        try:
-            from django.core.management import call_command
-            print("\n☁️  Pushing weights to R2...")
-            call_command("sync_ml_weights", push=True, force=True)
-        except Exception as exc:
-            print(f"⚠️  Could not push weights to R2: {exc}")
+    print(f"   Live weights:    {best_ckpt}")
+    _print_eval(results)
 
 
-def _print_class_eval(results) -> None:
-    """Print per-class mAP@0.5 from the final validation run."""
+def _print_eval(results) -> None:
+    """Print mAP@0.5 from the final validation run."""
     try:
-        from .detection import TARGET_CLASSES
         maps = getattr(results, "maps", None)
-        if maps is None:
+        if maps is None or not len(maps):
             return
-        print("\n📊 Per-class mAP@0.5 (final validation):")
-        for i, cls in enumerate(TARGET_CLASSES):
-            val = maps[i] if i < len(maps) else float("nan")
-            bar = "▓" * int(val * 20) + "░" * (20 - int(val * 20))
-            print(f"   {cls:<20} {bar}  {val:.3f}")
+        val = float(maps[0])
+        bar = "▓" * int(val * 20) + "░" * (20 - int(val * 20))
+        print("\n📊 mAP@0.5 (final validation):")
+        print(f"   {'vehicle':<20} {bar}  {val:.3f}")
     except Exception:
         pass  # eval printing is best-effort
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train multi-class vehicle detector (YOLOv8)")
+    parser = argparse.ArgumentParser(description="Train the single-class vehicle detector (YOLOv8)")
+    parser.add_argument("--zip",           type=str,   default=None,
+                        help="Roboflow YOLOv8 export zip — extracts into vehicle_ds/ before training")
     parser.add_argument("--data",          type=str,   default=None,
-                        help="Path to data.yaml (default: unplated_ds/data.yaml)")
+                        help="Path to data.yaml (default: vehicle_ds/data.yaml)")
     parser.add_argument("--epochs",        type=int,   default=100)
     parser.add_argument("--batch",         type=int,   default=16)
     parser.add_argument("--imgsz",         type=int,   default=640)
@@ -411,22 +370,11 @@ if __name__ == "__main__":
                         help="Disable backbone freezing (full retraining)")
     parser.add_argument("--freeze-layers", type=int,   default=10,
                         help="Number of backbone layers to freeze (default: 10)")
-    parser.add_argument("--incremental",   action="store_true",
-                        help="Append DB MLTrainingSample records to dataset before training")
-    parser.add_argument("--download",      action="store_true",
-                        help="Download Roboflow datasets before training")
-    parser.add_argument("--api-key",       type=str,   default=None,
-                        help="Roboflow API key (required with --download)")
 
     args = parser.parse_args()
 
-    if args.download:
-        if not args.api_key:
-            print("❌ --api-key is required when using --download")
-            print("   Get your API key from: https://roboflow.com → Settings → API Key")
-            exit(1)
-        from scanning.ml.download_datasets import download_and_merge
-        download_and_merge(api_key=args.api_key)
+    if args.zip:
+        ingest_zip(Path(args.zip))
 
     train(
         epochs=args.epochs,
@@ -434,7 +382,6 @@ if __name__ == "__main__":
         imgsz=args.imgsz,
         model_size=args.model_size,
         resume=args.resume,
-        incremental=args.incremental,
         freeze=args.freeze,
         freeze_layers=args.freeze_layers,
         data_yaml=Path(args.data) if args.data else None,

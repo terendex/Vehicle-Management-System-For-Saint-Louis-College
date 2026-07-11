@@ -1,13 +1,16 @@
 """
-detection.py — YOLOv8 vehicle detection for Philippine vehicles.
+detection.py — YOLOv8 detection for Philippine vehicles.
 
-Detects:
-- License plates
-- Vehicles and motorcycles
+Two independent models:
+- Plate detector  (runs/plate_detector/weights/best.pt)  — license plates only,
+  trained specifically for Philippine plates.  Required for the pipeline.
+- Vehicle detector (runs/vehicle_detector/weights/best.pt) — a single unified
+  "vehicle" class (cars, motorcycles, buses, trucks… all one class).
+  Optional: until it is trained the pipeline runs in plate-only mode.
 
 Uses the model's own class names at runtime so a retrained model with a
 different class list never silently misclassifies.  If weights are missing
-or class names don't match, detection is disabled with a clear ERROR log
+or class names don't match, that model is disabled with a clear log message
 rather than returning empty results silently.
 """
 
@@ -22,15 +25,15 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-WEIGHTS_PATH       = Path(__file__).resolve().parent / "weights" / "best.pt"
-PLATE_WEIGHTS_PATH = Path(__file__).resolve().parent / "runs" / "plate_detector" / "weights" / "best.pt"
+PLATE_WEIGHTS_PATH   = Path(__file__).resolve().parent / "runs" / "plate_detector" / "weights" / "best.pt"
+VEHICLE_WEIGHTS_PATH = Path(__file__).resolve().parent / "runs" / "vehicle_detector" / "weights" / "best.pt"
 
-# The 3 detection targets for the campus entry system.
-TARGET_CLASSES = ["license_plate", "vehicle", "motorcycle"]
+# The 2 detection targets for the campus entry system.
+TARGET_CLASSES = ["license_plate", "vehicle"]
 
-# Dynamic remap: any model class name → one of the 3 targets.
-# Anything NOT in this map is silently ignored (bicycle, e_bike, scooters, etc.).
-# Works with the current 6-class weights, future 3-class retrained weights,
+# Dynamic remap: any model class name → one of the 2 targets.
+# Anything NOT in this map is silently ignored (person, helmet, etc.).
+# Works with the single-class retrained weights, older multi-class weights,
 # and even COCO pre-trained models (which use "car", "truck", "bus", etc.).
 _CLASS_MAP: dict[str, str] = {
     # ── license plates ───────────────────────────────────────────────
@@ -38,8 +41,9 @@ _CLASS_MAP: dict[str, str] = {
     "plate":           "license_plate",
     "licence_plate":   "license_plate",
     "number_plate":    "license_plate",
-    # ── 4-wheel vehicles (all normalised to "vehicle") ───────────────
+    # ── vehicles (everything motorized is normalised to "vehicle") ───
     "vehicle":         "vehicle",
+    "vehicles":        "vehicle",
     "car":             "vehicle",
     "truck":           "vehicle",
     "bus":             "vehicle",
@@ -50,18 +54,18 @@ _CLASS_MAP: dict[str, str] = {
     "jeepney":         "vehicle",
     "taxi":            "vehicle",
     "ambulance":       "vehicle",
-    # ── motorcycles ──────────────────────────────────────────────────
-    "motorcycle":      "motorcycle",
-    "motorbike":       "motorcycle",
-    "moto":            "motorcycle",
-    "tricycle":        "motorcycle",
-    "sidecar":         "motorcycle",
+    "motorcycle":      "vehicle",
+    "motorbike":       "vehicle",
+    "moto":            "vehicle",
+    "motor":           "vehicle",
+    "tricycle":        "vehicle",
+    "sidecar":         "vehicle",
 }
 
-_model              = None   # vehicle/motorcycle model (weights/best.pt)
-_plate_model        = None   # dedicated plate detector (runs/plate_detector/weights/best.pt)
-_load_attempted     = False
-_plate_load_attempted = False
+_vehicle_model          = None   # unified vehicle model (runs/vehicle_detector/weights/best.pt)
+_plate_model            = None   # dedicated plate detector (runs/plate_detector/weights/best.pt)
+_vehicle_load_attempted = False
+_plate_load_attempted   = False
 
 # Serialises concurrent model.predict() calls from multiple camera streams.
 # Ultralytics YOLO predict() is not thread-safe when the same model object is
@@ -71,7 +75,7 @@ _plate_load_attempted = False
 _INFER_LOCK = threading.Lock()
 
 # ── ML loading status broadcast ────────────────────────────────────────────────
-# stage values: "idle" | "loading_yolo" | "warming_up" | "loading_plate_yolo"
+# stage values: "idle" | "loading_plate_yolo" | "warming_up" | "loading_yolo"
 #               | "loading_ocr" | "ready"
 _ml_status: tuple[str, str] = ("idle", "")
 _ml_listeners: list = []
@@ -138,52 +142,53 @@ def _validate_model_classes(model) -> bool:
         return True
 
 
-def _get_yolo():
-    """Lazy-load the YOLO model. Tries once; permanent None on any failure."""
-    global _model, _load_attempted
-    if _load_attempted:
-        return _model
-    _load_attempted = True
+def _get_plate_yolo():
+    """
+    Lazy-load the plate-detector model — the primary model of the pipeline.
+    Also chains the optional vehicle detector and OCR pre-loads so a single
+    call brings the whole stack up.  Tries once; permanent None on failure.
+    """
+    global _plate_model, _plate_load_attempted
+    if _plate_load_attempted:
+        return _plate_model
+    _plate_load_attempted = True
 
-    if not WEIGHTS_PATH.exists():
+    if not PLATE_WEIGHTS_PATH.exists():
         log.error(
-            "[DETECT] CRITICAL: No YOLO weights at %s — all detections disabled. "
-            "Train a model and place best.pt at that path.",
-            WEIGHTS_PATH,
+            "[DETECT] CRITICAL: No plate-detector weights at %s — plate detection disabled. "
+            "Train a plate model and place best.pt at that path.",
+            PLATE_WEIGHTS_PATH,
         )
         return None
 
     try:
-        _broadcast_status("loading_yolo", "Loading ML model…")
+        _broadcast_status("loading_plate_yolo", "Loading plate detector…")
         import torch
         from ultralytics import YOLO
-        candidate = YOLO(str(WEIGHTS_PATH))
-        if not _validate_model_classes(candidate):
-            _broadcast_status("idle", "")
-            return None
-        _model = candidate
+        candidate = YOLO(str(PLATE_WEIGHTS_PATH))
+        _plate_model = candidate
         if is_gpu_available():
-            _model.to("cuda")
+            _plate_model.to("cuda")
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
-            log.info("[DETECT] YOLO on GPU (CUDA): %s", WEIGHTS_PATH)
+            log.info("[DETECT] Plate-detector on GPU (CUDA): %s", PLATE_WEIGHTS_PATH)
         else:
             torch.set_num_threads(min(8, torch.get_num_threads()))
-            log.info("[DETECT] YOLO on CPU (%d threads): %s",
-                     torch.get_num_threads(), WEIGHTS_PATH)
+            log.info("[DETECT] Plate-detector on CPU (%d threads): %s",
+                     torch.get_num_threads(), PLATE_WEIGHTS_PATH)
 
-        _broadcast_status("warming_up", "Warming up detection model…")
-        log.info("[DETECT] Warming up model (compiling JIT graph)…")
+        _broadcast_status("warming_up", "Warming up plate detector…")
+        log.info("[DETECT] Warming up plate detector (compiling JIT graph)…")
         dummy = np.zeros((480, 640, 3), np.uint8)
-        _model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
-        log.info("[DETECT] Warm-up complete — model ready.")
+        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.15, verbose=False)
+        log.info("[DETECT] Plate-detector warm-up complete.")
 
-        _broadcast_status("loading_plate_yolo", "Loading plate detector…")
+        _broadcast_status("loading_yolo", "Loading vehicle detector…")
         try:
-            _get_plate_yolo()
-        except Exception as _pe:
-            log.warning("[DETECT] Plate-detector pre-load skipped: %s", _pe)
+            _get_vehicle_yolo()
+        except Exception as _ve:
+            log.warning("[DETECT] Vehicle-detector pre-load skipped: %s", _ve)
 
         _broadcast_status("loading_ocr", "Loading OCR engine…")
         try:
@@ -198,53 +203,64 @@ def _get_yolo():
 
     except ImportError:
         log.error("[DETECT] ultralytics is not installed — cannot load YOLO model")
+        _plate_model = None
         _broadcast_status("idle", "")
-    except Exception as exc:
-        log.error("[DETECT] Failed to load YOLO model: %s", exc)
-        _broadcast_status("idle", "")
-
-    return _model
-
-
-def _get_plate_yolo():
-    """Lazy-load the dedicated plate-detector model. Tries once; None on failure."""
-    global _plate_model, _plate_load_attempted
-    if _plate_load_attempted:
-        return _plate_model
-    _plate_load_attempted = True
-
-    if not PLATE_WEIGHTS_PATH.exists():
-        log.warning("[DETECT] Plate-detector weights not found at %s — using main model only.", PLATE_WEIGHTS_PATH)
-        return None
-
-    try:
-        import torch
-        from ultralytics import YOLO
-        candidate = YOLO(str(PLATE_WEIGHTS_PATH))
-        _plate_model = candidate
-        if is_gpu_available():
-            _plate_model.to("cuda")
-            log.info("[DETECT] Plate-detector on GPU: %s", PLATE_WEIGHTS_PATH)
-        else:
-            log.info("[DETECT] Plate-detector on CPU: %s", PLATE_WEIGHTS_PATH)
-
-        dummy = np.zeros((480, 640, 3), np.uint8)
-        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.15, verbose=False)
-        log.info("[DETECT] Plate-detector warm-up complete.")
     except Exception as exc:
         log.error("[DETECT] Failed to load plate-detector: %s", exc)
         _plate_model = None
+        _broadcast_status("idle", "")
 
     return _plate_model
+
+
+def _get_vehicle_yolo():
+    """
+    Lazy-load the unified single-class vehicle detector.
+    Optional — returns None (plate-only mode) until the model is trained.
+    """
+    global _vehicle_model, _vehicle_load_attempted
+    if _vehicle_load_attempted:
+        return _vehicle_model
+    _vehicle_load_attempted = True
+
+    if not VEHICLE_WEIGHTS_PATH.exists():
+        log.warning(
+            "[DETECT] Vehicle-detector weights not found at %s — running in plate-only mode. "
+            "Train the model with scanning/ml/train.py to enable vehicle detection.",
+            VEHICLE_WEIGHTS_PATH,
+        )
+        return None
+
+    try:
+        from ultralytics import YOLO
+        candidate = YOLO(str(VEHICLE_WEIGHTS_PATH))
+        if not _validate_model_classes(candidate):
+            return None
+        _vehicle_model = candidate
+        if is_gpu_available():
+            _vehicle_model.to("cuda")
+            log.info("[DETECT] Vehicle-detector on GPU: %s", VEHICLE_WEIGHTS_PATH)
+        else:
+            log.info("[DETECT] Vehicle-detector on CPU: %s", VEHICLE_WEIGHTS_PATH)
+
+        dummy = np.zeros((480, 640, 3), np.uint8)
+        _vehicle_model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
+        log.info("[DETECT] Vehicle-detector warm-up complete.")
+    except Exception as exc:
+        log.error("[DETECT] Failed to load vehicle-detector: %s", exc)
+        _vehicle_model = None
+
+    return _vehicle_model
 
 
 # Per-class confidence minimums
 _CONF_PLATE   = 0.15   # raised from 0.05 — was generating false positives on truck bodies
 _CONF_VEHICLE = 0.15   # raised from 0.10
 
-# Set to True to re-enable vehicle/motorcycle bounding-box detection.
-# Currently disabled — only license plates are tracked.
-DETECT_VEHICLES = False
+# Vehicle bounding-box detection activates automatically once the retrained
+# single-class weights exist at VEHICLE_WEIGHTS_PATH.  Set to False to force
+# plate-only mode even with weights present.
+DETECT_VEHICLES = True
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -315,7 +331,7 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             x1, y1, x2, y2 = (int(x1) + offset_x, int(y1) + offset_y,
                                int(x2) + offset_x, int(y2) + offset_y)
 
-            # Map to one of 3 targets; skip anything not in the map (bicycle, e_bike, etc.)
+            # Map to one of 2 targets; skip anything not in the map (person, helmet, etc.)
             class_name = _CLASS_MAP.get(class_name.lower())
             if class_name is None:
                 continue
@@ -335,7 +351,7 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
             vehicle_type = None
             if is_plate:
                 # Small uniform padding — plate_detector gives tight boxes so
-                # large padding just adds motorcycle body that hurts OCR.
+                # large padding just adds vehicle body that hurts OCR.
                 pad = max(int(min(box_w, box_h) * 0.10), 6)
                 cx1 = max(0,      x1 - pad)
                 cy1 = max(0,      y1 - pad)
@@ -367,22 +383,22 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
 def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                   try_rotation: bool = True) -> list[dict]:
     """
-    Detect vehicles and license plates in an image.
+    Detect license plates (and vehicles, when the vehicle model exists) in an image.
 
     Uses two specialised models:
-    - plate_detector (runs/plate_detector/weights/best.pt) — license plates only,
-      trained specifically for Philippine plates.  Falls back to the main model
-      if the plate-detector weights are missing.
-    - main model (weights/best.pt) — vehicles & motorcycles for tracking bboxes.
+    - plate_detector   (runs/plate_detector/weights/best.pt)   — license plates only,
+      trained specifically for Philippine plates.  Required.
+    - vehicle_detector (runs/vehicle_detector/weights/best.pt) — a single unified
+      "vehicle" class for tracking bboxes.  Optional until trained.
 
     Handles all conditions via:
     - Adaptive preprocessing  (dark/night/glare/dim)
     - Multi-rotation fallback (tilted cameras / angled plates) — skip with try_rotation=False
     - GPU tiled pass          (high-res frames, GPU only)
     """
-    model       = _get_yolo()
-    plate_model = _get_plate_yolo()
-    if model is None and plate_model is None:
+    plate_model   = _get_plate_yolo()
+    vehicle_model = _get_vehicle_yolo() if DETECT_VEHICLES else None
+    if plate_model is None and vehicle_model is None:
         return []
 
     h, w = img.shape[:2]
@@ -399,27 +415,26 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
     # buffers.  GPU inference is serialised by CUDA anyway, so this lock adds no
     # throughput penalty in practice.
     with _INFER_LOCK:
-        # ── Pass 1: main model → vehicles & motorcycles only ──────────────────
-        if DETECT_VEHICLES and model is not None:
-            res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
-                                half=gpu, imgsz=imgsz)
-            all_dets.extend(
-                d for d in _parse_boxes(res, img, w, h, model)
-                if d["class_name"] != "license_plate"
-            )
-
-        # ── Pass 2: dedicated plate detector → license plates only ────────────
-        active_plate_model = plate_model if plate_model is not None else model
-        if active_plate_model is not None:
-            plate_res = active_plate_model.predict(
+        # ── Pass 1: dedicated plate detector → license plates only ────────────
+        if plate_model is not None:
+            plate_res = plate_model.predict(
                 img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
                 half=gpu, imgsz=640,
             )
-            plate_dets = _parse_boxes(plate_res, img, w, h, active_plate_model)
+            plate_dets = _parse_boxes(plate_res, img, w, h, plate_model)
             all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
 
+        # ── Pass 2: vehicle detector → unified "vehicle" bboxes ───────────────
+        if vehicle_model is not None:
+            res = vehicle_model.predict(img_proc, conf=conf, verbose=False, max_det=200,
+                                        half=gpu, imgsz=imgsz)
+            all_dets.extend(
+                d for d in _parse_boxes(res, img, w, h, vehicle_model)
+                if d["class_name"] != "license_plate"
+            )
+
         # ── GPU: tiled pass for high-res frames ───────────────────────────────
-        if DETECT_VEHICLES and gpu and model is not None and (w > 1280 or h > 960):
+        if vehicle_model is not None and gpu and (w > 1280 or h > 960):
             tile, overlap = 640, 0.2
             stride = int(tile * (1 - overlap))
             for y0 in range(0, h, stride):
@@ -429,24 +444,24 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                     ph, pw = patch.shape[:2]
                     if pw < 64 or ph < 64:
                         continue
-                    tile_res = model.predict(patch, conf=conf, verbose=False,
-                                             max_det=50, half=True, imgsz=640)
-                    all_dets.extend(_parse_boxes(tile_res, img, w, h, model,
+                    tile_res = vehicle_model.predict(patch, conf=conf, verbose=False,
+                                                     max_det=50, half=True, imgsz=640)
+                    all_dets.extend(_parse_boxes(tile_res, img, w, h, vehicle_model,
                                                  offset_x=x0, offset_y=y0))
 
-        # ── Rotation fallback ─────────────────────────────────────────────────
-        rot_model = active_plate_model
-        if try_rotation and not any(d["class_name"] == "license_plate" for d in all_dets):
+        # ── Rotation fallback (plates only) ───────────────────────────────────
+        if (try_rotation and plate_model is not None
+                and not any(d["class_name"] == "license_plate" for d in all_dets)):
             center = (w // 2, h // 2)
             for angle in [20, -20, 40, -40, 60, -60]:
                 M = cv2.getRotationMatrix2D(center, angle, 1.0)
                 img_rot = cv2.warpAffine(img, M, (w, h),
                                          flags=cv2.INTER_LINEAR,
                                          borderMode=cv2.BORDER_REFLECT_101)
-                rot_res = rot_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
-                                            verbose=False, max_det=100,
-                                            half=gpu, imgsz=640)
-                rot_dets = _parse_boxes(rot_res, img_rot, w, h, rot_model)
+                rot_res = plate_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
+                                              verbose=False, max_det=100,
+                                              half=gpu, imgsz=640)
+                rot_dets = _parse_boxes(rot_res, img_rot, w, h, plate_model)
 
                 if rot_dets:
                     M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
@@ -490,16 +505,15 @@ def is_gpu_available() -> bool:
 
 
 def set_gpu_enabled(enabled: bool = True):
-    global _model, _load_attempted
-    if enabled and is_gpu_available():
+    """Move any already-loaded models to the GPU."""
+    if not (enabled and is_gpu_available()):
+        return
+    for name, model in (("plate-detector", _plate_model),
+                        ("vehicle-detector", _vehicle_model)):
+        if model is None:
+            continue
         try:
-            from ultralytics import YOLO
-            if WEIGHTS_PATH.exists():
-                candidate = YOLO(str(WEIGHTS_PATH))
-                if _validate_model_classes(candidate):
-                    _model = candidate
-                    _model.to("cuda")
-                    _load_attempted = True
-                    log.info("[DETECT] YOLO GPU enabled")
+            model.to("cuda")
+            log.info("[DETECT] %s GPU enabled", name)
         except Exception as exc:
-            log.warning("[DETECT] GPU enable failed: %s", exc)
+            log.warning("[DETECT] GPU enable failed for %s: %s", name, exc)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -31,11 +30,10 @@ log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_DIR = BASE_DIR / "dataset"
-WEIGHTS_DIR = BASE_DIR / "weights"
 OUTPUT_DIR = BASE_DIR / "output"
 
-VEHICLE_MODEL_PATH = WEIGHTS_DIR / "vehicle_detector.pt"
-PLATE_MODEL_PATH = WEIGHTS_DIR / "best.pt"
+VEHICLE_MODEL_PATH = BASE_DIR / "runs" / "vehicle_detector" / "weights" / "best.pt"
+PLATE_MODEL_PATH = BASE_DIR / "runs" / "plate_detector" / "weights" / "best.pt"
 
 _ocr_reader = None
 
@@ -278,12 +276,12 @@ def train_model(epochs: int = 100, batch: int = 16, imgsz: int = 640):
             patience=20,
         )
         
+        # runs/plate_detector/weights/best.pt is the canonical live path —
+        # detection.py loads it directly, no copy step needed.
         best_src = Path(results.save_dir) / "weights" / "best.pt"
         if best_src.exists():
-            WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(best_src, WEIGHTS_DIR / "best.pt")
-            log.info("[TRAIN] Best weights saved")
-        
+            log.info("[TRAIN] Best weights saved at %s", best_src)
+
         return results
     except ImportError:
         log.error("[TRAIN] ultralytics not installed")
