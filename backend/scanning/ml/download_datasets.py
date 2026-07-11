@@ -1,16 +1,25 @@
 """
-download_datasets.py — Roboflow dataset downloader + label merger.
+download_datasets.py — Merge extra datasets into the single-class vehicle dataset.
 
-Downloads unplated-vehicle datasets from Roboflow in YOLOv8 format,
-applies the canonical class mapping defined in class_mapping.py,
-merges images + labels into unplated_dataset/, and prints an
-ambiguity report for any raw labels not in CLASS_MAPPING.
+Downloads Roboflow datasets (YOLOv8 format) and/or merges local YOLOv8
+dataset folders into vehicle_ds/.  Every label whose class maps to a
+vehicle in class_mapping.CLASS_MAPPING (car, motorcycle, bus, truck…) is
+rewritten to the single class 0 = "vehicle".  License-plate and excluded
+labels are dropped — plates belong to the separate plate_detector dataset,
+which this script never touches.
+
+If vehicle_ds/ already holds a multi-class Roboflow export, it is
+normalised to the single-class schema first (via train.py's remap) so the
+merged labels line up.
+
+NOTE: run `train.py --zip <export.zip>` BEFORE merging extras — ingest_zip
+wipes vehicle_ds/ and would delete anything merged earlier.
 
 Usage (from backend/):
-    python -m scanning.ml.download_datasets --api-key <KEY> [--dry-run]
-
-Or via train.py:
-    python -m scanning.ml.train --download --api-key <KEY>
+    python -m scanning.ml.download_datasets --api-key <KEY> \
+        --dataset workspace/project/1 [--dataset ws2/proj2/3 ...]
+    python -m scanning.ml.download_datasets --local path/to/yolo_dataset
+    (both flags can be combined; add --dry-run to preview)
 """
 
 from __future__ import annotations
@@ -21,37 +30,16 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
+try:
+    from .class_mapping import get_standard_class_name, is_excluded_label
+    from .train import VEHICLE_DS_DIR, _build_remap, _remap_labels, _rewrite_data_yaml
+except ImportError:  # run as a script: python scanning/ml/download_datasets.py
+    from class_mapping import get_standard_class_name, is_excluded_label
+    from train import VEHICLE_DS_DIR, _build_remap, _remap_labels, _rewrite_data_yaml
+
 BASE_DIR = Path(__file__).resolve().parent
-UNPLATED_DIR = BASE_DIR.parent.parent / "unplated_ds"
-PLATE_DIR    = BASE_DIR / "dataset"          # existing license_plate-only set
 
-# ── Canonical class ordering (MUST match detection.py CLASS_NAMES) ─────────────
-CANONICAL_CLASSES = ["license_plate", "car", "bicycle", "e_bike", "electric_scooter"]
-CLASS_TO_ID: dict[str, int] = {c: i for i, c in enumerate(CANONICAL_CLASSES)}
-
-# ── Roboflow dataset specs ─────────────────────────────────────────────────────
-# Each entry: (workspace, project, version, suggested_label_notes)
-ROBOFLOW_DATASETS = [
-    # Electric scooters — confirmed YOLOv8 object detection datasets
-    ("etg-ik2gp",       "electric_scooter",       1, "electric_scooter"),
-    ("ajou-univ-xsz0v", "electric-scooter-kdl9p", 1, "electric_scooter"),
-    # REMOVED: scooter-9weqt/scooter-ptbxe — multilabel classification, not detection
-    # REMOVED: personal-mtwk7/helmet-bike-and-scooter-detection — no valid version found
-]
-
-# Bicycle-only datasets (add your chosen 1-2 here after searching roboflow.com)
-# Format: (workspace, project, version, "bicycle")
-BICYCLE_DATASETS: list[tuple[str, str, int, str]] = [
-    ("daffodil-international-university-kbooi", "object-detection-yolov8", 1, "bicycle"),
-    ("yolov8-druip", "bicycle-zrn08", 1, "bicycle"),
-    ("project", "cis-515-final-project", 1, "bicycle"),
-    ("theone-f4xcb", "bicycle5904", 1, "bicycle"),
-]
-
-
-def _load_class_mapping():
-    from .class_mapping import CLASS_MAPPING, EXCLUDED_LABELS, get_standard_class_name, is_excluded_label
-    return CLASS_MAPPING, EXCLUDED_LABELS, get_standard_class_name, is_excluded_label
+VEHICLE_CLASS_ID = 0  # the one and only class
 
 
 def _download_rf(api_key: str, workspace: str, project: str, version: int, dest: Path) -> Path:
@@ -68,19 +56,33 @@ def _download_rf(api_key: str, workspace: str, project: str, version: int, dest:
     return Path(dataset.location)
 
 
+def _parse_raw_class_names(rf_root: Path) -> list[str]:
+    """Read class names from data.yaml inside a dataset folder."""
+    import yaml
+    for candidate in [rf_root / "data.yaml", rf_root / "dataset.yaml"]:
+        if candidate.exists():
+            with open(candidate) as f:
+                cfg = yaml.safe_load(f)
+            names = cfg.get("names", [])
+            if isinstance(names, dict):
+                # YOLO sometimes writes {0: "cls", 1: "cls2"}
+                return [names[i] for i in sorted(names.keys())]
+            return list(names)
+    return []
+
+
 def _remap_label_file(
     label_path: Path,
     raw_class_names: list[str],
-    get_standard_class_name,
-    is_excluded_label,
     ambiguity_log: dict[str, list[str]],
+    dropped_counts: dict[str, int],
     dest_path: Path,
     dry_run: bool,
 ) -> bool:
     """
-    Remap a single YOLO label file from raw class ids → canonical class ids.
+    Remap one YOLO label file: vehicle-ish classes → 0, everything else dropped.
 
-    Returns True if at least one valid annotation was written.
+    Returns True if at least one vehicle annotation was written.
     """
     lines_out: list[str] = []
     with open(label_path) as f:
@@ -96,21 +98,16 @@ def _remap_label_file(
                 continue
             raw_label = raw_class_names[raw_id]
 
-            if is_excluded_label(raw_label):
-                continue  # silently drop excluded classes (person, car, motorcycle…)
+            canonical = (get_standard_class_name(raw_label)
+                         or get_standard_class_name(str(raw_label).lower()))
+            if canonical == "vehicle":
+                lines_out.append(f"{VEHICLE_CLASS_ID} {' '.join(parts[1:])}")
+                continue
 
-            canonical = get_standard_class_name(raw_label)
-            if canonical is None:
-                # Unknown label — log for review, skip
+            dropped_counts[raw_label] += 1
+            if canonical is None and not is_excluded_label(raw_label):
+                # Unknown label — log for review (plates/excluded drop silently)
                 ambiguity_log[raw_label].append(str(label_path))
-                continue
-
-            new_id = CLASS_TO_ID.get(canonical)
-            if new_id is None:
-                continue
-
-            coords = " ".join(parts[1:])
-            lines_out.append(f"{new_id} {coords}")
 
     if not lines_out:
         return False
@@ -123,27 +120,31 @@ def _remap_label_file(
 
 
 def _merge_split(
-    rf_root: Path,
+    src_root: Path,
     split: str,
+    dest_split: str,
     raw_class_names: list[str],
-    get_standard_class_name,
-    is_excluded_label,
-    dest_img_dir: Path,
-    dest_lbl_dir: Path,
     ambiguity_log: dict[str, list[str]],
+    dropped_counts: dict[str, int],
     dry_run: bool,
     prefix: str,
 ) -> tuple[int, int]:
-    """Merge one split (train/val) from a downloaded dataset into unplated_dataset/."""
-    src_img = rf_root / split / "images"
-    src_lbl = rf_root / split / "labels"
+    """Merge one split from a source dataset into vehicle_ds/<dest_split>/."""
+    src_img = src_root / split / "images"
+    src_lbl = src_root / split / "labels"
 
     if not src_img.exists():
-        # Some datasets use flat structure
-        src_img = rf_root / "images"
-        src_lbl = rf_root / "labels"
+        # Some datasets use the labels/<split> layout or a flat structure
+        src_img = src_root / "images" / split
+        src_lbl = src_root / "labels" / split
+    if not src_img.exists() and split == "train":
+        src_img = src_root / "images"
+        src_lbl = src_root / "labels"
     if not src_img.exists():
         return 0, 0
+
+    dest_img_dir = VEHICLE_DS_DIR / dest_split / "images"
+    dest_lbl_dir = VEHICLE_DS_DIR / dest_split / "labels"
 
     copied = 0
     skipped = 0
@@ -156,11 +157,9 @@ def _merge_split(
             continue
 
         dest_stem = f"{prefix}_{img_path.stem}"
-        dest_lbl_path = dest_lbl_dir / (dest_stem + ".txt")
-
         ok = _remap_label_file(
-            lbl_path, raw_class_names, get_standard_class_name, is_excluded_label,
-            ambiguity_log, dest_lbl_path, dry_run,
+            lbl_path, raw_class_names, ambiguity_log, dropped_counts,
+            dest_lbl_dir / (dest_stem + ".txt"), dry_run,
         )
         if ok:
             if not dry_run:
@@ -173,83 +172,85 @@ def _merge_split(
     return copied, skipped
 
 
-def _parse_raw_class_names(rf_root: Path) -> list[str]:
-    """Read class names from data.yaml inside the downloaded dataset."""
-    import yaml
-    for candidate in [rf_root / "data.yaml", rf_root / "dataset.yaml"]:
-        if candidate.exists():
-            with open(candidate) as f:
-                cfg = yaml.safe_load(f)
-            names = cfg.get("names", [])
-            if isinstance(names, dict):
-                # YOLO sometimes writes {0: "cls", 1: "cls2"}
-                return [names[i] for i in sorted(names.keys())]
-            return list(names)
-    return []
-
-
-def _merge_existing_plate_dataset(
-    dest_img_train: Path,
-    dest_lbl_train: Path,
-    dest_img_val: Path,
-    dest_lbl_val: Path,
+def _merge_dataset(
+    src_root: Path,
+    prefix: str,
+    ambiguity_log: dict[str, list[str]],
+    dropped_counts: dict[str, int],
     dry_run: bool,
-) -> int:
-    """
-    Copy existing license_plate-only dataset into the unified dataset,
-    remapping class id 0 (license_plate) → 0 (still license_plate, no change).
-    """
-    merged = 0
-    for split, dst_img, dst_lbl in [
-        ("train", dest_img_train, dest_lbl_train),
-        ("val",   dest_img_val,   dest_lbl_val),
+) -> tuple[int, int]:
+    """Merge a whole YOLOv8 dataset folder into vehicle_ds (all splits)."""
+    raw_names = _parse_raw_class_names(src_root)
+    if not raw_names:
+        print("     [WARN] Could not parse class names from data.yaml -- skipping")
+        return 0, 0
+    print(f"     Raw classes: {raw_names}")
+
+    total_copied = total_skipped = 0
+    for split, dest_split in [
+        ("train", "train"),
+        ("valid", "valid"),
+        ("val",   "valid"),
+        ("test",  "valid"),
     ]:
-        src_img = PLATE_DIR / "images" / split
-        src_lbl = PLATE_DIR / "labels" / split
-        if not src_img.exists():
-            continue
-        for img_path in src_img.glob("*.*"):
-            if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
-                continue
-            lbl_path = src_lbl / (img_path.stem + ".txt")
-            if not lbl_path.exists():
-                continue
-            # Labels already use id=0 for license_plate, which is correct
-            if not dry_run:
-                dst_img.mkdir(parents=True, exist_ok=True)
-                dst_lbl.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(img_path, dst_img / img_path.name)
-                shutil.copy2(lbl_path, dst_lbl / lbl_path.name)
-            merged += 1
-    return merged
+        copied, skipped = _merge_split(
+            src_root, split, dest_split, raw_names,
+            ambiguity_log, dropped_counts, dry_run, prefix,
+        )
+        if copied or skipped:
+            print(f"     [{split}] OK: {copied} merged, {skipped} skipped")
+            total_copied += copied
+            total_skipped += skipped
+    return total_copied, total_skipped
 
 
-def _write_data_yaml(dest_dir: Path, dry_run: bool):
-    """Write the unified data.yaml for the combined 5-class dataset."""
+def _normalise_existing_dataset(dry_run: bool) -> None:
+    """
+    If vehicle_ds already holds a (possibly multi-class) export, remap it to
+    the single-class schema first so merged class-0 labels line up.
+    Creates a fresh single-class data.yaml when the dataset doesn't exist yet.
+    """
     import yaml
+
+    data_yaml = VEHICLE_DS_DIR / "data.yaml"
+    if data_yaml.exists():
+        if dry_run:
+            print(f"[DRY RUN] Would normalise existing dataset at {VEHICLE_DS_DIR}")
+            return
+        _remap_labels(VEHICLE_DS_DIR, _build_remap(VEHICLE_DS_DIR))
+        _rewrite_data_yaml(data_yaml)
+        return
+
+    if dry_run:
+        print(f"[DRY RUN] Would create fresh dataset at {VEHICLE_DS_DIR}")
+        return
+    VEHICLE_DS_DIR.mkdir(parents=True, exist_ok=True)
     cfg = {
-        "path":  str(dest_dir),
-        "train": "images/train",
-        "val":   "images/val",
-        "nc":    len(CANONICAL_CLASSES),
-        "names": CANONICAL_CLASSES,
+        "path":  str(VEHICLE_DS_DIR),
+        "train": "train/images",
+        "val":   "valid/images",
+        "nc":    1,
+        "names": ["vehicle"],
     }
-    yaml_path = dest_dir / "data.yaml"
-    if not dry_run:
-        with open(yaml_path, "w") as f:
-            yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
-    print(f"[OK] data.yaml written -> {yaml_path}")
+    with open(data_yaml, "w") as f:
+        yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
+    print(f"[OK] Fresh single-class data.yaml written -> {data_yaml}")
 
 
-def _print_ambiguity_report(ambiguity_log: dict[str, list[str]]):
+def _print_report(ambiguity_log: dict[str, list[str]], dropped_counts: dict[str, int]):
+    if dropped_counts:
+        print("\nDropped annotations by raw label (not vehicles):")
+        for label, count in sorted(dropped_counts.items(), key=lambda x: -x[1]):
+            print(f"  {label}: {count}")
+
     if not ambiguity_log:
-        print("\n[OK] No ambiguous labels -- all raw labels mapped cleanly.")
+        print("\n[OK] No ambiguous labels -- all raw labels mapped or deliberately dropped.")
         return
 
     print("\n" + "=" * 60)
     print("  !! AMBIGUITY REPORT -- Labels requiring review")
     print("  These labels were NOT in CLASS_MAPPING and were SKIPPED.")
-    print("  Add them to class_mapping.py if they should be included.")
+    print("  Add them to class_mapping.py if they should count as vehicles.")
     print("=" * 60)
     for label, sources in sorted(ambiguity_log.items()):
         print(f"\n  Raw label: '{label}'  ({len(sources)} annotation file(s))")
@@ -261,110 +262,100 @@ def _print_ambiguity_report(ambiguity_log: dict[str, list[str]]):
 
 
 def download_and_merge(
-    api_key: str,
+    api_key: str | None = None,
+    datasets: list[str] | None = None,
+    local_dirs: list[str] | None = None,
     dry_run: bool = False,
-    tmp_dir: Path = None,
+    tmp_dir: Path | None = None,
 ) -> None:
     """
-    Main entry point: download all datasets, remap labels, merge into
-    unplated_dataset/.
+    Main entry point: download the requested Roboflow datasets and/or take
+    local dataset folders, remap every vehicle-ish label to class 0, and
+    merge into vehicle_ds/.
     """
-    import yaml
-
-    try:
-        import yaml as _yaml_check  # noqa: F401
-    except ImportError:
-        print("[ERROR] pyyaml not installed. Run: pip install pyyaml")
+    datasets   = datasets or []
+    local_dirs = local_dirs or []
+    if not datasets and not local_dirs:
+        print("[ERROR] Nothing to merge — pass --dataset workspace/project/version and/or --local <dir>")
         sys.exit(1)
-
-    CLASS_MAPPING, EXCLUDED_LABELS, get_standard_class_name, is_excluded_label = _load_class_mapping()
+    if datasets and not api_key:
+        print("[ERROR] --api-key is required to download Roboflow datasets")
+        sys.exit(1)
 
     if tmp_dir is None:
         tmp_dir = BASE_DIR.parent.parent / "dl_temp"
-    if not dry_run:
+    if datasets and not dry_run:
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    dest_img_train = UNPLATED_DIR / "images" / "train"
-    dest_lbl_train = UNPLATED_DIR / "labels" / "train"
-    dest_img_val   = UNPLATED_DIR / "images" / "val"
-    dest_lbl_val   = UNPLATED_DIR / "labels" / "val"
+    _normalise_existing_dataset(dry_run)
 
     ambiguity_log: dict[str, list[str]] = defaultdict(list)
+    dropped_counts: dict[str, int] = defaultdict(int)
     total_copied = 0
     total_skipped = 0
 
-    all_datasets = ROBOFLOW_DATASETS + BICYCLE_DATASETS
-
     print("\n" + "=" * 60)
-    print(f"  Downloading {len(all_datasets)} Roboflow dataset(s)")
+    print(f"  Merging {len(datasets)} Roboflow + {len(local_dirs)} local dataset(s) -> vehicle_ds")
     if dry_run:
         print("  [DRY RUN] -- no files will be written")
     print("=" * 60 + "\n")
 
-    for workspace, project, version, hint in all_datasets:
-        print(f"[DL] {workspace}/{project} v{version} (hint: {hint})")
+    for spec in datasets:
+        try:
+            workspace, project, version = spec.split("/")
+            version = int(version)
+        except ValueError:
+            print(f"[SKIP] Bad --dataset spec '{spec}' — expected workspace/project/version")
+            continue
+
+        print(f"[DL] {workspace}/{project} v{version}")
         rf_dest = tmp_dir / f"{workspace}__{project}__v{version}"
 
         if rf_dest.exists() and any(rf_dest.iterdir()):
             print(f"     -> Already downloaded at {rf_dest}")
         else:
             try:
-                rf_root = _download_rf(api_key, workspace, project, version, rf_dest)
+                _download_rf(api_key, workspace, project, version, rf_dest)
             except Exception as exc:
                 print(f"     [FAILED] Download failed: {exc}")
                 continue
 
-        rf_root = rf_dest
-        raw_names = _parse_raw_class_names(rf_root)
-        if not raw_names:
-            print("     [WARN] Could not parse class names from data.yaml -- skipping")
-            continue
-
-        print(f"     Raw classes: {raw_names}")
         prefix = f"{workspace}__{project}__v{version}"
+        copied, skipped = _merge_dataset(rf_dest, prefix, ambiguity_log,
+                                         dropped_counts, dry_run)
+        total_copied += copied
+        total_skipped += skipped
 
-        for split, dst_img, dst_lbl in [
-            ("train", dest_img_train, dest_lbl_train),
-            ("valid", dest_img_val,   dest_lbl_val),
-            ("val",   dest_img_val,   dest_lbl_val),
-        ]:
-            copied, skipped = _merge_split(
-                rf_root, split, raw_names,
-                get_standard_class_name, is_excluded_label,
-                dst_img, dst_lbl, ambiguity_log,
-                dry_run, prefix,
-            )
-            if copied or skipped:
-                print(f"     [{split}] OK: {copied} merged, {skipped} skipped")
-                total_copied += copied
-                total_skipped += skipped
+    for local in local_dirs:
+        src_root = Path(local).resolve()
+        print(f"[LOCAL] {src_root}")
+        if not src_root.exists():
+            print("     [FAILED] Directory not found")
+            continue
+        copied, skipped = _merge_dataset(src_root, src_root.name, ambiguity_log,
+                                         dropped_counts, dry_run)
+        total_copied += copied
+        total_skipped += skipped
 
-    # Merge existing plate dataset
-    print(f"\n[MERGE] Existing license_plate dataset from: {PLATE_DIR}")
-    plate_merged = _merge_existing_plate_dataset(
-        dest_img_train, dest_lbl_train, dest_img_val, dest_lbl_val, dry_run
-    )
-    print(f"     OK: {plate_merged} plate images merged")
-
-    # Write unified data.yaml
-    _write_data_yaml(UNPLATED_DIR, dry_run)
-
-    # Summary
     print("\n" + "=" * 60)
     print("  DONE")
     print(f"     Total new images merged:   {total_copied}")
-    print(f"     Total annotations skipped: {total_skipped}")
-    print(f"     Destination: {UNPLATED_DIR}")
+    print(f"     Total images skipped:      {total_skipped} (no vehicle annotations)")
+    print(f"     Destination: {VEHICLE_DS_DIR}")
     print("=" * 60)
 
-    _print_ambiguity_report(ambiguity_log)
+    _print_report(ambiguity_log, dropped_counts)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Download Roboflow datasets and merge into unified unplated_dataset/"
+        description="Merge extra Roboflow/local datasets into vehicle_ds as single-class 'vehicle'"
     )
-    parser.add_argument("--api-key",  required=True, help="Roboflow API key")
+    parser.add_argument("--api-key",  default=None, help="Roboflow API key (needed with --dataset)")
+    parser.add_argument("--dataset",  action="append", default=[],
+                        help="Roboflow dataset as workspace/project/version (repeatable)")
+    parser.add_argument("--local",    action="append", default=[],
+                        help="Local YOLOv8 dataset folder to merge (repeatable)")
     parser.add_argument("--dry-run",  action="store_true",
                         help="Show what would happen without writing files")
     parser.add_argument("--tmp-dir",  type=str, default=None,
@@ -373,6 +364,8 @@ if __name__ == "__main__":
 
     download_and_merge(
         api_key=args.api_key,
+        datasets=args.dataset,
+        local_dirs=args.local,
         dry_run=args.dry_run,
         tmp_dir=Path(args.tmp_dir) if args.tmp_dir else None,
     )

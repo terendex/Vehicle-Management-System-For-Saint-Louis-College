@@ -5,7 +5,8 @@ Pipeline:
   1. Scan media/ml_video for .mp4 / .mov files
   2. Extract frames with OpenCV (no ffmpeg required)
   3. Drop blurry frames
-  4. Auto-label with best.pt (plates) + YOLOv8n-COCO (vehicles)
+  4. Auto-label with the plate_detector model (plates) + YOLOv8n-COCO (vehicles,
+     all unified into the single "vehicle" class)
   5. Write YOLO .txt labels to scanning/ml/labeled/labels/
 
 Usage (from backend/):
@@ -129,7 +130,7 @@ def run_labeling(frames_dir: Path, output_dir: Path) -> dict:
     model_best, model_coco = load_models()
 
     if model_best is None:
-        print("[ERROR] best.pt not found — place it in scanning/ml/weights/best.pt")
+        print("[ERROR] plate_detector weights not found at scanning/ml/runs/plate_detector/weights/best.pt")
         sys.exit(1)
     if model_coco is None:
         print("[WARN] COCO model unavailable — vehicle boxes will be skipped")

@@ -3,12 +3,7 @@ visualize_labels.py — Draw bounding boxes on images for label review.
 
 Each class gets its own sub-folder under output_dir:
     output_dir/license_plate/
-    output_dir/car/
-    output_dir/motorcycle/
-    output_dir/jeep/
-    output_dir/truck/
-    output_dir/bus/
-    ...
+    output_dir/vehicle/
 
 Usage:
     python -m scanning.ml.visualize_labels --labels-dir <path> --images-dir <path> --output-dir <path>
@@ -27,27 +22,13 @@ except ImportError:
 
 CLASS_NAMES = [
     "license_plate",    # 0
-    "car",              # 1
-    "bicycle",          # 2
-    "e_bike",           # 3
-    "electric_scooter", # 4
-    "motorcycle",       # 5
-    "jeep",             # 6
-    "truck",            # 7
-    "bus",              # 8
+    "vehicle",          # 1 — every motorized vehicle, unified
 ]
 
 # BGR colours — one per class
 COLORS = [
     (0,   255,   0),   # license_plate — green
-    (0,     0, 255),   # car           — red
-    (255,   0,   0),   # bicycle       — blue
-    (255, 255,   0),   # e_bike        — cyan
-    (0,   255, 255),   # electric_scooter — yellow
-    (255,   0, 255),   # motorcycle    — magenta
-    (128,   0, 255),   # jeep          — purple
-    (0,   165, 255),   # truck         — orange
-    (0,   255, 128),   # bus           — lime
+    (0,     0, 255),   # vehicle       — red
 ]
 
 

@@ -167,11 +167,6 @@ _ocr_disabled_logged = False  # log the "disabled" message only once
 # same instance.  Serialise all ocr() calls across camera streams.
 _OCR_LOCK = threading.Lock()
 
-_yolo_model = None
-_yolo_loaded = False
-
-WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
-
 # Confidence above which we skip the expensive L/M/R tiled passes
 _OCR_EARLY_EXIT_CONF = 0.60
 
@@ -204,32 +199,6 @@ def _get_ocr():
             _ocr_load_failures, _OCR_MAX_RETRIES, exc,
         )
     return _ocr_reader
-
-
-def _get_yolo():
-    """
-    Lazy-load the YOLO plate-detection model.
-    Returns None if no trained weights exist yet.
-    """
-    global _yolo_model, _yolo_loaded
-    if _yolo_loaded:
-        return _yolo_model
-    _yolo_loaded = True
-
-    if WEIGHTS_PATH.exists():
-        try:
-            from ultralytics import YOLO
-            _yolo_model = YOLO(str(WEIGHTS_PATH))
-            log.info("✅ YOLO plate-detector loaded from %s", WEIGHTS_PATH)
-        except Exception as exc:
-            log.warning("⚠️  Failed to load YOLO model: %s", exc)
-            _yolo_model = None
-    else:
-        log.info(
-            "ℹ️  No YOLO weights found at %s — using PaddleOCR-only fallback.",
-            WEIGHTS_PATH,
-        )
-    return _yolo_model
 
 
 # ── Image helpers ───────────────────────────────────────────────────

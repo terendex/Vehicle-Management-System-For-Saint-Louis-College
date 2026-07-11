@@ -1,157 +1,89 @@
-# 🚗 License Plate Detection — ML Training Guide
+# 🚗 Vehicle & License Plate Detection — ML Guide
 
 ## Overview
 
-This directory contains everything needed to train and run the ALPR
-(Automatic License Plate Recognition) pipeline for Saint Louis College.
+The pipeline uses **two independent YOLOv8 models**:
+
+| Model | Weights (canonical path) | Classes | Status |
+|-------|--------------------------|---------|--------|
+| **Plate detector** | `runs/plate_detector/weights/best.pt` | `license_plate` | Trained — required, do not touch |
+| **Vehicle detector** | `runs/vehicle_detector/weights/best.pt` | `vehicle` (single unified class) | To be trained from Roboflow dataset |
+
+**Policy:** every motorized vehicle — car, motorcycle, bus, truck, jeepney,
+tricycle… — is ONE class: `vehicle`. No per-type distinction anywhere in
+datasets, labels, or detection. License plates are handled exclusively by the
+separate plate detector and its own dataset.
+
+Until the vehicle model is trained, `detection.py` runs in plate-only mode and
+picks up the weights automatically once they exist.
 
 ```
 scanning/ml/
-├── reader.py              # Two-stage detection + OCR pipeline
+├── detection.py           # Runtime: loads both models, detect_plates()
+├── reader.py / ocr.py     # Plate OCR (PaddleOCR)
 ├── validator.py           # Philippine plate format validation
-├── train.py               # YOLOv8 training script
-├── download_datasets.py   # Roboflow dataset downloader & merger
-├── weights/               # Trained model weights (auto-populated after training)
-│   ├── best.pt            # Best checkpoint (used in production)
-│   └── last.pt            # Latest checkpoint (for resuming training)
-├── dataset/
-│   ├── data.yaml          # Dataset config for YOLO
-│   ├── images/
-│   │   ├── train/         # Training images (~80%)
-│   │   └── val/           # Validation images (~20%)
-│   └── labels/
-│       ├── train/         # Training annotations
-│       └── val/           # Validation annotations
-└── runs/                  # Training logs & metrics (auto-generated)
+├── class_mapping.py       # Any raw label alias → license_plate | vehicle
+├── train.py               # Vehicle-model trainer (single class)
+├── download_datasets.py   # Merge extra Roboflow/local datasets → vehicle_ds
+├── auto_label.py          # Auto-label frames: 0=license_plate, 1=vehicle
+├── video_to_labeled.py    # Video → frames → auto-labels
+├── prepare_training.py    # Auto-labeled frames → vehicle_ds (vehicle-only)
+├── vehicle_ds/            # Vehicle dataset (Roboflow YOLOv8 export lands here)
+├── dataset/               # Plate dataset (separate — plate model only)
+└── runs/
+    ├── plate_detector/    # Trained plate model (KEEP)
+    └── vehicle_detector/  # Vehicle model training output (auto-created)
 ```
 
 ---
 
-## Quick Start: Download Pre-labeled Datasets from Roboflow
+## Training the vehicle model
 
-The fastest way to get started is to download pre-labeled Philippine license
-plate datasets from **Roboflow Universe**. We use two datasets:
+### 1. From a Roboflow export (primary path)
 
-| # | Dataset | Source |
-|---|---------|--------|
-| 1 | **Local LPR** | https://universe.roboflow.com/philippine-license-plates/local_lpr-117y7 |
-| 2 | **USeP Philippine License Plates** | https://universe.roboflow.com/university-of-southeastern-philippines-cnl9c/philippine-license-plates |
-
-### Prerequisites
-
-1. Create a free account at [roboflow.com](https://roboflow.com)
-2. Go to **Settings → API Key** and copy your API key
-3. Install the Roboflow SDK:
-   ```bash
-   pip install roboflow
-   ```
-
-### Download & Merge Datasets
-
-From the `backend/` directory:
+Export the dataset from Roboflow in **YOLOv8 format**, then from `backend/`:
 
 ```bash
-# Download both datasets and merge into dataset/ directory
-python -m scanning.ml.download_datasets --api-key YOUR_ROBOFLOW_API_KEY
+# From a zip (extracts into vehicle_ds/, then trains):
+python -m scanning.ml.train --zip path/to/roboflow-export.zip
 
-# Clean existing data and re-download
-python -m scanning.ml.download_datasets --api-key YOUR_KEY --clean
-
-# Specify exact versions
-python -m scanning.ml.download_datasets --api-key YOUR_KEY --ds1-version 1 --ds2-version 2
+# Or unzip into scanning/ml/vehicle_ds/ yourself and run:
+python -m scanning.ml.train --epochs 100 --batch 16 --model-size s
 ```
 
-The script will:
-- Download both datasets in **YOLOv8 format**
-- Merge images and labels into `dataset/images/` and `dataset/labels/`
-- Prefix filenames (`ds1_`, `ds2_`) to avoid collisions
-- Normalize all class IDs to `0` (`license_plate`)
+Whatever class names the dataset uses (car, motorcycle, bus…), labels are
+remapped automatically to the single class `0 = vehicle` via
+`class_mapping.py`. Non-vehicle labels (person, e-scooters, plates) are
+dropped. Output goes straight to `runs/vehicle_detector/weights/best.pt` —
+live on the next server start, no copy step.
 
-### One-Command Download + Train
+> ⚠️ `--zip` wipes `vehicle_ds/` first. Ingest the main export **before**
+> merging extras (steps below).
+
+### 2. Merging extra datasets (optional)
 
 ```bash
-python -m scanning.ml.train --download --api-key YOUR_KEY --epochs 100 --batch 16
+# Additional Roboflow datasets (repeatable):
+python -m scanning.ml.download_datasets --api-key KEY --dataset workspace/project/1
+
+# A local YOLOv8-format dataset folder from anywhere:
+python -m scanning.ml.download_datasets --local path/to/dataset
 ```
 
----
-
-## Step 1: Collect Images (Optional — Manual Approach)
-
-If you want to supplement the Roboflow data, gather additional photos
-of vehicles with visible Philippine license plates. More diverse data
-= better model. Try to include:
-
-- ✅ Different **vehicle types**: cars, motorcycles, tricycles, trucks
-- ✅ Different **angles**: front, rear, slight side angles
-- ✅ Different **lighting**: daylight, overcast, dusk, night with headlights
-- ✅ Different **distances**: close-up, mid-range, far
-- ✅ **Dirty / worn plates** — the model should handle real conditions
-- ✅ Images taken **at the actual SLC campus gates** for best accuracy
-
-Save images as `.jpg` or `.png` files.
-
----
-
-## Step 2: Label Images
-
-Use one of these free tools to draw bounding boxes around each plate:
-
-| Tool | Type | Link |
-|------|------|------|
-| **Roboflow** (recommended) | Web-based | https://roboflow.com |
-| **LabelImg** | Desktop | `pip install labelImg` |
-| **CVAT** | Web-based | https://cvat.ai |
-
-### Labeling Rules
-1. Draw a **tight bounding box** around the license plate only.
-2. Use one class: `license_plate` (class ID `0`).
-3. Export in **YOLO format** — each image gets a matching `.txt` file.
-
-### YOLO Label Format
-```
-<class_id> <x_center> <y_center> <width> <height>
-```
-All values are **normalized (0–1)** relative to the image dimensions.
-
-Example (`img_001.txt`):
-```
-0 0.52 0.78 0.18 0.06
-```
-
----
-
-## Step 3: Organize Dataset
-
-Split your labeled data roughly **80% train / 20% val**:
-
-```
-dataset/images/train/   ← 160–400 images
-dataset/images/val/     ← 40–100 images
-dataset/labels/train/   ← matching .txt files
-dataset/labels/val/     ← matching .txt files
-```
-
-> ⚠️ Each label `.txt` filename must exactly match its image filename
-> (e.g., `img_001.jpg` → `img_001.txt`).
-
----
-
-## Step 4: Train
-
-From the `backend/` directory:
+### 3. From campus camera footage (optional)
 
 ```bash
-# Default: 100 epochs, batch 16, nano model
+# Video → frames → auto-labels (plates via plate_detector, vehicles via COCO):
+python -m scanning.ml.video_to_labeled --video-dir media/ml_video
+
+# Auto-labeled frames → vehicle-only dataset merged into vehicle_ds/:
+python -m scanning.ml.prepare_training
+
+# Then (re)train:
 python -m scanning.ml.train
-
-# Custom settings
-python -m scanning.ml.train --epochs 200 --batch 8 --model-size s
-
-# Resume interrupted training
-python -m scanning.ml.train --resume
 ```
 
-### Model Sizes
+### Model sizes
 
 | Size | Flag | Speed | Accuracy | GPU VRAM |
 |------|------|-------|----------|----------|
@@ -159,72 +91,60 @@ python -m scanning.ml.train --resume
 | Small | `--model-size s` | Fast | Better | ~4 GB |
 | Medium | `--model-size m` | Moderate | Best | ~6 GB |
 
-> 💡 **No GPU?** Training still works on CPU — it just takes longer.
-> Use `--model-size n --batch 8` for CPU-friendly settings.
+> 💡 No GPU? Training works on CPU — use `--model-size n --batch 8`.
 
 ---
 
-## Step 5: Verify
+## The plate detector (do not touch)
 
-After training completes, `weights/best.pt` is created automatically.
-The next time Django starts, `reader.py` will detect and load the model.
-
-**No code changes needed** — the pipeline automatically switches from
-the EasyOCR-only fallback to the full YOLO → crop → EasyOCR pipeline.
-
-Check the training metrics in `runs/plate_detector/`:
-- `results.png` — loss & mAP curves
-- `confusion_matrix.png` — prediction accuracy breakdown
-- `val_batch0_pred.jpg` — sample predictions on validation images
+The plate model is already trained and lives at
+`runs/plate_detector/weights/best.pt`. Its dataset (`dataset/`) uses the
+single class `0 = license_plate`. Nothing in the vehicle workflow reads or
+writes either of them.
 
 ---
 
-## How the Pipeline Works
+## How the runtime pipeline works
 
 ```
-Image Input
+Camera frame
      │
-     ▼
-┌──────────────────┐
-│  YOLO Detection  │  ← Finds plate bounding box(es)
-│  (best.pt)       │
+     ├──────────────────────────────┐
+     ▼                              ▼
+┌──────────────────┐      ┌──────────────────────┐
+│  Plate detector  │      │  Vehicle detector    │
+│  license_plate   │      │  vehicle (1 class)   │
+│  (required)      │      │  (optional until     │
+└────────┬─────────┘      │   trained)           │
+         │  crop           └──────────┬───────────┘
+         ▼                            ▼
+┌──────────────────┐        tracking bboxes
+│  PaddleOCR       │
 └────────┬─────────┘
-         │  crop each detection
          ▼
 ┌──────────────────┐
-│  Preprocessing   │  ← Grayscale → Blur → Threshold
+│  PH Validator    │
 └────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  EasyOCR         │  ← Reads text from the clean crop
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  PH Validator    │  ← Confirms it matches a Philippine plate format
-└────────┬─────────┘
-         │
          ▼
    (plate_text, bbox)
 ```
 
-If no YOLO model is present, it falls back to running EasyOCR on the
-full image (the original behaviour before training).
+---
+
+## Sharing weights (Cloudflare R2)
+
+```bash
+python manage.py sync_ml_weights --push   # upload local weights
+python manage.py sync_ml_weights --pull   # download weights
+```
+
+R2 keys: `ml-weights/plate_detector/best.pt`,
+`ml-weights/vehicle_detector/best.pt`, `ml-weights/vehicle_detector/last.pt`.
 
 ---
 
-## Installation for Training
-
-Install the required packages:
+## Installation for training
 
 ```bash
-pip install ultralytics roboflow
-```
-
-If using Python 3.9, install compatible versions:
-
-```bash
-pip install torch==2.2.0+cpu torchvision==0.17.0+cpu --index-url https://download.pytorch.org/whl/cpu
 pip install ultralytics roboflow
 ```

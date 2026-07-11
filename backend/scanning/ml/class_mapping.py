@@ -3,13 +3,15 @@ Class mapping configuration for vehicle detection datasets.
 
 Canonical classes:
   license_plate — the plate itself (triggers OCR)
-  vehicle       — car, jeep, jeepney, bus, truck, van, SUV, pickup (4-wheel+)
-  motor         — motorcycle, motorbike, tricycle (2–3 wheel motorized)
+  vehicle       — ALL motorized vehicles unified into one class:
+                  car, jeep, jeepney, bus, truck, van, SUV, pickup,
+                  motorcycle, motorbike, tricycle
 """
 from __future__ import annotations
 from typing import Optional
 
 LICENSE_PLATE_CLASS = "license_plate"
+VEHICLE_CLASS       = "vehicle"
 
 # Classes that need a digital ID instead of a license plate (none supported)
 VEHICLE_TYPE_CLASSES: list[str] = []
@@ -20,8 +22,11 @@ CLASS_MAPPING = {
     "plate":            "license_plate",
     "lp":               "license_plate",
 
-    # ── Vehicle (4-wheel and up) ─────────────────────────────────
+    # ── Vehicle (everything motorized, unified) ──────────────────
     "vehicle":          "vehicle",
+    "vehicles":         "vehicle",
+    "Vehicle":          "vehicle",
+    "Vehicles":         "vehicle",
     "car":              "vehicle",
     "Car":              "vehicle",
     "automobile":       "vehicle",
@@ -39,20 +44,18 @@ CLASS_MAPPING = {
     "pickup":           "vehicle",
     "minivan":          "vehicle",
     "4wheel":           "vehicle",
-
-    # ── Motor (motorcycle, tricycle) ─────────────────────────────
-    "motor":            "motor",
-    "motorcycle":       "motor",
-    "Motorcycle":       "motor",
-    "motorbike":        "motor",
-    "Motorbike":        "motor",
-    "tricycle":         "motor",
-    "Tricycle":         "motor",
-    "trike":            "motor",
-    "bike":             "motor",
-    "Bike":             "motor",
-    "bicycle":          "motor",
-    "Bicycle":          "motor",
+    "motor":            "vehicle",
+    "motorcycle":       "vehicle",
+    "Motorcycle":       "vehicle",
+    "motorbike":        "vehicle",
+    "Motorbike":        "vehicle",
+    "tricycle":         "vehicle",
+    "Tricycle":         "vehicle",
+    "trike":            "vehicle",
+    "bike":             "vehicle",
+    "Bike":             "vehicle",
+    "bicycle":          "vehicle",
+    "Bicycle":          "vehicle",
 }
 
 # Labels found in datasets that are deliberately excluded
@@ -76,11 +79,10 @@ EXCLUDED_LABELS = {
 REVERSE_CLASS_MAPPING: dict[str, list[str]] = {
     "license_plate": ["license_plate", "plate", "lp"],
     "vehicle": [
-        "vehicle", "car", "Car", "automobile", "jeep", "jeepney",
+        "vehicle", "vehicles", "Vehicle", "Vehicles", "car", "Car",
+        "automobile", "jeep", "jeepney", "Jeepney",
         "bus", "Bus", "truck", "Truck", "van", "Van", "suv", "SUV",
         "pickup", "minivan", "4wheel",
-    ],
-    "motor": [
         "motor", "motorcycle", "Motorcycle", "motorbike", "Motorbike",
         "tricycle", "Tricycle", "trike", "bike", "Bike", "bicycle", "Bicycle",
     ],
@@ -90,7 +92,6 @@ REVERSE_CLASS_MAPPING: dict[str, list[str]] = {
 VEHICLE_TYPE_BEHAVIOR = {
     "license_plate": {"triggers_ocr": True},
     "vehicle":       {"triggers_ocr": True},
-    "motor":         {"triggers_ocr": True},
 }
 
 

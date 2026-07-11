@@ -29,8 +29,8 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-VEHICLE_MODEL_PATH = Path(__file__).resolve().parent / "weights" / "vehicle_detector.pt"
-PLATE_MODEL_PATH = Path(__file__).resolve().parent / "weights" / "best.pt"
+VEHICLE_MODEL_PATH = Path(__file__).resolve().parent / "runs" / "vehicle_detector" / "weights" / "best.pt"
+PLATE_MODEL_PATH = Path(__file__).resolve().parent / "runs" / "plate_detector" / "weights" / "best.pt"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 _ocr_reader = None
