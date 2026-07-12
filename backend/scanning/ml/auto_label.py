@@ -2,7 +2,7 @@
 auto_label.py — Two-model auto-labeling for vehicle detection.
 
 Uses the plate_detector model for license_plate detection (high-recall mode).
-Uses COCO YOLOv8n for vehicle detection: cars, motorcycles, buses, trucks…
+Uses COCO YOLO26n for vehicle detection: cars, motorcycles, buses, trucks…
 are ALL labelled as the single unified "vehicle" class.
 
 Output label schema: 0 = license_plate, 1 = vehicle.
@@ -55,8 +55,8 @@ def load_models():
     model_best = YOLO(str(plate_pt)) if plate_pt.exists() else None
 
     try:
-        # "yolov8n.pt" is downloaded automatically by Ultralytics if not cached
-        model_coco = YOLO("yolov8n.pt")
+        # "yolo26n.pt" is downloaded automatically by Ultralytics if not cached
+        model_coco = YOLO("yolo26n.pt")
     except Exception as exc:
         print(f"[WARN] Could not load COCO model: {exc}")
         model_coco = None

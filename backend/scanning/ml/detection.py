@@ -199,6 +199,11 @@ def _get_plate_yolo():
         except Exception as _ocr_exc:
             log.warning("[DETECT] PaddleOCR pre-load skipped: %s", _ocr_exc)
 
+        if is_gpu_available():
+            # Warm-up (cudnn benchmarking) bloats the torch allocator cache;
+            # release it so training / other processes can use the VRAM.
+            torch.cuda.empty_cache()
+
         _broadcast_status("ready", "Detection ready")
 
     except ImportError:
@@ -246,6 +251,9 @@ def _get_vehicle_yolo():
         dummy = np.zeros((480, 640, 3), np.uint8)
         _vehicle_model.predict(_preprocess_adaptive(dummy), imgsz=960, conf=0.15, verbose=False)
         log.info("[DETECT] Vehicle-detector warm-up complete.")
+        if is_gpu_available():
+            import torch
+            torch.cuda.empty_cache()
     except Exception as exc:
         log.error("[DETECT] Failed to load vehicle-detector: %s", exc)
         _vehicle_model = None

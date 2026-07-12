@@ -189,7 +189,16 @@ def _get_ocr():
     try:
         from paddleocr import PaddleOCR
         _use_gpu = is_gpu_available()
-        _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=_use_gpu, show_log=False)
+        try:
+            _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=_use_gpu, show_log=False)
+        except Exception as gpu_exc:
+            if not _use_gpu:
+                raise
+            # Torch sees CUDA but Paddle's GPU init failed — OCR must keep
+            # working, so retry on CPU instead of burning a load attempt.
+            log.warning("[OCR] GPU PaddleOCR failed (%s) — retrying on CPU", gpu_exc)
+            _use_gpu = False
+            _ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)
         log.info("[OCR] PaddleOCR loaded OK (gpu=%s)", _use_gpu)
         _ocr_load_failures = 0
     except Exception as exc:
