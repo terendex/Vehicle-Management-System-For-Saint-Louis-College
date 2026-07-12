@@ -2,12 +2,12 @@
 
 ## Overview
 
-The pipeline uses **two independent YOLOv8 models**:
+The pipeline uses **two independent YOLO models**:
 
-| Model | Weights (canonical path) | Classes | Status |
-|-------|--------------------------|---------|--------|
-| **Plate detector** | `runs/plate_detector/weights/best.pt` | `license_plate` | Trained — required, do not touch |
-| **Vehicle detector** | `runs/vehicle_detector/weights/best.pt` | `vehicle` (single unified class) | To be trained from Roboflow dataset |
+| Model | Architecture | Weights (canonical path) | Classes | Status |
+|-------|--------------|--------------------------|---------|--------|
+| **Plate detector** | YOLOv8 | `runs/plate_detector/weights/best.pt` | `license_plate` | Trained — required, do not touch |
+| **Vehicle detector** | **YOLO26-m** | `runs/vehicle_detector/weights/best.pt` | `vehicle` (single unified class) | To be trained from Roboflow dataset |
 
 **Policy:** every motorized vehicle — car, motorcycle, bus, truck, jeepney,
 tricycle… — is ONE class: `vehicle`. No per-type distinction anywhere in
@@ -44,11 +44,11 @@ scanning/ml/
 Export the dataset from Roboflow in **YOLOv8 format**, then from `backend/`:
 
 ```bash
-# From a zip (extracts into vehicle_ds/, then trains):
+# From a zip (extracts into vehicle_ds/, then trains YOLO26-m):
 python -m scanning.ml.train --zip path/to/roboflow-export.zip
 
 # Or unzip into scanning/ml/vehicle_ds/ yourself and run:
-python -m scanning.ml.train --epochs 100 --batch 16 --model-size s
+python -m scanning.ml.train --epochs 100 --batch 16
 ```
 
 Whatever class names the dataset uses (car, motorcycle, bus…), labels are
@@ -83,15 +83,32 @@ python -m scanning.ml.prepare_training
 python -m scanning.ml.train
 ```
 
-### Model sizes
+### Model sizes (YOLO26)
 
 | Size | Flag | Speed | Accuracy | GPU VRAM |
 |------|------|-------|----------|----------|
 | Nano | `--model-size n` | ⚡ Fastest | Good | ~2 GB |
 | Small | `--model-size s` | Fast | Better | ~4 GB |
-| Medium | `--model-size m` | Moderate | Best | ~6 GB |
+| **Medium (default)** | `--model-size m` | Moderate | Best | ~8 GB |
 
-> 💡 No GPU? Training works on CPU — use `--model-size n --batch 8`.
+The pretrained base (`yolo26m.pt`, 42 MB) is already downloaded in
+`backend/`; other sizes auto-download on first use.
+
+### GPU usage & memory cap
+
+Training auto-detects the local **RTX 3060 (6 GB)** and hard-caps its VRAM
+usage at **3 GB** by default, leaving headroom for the running server /
+other apps. The batch size is auto-computed to fit the cap.
+
+```bash
+python -m scanning.ml.train                  # GPU, capped at 3 GB, auto batch
+python -m scanning.ml.train --gpu-mem-gb 4   # raise the cap
+python -m scanning.ml.train --batch 8        # force an explicit batch size
+```
+
+The venv needs the CUDA build of torch (see the note in
+`requirements.txt`) — with the plain CPU wheels training falls back to CPU
+automatically.
 
 ---
 

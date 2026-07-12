@@ -1,6 +1,6 @@
 """
 scanning/ml/train.py — Train / fine-tune the unified single-class vehicle
-detector (YOLOv8).
+detector (YOLO26, size m by default).
 
 The model detects ONE class: "vehicle" (cars, motorcycles, buses, trucks,
 jeepneys… all unified).  License plates are handled by the separate
@@ -30,6 +30,7 @@ Security-camera augmentation profile:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -217,26 +218,68 @@ def _count_images(dataset_dir: Path, split_prefixes: tuple[str, ...]) -> int:
     return count
 
 
+def _setup_device(gpu_mem_gb: float) -> tuple[str, "float | None"]:
+    """
+    Pick the training device.  On CUDA, hard-cap this process's VRAM usage at
+    `gpu_mem_gb` (allocations beyond it raise OOM instead of eating the whole
+    card) and return an auto-batch fraction targeting ~90% of the cap, so
+    Ultralytics computes the largest batch size that fits inside it.
+
+    Returns (device, batch_fraction) — batch_fraction is None on CPU.
+    """
+    # Reduces fragmentation so the capped allocator is used efficiently.
+    # Must be set before the first CUDA allocation.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total_gb = props.total_memory / 1024**3
+            frac = min(1.0, gpu_mem_gb / total_gb)
+            torch.cuda.set_per_process_memory_fraction(frac, 0)
+            # TF32 tensor cores — free speedup on Ampere+ (RTX 3060)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+            print(f"⚡ GPU: {props.name} ({total_gb:.1f} GB) — hard-capped at "
+                  f"{gpu_mem_gb:.1f} GB ({frac:.0%} of VRAM)")
+            return "0", round(frac * 0.9, 2)
+    except Exception as exc:
+        print(f"⚠️  GPU setup failed ({exc}) — falling back to CPU")
+    print("🐢 No CUDA GPU available — training on CPU (slow for size m)")
+    return "cpu", None
+
+
 def train(
     epochs:        int  = 100,
-    batch:         int  = 16,
+    batch:         "int | float | None" = None,
     imgsz:         int  = 640,
-    model_size:    str  = "s",
+    model_size:    str  = "m",
     resume:        bool = False,
     freeze:        bool = True,
     freeze_layers: int  = 10,
     data_yaml:     Path | None = None,
+    gpu_mem_gb:    float = 3.0,
 ) -> None:
     """
     Train or fine-tune the single-class vehicle detector.
 
     Args:
+        batch:         Explicit batch size. Default None = auto: on GPU the
+                       batch is sized to fit the gpu_mem_gb cap; on CPU it's 8.
         freeze:        If True, freeze the first `freeze_layers` backbone layers.
                        Recommended when fine-tuning from an existing checkpoint.
-        freeze_layers: Number of backbone layers to freeze (YOLOv8n/s: 10 is safe).
+        freeze_layers: Number of backbone layers to freeze (10 covers the
+                       YOLO26 backbone stages, same as YOLOv8).
         data_yaml:     Path to a custom data.yaml. Defaults to vehicle_ds/data.yaml.
+        gpu_mem_gb:    Hard VRAM budget for this training process.
     """
     from ultralytics import YOLO
+
+    device, batch_frac = _setup_device(gpu_mem_gb)
+    if batch is None:
+        # Float in (0,1) → Ultralytics auto-batch targeting that VRAM fraction
+        batch = batch_frac if batch_frac is not None else 8
 
     data_yaml   = Path(data_yaml).resolve() if data_yaml else DATA_YAML
     dataset_dir = data_yaml.parent
@@ -278,11 +321,13 @@ def train(
         freeze_note = f" (backbone frozen: {freeze_layers} layers)" if freeze else ""
         print(f"   Strategy: fine-tune detection head{freeze_note}")
     else:
-        print(f"🧠 Starting from pretrained YOLOv8{model_size} (no existing checkpoint)")
-        model = YOLO(f"yolov8{model_size}.pt")
+        print(f"🧠 Starting from pretrained YOLO26{model_size} (no existing checkpoint)")
+        model = YOLO(f"yolo26{model_size}.pt")
         freeze = False  # Nothing to freeze from scratch
 
-    print(f"🧠 Model:    YOLOv8{model_size}  |  {epochs} epochs  |  batch {batch}  |  imgsz {imgsz}")
+    batch_desc = (f"auto (fits {gpu_mem_gb:.1f} GB VRAM cap)"
+                  if isinstance(batch, float) and batch < 1 else str(batch))
+    print(f"🧠 Model:    YOLO26{model_size}  |  {epochs} epochs  |  batch {batch_desc}  |  imgsz {imgsz}")
     if freeze:
         print(f"🧊 Freezing first {freeze_layers} backbone layers")
     print()
@@ -311,16 +356,17 @@ def train(
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
-        workers=2,
+        device=device,
+        workers=4 if device != "cpu" else 2,
         name=RUN_NAME,
         project=str(RUNS_DIR),
         exist_ok=True,
         patience=25,
         save=True,
         plots=True,
-        amp=True,
+        amp=True,                # FP16 tensor cores on the RTX 3060 — ~2× speed, ~half VRAM
         cache=False,
-        optimizer="Adam",        # Muon optimizer uses BF16 cuBLAS which fails on older GPUs
+        optimizer="Adam",        # YOLO26's default MuSGD/Muon uses BF16 cuBLAS which fails on older GPUs
         **augment_kwargs,
     )
 
@@ -352,16 +398,20 @@ def _print_eval(results) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train the single-class vehicle detector (YOLOv8)")
+    parser = argparse.ArgumentParser(description="Train the single-class vehicle detector (YOLO26)")
     parser.add_argument("--zip",           type=str,   default=None,
                         help="Roboflow YOLOv8 export zip — extracts into vehicle_ds/ before training")
     parser.add_argument("--data",          type=str,   default=None,
                         help="Path to data.yaml (default: vehicle_ds/data.yaml)")
     parser.add_argument("--epochs",        type=int,   default=100)
-    parser.add_argument("--batch",         type=int,   default=16)
+    parser.add_argument("--batch",         type=float, default=None,
+                        help="Batch size (default: auto-sized to fit --gpu-mem-gb on GPU, 8 on CPU)")
+    parser.add_argument("--gpu-mem-gb",    type=float, default=3.0,
+                        help="Hard VRAM budget for training (default: 3.0 GB)")
     parser.add_argument("--imgsz",         type=int,   default=640)
-    parser.add_argument("--model-size",    type=str,   default="s",
-                        choices=["n", "s", "m", "l", "x"])
+    parser.add_argument("--model-size",    type=str,   default="m",
+                        choices=["n", "s", "m", "l", "x"],
+                        help="YOLO26 size (default: m)")
     parser.add_argument("--resume",        action="store_true",
                         help="Resume from last.pt checkpoint")
     parser.add_argument("--freeze",        action="store_true", default=True,
@@ -376,13 +426,19 @@ if __name__ == "__main__":
     if args.zip:
         ingest_zip(Path(args.zip))
 
+    # --batch accepts floats for CLI parsing; whole numbers are real batch sizes
+    batch = args.batch
+    if batch is not None and batch >= 1:
+        batch = int(batch)
+
     train(
         epochs=args.epochs,
-        batch=args.batch,
+        batch=batch,
         imgsz=args.imgsz,
         model_size=args.model_size,
         resume=args.resume,
         freeze=args.freeze,
         freeze_layers=args.freeze_layers,
         data_yaml=Path(args.data) if args.data else None,
+        gpu_mem_gb=args.gpu_mem_gb,
     )
