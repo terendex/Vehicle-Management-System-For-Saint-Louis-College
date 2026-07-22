@@ -1,12 +1,13 @@
 """
-scanning/ml/collector.py — Collect scan data for the ML feedback loop.
+scanning/ml/collector.py — Collect scan data for later ML review.
 
 For each incoming scan, the system:
 1. Saves the raw image to `MLTrainingSample.image`.
 2. Re-uses the YOLO + OCR pipeline to auto-label the image (pseudo-labeling).
 3. Stores the plate number + bounding box with confidence metadata.
-4. When enough new high-confidence samples have accumulated since the
-   last training run, enqueues an incremental YOLOv8 retrain via Celery.
+
+Samples are stored for review only. Automatic retraining has been removed —
+the model is never retrained on its own from live scans.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -36,24 +36,6 @@ def _save_raw_image(raw_bytes: bytes) -> str:
     with open(path, "wb") as fh:
         fh.write(raw_bytes)
     return f"ml_samples/{filename}"
-
-
-def _should_trigger_retrain() -> bool:
-    cutoff   = timezone.now() - timedelta(minutes=30)
-    new_count = MLTrainingSample.objects.filter(
-        created_at__gte=cutoff,
-        used_in_training=False,
-    ).count()
-    return new_count >= settings.ML_SAMPLE_BATCH_SIZE
-
-
-def _enqueue_retrain() -> None:
-    try:
-        from .tasks import ml_retrain_task
-        task = ml_retrain_task.delay()
-        log.info("Retrain enqueued (task_id=%s)", task.id)
-    except Exception as exc:
-        log.error("Could not enqueue retrain task: %s", exc)
 
 
 def record_scan(raw_bytes: bytes) -> dict | None:
@@ -98,11 +80,6 @@ def record_scan(raw_bytes: bytes) -> dict | None:
     )
 
     log.info("Saved MLTrainingSample id=%s plates=%s conf=%s", sample.pk, plate_texts, confidences)
-
-    if _should_trigger_retrain() and settings.ML_AUTO_RETRAIN_ENABLED:
-        _enqueue_retrain()
-    else:
-        log.debug("Sample stored — retrain threshold not yet reached")
 
     return {
         "sample_id": sample.pk,
