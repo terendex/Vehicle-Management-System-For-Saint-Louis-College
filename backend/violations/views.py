@@ -14,12 +14,12 @@ from accounts.models import AuditLog
 
 
 class IsStaffRole(permissions.BasePermission):
-    """Allow access only to admin, cdso, or security roles."""
+    """Allow access only to the CDSO (admin) or security roles."""
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role in ('admin', 'cdso', 'security')
+            and request.user.role in ('admin', 'security')
         )
 
 
@@ -28,7 +28,7 @@ class IsCDSOOrAdmin(permissions.BasePermission):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role in ('admin', 'cdso')
+            and request.user.role == 'admin'
         )
 
 

@@ -10,7 +10,7 @@ const ACTION_LABELS = {
   user_deleted:    'User Deleted',
   user_disabled:   'User Disabled',
   user_enabled:    'User Enabled',
-  admin_replaced:  'Admin Replaced',
+  admin_replaced:  'CDSO Replaced',
   scan:            'Vehicle Scanned',
   vehicle_entered: 'Vehicle Entered',
   vehicle_exited:  'Vehicle Exited',
@@ -167,7 +167,7 @@ export default function SecurityAuditLog() {
                 <option value="user_deleted">User Deleted</option>
                 <option value="user_disabled">User Disabled</option>
                 <option value="user_enabled">User Enabled</option>
-                <option value="admin_replaced">Admin Replaced</option>
+                <option value="admin_replaced">CDSO Replaced</option>
               </select>
             </div>
             <div className="sal-filter-item">

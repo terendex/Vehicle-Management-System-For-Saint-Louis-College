@@ -329,7 +329,7 @@ export default function UserManagement() {
       await usersApi.replaceAdmin({
         full_name: adminForm.full_name.trim(), email: adminForm.email.trim(),
       })
-      showResult('Admin replaced. Login credentials have been emailed. Logging out…')
+      showResult('CDSO replaced. Login credentials have been emailed. Logging out…')
       setTimeout(() => { logout(); window.location.href = '/login' }, 1500)
     } catch (err) {
       const data = err.response?.data
@@ -339,7 +339,7 @@ export default function UserManagement() {
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         setFormErrors(errors); setModal('add')
-      } else { showResult('Failed to replace admin', 'error') }
+      } else { showResult('Failed to replace CDSO', 'error') }
       setSubmitting(false)
     }
   }
@@ -370,6 +370,7 @@ export default function UserManagement() {
       if (user.registrant_type === 'fetcher')  return 'Fetcher'
       return 'Vehicle Owner'
     }
+    if (user.role === 'admin') return 'CDSO'
     return user.role
   }
   const roleBadgeClass = (user) => {
@@ -578,7 +579,7 @@ export default function UserManagement() {
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal um-modal--wide" onClick={(e) => e.stopPropagation()}>
             <div className="um-modal-header">
-              <h2>{addType === 'admin' ? 'Replace Admin' : 'Add Security Guard'}</h2>
+              <h2>{addType === 'admin' ? 'Replace CDSO' : 'Add Security Guard'}</h2>
               <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
             </div>
 
@@ -605,8 +606,8 @@ export default function UserManagement() {
                     : { opacity: 0.75 }}
                 >
                   <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
-                  <span className="um-type-option-label">New Admin</span>
-                  <span className="um-type-option-desc">Replaces current admin account</span>
+                  <span className="um-type-option-label">New CDSO</span>
+                  <span className="um-type-option-desc">Replaces current CDSO account</span>
                 </div>
               </div>
 
@@ -667,12 +668,12 @@ export default function UserManagement() {
                   <div className="um-admin-warning">
                     <AlertTriangle size={18} />
                     <div className="um-admin-warning-text">
-                      <strong>Warning:</strong> This will <strong>delete your current admin account</strong> and create a new one. You will be logged out immediately.
+                      <strong>Warning:</strong> This will <strong>delete your current CDSO account</strong> and create a new one. You will be logged out immediately.
                     </div>
                   </div>
                   <div className="um-info-banner">
                     <Info size={14} />
-                    A temporary password will be auto-generated and emailed to the new admin.
+                    A temporary password will be auto-generated and emailed to the new CDSO.
                     They must change it on first login.
                   </div>
                   <div className="um-form-group">
@@ -955,8 +956,8 @@ export default function UserManagement() {
             <div className="um-modal-body">
               <div className="um-confirm-body">
                 <div className="um-confirm-icon info"><UserPlus size={24} /></div>
-                <h3>{addType === 'admin' ? 'Replace Admin?' : 'Create User?'}</h3>
-                <p>Are you sure you want to {addType === 'admin' ? 'replace the current admin' : 'create this new account'}?</p>
+                <h3>{addType === 'admin' ? 'Replace CDSO?' : 'Create User?'}</h3>
+                <p>Are you sure you want to {addType === 'admin' ? 'replace the current CDSO' : 'create this new account'}?</p>
               </div>
             </div>
             <div className="um-modal-footer">

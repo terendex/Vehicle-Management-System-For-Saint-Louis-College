@@ -23,7 +23,7 @@ const ACTION_LABELS = {
   user_deleted:    'User Deleted',
   user_disabled:   'User Disabled',
   user_enabled:    'User Enabled',
-  admin_replaced:  'Admin Replaced',
+  admin_replaced:  'CDSO Replaced',
   device_created:  'Device Added',
   device_updated:  'Device Updated',
   device_deleted:  'Device Removed',

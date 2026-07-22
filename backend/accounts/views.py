@@ -56,12 +56,12 @@ class IsAdminRole(permissions.BasePermission):
 
 
 class IsAdminOrCdso(permissions.BasePermission):
-    """Allow access to admin and CDSO staff."""
+    """Allow access to the CDSO (admin) role."""
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role in ('admin', 'cdso')
+            and request.user.role == 'admin'
         )
 
 

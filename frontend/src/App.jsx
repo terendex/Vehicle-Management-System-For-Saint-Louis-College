@@ -72,19 +72,14 @@ export default function App() {
           <Route path="/admin/suppliers" element={<SupplierManagement />} />
         </Route>
 
-        {/* Admin + CDSO shared routes */}
-        <Route element={<ProtectedRoute allowedRoles={['admin', 'cdso']} />}>
+        {/* Admin (CDSO) — settings, operations, parking, violations */}
+        <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
           <Route path="/admin/settings"    element={<SystemSettings />} />
           <Route path="/admin/entries"     element={<OperationsCenter />} />
           <Route path="/admin/parking"     element={<ParkingSpaceManagement />} />
           <Route path="/admin/violations"  element={<ViolationsManagement />} />
           {/* Legacy URL — Events now lives inside Parking Space Management */}
           <Route path="/admin/events"      element={<Navigate to="/admin/parking" replace />} />
-        </Route>
-
-        {/* CDSO Routes — landing redirects to settings */}
-        <Route element={<ProtectedRoute allowedRoles={['cdso']} />}>
-          <Route path="/cdso" element={<Navigate to="/admin/settings" replace />} />
         </Route>
 
         {/* Security Routes */}

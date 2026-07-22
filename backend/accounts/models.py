@@ -26,10 +26,9 @@ class UserManager(BaseUserManager):
 
 class User(AbstractUser):
     class Role(models.TextChoices):
-        ADMIN          = 'admin',          'Admin'
+        ADMIN          = 'admin',          'CDSO'
         SECURITY       = 'security',       'Security Personnel'
         VEHICLE_OWNER  = 'vehicle_owner',  'Registered Vehicle Owner'
-        CDSO           = 'cdso',           'CDSO Staff'
 
     class OwnerType(models.TextChoices):
         STUDENT  = 'student',  'Student'
@@ -49,7 +48,6 @@ class User(AbstractUser):
         'admin':         'ADM',
         'security':      'SEC',
         'vehicle_owner': 'OWN',
-        'cdso':          'CDS',
     }
 
     class Gate(models.TextChoices):
