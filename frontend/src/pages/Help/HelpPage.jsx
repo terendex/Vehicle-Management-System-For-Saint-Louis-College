@@ -7,12 +7,6 @@ import OwnerLayout from '../../components/Layout/OwnerLayout'
 import { HELP_TOPICS } from './helpContent'
 import './HelpPage.css'
 
-function layoutForRole(role) {
-  if (role === 'admin') return AdminLayout
-  if (role === 'security') return SecurityLayout
-  return OwnerLayout
-}
-
 // Flatten a topic's body into searchable text.
 function topicText(topic) {
   const parts = [topic.title, topic.category]
@@ -63,7 +57,6 @@ function Block({ block }) {
 export default function HelpPage() {
   const { user } = useAuthStore()
   const role = user?.role || 'vehicle_owner'
-  const Layout = layoutForRole(role)
 
   // Topics this role is allowed to see.
   const roleTopics = useMemo(
@@ -95,9 +88,8 @@ export default function HelpPage() {
     return [...map.entries()]
   }, [visibleTopics])
 
-  return (
-    <Layout>
-      <div className="help-page">
+  const content = (
+    <div className="help-page">
         <div className="help-header">
           <div>
             <h1 className="help-title"><HelpCircle size={20} /> Help &amp; User Manual</h1>
@@ -160,7 +152,10 @@ export default function HelpPage() {
             )}
           </article>
         </div>
-      </div>
-    </Layout>
+    </div>
   )
+
+  if (role === 'admin')    return <AdminLayout>{content}</AdminLayout>
+  if (role === 'security') return <SecurityLayout>{content}</SecurityLayout>
+  return <OwnerLayout>{content}</OwnerLayout>
 }
