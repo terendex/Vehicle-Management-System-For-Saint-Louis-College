@@ -33,6 +33,38 @@ def report_filename(report_name, ext):
     return f"{report_name} - {stamp}.{ext}"
 
 
+# ── Letterhead fonts ────────────────────────────────────────────────────────
+# "Saint Louis College" → Old English Text MT (blackletter); the tagline → a
+# formal script. The PDF registers the Windows TTFs and *embeds* the glyphs so
+# the file renders correctly on any viewer. Excel uses the font names (rendered
+# only if the viewer has them installed, else a graceful fallback). If a TTF is
+# missing, the PDF falls back to Times.
+_WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
+LH_INSTITUTION_TTF = 'OLDENGL.TTF'    # Old English Text MT
+LH_INSTITUTION_XLSX_FONT = 'Old English Text MT'
+
+_fonts_ready = False
+_PDF_INSTITUTION_FONT = 'Times-Bold'     # fallback until registered
+
+
+def _register_letterhead_fonts():
+    """Register the Old English TTF with reportlab once (embedded into each PDF).
+    The tagline stays on the built-in Times-Italic."""
+    global _fonts_ready, _PDF_INSTITUTION_FONT
+    if _fonts_ready:
+        return
+    _fonts_ready = True
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    path = os.path.join(_WIN_FONTS, LH_INSTITUTION_TTF)
+    if os.path.exists(path):
+        try:
+            pdfmetrics.registerFont(TTFont('SLC-OldEnglish', path))
+            _PDF_INSTITUTION_FONT = 'SLC-OldEnglish'
+        except Exception:
+            pass
+
+
 def branded_excel_response(*, filename, sheet_title, report_title, subtitle, headers, rows, col_widths):
     """Build a styled .xlsx with the SLC letterhead band, brand header row, footer."""
     from openpyxl import Workbook
@@ -46,21 +78,11 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     last_col = chr(ord('A') + n - 1)
     TNR = 'Times New Roman'
 
-    # ── Letterhead band ──────────────────────────────────────────────
-    if os.path.exists(REPORT_LOGO_PATH):
-        try:
-            logo = XLImage(REPORT_LOGO_PATH)
-            logo.width, logo.height = 132, 50
-            ws.add_image(logo, 'A1')
-        except Exception:
-            pass
-    for rh in (1, 2, 3, 4):
-        ws.row_dimensions[rh].height = 15
-
+    # ── Letterhead: text centred; seal floated just left of the name ─
     center = Alignment(horizontal='center')
     ws.merge_cells(f'A1:{last_col}1')
     ws['A1'] = LH_INSTITUTION
-    ws['A1'].font = Font(name=TNR, bold=True, size=18, color=REPORT_NAVY_HEX)
+    ws['A1'].font = Font(name=LH_INSTITUTION_XLSX_FONT, bold=True, size=20, color=REPORT_NAVY_HEX)
     ws['A1'].alignment = center
     ws.merge_cells(f'A2:{last_col}2')
     ws['A2'] = LH_LOCATION
@@ -70,6 +92,37 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     ws['A3'] = LH_TAGLINE
     ws['A3'].font = Font(name=TNR, italic=True, size=10, color='555555')
     ws['A3'].alignment = center
+    for rh in (1, 2, 3):
+        ws.row_dimensions[rh].height = 16
+
+    if os.path.exists(REPORT_LOGO_PATH):
+        try:
+            from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+            from openpyxl.drawing.xdr import XDRPositiveSize2D
+            from openpyxl.utils.units import pixels_to_EMU
+            logo = XLImage(REPORT_LOGO_PATH)
+            logo_px = 46
+            logo.width, logo.height = logo_px, logo_px
+            # Float the seal just to the left of the page-centred name.
+            def _col_px(wd):
+                return int(round(wd * 7)) + 5
+            total_px = sum(_col_px(wd) for wd in col_widths)
+            name_px = 250   # approx width of "Saint Louis College" in Old English
+            logo_left = max(0, total_px / 2 - name_px / 2 - 10 - logo_px)
+            acc, col_idx, col_off = 0, 0, 0
+            for i, wd in enumerate(col_widths):
+                cwpx = _col_px(wd)
+                if acc + cwpx > logo_left:
+                    col_idx, col_off = i, logo_left - acc
+                    break
+                acc += cwpx
+            marker = AnchorMarker(col=col_idx, colOff=pixels_to_EMU(col_off),
+                                  row=0, rowOff=pixels_to_EMU(1))
+            logo.anchor = OneCellAnchor(
+                _from=marker, ext=XDRPositiveSize2D(pixels_to_EMU(logo_px), pixels_to_EMU(logo_px)))
+            ws.add_image(logo)
+        except Exception:
+            pass
 
     ws.merge_cells(f'A5:{last_col}5')
     ws['A5'] = LH_ACCRED
@@ -128,6 +181,7 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
+    _register_letterhead_fonts()
     brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
     navy  = colors.HexColor(f'#{REPORT_NAVY_HEX}')
     generated_at = tz.localtime().strftime('%B %d, %Y %I:%M %p')
@@ -139,24 +193,29 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         canvas.saveState()
         w, h = landscape(A4)
         left = 15 * mm
-        # Seal
+        cx = w / 2
+        # Institution name is centred on the page; the seal tucks in just to its
+        # left (a crest beside the name), vertically centred on the text block.
+        inst_size = 22
+        inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
+        logo_w = 16 * mm
         if os.path.exists(REPORT_LOGO_PATH):
             try:
-                canvas.drawImage(REPORT_LOGO_PATH, left, h - 27 * mm,
-                                 width=20 * mm, height=20 * mm,
+                logo_x = cx - inst_w / 2 - 6 * mm - logo_w
+                canvas.drawImage(REPORT_LOGO_PATH, logo_x, h - 25 * mm,
+                                 width=logo_w, height=logo_w,
                                  preserveAspectRatio=True, mask='auto')
             except Exception:
                 pass
-        cx = w / 2
         canvas.setFillColor(navy)
-        canvas.setFont('Times-Bold', 20)
+        canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
         canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
         canvas.setFillColor(colors.HexColor('#333333'))
         canvas.setFont('Times-Roman', 10.5)
         canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
         canvas.setFillColor(colors.HexColor('#555555'))
-        canvas.setFont('Times-Italic', 10)
-        canvas.drawCentredString(cx, h - 23.5 * mm, LH_TAGLINE)
+        canvas.setFont('Times-Italic', 11)
+        canvas.drawCentredString(cx, h - 24 * mm, LH_TAGLINE)
         # Accreditation line (centred)
         canvas.setFont('Times-Roman', 7.5)
         canvas.setFillColor(colors.HexColor('#555555'))
