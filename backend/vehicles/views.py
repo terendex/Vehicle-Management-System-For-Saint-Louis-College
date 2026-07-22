@@ -1845,3 +1845,101 @@ class SupplierPlateView(APIView):
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Supplier plate removed | {desc} | By: {request.user.full_name}")
         return Response(status=204)
+
+
+# ── Vehicle Registrations Report (CDSO/admin — branded PDF & Excel) ──────────
+REGISTRATION_REPORT_HEADERS = ['#', 'Date', 'Plate', 'Registrant', 'Type', 'Vehicle', 'Status']
+
+
+def _filter_registrations_report(request):
+    """Filter registrations for a report — mirrors the management page knobs."""
+    qs = VehicleRegistration.objects.all()
+    date_from = request.query_params.get('date_from', '').strip()
+    date_to   = request.query_params.get('date_to', '').strip()
+    status_f  = request.query_params.get('status', '').strip()
+    search    = request.query_params.get('search', '').strip()
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    if status_f:
+        qs = qs.filter(status=status_f)
+    if search:
+        qs = qs.filter(Q(plate_number__icontains=search) | Q(full_name__icontains=search))
+
+    status_labels = dict(VehicleRegistration.Status.choices)
+    desc = []
+    if date_from or date_to:
+        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+    if status_f:
+        desc.append(f"Status: {status_labels.get(status_f, status_f)}")
+    if search:
+        desc.append(f"Search: '{search}'")
+    return qs.order_by('-created_at'), desc
+
+
+def _registration_report_rows(qs):
+    from django.utils import timezone as tz
+    reg_labels    = dict(VehicleRegistration.RegistrantType.choices)
+    status_labels = dict(VehicleRegistration.Status.choices)
+    rows = []
+    for i, r in enumerate(qs, start=1):
+        rows.append([
+            i,
+            tz.localtime(r.created_at).strftime('%b %d, %Y'),
+            r.plate_number or '—',
+            r.full_name or '—',
+            reg_labels.get(r.registrant_type, r.registrant_type or '—'),
+            r.vehicle_type or '—',
+            status_labels.get(r.status, r.status),
+        ])
+    return rows
+
+
+def _registration_report_subtitle(desc, count):
+    return ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
+
+
+class RegistrationReportExcelView(APIView):
+    """Download the (filtered) vehicle registrations as a branded Excel report — admin only."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_excel_response
+        qs, desc = _filter_registrations_report(request)
+        rows = _registration_report_rows(qs[:5000])
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                    f"by {getattr(request.user, 'full_name', '')} · "
+                    + _registration_report_subtitle(desc, len(rows)))
+        return branded_excel_response(
+            filename=f'registrations-report-{stamp}.xlsx',
+            sheet_title='Registrations',
+            report_title='Saint Louis College — Vehicle Management System · Vehicle Registrations Report',
+            subtitle=subtitle,
+            headers=REGISTRATION_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 16, 16, 28, 14, 16, 14],
+        )
+
+
+class RegistrationReportPdfView(APIView):
+    """Download the (filtered) vehicle registrations as a branded PDF report — admin only."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_pdf_response
+        qs, desc = _filter_registrations_report(request)
+        rows = _registration_report_rows(qs[:5000])
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        return branded_pdf_response(
+            filename=f'registrations-report-{stamp}.pdf',
+            report_title='Vehicle Registrations Report',
+            subtitle=_registration_report_subtitle(desc, len(rows)),
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=REGISTRATION_REPORT_HEADERS,
+            rows=rows,
+            col_widths_mm=[10, 30, 30, 60, 40, 40, 27],
+        )

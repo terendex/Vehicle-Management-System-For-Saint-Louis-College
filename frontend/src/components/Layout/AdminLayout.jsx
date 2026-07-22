@@ -56,8 +56,9 @@ function buildNavGroups(isAdmin) {
       icon: <Settings2 size={18} />,
       children: [
         { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
-        { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
+        { name: 'Vehicle Log',      path: '/admin/audit', icon: <ClipboardList size={18} /> },
         { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
+        { name: 'Help', path: '/help', icon: <HelpCircle size={18} /> },
       ],
     })
   }

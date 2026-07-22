@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
+import { usersApi } from '../../api/users'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
@@ -27,6 +28,21 @@ export default function SystemSettings() {
   const [gateForm, setGateForm]         = useState({ number: '', label: '' })
   const [addingGate, setAddingGate]     = useState(false)
   const [togglingGateId, setTogglingGateId] = useState(null)
+
+  // Backup & Restore state
+  const [downloading, setDownloading] = useState(false)
+  const [restoring, setRestoring]     = useState(false)
+  const [restoreFile, setRestoreFile] = useState(null) // File pending confirmation
+  const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
+
+  // Tick an elapsed-seconds counter while a backup/restore is in progress so the
+  // long-running restore visibly shows progression.
+  useEffect(() => {
+    if (!downloading && !restoring) { setElapsed(0); return }
+    setElapsed(0)
+    const timer = setInterval(() => setElapsed((e) => e + 1), 1000)
+    return () => clearInterval(timer)
+  }, [downloading, restoring])
 
   useEffect(() => {
     getSystemSettings()
@@ -126,6 +142,52 @@ export default function SystemSettings() {
       toast.error('Failed to remove notice.')
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  const handleDownloadBackup = async () => {
+    setDownloading(true)
+    try {
+      const blob = await usersApi.downloadBackup()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `slc-vms-backup-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Backup downloaded successfully.')
+    } catch {
+      toast.error('Failed to generate backup.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const handleRestorePick = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // reset so picking the same file again re-triggers
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      toast.error('Please choose a .json backup file.')
+      return
+    }
+    setRestoreFile(file) // opens the confirmation modal
+  }
+
+  const handleRestoreConfirm = async () => {
+    const file = restoreFile
+    setRestoreFile(null)
+    if (!file) return
+    setRestoring(true)
+    try {
+      const res = await usersApi.restoreBackup(file)
+      toast.success(`Restore complete — ${res.restored} records loaded. A safety snapshot was saved first.`)
+      fetchNotices()
+      fetchGates()
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Restore failed. No changes were applied.')
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -369,6 +431,55 @@ export default function SystemSettings() {
           </div>
         </div>
 
+        {/* ── Backup & Restore ──────────────────────────────────────── */}
+        <div className="ss-notice-section">
+          <div className="ss-card">
+            <div className="ss-card-head">
+              <div className="ss-card-icon ss-icon-blue">
+                <Database size={16} />
+              </div>
+              <div>
+                <h2 className="ss-card-title">Backup &amp; Restore</h2>
+                <p className="ss-card-desc">
+                  Download a full snapshot of all system data — users, vehicles, registrations,
+                  violations and scan logs — as a JSON file you can save anywhere, or restore the
+                  system from a previously downloaded backup.
+                </p>
+              </div>
+            </div>
+
+            <div className="ss-backup-actions">
+              <button
+                type="button"
+                className="ss-broadcast-btn"
+                onClick={handleDownloadBackup}
+                disabled={downloading || restoring}
+              >
+                {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
+                {downloading ? 'Preparing…' : 'Download Backup'}
+              </button>
+
+              <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
+                {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
+                {restoring ? 'Restoring…' : 'Restore from Backup'}
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  disabled={downloading || restoring}
+                  onChange={handleRestorePick}
+                />
+              </label>
+            </div>
+
+            <div className="ss-info-row">
+              <ShieldAlert size={13} />
+              Restoring overwrites current records with those in the backup. A safety snapshot of the
+              current data is saved automatically before any restore, and the load is rolled back if it fails.
+            </div>
+          </div>
+        </div>
+
         {/* ── Parking Notices ────────────────────────────────────────── */}
         <div className="ss-notice-section">
           <div className="ss-card ss-notice-card">
@@ -471,6 +582,46 @@ export default function SystemSettings() {
         )}
 
       </div>
+
+      {/* ── Backup / Restore progress overlay ─── */}
+      {(downloading || restoring) && (
+        <div className="ss-overlay">
+          <div className="ss-modal ss-loading-modal">
+            <Loader2 size={46} className="ss-spinner ss-loading-spinner" />
+            <h2 className="ss-modal-title">
+              {restoring ? 'Restoring data…' : 'Preparing backup…'}
+            </h2>
+            <p className="ss-modal-body">
+              {restoring
+                ? 'Loading records into the database. This can take a few minutes — please keep this page open and do not refresh.'
+                : 'Generating your backup file. It will download automatically when ready.'}
+            </p>
+            <span className="ss-loading-elapsed">
+              {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')} elapsed
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Restore Modal ─── */}
+      {restoreFile && (
+        <div className="ss-overlay" onClick={() => setRestoreFile(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setRestoreFile(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Restore from Backup?</h2>
+            <p className="ss-modal-body">
+              This will overwrite current system data with the contents of{' '}
+              <strong>{restoreFile.name}</strong>. A safety snapshot of the current data is saved
+              first, and the restore is rolled back automatically if anything goes wrong. Continue?
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreFile(null)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-danger" onClick={handleRestoreConfirm}>Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Confirm Deactivate Notice Modal ─── */}
       {confirmDeactivate && (

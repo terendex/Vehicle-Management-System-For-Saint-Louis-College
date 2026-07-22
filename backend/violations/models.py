@@ -58,6 +58,9 @@ class Violation(models.Model):
     cdso_report_issued   = models.BooleanField(default=False)
     official_receipt     = models.CharField(max_length=100, blank=True)
 
+    class Meta:
+        db_table = 'tbl_violation'
+
     @classmethod
     def compute_offense_number(cls, vehicle, violation_type) -> int:
         """Count active (uncleared) new-style violations of this type to get the next offense number."""

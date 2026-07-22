@@ -18,6 +18,7 @@ import DeviceManagement from './pages/Admin/DeviceManagement'
 import SystemSettings from './pages/Admin/SystemSettings'
 import ViolationsManagement from './pages/Admin/ViolationsManagement'
 import SupplierManagement from './pages/Admin/SupplierManagement'
+import HelpPage from './pages/Help/HelpPage'
 import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
 import SecurityParkingView from './pages/Security/SecurityParkingView'
 import SecurityAuditLogPage from './pages/Security/SecurityAuditLogPage'
@@ -94,6 +95,11 @@ export default function App() {
         {/* Owner Routes */}
         <Route element={<ProtectedRoute allowedRoles={['vehicle_owner']} />}>
           <Route path="/owner" element={<OwnerDashboard />} />
+        </Route>
+
+        {/* Help — available to every signed-in role */}
+        <Route element={<ProtectedRoute allowedRoles={['admin', 'security', 'vehicle_owner']} />}>
+          <Route path="/help" element={<HelpPage />} />
         </Route>
 
         {/* 404 */}

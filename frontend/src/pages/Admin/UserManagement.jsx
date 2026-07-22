@@ -5,6 +5,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
+import { toUpperName, normalizeEmail } from '../../utils/textFormat'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
@@ -624,6 +625,7 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={guardForm.full_name}
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
+                      onBlur={e => setGuardForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="e.g. Juan Dela Cruz" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
@@ -633,6 +635,7 @@ export default function UserManagement() {
                       type="email"
                       value={guardForm.email}
                       onChange={e => setGuardForm({ ...guardForm, email: e.target.value })}
+                      onBlur={e => setGuardForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="e.g. guard@slc.edu.ph" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
@@ -681,6 +684,7 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={adminForm.full_name}
                       onChange={e => setAdminForm({ ...adminForm, full_name: e.target.value })}
+                      onBlur={e => setAdminForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="Enter full name" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
@@ -689,6 +693,7 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
                       type="email" value={adminForm.email}
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
+                      onBlur={e => setAdminForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="Enter email address" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>

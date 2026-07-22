@@ -1,8 +1,10 @@
+import os
 from rest_framework import generics, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
@@ -491,8 +493,49 @@ class AuditLogListView(generics.ListAPIView):
         return qs.order_by('-created_at')
 
 
+# Brand colour + logo shared by the Audit Log Excel/PDF reports.
+REPORT_BRAND_HEX = '2A2B61'
+REPORT_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'slclogo.jpg')
+
+
+def _filter_audit_logs(request):
+    """Apply the same filters the Audit Log UI uses.
+
+    Returns (ordered_queryset, filters_desc) so the Excel and PDF exports stay
+    identical to what the operator sees on screen.
+    """
+    qs = AuditLog.objects.select_related('actor', 'target_user').all()
+    action    = request.query_params.get('action', '').strip()
+    date_from = request.query_params.get('date_from', '').strip()
+    date_to   = request.query_params.get('date_to', '').strip()
+    search    = request.query_params.get('search', '').strip()
+    if action:
+        qs = qs.filter(action=action)
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    if search:
+        qs = qs.filter(
+            Q(actor__user_code__icontains=search) |
+            Q(actor__full_name__icontains=search) |
+            Q(actor__email__icontains=search) |
+            Q(details__icontains=search)
+        )
+
+    action_labels = dict(AuditLog.Action.choices)
+    filters_desc = []
+    if action:
+        filters_desc.append(f"Action: {action_labels.get(action, action)}")
+    if date_from or date_to:
+        filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+    if search:
+        filters_desc.append(f"Search: '{search}'")
+    return qs.order_by('-created_at'), filters_desc
+
+
 class AuditLogExportView(APIView):
-    """Download the (filtered) audit log as a formatted Excel report — admin only."""
+    """Download the (filtered) audit log as a branded Excel report — admin only."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
@@ -500,57 +543,43 @@ class AuditLogExportView(APIView):
         from django.utils import timezone as tz
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, PatternFill
+        from openpyxl.drawing.image import Image as XLImage
 
-        qs = AuditLog.objects.select_related('actor', 'target_user').all()
-        action    = request.query_params.get('action', '').strip()
-        date_from = request.query_params.get('date_from', '').strip()
-        date_to   = request.query_params.get('date_to', '').strip()
-        search    = request.query_params.get('search', '').strip()
-        if action:
-            qs = qs.filter(action=action)
-        if date_from:
-            qs = qs.filter(created_at__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(created_at__date__lte=date_to)
-        if search:
-            qs = qs.filter(
-                Q(actor__user_code__icontains=search) |
-                Q(actor__full_name__icontains=search) |
-                Q(actor__email__icontains=search) |
-                Q(details__icontains=search)
-            )
-        rows = qs.order_by('-created_at')[:5000]
-
+        qs, filters_desc = _filter_audit_logs(request)
+        rows = qs[:5000]
         action_labels = dict(AuditLog.Action.choices)
 
         wb = Workbook()
         ws = wb.active
-        ws.title = 'Audit Log'
+        ws.title = 'Vehicle Log'
 
-        # Report header
-        ws.merge_cells('A1:F1')
-        ws['A1'] = 'Saint Louis College — Vehicle Management System · Audit Log Report'
-        ws['A1'].font = Font(bold=True, size=13, color='2A2B61')
+        # ── Branded header band: logo (col A) + title/subtitle (cols C–F) ──
+        if os.path.exists(REPORT_LOGO_PATH):
+            try:
+                logo = XLImage(REPORT_LOGO_PATH)
+                logo.width, logo.height = 150, 55
+                ws.add_image(logo, 'A1')
+            except Exception:
+                pass  # never let a logo hiccup break the export
+        for rh in (1, 2, 3):
+            ws.row_dimensions[rh].height = 18
 
-        filters_desc = []
-        if action:
-            filters_desc.append(f"Action: {action_labels.get(action, action)}")
-        if date_from or date_to:
-            filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
-        if search:
-            filters_desc.append(f"Search: '{search}'")
-        ws.merge_cells('A2:F2')
-        ws['A2'] = (
+        ws.merge_cells('C1:F1')
+        ws['C1'] = 'Saint Louis College — Vehicle Management System · Vehicle Log Report'
+        ws['C1'].font = Font(bold=True, size=13, color=REPORT_BRAND_HEX)
+
+        ws.merge_cells('C2:F2')
+        ws['C2'] = (
             f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
             f"by {getattr(request.user, 'full_name', '')} · "
             + ('; '.join(filters_desc) if filters_desc else 'All records')
             + f" · {rows.count() if hasattr(rows, 'count') else len(rows)} entries"
         )
-        ws['A2'].font = Font(size=10, color='666666')
+        ws['C2'].font = Font(size=10, color='666666')
 
-        # Column headers
+        # ── Column headers (row 4) ──
         headers = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
-        header_fill = PatternFill('solid', fgColor='2A2B61')
+        header_fill = PatternFill('solid', fgColor=REPORT_BRAND_HEX)
         for col, title in enumerate(headers, start=1):
             cell = ws.cell(row=4, column=col, value=title)
             cell.font = Font(bold=True, color='FFFFFF', size=11)
@@ -562,8 +591,10 @@ class AuditLogExportView(APIView):
         ws.freeze_panes = 'A5'
 
         wrap = Alignment(wrap_text=True, vertical='top')
+        last_row = 4
         for i, log in enumerate(rows, start=1):
             r = 4 + i
+            last_row = r
             actor = log.actor.full_name if log.actor else 'System'
             role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
             ws.cell(row=r, column=1, value=i)
@@ -575,13 +606,236 @@ class AuditLogExportView(APIView):
             c = ws.cell(row=r, column=6, value=log.details or '')
             c.alignment = wrap
 
+        # ── Footer ──
+        foot_row = last_row + 2
+        ws.merge_cells(start_row=foot_row, start_column=1, end_row=foot_row, end_column=6)
+        fcell = ws.cell(row=foot_row, column=1,
+                        value='— End of report · Saint Louis College CDSO · Confidential —')
+        fcell.font = Font(size=9, italic=True, color='999999')
+        fcell.alignment = Alignment(horizontal='center')
+
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
         stamp = tz.localtime().strftime('%Y%m%d-%H%M')
-        response['Content-Disposition'] = f'attachment; filename="audit-log-report-{stamp}.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="vehicle-log-report-{stamp}.xlsx"'
         wb.save(response)
         return response
+
+
+class AuditLogPdfExportView(APIView):
+    """Download the (filtered) audit log as a branded PDF report — admin only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from django.utils import timezone as tz
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import (
+            SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage,
+        )
+
+        qs, filters_desc = _filter_audit_logs(request)
+        rows = list(qs[:5000])
+        action_labels = dict(AuditLog.Action.choices)
+
+        brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
+        generated_by = getattr(request.user, 'full_name', '')
+        generated_at = tz.localtime().strftime('%B %d, %Y %I:%M %p')
+        subtitle = (
+            ('; '.join(filters_desc) if filters_desc else 'All records')
+            + f" · {len(rows)} entries"
+        )
+
+        # ── Header/footer painted on every page ──
+        def draw_frame(canvas, doc):
+            canvas.saveState()
+            w, h = landscape(A4)
+            # Logo top-left
+            if os.path.exists(REPORT_LOGO_PATH):
+                try:
+                    canvas.drawImage(
+                        REPORT_LOGO_PATH, 15 * mm, h - 26 * mm,
+                        width=30 * mm, height=16 * mm, preserveAspectRatio=True, mask='auto',
+                    )
+                except Exception:
+                    pass
+            canvas.setFillColor(brand)
+            canvas.setFont('Helvetica-Bold', 13)
+            canvas.drawString(50 * mm, h - 16 * mm, 'Saint Louis College — Vehicle Management System')
+            canvas.setFont('Helvetica', 10)
+            canvas.setFillColor(colors.HexColor('#666666'))
+            canvas.drawString(50 * mm, h - 21 * mm, 'Vehicle Log Report')
+            # Header rule
+            canvas.setStrokeColor(brand)
+            canvas.setLineWidth(1)
+            canvas.line(15 * mm, h - 28 * mm, w - 15 * mm, h - 28 * mm)
+            # Footer
+            canvas.setFont('Helvetica', 8)
+            canvas.setFillColor(colors.HexColor('#999999'))
+            canvas.drawString(15 * mm, 10 * mm,
+                              f'Generated {generated_at} by {generated_by} · Saint Louis College CDSO · Confidential')
+            canvas.drawRightString(w - 15 * mm, 10 * mm, f'Page {doc.page}')
+            canvas.restoreState()
+
+        buf_response = HttpResponse(content_type='application/pdf')
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        buf_response['Content-Disposition'] = f'attachment; filename="vehicle-log-report-{stamp}.pdf"'
+
+        doc = SimpleDocTemplate(
+            buf_response, pagesize=landscape(A4),
+            leftMargin=15 * mm, rightMargin=15 * mm,
+            topMargin=32 * mm, bottomMargin=16 * mm,
+            title='Vehicle Log Report',
+        )
+
+        cell_style = ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10)
+        head_style = ParagraphStyle('head', fontName='Helvetica-Bold', fontSize=9,
+                                    textColor=colors.white, leading=11)
+
+        sub_style = ParagraphStyle('sub', fontName='Helvetica', fontSize=9,
+                                   textColor=colors.HexColor('#666666'))
+        story = [Paragraph(subtitle, sub_style), Spacer(1, 4 * mm)]
+
+        table_head = [Paragraph(t, head_style) for t in
+                      ['#', 'Date &amp; Time', 'Actor', 'Role', 'Action', 'Details']]
+        data = [table_head]
+        for i, log in enumerate(rows, start=1):
+            actor = log.actor.full_name if log.actor else 'System'
+            role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
+            details = (log.details or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            data.append([
+                Paragraph(str(i), cell_style),
+                Paragraph(tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'), cell_style),
+                Paragraph(actor, cell_style),
+                Paragraph(role, cell_style),
+                Paragraph(action_labels.get(log.action, log.action), cell_style),
+                Paragraph(details, cell_style),
+            ])
+
+        if len(data) == 1:
+            data.append([Paragraph('No records match the selected filters.', cell_style)]
+                        + [Paragraph('', cell_style) for _ in range(5)])
+
+        col_widths = [10 * mm, 34 * mm, 42 * mm, 22 * mm, 38 * mm, 121 * mm]
+        table = Table(data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), brand),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
+            ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
+        ]))
+        story.append(table)
+
+        doc.build(story, onFirstPage=draw_frame, onLaterPages=draw_frame)
+        return buf_response
+
+
+# ── System Backup & Restore ─────────────────────────────────────────────────
+# App labels whose data is captured in a backup. Excludes contenttypes,
+# permissions, sessions, admin log entries and token blacklists (volatile /
+# rebuildable) — the schema itself is versioned by migrations.
+BACKUP_APPS = ['accounts', 'vehicles', 'scanning', 'violations', 'realtime']
+
+# High-volume ML artefacts (plate-recognition crops and training samples) are
+# rebuildable and would bloat every backup by ~20k rows / many MB, making
+# restore impractically slow. Business data — including the access log — is kept.
+BACKUP_EXCLUDE = ['scanning.platerecognitionrecord', 'scanning.mltrainingsample']
+
+
+class SystemBackupView(APIView):
+    """Download a JSON snapshot of all application data — admin (CDSO) only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        import io
+        from django.core.management import call_command
+        from django.http import HttpResponse
+        from django.utils import timezone as tz
+
+        buf = io.StringIO()
+        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=buf)
+
+        response = HttpResponse(buf.getvalue(), content_type='application/json')
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        response['Content-Disposition'] = f'attachment; filename="slc-vms-backup-{stamp}.json"'
+        log_action(request, AuditLog.Action.RECORD_UPDATED, details='System backup downloaded')
+        return response
+
+
+class SystemRestoreView(APIView):
+    """Restore application data from an uploaded JSON backup — admin (CDSO) only.
+
+    Safety measures: admin-only, file validated as a JSON fixture, an automatic
+    pre-restore snapshot of current data is saved to disk, and the load runs in
+    a single transaction that rolls back completely on any error.
+    """
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        import io, json, os, tempfile
+        from django.core.management import call_command
+        from django.db import transaction
+        from django.utils import timezone as tz
+
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({'error': 'No backup file provided.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > 50 * 1024 * 1024:
+            return Response({'error': 'Backup file is too large (max 50 MB).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        raw = upload.read()
+        try:
+            parsed = json.loads(raw.decode('utf-8'))
+            if not isinstance(parsed, list):
+                raise ValueError('not a fixture list')
+        except Exception:
+            return Response({'error': 'Invalid backup file — expected a JSON data fixture.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # 1) Auto safety snapshot of current data before overwriting anything.
+        safety = io.StringIO()
+        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=safety)
+        safety_dir = os.path.join(settings.BASE_DIR, 'backups')
+        os.makedirs(safety_dir, exist_ok=True)
+        safety_name = f"pre-restore-{tz.localtime().strftime('%Y%m%d-%H%M%S')}.json"
+        with open(os.path.join(safety_dir, safety_name), 'w', encoding='utf-8') as fh:
+            fh.write(safety.getvalue())
+
+        # 2) Load the uploaded fixture atomically (rolls back on any error).
+        tmp = tempfile.NamedTemporaryFile('wb', suffix='.json', delete=False)
+        try:
+            tmp.write(raw)
+            tmp.close()
+            with transaction.atomic():
+                call_command('loaddata', tmp.name, verbosity=0)
+        except Exception as exc:
+            return Response(
+                {'error': f'Restore failed and was rolled back. No changes were applied. ({exc})',
+                 'safety_backup': safety_name},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        log_action(request, AuditLog.Action.RECORD_UPDATED,
+                   details=f'System restore from backup ({len(parsed)} records)')
+        return Response({'restored': len(parsed), 'safety_backup': safety_name},
+                        status=status.HTTP_200_OK)
 
 
 class AuditLogClearView(APIView):

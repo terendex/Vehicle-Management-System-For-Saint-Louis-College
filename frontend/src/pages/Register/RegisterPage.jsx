@@ -298,6 +298,7 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
+      else if (name === 'email') formatted = formatted.toLowerCase()
       else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
       setFormData((prev) => ({

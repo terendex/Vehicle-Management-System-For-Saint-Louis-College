@@ -11,8 +11,9 @@ import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getAllViolations, resolveViolation,
-  issueCDSOReport, clearViolation,
+  issueCDSOReport, clearViolation, exportViolationsReport,
 } from '../../api/violations'
+import ReportExportBar from '../../components/ReportExportBar'
 import './ViolationsManagement.css'
 
 const TYPE_LABELS = {
@@ -342,6 +343,12 @@ export default function ViolationsManagement() {
             </div>
           )}
         </div>
+
+        <ReportExportBar
+          label="Violations Report"
+          fileBase="violations-report"
+          fetchBlob={exportViolationsReport}
+        />
 
         <div className="vm-toolbar">
           <div className="vm-filters">

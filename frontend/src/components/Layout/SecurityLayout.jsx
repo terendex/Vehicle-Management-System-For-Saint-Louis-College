@@ -16,6 +16,7 @@ import {
   EyeOff,
   KeyRound,
   Menu,
+  HelpCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -495,6 +496,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
     { name: 'Entry Management', path: entryPath,            icon: <ShieldCheck size={18} /> },
     { name: 'Parking',          path: '/security/parking',  icon: <ParkingCircle size={18} /> },
     { name: 'Vehicle Log',      path: '/security/audit',    icon: <ClipboardList size={18} /> },
+    { name: 'Help',             path: '/help',              icon: <HelpCircle size={18} /> },
   ]
 
   return (

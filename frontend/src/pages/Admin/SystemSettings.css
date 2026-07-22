@@ -374,6 +374,33 @@
 .ss-broadcast-btn:hover:not(:disabled) { background: #1e1f4a; }
 .ss-broadcast-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ── Backup & Restore ── */
+.ss-backup-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ss-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  color: #2A2B61;
+  border: 1.5px solid #2A2B61;
+  border-radius: 8px;
+  padding: 9px 20px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  font-family: inherit;
+}
+
+.ss-restore-btn:hover { background: #F0F2FF; }
+.ss-restore-btn.is-busy { opacity: 0.6; cursor: default; pointer-events: none; }
+
 .ss-notices-list-head {
   font-size: 0.78rem;
   font-weight: 700;
@@ -517,6 +544,31 @@
   color: #5A5F72;
   margin: 0;
   line-height: 1.55;
+}
+
+/* ── Backup / Restore progress overlay ── */
+.ss-loading-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 34px 30px;
+  max-width: 400px;
+}
+
+.ss-loading-spinner {
+  color: #2A2B61;
+}
+
+.ss-loading-elapsed {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2A2B61;
+  background: #F0F2FF;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
 }
 
 .ss-modal-actions {

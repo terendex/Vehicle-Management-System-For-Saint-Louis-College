@@ -88,6 +88,9 @@ class User(AbstractUser):
 
     objects = UserManager()
 
+    class Meta:
+        db_table = 'tbl_user'
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Generate user_code once after pk is available
@@ -128,6 +131,7 @@ class AuditLog(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_audit_log'
         ordering = ['-created_at']
 
     def __str__(self):
@@ -161,6 +165,7 @@ class Notification(models.Model):
     created_at   = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_notification'
         ordering = ['-created_at']
 
     def __str__(self):

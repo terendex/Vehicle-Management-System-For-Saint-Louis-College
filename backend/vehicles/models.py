@@ -14,6 +14,7 @@ class ReferenceItem(models.Model):
     order     = models.PositiveIntegerField(default=0)
 
     class Meta:
+        db_table = 'tbl_reference_item'
         unique_together = [('category', 'name')]
         ordering = ['category', 'order', 'name']
 
@@ -40,6 +41,9 @@ class Vehicle(models.Model):
         related_name='vehicles',
     )
     created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tbl_vehicle'
 
     def __str__(self):
         return self.plate_number
@@ -98,7 +102,7 @@ class VehicleRegistration(models.Model):
         DROP_AND_GO = 'drop_and_go', 'Fetcher / Drop & Go'
         STANDBY     = 'standby',     'Standby'
 
-    id = models.BigAutoField(primary_key=True, db_column='registration_id')
+    id = models.BigAutoField(primary_key=True, db_column='vehicle_registration_id')
     user = models.ForeignKey(
         'accounts.User',
         null=True, blank=True,
@@ -201,6 +205,7 @@ class VehicleRegistration(models.Model):
         return f"{self.full_name} - {self.plate_number} ({self.status})"
 
     class Meta:
+        db_table = 'tbl_vehicle_registration'
         # A plate and an email may each belong to at most ONE active
         # (pending/accepted) registration — enforcing a 1:1 email↔plate pairing
         # at the database level. Rejected registrations are exempt so a
@@ -260,6 +265,7 @@ class RuleConstraint(models.Model):
     updated_at      = models.DateTimeField(auto_now=True)
 
     class Meta:
+        db_table = 'tbl_rule_constraint'
         ordering = ['constraint_type', 'name']
 
     def __str__(self):
@@ -271,7 +277,7 @@ class ParkingZone(models.Model):
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
         CAR        = 'car',        'Car'
 
-    id                = models.BigAutoField(primary_key=True, db_column='zone_id')
+    id                = models.BigAutoField(primary_key=True, db_column='parking_zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
@@ -287,6 +293,7 @@ class ParkingZone(models.Model):
     created_at        = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_parking_zone'
         ordering = ['vehicle_category', 'name']
 
     def __str__(self):
@@ -295,7 +302,7 @@ class ParkingZone(models.Model):
 
 class SystemSettings(models.Model):
     """Singleton row (pk=1) for CDSO/admin-configurable system-wide parameters."""
-    id                   = models.BigAutoField(primary_key=True, db_column='settings_id')
+    id                   = models.BigAutoField(primary_key=True, db_column='system_settings_id')
     retention_years      = models.IntegerField(
         default=5,
         validators=[MinValueValidator(1), MaxValueValidator(10)],
@@ -326,6 +333,7 @@ class SystemSettings(models.Model):
     )
 
     class Meta:
+        db_table            = 'tbl_system_settings'
         verbose_name        = "System Settings"
         verbose_name_plural = "System Settings"
 
@@ -340,7 +348,7 @@ class SystemSettings(models.Model):
 
 class RegistrationPeriod(models.Model):
     """One row per registration window. Only one row may be active at a time."""
-    id         = models.BigAutoField(primary_key=True, db_column='period_id')
+    id         = models.BigAutoField(primary_key=True, db_column='registration_period_id')
     label      = models.CharField(max_length=150)
     start_date = models.DateField()
     end_date   = models.DateField()
@@ -348,6 +356,7 @@ class RegistrationPeriod(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_registration_period'
         ordering = ['-created_at']
 
     @classmethod
@@ -374,6 +383,7 @@ class Event(models.Model):
     created_at       = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_event'
         ordering = ['-date', '-created_at']
 
     def __str__(self):
@@ -382,7 +392,7 @@ class Event(models.Model):
 
 class ParkingNotice(models.Model):
     """Admin/CDSO-authored broadcast message sent to all vehicle owners by email and shown in their portal."""
-    id         = models.BigAutoField(primary_key=True, db_column='notice_id')
+    id         = models.BigAutoField(primary_key=True, db_column='parking_notice_id')
     title      = models.CharField(max_length=200)
     body       = models.TextField()
     is_active  = models.BooleanField(default=True)
@@ -393,6 +403,7 @@ class ParkingNotice(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_parking_notice'
         ordering = ['-created_at']
 
     def __str__(self):
@@ -400,7 +411,7 @@ class ParkingNotice(models.Model):
 
 
 class ParkingSpace(models.Model):
-    id           = models.BigAutoField(primary_key=True, db_column='space_id')
+    id           = models.BigAutoField(primary_key=True, db_column='parking_space_id')
     zone         = models.ForeignKey(
         ParkingZone, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='spaces',
@@ -420,6 +431,7 @@ class ParkingSpace(models.Model):
     updated_at   = models.DateTimeField(auto_now=True)
 
     class Meta:
+        db_table = 'tbl_parking_space'
         ordering = ['zone__vehicle_category', 'space_number']
 
     def __str__(self):
@@ -437,6 +449,7 @@ class Supplier(models.Model):
     updated_at   = models.DateTimeField(auto_now=True)
 
     class Meta:
+        db_table = 'tbl_supplier'
         ordering = ['company_name']
 
     def __str__(self):
@@ -451,6 +464,7 @@ class SupplierPlate(models.Model):
     created_at   = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_supplier_plate'
         ordering = ['plate_number']
 
     def __str__(self):
@@ -483,6 +497,7 @@ class Camera(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        db_table = 'tbl_camera'
         ordering = ['cam_number']
 
     def __str__(self):

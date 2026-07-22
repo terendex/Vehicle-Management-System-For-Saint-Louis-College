@@ -20,6 +20,7 @@ class Gate(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_gate'
         ordering = ['gate_id']
 
     def __str__(self):
@@ -38,6 +39,9 @@ class Office(models.Model):
     name    = models.CharField(max_length=100)
     contact = models.CharField(max_length=50, blank=True)
     email   = models.EmailField(blank=True)
+
+    class Meta:
+        db_table = 'tbl_office'
 
     def __str__(self):
         return self.name
@@ -69,6 +73,9 @@ class VisitorPass(models.Model):
     printed_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     exited_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'tbl_visitor_pass'
 
     @property
     def qr_payload(self):
@@ -117,6 +124,7 @@ class AccessLog(models.Model):
     )
 
     class Meta:
+        db_table = 'tbl_access_log'
         ordering = ['-scanned_at']
 
     def save(self, *args, **kwargs):
@@ -129,7 +137,7 @@ class AccessLog(models.Model):
 
 
 class GuardShift(models.Model):
-    id = models.BigAutoField(primary_key=True, db_column='shift_id')
+    id = models.BigAutoField(primary_key=True, db_column='guard_shift_id')
     guard = models.ForeignKey(
         'accounts.User', on_delete=models.CASCADE, related_name='shifts',
     )
@@ -142,6 +150,7 @@ class GuardShift(models.Model):
     )
 
     class Meta:
+        db_table = 'tbl_guard_shift'
         ordering = ['-clocked_in_at']
 
     def __str__(self):
@@ -176,7 +185,7 @@ class MLTrainingSample(models.Model):
         ('rejected',     'Rejected'),
     ]
 
-    id = models.BigAutoField(primary_key=True, db_column='sample_id')
+    id = models.BigAutoField(primary_key=True, db_column='ml_training_sample_id')
     image = models.ImageField(upload_to='ml_samples/')
     plate_number = models.CharField(max_length=20, blank=True)
     bbox = models.JSONField(default=dict, blank=True)
@@ -187,6 +196,7 @@ class MLTrainingSample(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'tbl_ml_training_sample'
         ordering = ['-created_at']
 
     def __str__(self):
@@ -194,7 +204,7 @@ class MLTrainingSample(models.Model):
 
 
 class PlateRecognitionRecord(models.Model):
-    id = models.BigAutoField(primary_key=True, db_column='record_id')
+    id = models.BigAutoField(primary_key=True, db_column='plate_recognition_record_id')
     track_id = models.IntegerField(db_index=True)
     plate_text = models.CharField(max_length=20, db_index=True)
     detection_confidence = models.FloatField()
@@ -203,6 +213,7 @@ class PlateRecognitionRecord(models.Model):
     snapshot_path = models.CharField(max_length=255, blank=True)
 
     class Meta:
+        db_table = 'tbl_plate_recognition_record'
         ordering = ['-timestamp']
         indexes = [
             models.Index(fields=['plate_text', '-timestamp'], name='plate_text_timestamp_idx'),

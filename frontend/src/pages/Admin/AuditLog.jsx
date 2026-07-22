@@ -4,7 +4,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
-  RefreshCw, ChevronLeft, ChevronRight, Download, X
+  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
 } from 'lucide-react'
 import './AuditLog.css'
 
@@ -68,7 +68,7 @@ export default function AuditLog() {
   const [totalCount, setTotalCount] = useState(0)
   const searchTimer = useRef(null)
 
-  const hasFilters = search || actionFilter || datePeriod !== 'all'
+  const hasFilters = search || actionFilter || datePeriod !== 'all' || dateFrom || dateTo
 
   const fetchLogs = useCallback(async (currentPage, currentSearch) => {
     setLoading(true)
@@ -130,29 +130,65 @@ export default function AuditLog() {
     }
   }
 
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting]       = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
+
+  const today = toDateStr(new Date())
+
+  const buildExportParams = () => {
+    const params = {}
+    if (actionFilter) params.action    = actionFilter
+    if (dateFrom)     params.date_from = dateFrom
+    if (dateTo)       params.date_to   = dateTo
+    if (search)       params.search    = search
+    return params
+  }
+
+  const downloadBlob = (blob, ext) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `vehicle-log-report-${toDateStr(new Date())}.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Server-generated Excel report of ALL rows matching the current filters
   const exportExcel = async () => {
     setExporting(true)
     try {
-      const params = {}
-      if (actionFilter) params.action    = actionFilter
-      if (dateFrom)     params.date_from = dateFrom
-      if (dateTo)       params.date_to   = dateTo
-      if (search)       params.search    = search
-      const blob = await usersApi.exportAuditLogsExcel(params)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `audit-log-report-${toDateStr(new Date())}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
+      const blob = await usersApi.exportAuditLogsExcel(buildExportParams())
+      downloadBlob(blob, 'xlsx')
     } catch {
       // download failed silently — surface nothing destructive
     } finally {
       setExporting(false)
     }
+  }
+
+  // Server-generated branded PDF report of ALL rows matching the current filters
+  const exportPdf = async () => {
+    setExportingPdf(true)
+    try {
+      const blob = await usersApi.exportAuditLogsPdf(buildExportParams())
+      downloadBlob(blob, 'pdf')
+    } catch {
+      // download failed silently
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
+  // Manual Date From/To — clears the active preset and validates ordering
+  const onDateFromChange = (value) => {
+    setDatePeriod('')
+    if (value && dateTo && value > dateTo) setDateTo(value)
+    setDateFrom(value)
+  }
+  const onDateToChange = (value) => {
+    setDatePeriod('')
+    if (value && dateFrom && value < dateFrom) setDateFrom(value)
+    setDateTo(value)
   }
 
   const formatDate = (iso) => {
@@ -180,7 +216,7 @@ export default function AuditLog() {
       <div className="al-page">
         <div className="al-header">
           <div>
-            <h1 className="al-title">Audit Log</h1>
+            <h1 className="al-title">Vehicle Log</h1>
             <p className="al-subtitle">Track all user management actions and vehicle scans.</p>
           </div>
           <div className="al-header-actions">
@@ -188,6 +224,10 @@ export default function AuditLog() {
               <ClipboardList size={16} />
               <span>{totalCount} events</span>
             </div>
+            <button className="al-export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Download all filtered entries as a branded PDF report">
+              <FileText size={14} />
+              <span>{exportingPdf ? 'Exporting…' : 'Export PDF'}</span>
+            </button>
             <button className="al-export-btn" onClick={exportExcel} disabled={exporting || totalCount === 0} title="Download all filtered entries as an Excel report">
               <Download size={14} />
               <span>{exporting ? 'Exporting…' : 'Export Excel'}</span>
@@ -206,6 +246,30 @@ export default function AuditLog() {
                 {p.label}
               </button>
             ))}
+          </div>
+
+          <div className="al-daterange">
+            <Calendar size={13} />
+            <input
+              className="al-date-input"
+              type="date"
+              value={dateFrom}
+              max={dateTo || today}
+              onChange={(e) => onDateFromChange(e.target.value)}
+              title="Date From"
+              aria-label="Date From"
+            />
+            <span className="al-daterange-sep">to</span>
+            <input
+              className="al-date-input"
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              max={today}
+              onChange={(e) => onDateToChange(e.target.value)}
+              title="Date To"
+              aria-label="Date To"
+            />
           </div>
 
           <div className="al-search-wrapper">
@@ -249,12 +313,12 @@ export default function AuditLog() {
           {loading ? (
             <div className="al-loading">
               <div className="al-spinner" />
-              <p>Loading audit logs...</p>
+              <p>Loading vehicle logs...</p>
             </div>
           ) : logs.length === 0 ? (
             <div className="al-empty">
               <ClipboardList size={48} />
-              <h3>No audit logs found</h3>
+              <h3>No vehicle logs found</h3>
               <p>{hasFilters ? 'No events match your current filters.' : 'No events recorded yet.'}</p>
             </div>
           ) : (

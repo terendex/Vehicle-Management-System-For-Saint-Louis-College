@@ -5,6 +5,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
+import ReportExportBar from '../../components/ReportExportBar'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -251,6 +252,12 @@ export default function VehicleRegistration() {
             <QrCode size={18} /> Registration Form QR
           </button>
         </div>
+
+        <ReportExportBar
+          label="Registrations Report"
+          fileBase="registrations-report"
+          fetchBlob={registrationApi.exportRegistrationsReport}
+        />
 
         {/* SECTION: Registrations */}
         <div className="section-container">

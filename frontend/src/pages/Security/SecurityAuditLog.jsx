@@ -176,6 +176,7 @@ export default function SecurityAuditLog() {
                 className="sal-date-input"
                 type="date"
                 value={dateFrom}
+                max={dateTo || new Date().toISOString().slice(0, 10)}
                 onChange={(e) => { setDateFrom(e.target.value); setDatePeriod('') }}
                 placeholder="From"
               />
@@ -186,6 +187,8 @@ export default function SecurityAuditLog() {
                 className="sal-date-input"
                 type="date"
                 value={dateTo}
+                min={dateFrom || undefined}
+                max={new Date().toISOString().slice(0, 10)}
                 onChange={(e) => { setDateTo(e.target.value); setDatePeriod('') }}
                 placeholder="To"
               />

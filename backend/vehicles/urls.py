@@ -31,6 +31,8 @@ urlpatterns = [
     path('parking-zones/<int:pk>/stream/', views.parking_stream_view, name='parking-stream'),
 
     # Registration management (Admin/CDSO)
+    path('registrations/report/excel/',    views.RegistrationReportExcelView.as_view(),  name='registration-report-excel'),
+    path('registrations/report/pdf/',       views.RegistrationReportPdfView.as_view(),    name='registration-report-pdf'),
     path('registrations/pending/',         views.PendingRegistrationsListView.as_view(), name='list-pending-registrations'),
     path('registrations/<int:pk>/accept/', views.AcceptRegistrationView.as_view(),       name='accept-registration'),
     path('registrations/<int:pk>/reject/', views.RejectRegistrationView.as_view(),       name='reject-registration'),

@@ -245,3 +245,107 @@ class MyViolationsView(APIView):
             Q(is_released=True) | Q(is_resolved=True)
         ).select_related('vehicle__user', 'issued_by').order_by('-issued_at')
         return Response(ViolationSerializer(violations, many=True, context={'request': request}).data)
+
+
+# ── Violations Report (CDSO/admin — branded PDF & Excel) ─────────────────────
+VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation', 'Fee (PHP)', 'Status', 'Issued By']
+
+
+def _filter_violations_report(request):
+    """Filter the violations for a report — same knobs as the management page."""
+    qs = Violation.objects.select_related('vehicle', 'vehicle__user', 'issued_by').all()
+    date_from = request.query_params.get('date_from', '').strip()
+    date_to   = request.query_params.get('date_to', '').strip()
+    status_f  = request.query_params.get('status', '').strip()
+    search    = request.query_params.get('search', '').strip()
+    if date_from:
+        qs = qs.filter(issued_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(issued_at__date__lte=date_to)
+    if status_f:
+        qs = qs.filter(status=status_f)
+    if search:
+        qs = qs.filter(Q(vehicle__plate_number__icontains=search) |
+                       Q(vehicle__user__full_name__icontains=search))
+
+    status_labels = dict(Violation.Status.choices)
+    desc = []
+    if date_from or date_to:
+        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+    if status_f:
+        desc.append(f"Status: {status_labels.get(status_f, status_f)}")
+    if search:
+        desc.append(f"Search: '{search}'")
+    return qs.order_by('-issued_at'), desc
+
+
+def _violation_report_rows(qs):
+    from django.utils import timezone as tz
+    type_labels   = dict(Violation.Type.choices)
+    status_labels = dict(Violation.Status.choices)
+    rows = []
+    for i, v in enumerate(qs, start=1):
+        plate     = v.vehicle.plate_number if v.vehicle else '—'
+        owner     = v.vehicle.user.full_name if (v.vehicle and v.vehicle.user) else '—'
+        issued_by = v.issued_by.full_name if v.issued_by else 'System'
+        rows.append([
+            i,
+            tz.localtime(v.issued_at).strftime('%b %d, %Y %I:%M %p'),
+            plate, owner,
+            type_labels.get(v.violation_type, v.violation_type),
+            f"{v.fine_amount:.2f}",
+            status_labels.get(v.status, v.status),
+            issued_by,
+        ])
+    return rows
+
+
+def _violation_report_subtitle(request, desc, count):
+    from django.utils import timezone as tz
+    body = ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
+    return body
+
+
+class ViolationReportExcelView(APIView):
+    """Download the (filtered) violations as a branded Excel report — admin only."""
+    permission_classes = [IsCDSOOrAdmin]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_excel_response
+        qs, desc = _filter_violations_report(request)
+        rows = _violation_report_rows(qs[:5000])
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                    f"by {getattr(request.user, 'full_name', '')} · "
+                    + _violation_report_subtitle(request, desc, len(rows)))
+        return branded_excel_response(
+            filename=f'violations-report-{stamp}.xlsx',
+            sheet_title='Violations',
+            report_title='Saint Louis College — Vehicle Management System · Violations Report',
+            subtitle=subtitle,
+            headers=VIOLATION_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 21, 16, 26, 22, 12, 14, 22],
+        )
+
+
+class ViolationReportPdfView(APIView):
+    """Download the (filtered) violations as a branded PDF report — admin only."""
+    permission_classes = [IsCDSOOrAdmin]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_pdf_response
+        qs, desc = _filter_violations_report(request)
+        rows = _violation_report_rows(qs[:5000])
+        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
+        return branded_pdf_response(
+            filename=f'violations-report-{stamp}.pdf',
+            report_title='Violations Report',
+            subtitle=_violation_report_subtitle(request, desc, len(rows)),
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=VIOLATION_REPORT_HEADERS,
+            rows=rows,
+            col_widths_mm=[10, 34, 26, 50, 40, 22, 30, 55],
+        )

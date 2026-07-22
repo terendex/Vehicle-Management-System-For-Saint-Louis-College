@@ -445,6 +445,7 @@ export default function RuleConstraints() {
                       type="date"
                       className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
                       value={periodForm.start_date}
+                      min={new Date().toISOString().slice(0, 10)}
                       onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
                     />
                     {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
