@@ -312,17 +312,16 @@ class ViolationReportExcelView(APIView):
 
     def get(self, request):
         from django.utils import timezone as tz
-        from report_utils import branded_excel_response
+        from report_utils import branded_excel_response, report_filename
         qs, desc = _filter_violations_report(request)
         rows = _violation_report_rows(qs[:5000])
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "
                     + _violation_report_subtitle(request, desc, len(rows)))
         return branded_excel_response(
-            filename=f'violations-report-{stamp}.xlsx',
+            filename=report_filename('Violations Report', 'xlsx'),
             sheet_title='Violations',
-            report_title='Saint Louis College — Vehicle Management System · Violations Report',
+            report_title='Violations Report',
             subtitle=subtitle,
             headers=VIOLATION_REPORT_HEADERS,
             rows=rows,
@@ -336,12 +335,11 @@ class ViolationReportPdfView(APIView):
 
     def get(self, request):
         from django.utils import timezone as tz
-        from report_utils import branded_pdf_response
+        from report_utils import branded_pdf_response, report_filename
         qs, desc = _filter_violations_report(request)
         rows = _violation_report_rows(qs[:5000])
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
         return branded_pdf_response(
-            filename=f'violations-report-{stamp}.pdf',
+            filename=report_filename('Violations Report', 'pdf'),
             report_title='Violations Report',
             subtitle=_violation_report_subtitle(request, desc, len(rows)),
             generated_by=getattr(request.user, 'full_name', ''),

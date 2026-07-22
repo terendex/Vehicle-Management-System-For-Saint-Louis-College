@@ -81,14 +81,44 @@
 
 .al-toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
   background: #fff;
   border: 1.5px solid #E2E6EE;
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
+}
+
+.al-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.al-toolbar-row:first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #EEF1F7;
+}
+
+.al-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2A2B61;
+  white-space: nowrap;
+}
+
+.al-toolbar-label svg { color: #9CA3AF; }
+
+.al-daterange-or {
+  font-size: 11.5px;
+  color: #9CA3AF;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .al-sep {
@@ -101,7 +131,8 @@
 
 .al-search-wrapper {
   position: relative;
-  width: 200px;
+  flex: 1 1 260px;
+  min-width: 220px;
 }
 
 .al-search-wrapper > svg:first-child {

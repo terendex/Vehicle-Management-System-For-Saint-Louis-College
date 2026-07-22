@@ -281,6 +281,53 @@ export default function SystemSettings() {
               </div>
             </div>
 
+            {/* ── Backup & Restore ──────────────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon ss-icon-blue">
+                  <Database size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Backup &amp; Restore</h2>
+                  <p className="ss-card-desc">
+                    Download a full snapshot of all system data — users, vehicles, registrations,
+                    violations and scan logs — as a JSON file you can save anywhere, or restore the
+                    system from a previously downloaded backup.
+                  </p>
+                </div>
+              </div>
+
+              <div className="ss-backup-actions">
+                <button
+                  type="button"
+                  className="ss-broadcast-btn"
+                  onClick={handleDownloadBackup}
+                  disabled={downloading || restoring}
+                >
+                  {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
+                  {downloading ? 'Preparing…' : 'Download Backup'}
+                </button>
+
+                <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
+                  {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
+                  {restoring ? 'Restoring…' : 'Restore from Backup'}
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    disabled={downloading || restoring}
+                    onChange={handleRestorePick}
+                  />
+                </label>
+              </div>
+
+              <div className="ss-info-row">
+                <ShieldAlert size={13} />
+                Restoring overwrites current records with those in the backup. A safety snapshot of the
+                current data is saved automatically before any restore, and the load is rolled back if it fails.
+              </div>
+            </div>
+
             {/* ── Scan Grace Period ─────────────────────────────────────── */}
             <div className="ss-card">
               <div className="ss-card-head">
@@ -428,55 +475,6 @@ export default function SystemSettings() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
-
-        {/* ── Backup & Restore ──────────────────────────────────────── */}
-        <div className="ss-notice-section">
-          <div className="ss-card">
-            <div className="ss-card-head">
-              <div className="ss-card-icon ss-icon-blue">
-                <Database size={16} />
-              </div>
-              <div>
-                <h2 className="ss-card-title">Backup &amp; Restore</h2>
-                <p className="ss-card-desc">
-                  Download a full snapshot of all system data — users, vehicles, registrations,
-                  violations and scan logs — as a JSON file you can save anywhere, or restore the
-                  system from a previously downloaded backup.
-                </p>
-              </div>
-            </div>
-
-            <div className="ss-backup-actions">
-              <button
-                type="button"
-                className="ss-broadcast-btn"
-                onClick={handleDownloadBackup}
-                disabled={downloading || restoring}
-              >
-                {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
-                {downloading ? 'Preparing…' : 'Download Backup'}
-              </button>
-
-              <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
-                {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
-                {restoring ? 'Restoring…' : 'Restore from Backup'}
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  hidden
-                  disabled={downloading || restoring}
-                  onChange={handleRestorePick}
-                />
-              </label>
-            </div>
-
-            <div className="ss-info-row">
-              <ShieldAlert size={13} />
-              Restoring overwrites current records with those in the backup. A safety snapshot of the
-              current data is saved automatically before any restore, and the load is rolled back if it fails.
-            </div>
           </div>
         </div>
 

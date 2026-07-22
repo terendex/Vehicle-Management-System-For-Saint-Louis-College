@@ -1,8 +1,9 @@
 """Shared branded report builders (Excel + PDF) for the admin/CDSO reports.
 
-Keeps the Saint Louis College branding — logo header, brand-coloured table
-header, footer with generation stamp + page numbers — consistent across every
-report (Vehicle Log, Violations, Registrations).
+Every report carries a text reconstruction of the Saint Louis College
+letterhead — seal, "Saint Louis College", "of San Fernando, La Union", the
+"Beacon of Wisdom" tagline, and the accreditation line — followed by the
+brand-coloured table and a footer with generation stamp + page numbers.
 """
 import os
 from django.conf import settings
@@ -10,11 +11,30 @@ from django.http import HttpResponse
 from django.utils import timezone as tz
 
 REPORT_BRAND_HEX = '2A2B61'
+REPORT_NAVY_HEX  = '1B2A63'
 REPORT_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'slclogo.jpg')
+
+# Letterhead text (reconstruction of the official SLC letterhead).
+LH_INSTITUTION = 'Saint Louis College'
+LH_LOCATION    = 'of San Fernando, La Union'
+LH_TAGLINE     = 'The Beacon of Wisdom in the North'
+LH_ACCRED      = ('•  Center of Excellence in Teacher Education        '
+                  '•  ISO 9001: 2015 Quality Management System Certified        '
+                  '•  CHED Deregulated Status')
+
+
+def report_filename(report_name, ext):
+    """Filesystem-safe, human-readable report filename with date + time.
+
+    e.g. report_filename('Vehicle Log Report', 'pdf')
+         -> 'Vehicle Log Report - 2026-07-22 09-30 PM.pdf'
+    """
+    stamp = tz.localtime().strftime('%Y-%m-%d %I-%M %p')
+    return f"{report_name} - {stamp}.{ext}"
 
 
 def branded_excel_response(*, filename, sheet_title, report_title, subtitle, headers, rows, col_widths):
-    """Build a styled .xlsx: logo band, title/subtitle, brand header row, footer."""
+    """Build a styled .xlsx with the SLC letterhead band, brand header row, footer."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.drawing.image import Image as XLImage
@@ -24,37 +44,63 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     ws.title = sheet_title
     n = len(headers)
     last_col = chr(ord('A') + n - 1)
+    TNR = 'Times New Roman'
 
+    # ── Letterhead band ──────────────────────────────────────────────
     if os.path.exists(REPORT_LOGO_PATH):
         try:
             logo = XLImage(REPORT_LOGO_PATH)
-            logo.width, logo.height = 150, 55
+            logo.width, logo.height = 132, 50
             ws.add_image(logo, 'A1')
         except Exception:
             pass
-    for rh in (1, 2, 3):
-        ws.row_dimensions[rh].height = 18
+    for rh in (1, 2, 3, 4):
+        ws.row_dimensions[rh].height = 15
 
-    ws.merge_cells(f'C1:{last_col}1')
-    ws['C1'] = report_title
-    ws['C1'].font = Font(bold=True, size=13, color=REPORT_BRAND_HEX)
-    ws.merge_cells(f'C2:{last_col}2')
-    ws['C2'] = subtitle
-    ws['C2'].font = Font(size=10, color='666666')
+    center = Alignment(horizontal='center')
+    ws.merge_cells(f'A1:{last_col}1')
+    ws['A1'] = LH_INSTITUTION
+    ws['A1'].font = Font(name=TNR, bold=True, size=18, color=REPORT_NAVY_HEX)
+    ws['A1'].alignment = center
+    ws.merge_cells(f'A2:{last_col}2')
+    ws['A2'] = LH_LOCATION
+    ws['A2'].font = Font(name=TNR, size=11, color='333333')
+    ws['A2'].alignment = center
+    ws.merge_cells(f'A3:{last_col}3')
+    ws['A3'] = LH_TAGLINE
+    ws['A3'].font = Font(name=TNR, italic=True, size=10, color='555555')
+    ws['A3'].alignment = center
 
+    ws.merge_cells(f'A5:{last_col}5')
+    ws['A5'] = LH_ACCRED
+    ws['A5'].font = Font(name=TNR, size=8, color='555555')
+    ws['A5'].alignment = center
+
+    # ── Report title + subtitle (centred) ────────────────────────────
+    ws.merge_cells(f'A6:{last_col}6')
+    ws['A6'] = report_title
+    ws['A6'].font = Font(bold=True, size=13, color=REPORT_BRAND_HEX)
+    ws['A6'].alignment = center
+    ws.merge_cells(f'A7:{last_col}7')
+    ws['A7'] = subtitle
+    ws['A7'].font = Font(size=10, color='666666')
+    ws['A7'].alignment = center
+
+    # ── Column headers (row 9) ───────────────────────────────────────
+    header_row = 9
     header_fill = PatternFill('solid', fgColor=REPORT_BRAND_HEX)
     for col, title in enumerate(headers, start=1):
-        cell = ws.cell(row=4, column=col, value=title)
+        cell = ws.cell(row=header_row, column=col, value=title)
         cell.font = Font(bold=True, color='FFFFFF', size=11)
         cell.fill = header_fill
         cell.alignment = Alignment(vertical='center')
 
     for i, width in enumerate(col_widths):
         ws.column_dimensions[chr(ord('A') + i)].width = width
-    ws.freeze_panes = 'A5'
+    ws.freeze_panes = f'A{header_row + 1}'
 
     wrap = Alignment(wrap_text=True, vertical='top')
-    r = 4
+    r = header_row
     for row in rows:
         r += 1
         for col, val in enumerate(row, start=1):
@@ -75,7 +121,7 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
 
 
 def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows, col_widths_mm):
-    """Build a landscape A4 PDF with logo header, brand table and footer."""
+    """Build a landscape A4 PDF with the SLC letterhead, brand table and footer."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -83,6 +129,7 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
     brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
+    navy  = colors.HexColor(f'#{REPORT_NAVY_HEX}')
     generated_at = tz.localtime().strftime('%B %d, %Y %I:%M %p')
 
     def esc(s):
@@ -91,25 +138,41 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     def draw_frame(canvas, doc):
         canvas.saveState()
         w, h = landscape(A4)
+        left = 15 * mm
+        # Seal
         if os.path.exists(REPORT_LOGO_PATH):
             try:
-                canvas.drawImage(REPORT_LOGO_PATH, 15 * mm, h - 26 * mm,
-                                 width=30 * mm, height=16 * mm,
+                canvas.drawImage(REPORT_LOGO_PATH, left, h - 27 * mm,
+                                 width=20 * mm, height=20 * mm,
                                  preserveAspectRatio=True, mask='auto')
             except Exception:
                 pass
+        cx = w / 2
+        canvas.setFillColor(navy)
+        canvas.setFont('Times-Bold', 20)
+        canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
+        canvas.setFillColor(colors.HexColor('#333333'))
+        canvas.setFont('Times-Roman', 10.5)
+        canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
+        canvas.setFillColor(colors.HexColor('#555555'))
+        canvas.setFont('Times-Italic', 10)
+        canvas.drawCentredString(cx, h - 23.5 * mm, LH_TAGLINE)
+        # Accreditation line (centred)
+        canvas.setFont('Times-Roman', 7.5)
+        canvas.setFillColor(colors.HexColor('#555555'))
+        canvas.drawCentredString(cx, h - 30 * mm, LH_ACCRED)
+        # Rule
+        canvas.setStrokeColor(navy)
+        canvas.setLineWidth(1.2)
+        canvas.line(left, h - 33 * mm, w - 15 * mm, h - 33 * mm)
+        # Report title (centred)
         canvas.setFillColor(brand)
-        canvas.setFont('Helvetica-Bold', 13)
-        canvas.drawString(50 * mm, h - 16 * mm, 'Saint Louis College — Vehicle Management System')
-        canvas.setFont('Helvetica', 10)
-        canvas.setFillColor(colors.HexColor('#666666'))
-        canvas.drawString(50 * mm, h - 21 * mm, report_title)
-        canvas.setStrokeColor(brand)
-        canvas.setLineWidth(1)
-        canvas.line(15 * mm, h - 28 * mm, w - 15 * mm, h - 28 * mm)
+        canvas.setFont('Helvetica-Bold', 11)
+        canvas.drawCentredString(cx, h - 39 * mm, report_title)
+        # Footer
         canvas.setFont('Helvetica', 8)
         canvas.setFillColor(colors.HexColor('#999999'))
-        canvas.drawString(15 * mm, 10 * mm,
+        canvas.drawString(left, 10 * mm,
                           f'Generated {generated_at} by {generated_by} · Saint Louis College CDSO · Confidential')
         canvas.drawRightString(w - 15 * mm, 10 * mm, f'Page {doc.page}')
         canvas.restoreState()
@@ -120,7 +183,7 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     doc = SimpleDocTemplate(
         resp, pagesize=landscape(A4),
         leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=32 * mm, bottomMargin=16 * mm, title=report_title,
+        topMargin=44 * mm, bottomMargin=16 * mm, title=report_title,
     )
     cell_style = ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10)
     head_style = ParagraphStyle('head', fontName='Helvetica-Bold', fontSize=9,

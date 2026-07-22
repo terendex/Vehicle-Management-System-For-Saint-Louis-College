@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { FileText, Download, Calendar, Loader2, FileBarChart2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { reportFileName } from '../utils/reportName'
 import './ReportExportBar.css'
 
 // Reusable report controls: Date From / Date To (validated) + branded PDF/Excel
 // download. `fetchBlob(format, params)` must return a Promise<Blob>, where
 // format is 'pdf' | 'excel' and params carries date_from / date_to.
-export default function ReportExportBar({ label = 'Report', fileBase, fetchBlob }) {
+export default function ReportExportBar({ label = 'Report', fetchBlob }) {
   const [from, setFrom] = useState('')
   const [to, setTo]     = useState('')
   const [busy, setBusy] = useState(null) // 'pdf' | 'excel' | null
@@ -22,7 +23,7 @@ export default function ReportExportBar({ label = 'Report', fileBase, fetchBlob 
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${fileBase}-${today}.${format === 'excel' ? 'xlsx' : 'pdf'}`
+      a.download = reportFileName(label, format === 'excel' ? 'xlsx' : 'pdf')
       a.click()
       URL.revokeObjectURL(url)
       toast.success(`${format === 'excel' ? 'Excel' : 'PDF'} report downloaded.`)

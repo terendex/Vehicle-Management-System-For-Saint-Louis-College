@@ -493,11 +493,6 @@ class AuditLogListView(generics.ListAPIView):
         return qs.order_by('-created_at')
 
 
-# Brand colour + logo shared by the Audit Log Excel/PDF reports.
-REPORT_BRAND_HEX = '2A2B61'
-REPORT_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'slclogo.jpg')
-
-
 def _filter_audit_logs(request):
     """Apply the same filters the Audit Log UI uses.
 
@@ -534,210 +529,70 @@ def _filter_audit_logs(request):
     return qs.order_by('-created_at'), filters_desc
 
 
+AUDIT_REPORT_HEADERS = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
+
+
+def _audit_report_rows(qs):
+    from django.utils import timezone as tz
+    action_labels = dict(AuditLog.Action.choices)
+    rows = []
+    for i, log in enumerate(qs, start=1):
+        actor = log.actor.full_name if log.actor else 'System'
+        role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
+        rows.append([
+            i,
+            tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'),
+            actor, role,
+            action_labels.get(log.action, log.action),
+            log.details or '',
+        ])
+    return rows
+
+
 class AuditLogExportView(APIView):
-    """Download the (filtered) audit log as a branded Excel report — admin only."""
+    """Download the (filtered) vehicle log as a branded Excel report — admin only."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        from django.http import HttpResponse
         from django.utils import timezone as tz
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, PatternFill
-        from openpyxl.drawing.image import Image as XLImage
-
+        from report_utils import branded_excel_response, report_filename
         qs, filters_desc = _filter_audit_logs(request)
-        rows = qs[:5000]
-        action_labels = dict(AuditLog.Action.choices)
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Vehicle Log'
-
-        # ── Branded header band: logo (col A) + title/subtitle (cols C–F) ──
-        if os.path.exists(REPORT_LOGO_PATH):
-            try:
-                logo = XLImage(REPORT_LOGO_PATH)
-                logo.width, logo.height = 150, 55
-                ws.add_image(logo, 'A1')
-            except Exception:
-                pass  # never let a logo hiccup break the export
-        for rh in (1, 2, 3):
-            ws.row_dimensions[rh].height = 18
-
-        ws.merge_cells('C1:F1')
-        ws['C1'] = 'Saint Louis College — Vehicle Management System · Vehicle Log Report'
-        ws['C1'].font = Font(bold=True, size=13, color=REPORT_BRAND_HEX)
-
-        ws.merge_cells('C2:F2')
-        ws['C2'] = (
-            f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
-            f"by {getattr(request.user, 'full_name', '')} · "
-            + ('; '.join(filters_desc) if filters_desc else 'All records')
-            + f" · {rows.count() if hasattr(rows, 'count') else len(rows)} entries"
+        rows = _audit_report_rows(qs[:5000])
+        subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                    f"by {getattr(request.user, 'full_name', '')} · "
+                    + ('; '.join(filters_desc) if filters_desc else 'All records')
+                    + f" · {len(rows)} entries")
+        return branded_excel_response(
+            filename=report_filename('Vehicle Log Report', 'xlsx'),
+            sheet_title='Vehicle Log',
+            report_title='Vehicle Log Report',
+            subtitle=subtitle,
+            headers=AUDIT_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 21, 24, 12, 20, 95],
         )
-        ws['C2'].font = Font(size=10, color='666666')
-
-        # ── Column headers (row 4) ──
-        headers = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
-        header_fill = PatternFill('solid', fgColor=REPORT_BRAND_HEX)
-        for col, title in enumerate(headers, start=1):
-            cell = ws.cell(row=4, column=col, value=title)
-            cell.font = Font(bold=True, color='FFFFFF', size=11)
-            cell.fill = header_fill
-            cell.alignment = Alignment(vertical='center')
-
-        for width, col in zip([5, 21, 24, 12, 20, 95], 'ABCDEF'):
-            ws.column_dimensions[col].width = width
-        ws.freeze_panes = 'A5'
-
-        wrap = Alignment(wrap_text=True, vertical='top')
-        last_row = 4
-        for i, log in enumerate(rows, start=1):
-            r = 4 + i
-            last_row = r
-            actor = log.actor.full_name if log.actor else 'System'
-            role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
-            ws.cell(row=r, column=1, value=i)
-            ws.cell(row=r, column=2,
-                    value=tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'))
-            ws.cell(row=r, column=3, value=actor)
-            ws.cell(row=r, column=4, value=role)
-            ws.cell(row=r, column=5, value=action_labels.get(log.action, log.action))
-            c = ws.cell(row=r, column=6, value=log.details or '')
-            c.alignment = wrap
-
-        # ── Footer ──
-        foot_row = last_row + 2
-        ws.merge_cells(start_row=foot_row, start_column=1, end_row=foot_row, end_column=6)
-        fcell = ws.cell(row=foot_row, column=1,
-                        value='— End of report · Saint Louis College CDSO · Confidential —')
-        fcell.font = Font(size=9, italic=True, color='999999')
-        fcell.alignment = Alignment(horizontal='center')
-
-        response = HttpResponse(
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
-        response['Content-Disposition'] = f'attachment; filename="vehicle-log-report-{stamp}.xlsx"'
-        wb.save(response)
-        return response
 
 
 class AuditLogPdfExportView(APIView):
-    """Download the (filtered) audit log as a branded PDF report — admin only."""
+    """Download the (filtered) vehicle log as a branded PDF report — admin only."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        from django.http import HttpResponse
         from django.utils import timezone as tz
-        from reportlab.lib.pagesizes import A4, landscape
-        from reportlab.lib.units import mm
-        from reportlab.lib import colors
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.platypus import (
-            SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage,
-        )
-
+        from report_utils import branded_pdf_response, report_filename
         qs, filters_desc = _filter_audit_logs(request)
-        rows = list(qs[:5000])
-        action_labels = dict(AuditLog.Action.choices)
-
-        brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
-        generated_by = getattr(request.user, 'full_name', '')
-        generated_at = tz.localtime().strftime('%B %d, %Y %I:%M %p')
-        subtitle = (
-            ('; '.join(filters_desc) if filters_desc else 'All records')
-            + f" · {len(rows)} entries"
+        rows = _audit_report_rows(qs[:5000])
+        subtitle = (('; '.join(filters_desc) if filters_desc else 'All records')
+                    + f" · {len(rows)} entries")
+        return branded_pdf_response(
+            filename=report_filename('Vehicle Log Report', 'pdf'),
+            report_title='Vehicle Log Report',
+            subtitle=subtitle,
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=AUDIT_REPORT_HEADERS,
+            rows=rows,
+            col_widths_mm=[10, 34, 42, 22, 38, 121],
         )
-
-        # ── Header/footer painted on every page ──
-        def draw_frame(canvas, doc):
-            canvas.saveState()
-            w, h = landscape(A4)
-            # Logo top-left
-            if os.path.exists(REPORT_LOGO_PATH):
-                try:
-                    canvas.drawImage(
-                        REPORT_LOGO_PATH, 15 * mm, h - 26 * mm,
-                        width=30 * mm, height=16 * mm, preserveAspectRatio=True, mask='auto',
-                    )
-                except Exception:
-                    pass
-            canvas.setFillColor(brand)
-            canvas.setFont('Helvetica-Bold', 13)
-            canvas.drawString(50 * mm, h - 16 * mm, 'Saint Louis College — Vehicle Management System')
-            canvas.setFont('Helvetica', 10)
-            canvas.setFillColor(colors.HexColor('#666666'))
-            canvas.drawString(50 * mm, h - 21 * mm, 'Vehicle Log Report')
-            # Header rule
-            canvas.setStrokeColor(brand)
-            canvas.setLineWidth(1)
-            canvas.line(15 * mm, h - 28 * mm, w - 15 * mm, h - 28 * mm)
-            # Footer
-            canvas.setFont('Helvetica', 8)
-            canvas.setFillColor(colors.HexColor('#999999'))
-            canvas.drawString(15 * mm, 10 * mm,
-                              f'Generated {generated_at} by {generated_by} · Saint Louis College CDSO · Confidential')
-            canvas.drawRightString(w - 15 * mm, 10 * mm, f'Page {doc.page}')
-            canvas.restoreState()
-
-        buf_response = HttpResponse(content_type='application/pdf')
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
-        buf_response['Content-Disposition'] = f'attachment; filename="vehicle-log-report-{stamp}.pdf"'
-
-        doc = SimpleDocTemplate(
-            buf_response, pagesize=landscape(A4),
-            leftMargin=15 * mm, rightMargin=15 * mm,
-            topMargin=32 * mm, bottomMargin=16 * mm,
-            title='Vehicle Log Report',
-        )
-
-        cell_style = ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10)
-        head_style = ParagraphStyle('head', fontName='Helvetica-Bold', fontSize=9,
-                                    textColor=colors.white, leading=11)
-
-        sub_style = ParagraphStyle('sub', fontName='Helvetica', fontSize=9,
-                                   textColor=colors.HexColor('#666666'))
-        story = [Paragraph(subtitle, sub_style), Spacer(1, 4 * mm)]
-
-        table_head = [Paragraph(t, head_style) for t in
-                      ['#', 'Date &amp; Time', 'Actor', 'Role', 'Action', 'Details']]
-        data = [table_head]
-        for i, log in enumerate(rows, start=1):
-            actor = log.actor.full_name if log.actor else 'System'
-            role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
-            details = (log.details or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            data.append([
-                Paragraph(str(i), cell_style),
-                Paragraph(tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'), cell_style),
-                Paragraph(actor, cell_style),
-                Paragraph(role, cell_style),
-                Paragraph(action_labels.get(log.action, log.action), cell_style),
-                Paragraph(details, cell_style),
-            ])
-
-        if len(data) == 1:
-            data.append([Paragraph('No records match the selected filters.', cell_style)]
-                        + [Paragraph('', cell_style) for _ in range(5)])
-
-        col_widths = [10 * mm, 34 * mm, 42 * mm, 22 * mm, 38 * mm, 121 * mm]
-        table = Table(data, colWidths=col_widths, repeatRows=1)
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), brand),
-            ('TOPPADDING', (0, 0), (-1, 0), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 1), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
-            ('LEFTPADDING', (0, 0), (-1, -1), 5),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
-            ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
-        ]))
-        story.append(table)
-
-        doc.build(story, onFirstPage=draw_frame, onLaterPages=draw_frame)
-        return buf_response
 
 
 # ── System Backup & Restore ─────────────────────────────────────────────────

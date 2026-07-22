@@ -18,6 +18,7 @@ import {
   Truck,
   Menu,
   X,
+  Shield,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -58,7 +59,6 @@ function buildNavGroups(isAdmin) {
         { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
         { name: 'Vehicle Log',      path: '/admin/audit', icon: <ClipboardList size={18} /> },
         { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
-        { name: 'Help', path: '/help', icon: <HelpCircle size={18} /> },
       ],
     })
   }
@@ -198,8 +198,11 @@ export default function AdminLayout({ children, fillHeight = false }) {
             </div>
           </div>
           <div className="footer-actions">
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
               <HelpCircle size={18} />
+            </button>
+            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+              <Shield size={18} />
             </button>
             <button className="logout-btn" onClick={handleLogout}>
               <LogOut size={16} />
