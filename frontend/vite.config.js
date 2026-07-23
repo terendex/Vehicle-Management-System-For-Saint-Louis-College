@@ -42,10 +42,38 @@ const allowedHosts = ['preconcurrently-inorganic-nicolle.ngrok-free.dev', '.tryc
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+
+  // Pre-bundle every heavy dependency up front. Without this Vite discovers
+  // them lazily mid-session, then re-optimises and force-reloads the page —
+  // the single worst stall when developing through a tunnel.
+  optimizeDeps: {
+    include: [
+      'react', 'react-dom', 'react-router-dom',
+      'axios', 'sonner', 'zustand',
+      'lucide-react', 'date-fns',
+      'recharts',
+      'jspdf',
+      'qrcode.react', 'jsqr', 'react-webcam',
+      '@tanstack/react-query', '@tanstack/react-table',
+      'react-hook-form', '@hookform/resolvers', 'zod',
+    ],
+  },
+
   server: {
     host: '0.0.0.0',
     allowedHosts,
     proxy,
+    // Transform these at startup so the first request doesn't pay for it.
+    warmup: {
+      clientFiles: [
+        './src/main.jsx',
+        './src/App.jsx',
+        './src/pages/Login/LoginPage.jsx',
+        './src/stores/authStore.js',
+        './src/api/axios.js',
+        './src/components/Layout/AdminLayout.jsx',
+      ],
+    },
   },
   preview: {
     host: '0.0.0.0',

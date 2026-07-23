@@ -1,33 +1,49 @@
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
 import LoginPage from './pages/Login/LoginPage'
-import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
-import AdminDashboard from './pages/Admin/AdminDashboard'
-import VehicleRegistration from './pages/Admin/VehicleRegistration'
-import UserManagement from './pages/Admin/UserManagement'
-import OperationsCenter from './pages/Admin/OperationsCenter'
-import RuleConstraints from './pages/Admin/RuleConstraints'
-import AuditLog from './pages/Admin/AuditLog'
-import ParkingSpaceManagement from './pages/Admin/ParkingSpaceManagement'
-import DeviceManagement from './pages/Admin/DeviceManagement'
-import SystemSettings from './pages/Admin/SystemSettings'
-import ViolationsManagement from './pages/Admin/ViolationsManagement'
-import SupplierManagement from './pages/Admin/SupplierManagement'
-import HelpPage from './pages/Help/HelpPage'
-import SecurityEntryManagement from './pages/Security/SecurityEntryManagement'
-import SecurityParkingView from './pages/Security/SecurityParkingView'
-import SecurityAuditLogPage from './pages/Security/SecurityAuditLogPage'
-import SecurityQRLogin from './pages/Security/SecurityQRLogin'
-import OwnerDashboard from './pages/VehicleOwner/OwnerDashboard'
-import RegisterPage from './pages/Register/RegisterPage'
-import ForgotPasswordPage from './pages/ForgotPassword/ForgotPasswordPage'
-import ResetPasswordPage from './pages/ResetPassword/ResetPasswordPage'
-import PolicyPage from './pages/Policy/PolicyPage'
+
+// Route-level code splitting. Without this every page — plus recharts, jsPDF
+// and html2canvas — is downloaded before the login screen can render, which is
+// slow over a tunnel. Each page now loads only when its route is visited.
+const NotFoundPage            = lazy(() => import('./pages/NotFoundPage'))
+const AdminDashboard          = lazy(() => import('./pages/Admin/AdminDashboard'))
+const VehicleRegistration     = lazy(() => import('./pages/Admin/VehicleRegistration'))
+const UserManagement          = lazy(() => import('./pages/Admin/UserManagement'))
+const OperationsCenter        = lazy(() => import('./pages/Admin/OperationsCenter'))
+const RuleConstraints         = lazy(() => import('./pages/Admin/RuleConstraints'))
+const AuditLog                = lazy(() => import('./pages/Admin/AuditLog'))
+const ParkingSpaceManagement  = lazy(() => import('./pages/Admin/ParkingSpaceManagement'))
+const DeviceManagement        = lazy(() => import('./pages/Admin/DeviceManagement'))
+const SystemSettings          = lazy(() => import('./pages/Admin/SystemSettings'))
+const ViolationsManagement    = lazy(() => import('./pages/Admin/ViolationsManagement'))
+const SupplierManagement      = lazy(() => import('./pages/Admin/SupplierManagement'))
+const HelpPage                = lazy(() => import('./pages/Help/HelpPage'))
+const SecurityEntryManagement = lazy(() => import('./pages/Security/SecurityEntryManagement'))
+const SecurityParkingView     = lazy(() => import('./pages/Security/SecurityParkingView'))
+const SecurityAuditLogPage    = lazy(() => import('./pages/Security/SecurityAuditLogPage'))
+const SecurityQRLogin         = lazy(() => import('./pages/Security/SecurityQRLogin'))
+const OwnerDashboard          = lazy(() => import('./pages/VehicleOwner/OwnerDashboard'))
+const RegisterPage            = lazy(() => import('./pages/Register/RegisterPage'))
+const ForgotPasswordPage      = lazy(() => import('./pages/ForgotPassword/ForgotPasswordPage'))
+const ResetPasswordPage       = lazy(() => import('./pages/ResetPassword/ResetPasswordPage'))
+const PolicyPage              = lazy(() => import('./pages/Policy/PolicyPage'))
+
+function RouteFallback() {
+  return (
+    <div style={{
+      minHeight: '60vh', display: 'flex', alignItems: 'center',
+      justifyContent: 'center', color: '#8892A4', fontSize: 14,
+      fontFamily: 'system-ui, sans-serif',
+    }}>
+      Loading…
+    </div>
+  )
+}
 
 // Old /security/qr-login/:gateParam kiosk URLs → new /security/guard-login/:gateParam
 function GuardLoginLegacyRedirect() {
@@ -47,6 +63,7 @@ export default function App() {
     <CameraProvider>
     <BrowserRouter>
       <Toaster richColors position="top-right" />
+      <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
@@ -105,6 +122,7 @@ export default function App() {
         {/* 404 */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
+      </Suspense>
     </BrowserRouter>
     </CameraProvider>
     </LiveUpdatesProvider>
