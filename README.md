@@ -353,7 +353,9 @@ Exposes the app to the internet — useful for testing on other devices (phone c
 cloudflared tunnel --url http://localhost:5173
 ```
 
-It prints a public URL, e.g. `https://random-words-1234.trycloudflare.com`.
+It prints **your own** public URL — a random word combo like `https://runtime-clothing-feeding-already.trycloudflare.com`.
+
+> ⚠️ `YOUR-TUNNEL-URL` below is a **placeholder**. Copy the real URL that *your* `cloudflared` window printed — pasting the placeholder gives `ERR_NAME_NOT_RESOLVED` in the browser.
 
 Vite already allows `.trycloudflare.com` hosts and proxies `/api` and `/ws` to Django, so API and WebSocket traffic flow through the tunnel with **no frontend changes**.
 
@@ -362,16 +364,16 @@ Vite already allows `.trycloudflare.com` hosts and proxies `/api` and `/ws` to D
 ```bash
 cd backend
 venv\Scripts\activate                # Windows
-python set_tunnel_url.py https://random-words-1234.trycloudflare.com
+python set_tunnel_url.py https://YOUR-TUNNEL-URL.trycloudflare.com
 ```
 
 That sets:
 
 ```env
 ALLOWED_HOSTS=localhost,127.0.0.1,.trycloudflare.com
-CORS_ALLOWED_ORIGINS=http://localhost:5173,https://random-words-1234.trycloudflare.com
-FRONTEND_URL=https://random-words-1234.trycloudflare.com
-BACKEND_URL=https://random-words-1234.trycloudflare.com
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://YOUR-TUNNEL-URL.trycloudflare.com
+FRONTEND_URL=https://YOUR-TUNNEL-URL.trycloudflare.com
+BACKEND_URL=https://YOUR-TUNNEL-URL.trycloudflare.com
 ```
 
 `FRONTEND_URL` matters most — emailed links (password reset, registration status) and the Registration Form QR are built from it.

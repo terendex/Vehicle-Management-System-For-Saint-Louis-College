@@ -26,6 +26,15 @@ def main():
         print(f'error: expected an https:// URL, got: {url}')
         return 1
 
+    # Refuse the docs placeholders — pasting those breaks the app with
+    # ERR_NAME_NOT_RESOLVED because the domain does not exist.
+    placeholders = ('your-tunnel-url', 'random-words-1234', '<', 'example.com')
+    if any(p in url.lower() for p in placeholders):
+        print(f'error: "{url}" looks like the README placeholder, not a real tunnel URL.\n'
+              '       Copy the https://....trycloudflare.com line that YOUR cloudflared\n'
+              '       window printed and pass that instead.')
+        return 1
+
     updates = {
         'ALLOWED_HOSTS': 'localhost,127.0.0.1,.trycloudflare.com',
         'CORS_ALLOWED_ORIGINS': f'http://localhost:5173,{url}',
