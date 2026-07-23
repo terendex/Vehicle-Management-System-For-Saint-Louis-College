@@ -134,7 +134,7 @@ class AuditLog(models.Model):
         db_table = 'tbl_audit_log'
         ordering = ['-created_at']
         indexes = [
-            # Meta.ordering + the date-range filters on the Vehicle Log screen.
+            # Meta.ordering + the date-range filters on the Audit Log screen.
             models.Index(fields=['-created_at'], name='auditlog_created_at'),
             # Action filter, and the dashboard's per-actor-role recent lists.
             models.Index(fields=['action', '-created_at'], name='auditlog_action_time'),

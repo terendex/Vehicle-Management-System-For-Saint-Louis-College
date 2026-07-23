@@ -148,7 +148,7 @@ export default function AuditLog() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = reportFileName('Vehicle Log Report', ext)
+    a.download = reportFileName('Audit Log Report', ext)
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -216,7 +216,7 @@ export default function AuditLog() {
       <div className="al-page">
         <div className="al-header">
           <div>
-            <h1 className="al-title">Vehicle Log</h1>
+            <h1 className="al-title">Audit Log</h1>
             <p className="al-subtitle">Track all user management actions and vehicle scans.</p>
           </div>
           <div className="al-header-actions">
@@ -317,12 +317,12 @@ export default function AuditLog() {
           {loading ? (
             <div className="al-loading">
               <div className="al-spinner" />
-              <p>Loading vehicle logs...</p>
+              <p>Loading audit logs…</p>
             </div>
           ) : logs.length === 0 ? (
             <div className="al-empty">
               <ClipboardList size={48} />
-              <h3>No vehicle logs found</h3>
+              <h3>No audit logs found</h3>
               <p>{hasFilters ? 'No events match your current filters.' : 'No events recorded yet.'}</p>
             </div>
           ) : (

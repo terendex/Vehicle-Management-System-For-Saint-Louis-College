@@ -617,7 +617,7 @@ def _audit_report_rows(qs):
 
 
 class AuditLogExportView(APIView):
-    """Download the (filtered) vehicle log as a branded Excel report — admin only."""
+    """Download the (filtered) audit log as a branded Excel report — admin only."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
@@ -630,9 +630,9 @@ class AuditLogExportView(APIView):
                     + ('; '.join(filters_desc) if filters_desc else 'All records')
                     + f" · {len(rows)} entries")
         return branded_excel_response(
-            filename=report_filename('Vehicle Log Report', 'xlsx'),
-            sheet_title='Vehicle Log',
-            report_title='Vehicle Log Report',
+            filename=report_filename('Audit Log Report', 'xlsx'),
+            sheet_title='Audit Log',
+            report_title='Audit Log Report',
             subtitle=subtitle,
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
@@ -641,7 +641,7 @@ class AuditLogExportView(APIView):
 
 
 class AuditLogPdfExportView(APIView):
-    """Download the (filtered) vehicle log as a branded PDF report — admin only."""
+    """Download the (filtered) audit log as a branded PDF report — admin only."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
@@ -652,8 +652,8 @@ class AuditLogPdfExportView(APIView):
         subtitle = (('; '.join(filters_desc) if filters_desc else 'All records')
                     + f" · {len(rows)} entries")
         return branded_pdf_response(
-            filename=report_filename('Vehicle Log Report', 'pdf'),
-            report_title='Vehicle Log Report',
+            filename=report_filename('Audit Log Report', 'pdf'),
+            report_title='Audit Log Report',
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
             headers=AUDIT_REPORT_HEADERS,
@@ -1158,7 +1158,7 @@ class QRLoginView(APIView):
         # attribution (manual entry, override, exit, HTTP/WS scans) reads
         # request.user.gate_assignment to tag each log; without this it stays
         # None and those scans fall to the orphan 'main' gate, invisible in
-        # every gate's Vehicle Log.
+        # every gate's Audit Log.
         if guard.gate_assignment != gate:
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate
@@ -1236,7 +1236,7 @@ class GuardCredentialLoginView(APIView):
         # attribution (manual entry, override, exit, HTTP/WS scans) reads
         # request.user.gate_assignment to tag each log; without this it stays
         # None and those scans fall to the orphan 'main' gate, invisible in
-        # every gate's Vehicle Log.
+        # every gate's Audit Log.
         if guard.gate_assignment != gate:
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate

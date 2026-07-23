@@ -1,6 +1,6 @@
 /* Shared table loading state.
    Values copied from the existing .al-loading / .um-loading rules so the
-   loader looks identical to the ones already in Vehicle Log and Users. */
+   loader looks identical to the ones already in Audit Log and Users. */
 
 .tbl-loading {
   text-align: center;

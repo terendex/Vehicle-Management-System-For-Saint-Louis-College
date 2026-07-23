@@ -1,8 +1,12 @@
-from django.core.mail import send_mail
+import logging
+
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 import qrcode
 from io import BytesIO
 import base64
+
+log = logging.getLogger(__name__)
 
 
 def _generate_qr_base64(data):
@@ -169,21 +173,42 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     </html>
     """
 
-    send_mail(
+    # EmailMultiAlternatives rather than send_mail(): send_mail cannot carry
+    # attachments, and the approval mail ships the owner's registration
+    # confirmation as a PDF.
+    msg = EmailMultiAlternatives(
         subject="SLC Vehicle Registration Approved \u2014 Your Account & Credentials",
-        message=(
+        body=(
             f"Your vehicle registration has been approved.\n\n"
             f"Portal Account ID: {portal_id_display}\n"
             f"System Registration ID: {system_id}\n\n"
             f"Email: {registration.email}\n"
             f"Temporary Password: {temp_password}\n\n"
-            f"You will be prompted to change your password on first login."
+            f"You will be prompted to change your password on first login.\n\n"
+            f"A PDF copy of your full registration details is attached."
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[registration.email],
-        html_message=html_message,
-        fail_silently=False,
+        to=[registration.email],
     )
+    msg.attach_alternative(html_message, "text/html")
+
+    # A failure building the PDF must not cost the owner their approval email
+    # (and, upstream, must not roll back the approval itself) \u2014 so send without
+    # the attachment and log it rather than raising.
+    try:
+        from registration_pdf import (registration_confirmation_pdf,
+                                      registration_pdf_filename)
+        msg.attach(registration_pdf_filename(registration),
+                   registration_confirmation_pdf(registration),
+                   'application/pdf')
+    except Exception:
+        log.exception(
+            "Could not attach registration PDF for %s (registration %s) \u2014 "
+            "sending the approval email without it.",
+            registration.email, registration.pk,
+        )
+
+    msg.send(fail_silently=False)
 
 
 def send_pending_email(registration):

@@ -26,8 +26,8 @@ LH_ACCRED      = ('•  Center of Excellence in Teacher Education        '
 def report_filename(report_name, ext):
     """Filesystem-safe, human-readable report filename with date + time.
 
-    e.g. report_filename('Vehicle Log Report', 'pdf')
-         -> 'Vehicle Log Report - 2026-07-22 09-30 PM.pdf'
+    e.g. report_filename('Audit Log Report', 'pdf')
+         -> 'Audit Log Report - 2026-07-22 09-30 PM.pdf'
     """
     stamp = tz.localtime().strftime('%Y-%m-%d %I-%M %p')
     return f"{report_name} - {stamp}.{ext}"
@@ -107,6 +107,67 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     return resp
 
 
+def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
+    """Paint the SLC letterhead and footer onto `canvas` for a `w` x `h` page.
+
+    Shared by the landscape report tables and the portrait registration
+    confirmation, so the two can never drift apart. Everything is positioned
+    relative to the page size, so it works in either orientation.
+    """
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+
+    _register_letterhead_fonts()
+    brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
+    navy  = colors.HexColor(f'#{REPORT_NAVY_HEX}')
+
+    canvas.saveState()
+    left = 15 * mm
+    cx = w / 2
+    # Institution name is centred on the page; the seal tucks in just to its
+    # left (a crest beside the name), vertically centred on the text block.
+    inst_size = 22
+    inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
+    logo_w = 16 * mm
+    if os.path.exists(REPORT_LOGO_PATH):
+        try:
+            logo_x = cx - inst_w / 2 - 6 * mm - logo_w
+            canvas.drawImage(REPORT_LOGO_PATH, logo_x, h - 25 * mm,
+                             width=logo_w, height=logo_w,
+                             preserveAspectRatio=True, mask='auto')
+        except Exception:
+            pass
+    canvas.setFillColor(navy)
+    canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
+    canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
+    canvas.setFillColor(colors.HexColor('#333333'))
+    canvas.setFont('Times-Roman', 10.5)
+    canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
+    canvas.setFillColor(colors.HexColor('#555555'))
+    canvas.setFont('Times-Italic', 11)
+    canvas.drawCentredString(cx, h - 24 * mm, LH_TAGLINE)
+    # Accreditation line (centred)
+    canvas.setFont('Times-Roman', 7.5)
+    canvas.setFillColor(colors.HexColor('#555555'))
+    canvas.drawCentredString(cx, h - 30 * mm, LH_ACCRED)
+    # Rule
+    canvas.setStrokeColor(navy)
+    canvas.setLineWidth(1.2)
+    canvas.line(left, h - 33 * mm, w - 15 * mm, h - 33 * mm)
+    # Document title (centred)
+    canvas.setFillColor(brand)
+    canvas.setFont('Helvetica-Bold', 11)
+    canvas.drawCentredString(cx, h - 39 * mm, title)
+    # Footer
+    canvas.setFont('Helvetica', 8)
+    canvas.setFillColor(colors.HexColor('#999999'))
+    if footer_left:
+        canvas.drawString(left, 10 * mm, footer_left)
+    if footer_right:
+        canvas.drawRightString(w - 15 * mm, 10 * mm, footer_right)
+    canvas.restoreState()
+
+
 def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows, col_widths_mm):
     """Build a landscape A4 PDF with the SLC letterhead, brand table and footer."""
     from reportlab.lib.pagesizes import A4, landscape
@@ -124,51 +185,11 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
     def draw_frame(canvas, doc):
-        canvas.saveState()
         w, h = landscape(A4)
-        left = 15 * mm
-        cx = w / 2
-        # Institution name is centred on the page; the seal tucks in just to its
-        # left (a crest beside the name), vertically centred on the text block.
-        inst_size = 22
-        inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
-        logo_w = 16 * mm
-        if os.path.exists(REPORT_LOGO_PATH):
-            try:
-                logo_x = cx - inst_w / 2 - 6 * mm - logo_w
-                canvas.drawImage(REPORT_LOGO_PATH, logo_x, h - 25 * mm,
-                                 width=logo_w, height=logo_w,
-                                 preserveAspectRatio=True, mask='auto')
-            except Exception:
-                pass
-        canvas.setFillColor(navy)
-        canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
-        canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
-        canvas.setFillColor(colors.HexColor('#333333'))
-        canvas.setFont('Times-Roman', 10.5)
-        canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
-        canvas.setFillColor(colors.HexColor('#555555'))
-        canvas.setFont('Times-Italic', 11)
-        canvas.drawCentredString(cx, h - 24 * mm, LH_TAGLINE)
-        # Accreditation line (centred)
-        canvas.setFont('Times-Roman', 7.5)
-        canvas.setFillColor(colors.HexColor('#555555'))
-        canvas.drawCentredString(cx, h - 30 * mm, LH_ACCRED)
-        # Rule
-        canvas.setStrokeColor(navy)
-        canvas.setLineWidth(1.2)
-        canvas.line(left, h - 33 * mm, w - 15 * mm, h - 33 * mm)
-        # Report title (centred)
-        canvas.setFillColor(brand)
-        canvas.setFont('Helvetica-Bold', 11)
-        canvas.drawCentredString(cx, h - 39 * mm, report_title)
-        # Footer
-        canvas.setFont('Helvetica', 8)
-        canvas.setFillColor(colors.HexColor('#999999'))
-        canvas.drawString(left, 10 * mm,
-                          f'Generated {generated_at} by {generated_by} · Saint Louis College CDSO · Confidential')
-        canvas.drawRightString(w - 15 * mm, 10 * mm, f'Page {doc.page}')
-        canvas.restoreState()
+        draw_letterhead(canvas, w, h, title=report_title,
+                        footer_left=f'Generated {generated_at} by {generated_by} '
+                                    f'· Saint Louis College CDSO · Confidential',
+                        footer_right=f'Page {doc.page}')
 
     resp = HttpResponse(content_type='application/pdf')
     resp['Content-Disposition'] = f'attachment; filename="{filename}"'

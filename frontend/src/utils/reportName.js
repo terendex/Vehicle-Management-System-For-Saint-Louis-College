@@ -1,5 +1,5 @@
 // Readable, filesystem-safe report filename: "<Name> - YYYY-MM-DD HH-MM AM.ext"
-// e.g. reportFileName('Vehicle Log Report', 'pdf') -> "Vehicle Log Report - 2026-07-22 09-30 PM.pdf"
+// e.g. reportFileName('Audit Log Report', 'pdf') -> "Audit Log Report - 2026-07-22 09-30 PM.pdf"
 export function reportFileName(name, ext) {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')

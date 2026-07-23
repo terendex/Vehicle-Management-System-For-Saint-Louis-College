@@ -181,11 +181,11 @@ export const HELP_TOPICS = [
   },
   {
     id: 'cdso-reports',
-    title: 'Reports & Vehicle Log',
+    title: 'Reports & Audit Log',
     category: 'CDSO',
     roles: ['admin'],
     body: [
-      { type: 'p', text: 'The Vehicle Log is the system’s report centre. It records every scan, entry/exit, and management action.' },
+      { type: 'p', text: 'The Audit Log is the system’s report centre. It records every scan, entry/exit, and management action.' },
       { type: 'steps', items: [
         'Use the Date From / Date To fields (or the quick period buttons) to choose a range — future dates are blocked.',
         'Filter by action type or search by actor, plate, or details.',
