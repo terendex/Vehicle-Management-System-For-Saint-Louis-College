@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
+import TableLoader from '../../components/TableLoader'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -407,7 +408,18 @@ export default function OperationsCenter() {
         </div>
 
         {/* ── Guard activity ── */}
-        {guards.some(g => g.is_active) && (
+        {/* While loading the section stays visible with a spinner; it used to
+            be hidden entirely (guards is empty until the fetch lands), so the
+            table appeared out of nowhere with no indication it was coming. */}
+        {loading ? (
+          <div className="oc-section">
+            <div className="oc-section-head">
+              <Shield size={15} />
+              <span>Guard Activity</span>
+            </div>
+            <TableLoader label="Loading guard activity…" />
+          </div>
+        ) : guards.some(g => g.is_active) && (
           <div className="oc-section">
             <div className="oc-section-head">
               <Shield size={15} />

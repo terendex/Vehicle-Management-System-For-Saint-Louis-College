@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
+import { TableLoaderRow } from '../../components/TableLoader'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -42,6 +43,7 @@ function getPeriodStart(period) {
 export default function VehicleRegistration() {
   // Registrations State
   const [registrations, setRegistrations] = useState([])
+  const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('pending')
   const [datePeriod, setDatePeriod] = useState('all')
   const [search, setSearch] = useState('')
@@ -79,11 +81,16 @@ export default function VehicleRegistration() {
   }, [statusFilter])
 
   const fetchRegistrations = async () => {
+    setLoading(true)
     try {
       const data = await registrationApi.getPendingRegistrations(statusFilter)
       setRegistrations(data)
     } catch (error) {
       console.error('Failed to fetch registrations:', error)
+    } finally {
+      // finally, so a failed request still clears the spinner instead of
+      // leaving the table loading forever.
+      setLoading(false)
     }
   }
 
@@ -320,7 +327,8 @@ export default function VehicleRegistration() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedRegistrations.map(r => (
+                {loading && <TableLoaderRow colSpan={7} label="Loading registrations…" />}
+                {!loading && paginatedRegistrations.map(r => (
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
@@ -342,7 +350,7 @@ export default function VehicleRegistration() {
                     </td>
                   </tr>
                 ))}
-                {filteredRegistrations.length === 0 && (
+                {!loading && filteredRegistrations.length === 0 && (
                   <tr className="empty-row">
                     <td colSpan="7">No {statusFilter} registrations found{datePeriod !== 'all' ? ' for this period' : ''}.</td>
                   </tr>

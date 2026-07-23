@@ -13,6 +13,7 @@ import {
   issueCDSOReport, clearViolation, exportViolationsReport,
 } from '../../api/violations'
 import ReportExportBar from '../../components/ReportExportBar'
+import TableLoader from '../../components/TableLoader'
 import './ViolationsManagement.css'
 
 const TYPE_LABELS = {
@@ -416,7 +417,7 @@ export default function ViolationsManagement() {
 
         <div className="vm-card">
           {loading ? (
-            <div className="vm-empty">Loading violations…</div>
+            <TableLoader label="Loading violations…" />
           ) : filtered.length === 0 ? (
             <div className="vm-empty">No violations found.</div>
           ) : (
