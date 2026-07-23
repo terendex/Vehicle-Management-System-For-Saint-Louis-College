@@ -283,7 +283,22 @@ npm install
 
 > **Prerequisite:** Ensure Redis is running before starting the backend (Memurai on Windows, `redis-server` on Linux).
 
-Open **three terminals** in VS Code (`` Ctrl+` `` to open terminal, click the split icon to add more).
+Open a terminal per service in VS Code (`` Ctrl+` `` to open, split icon to add more). **Start them in this order** and wait for each to be ready before starting the next:
+
+| # | Service | Command (from repo root) | Wait for |
+|---|---|---|---|
+| 1 | **Backend** | `cd backend` → activate venv → `daphne -b 127.0.0.1 -p 8000 config.asgi:application` | `Listening on TCP address 127.0.0.1:8000` |
+| 2 | **Frontend** | `cd frontend` → `npm run dev` | `Local: http://localhost:5173/` |
+| 3 | Celery *(optional — ML tasks)* | `cd backend` → activate venv → `python -m celery -A config worker -l info --pool=solo` | `celery@… ready` |
+| 4 | Tunnel *(optional — public access)* | `cloudflared tunnel --url http://localhost:5173` | the `https://….trycloudflare.com` URL |
+
+> ⚠️ **Order matters.** The tunnel forwards to **Vite on `5173`**, *not* Django. If Vite isn't running when you start the tunnel, the public URL returns **HTTP 530** (Cloudflare can't reach the origin). Always start the tunnel **last**.
+>
+> Quick sanity check that a service is up:
+> ```powershell
+> netstat -ano | findstr :8000    # Daphne
+> netstat -ano | findstr :5173    # Vite
+> ```
 
 ### Terminal 1 — Backend (Django + Daphne)
 
@@ -364,6 +379,18 @@ BACKEND_URL=https://random-words-1234.trycloudflare.com
 Then **restart Daphne** so the new `.env` is loaded.
 
 > The free tunnel gets a **new random URL every session**, so update `backend/.env` and restart Daphne each time. A named tunnel on a Cloudflare account gives you a fixed domain instead.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Daphne won't start — *"address already in use"* / error `10048` | An old Daphne is still holding port 8000 (Ctrl+C went to the wrong terminal, or the window was closed) | `netstat -ano \| findstr :8000` → `taskkill /PID <pid> /F`, then start Daphne again |
+| Public tunnel URL returns **HTTP 530** | **Vite isn't running** — the tunnel points at `5173` and has no origin to reach | Start `npm run dev` **first**, confirm `:5173` is listening, then start the tunnel |
+| Tunnel URL loads, but login/API fails | Daphne isn't running | Check `netstat -ano \| findstr :8000`; start Daphne |
+| App works, but emailed links / Registration QR point to an **old** URL | Daphne is still running the previous `.env` | `python set_tunnel_url.py <new-url>` → **restart Daphne** (`.env` is read only at startup) |
+| Backend code changes don't take effect | Daphne has **no auto-reload** | Restart Daphne after every `.py` or `.env` change (the frontend *does* hot-reload) |
+| cloudflared logs `Failed to initialize DNS local resolver` | Harmless — that's cloudflared's optional local DNS proxy, unrelated to your tunnel | Ignore it; check for `Registered tunnel connection` instead |
+| Tunnel URL changed again | Quick tunnels are random per run | Re-run `set_tunnel_url.py` + restart Daphne, or create a named tunnel |
 
 ---
 
