@@ -342,7 +342,15 @@ It prints a public URL, e.g. `https://random-words-1234.trycloudflare.com`.
 
 Vite already allows `.trycloudflare.com` hosts and proxies `/api` and `/ws` to Django, so API and WebSocket traffic flow through the tunnel with **no frontend changes**.
 
-**After starting the tunnel, update `backend/.env` with the new URL:**
+**After starting the tunnel, point `backend/.env` at the new URL.** Use the helper — it edits only the four tunnel keys and leaves the rest of `.env` untouched:
+
+```bash
+cd backend
+venv\Scripts\activate                # Windows
+python set_tunnel_url.py https://random-words-1234.trycloudflare.com
+```
+
+That sets:
 
 ```env
 ALLOWED_HOSTS=localhost,127.0.0.1,.trycloudflare.com
