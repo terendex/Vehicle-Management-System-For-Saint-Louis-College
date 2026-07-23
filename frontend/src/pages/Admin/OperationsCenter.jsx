@@ -8,7 +8,6 @@ import {
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
@@ -339,7 +338,7 @@ export default function OperationsCenter() {
   const pagedFlags     = sortedFlags.slice((flagPageSafe - 1) * LIST_PAGE_SIZE, flagPageSafe * LIST_PAGE_SIZE)
 
   return (
-    <AdminLayout>
+    <>
       <div className="oc-page">
 
         {/* ── Header ── */}
@@ -544,6 +543,6 @@ export default function OperationsCenter() {
         </div>
 
       </div>
-    </AdminLayout>
+    </>
   )
 }

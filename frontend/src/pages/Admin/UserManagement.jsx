@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import { jsPDF } from 'jspdf'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
@@ -386,7 +385,7 @@ export default function UserManagement() {
 
   /* ─── render ─────────────────────────────────────────────────── */
   return (
-    <AdminLayout>
+    <>
 
       {/* Page Header */}
       <div className="um-header">
@@ -1067,6 +1066,6 @@ export default function UserManagement() {
         </div>
       )}
 
-    </AdminLayout>
+    </>
   )
 }

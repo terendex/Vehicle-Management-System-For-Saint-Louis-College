@@ -5,7 +5,6 @@ import {
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
@@ -346,7 +345,7 @@ export default function SupplierManagement() {
   const handleDeleted  = (id) => setSuppliers(prev => prev.filter(x => x.id !== id))
 
   return (
-    <AdminLayout>
+    <>
       <div className="sp-page">
 
         {/* ── Header ──────────────────────────────── */}
@@ -394,6 +393,6 @@ export default function SupplierManagement() {
           onCreated={handleCreated}
         />
       )}
-    </AdminLayout>
+    </>
   )
 }

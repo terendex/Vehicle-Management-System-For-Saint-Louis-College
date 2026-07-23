@@ -6,7 +6,6 @@ import {
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
   ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn
 } from 'lucide-react'
-import OwnerLayout from '../../components/Layout/OwnerLayout'
 import useAuthStore from '../../stores/authStore'
 import { usersApi } from '../../api/users'
 import { violationsApi } from '../../api/violations'
@@ -198,7 +197,7 @@ export default function OwnerDashboard() {
   const parkingZones   = (parking?.zones || []).filter(z => z.category === parkingCategory)
 
   return (
-    <OwnerLayout>
+    <>
       {/* Force password change modal */}
       {pwModal && (
         <div className="od-modal-overlay">
@@ -726,6 +725,6 @@ export default function OwnerDashboard() {
           </>
         )}
       </div>
-    </OwnerLayout>
+    </>
   )
 }

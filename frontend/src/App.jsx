@@ -1,11 +1,16 @@
 import { useEffect, lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
 import LoginPage from './pages/Login/LoginPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
+// Layouts are mounted by the shell routes below, never by the pages themselves,
+// so the sidebar survives navigation instead of being torn down and rebuilt.
+import AdminLayout from './components/Layout/AdminLayout'
+import SecurityLayout from './components/Layout/SecurityLayout'
+import OwnerLayout from './components/Layout/OwnerLayout'
 
 // Route-level code splitting. Without this every page — plus recharts, jsPDF
 // and html2canvas — is downloaded before the login screen can render, which is
@@ -45,6 +50,39 @@ function RouteFallback() {
   )
 }
 
+// ── Shell routes ───────────────────────────────────────────────────────────
+// The layout renders once for the whole role and stays mounted; only <Outlet />
+// swaps as you navigate. Suspense sits *inside* the layout so a lazy page chunk
+// loading shows the fallback in the content area — it no longer blanks the
+// sidebar, and the layout keeps its open-menu state across clicks.
+
+const LAYOUT_BY_ROLE = {
+  admin: AdminLayout,
+  security: SecurityLayout,
+  vehicle_owner: OwnerLayout,
+}
+
+// One shell for every signed-in route. It picks the layout from the user's
+// role, which is fixed for the session — so the same component sits at the
+// same place in the tree no matter which page is showing, and React keeps it
+// mounted instead of rebuilding the sidebar.
+//
+// It is deliberately a single component rather than one per role: /help is
+// shared by all three roles and a path can only be declared once, since
+// React Router resolves duplicate paths to whichever was declared first.
+function RoleShell() {
+  const { user } = useAuthStore()
+  const { pathname } = useLocation()
+  const Layout = LAYOUT_BY_ROLE[user?.role] || OwnerLayout
+  // The security entries screen wants the full-height variant.
+  const fillHeight = Layout === SecurityLayout && pathname.endsWith('/entries')
+  return (
+    <Layout fillHeight={fillHeight}>
+      <Suspense fallback={<RouteFallback />}><Outlet /></Suspense>
+    </Layout>
+  )
+}
+
 // Old /security/qr-login/:gateParam kiosk URLs → new /security/guard-login/:gateParam
 function GuardLoginLegacyRedirect() {
   const { gateParam } = useParams()
@@ -63,6 +101,9 @@ export default function App() {
     <CameraProvider>
     <BrowserRouter>
       <Toaster richColors position="top-right" />
+      {/* Outer Suspense covers only the routes that render no layout (login,
+          register, 404). Layout routes have their own boundary inside the
+          shell so the sidebar is never unmounted by a chunk load. */}
       <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
@@ -79,44 +120,53 @@ export default function App() {
 
         {/* Role-specific dashboards */}
 
-        {/* Admin Routes */}
+        {/* Admin Routes — the shell keeps the sidebar mounted across all of them */}
         <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-          <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/admin/vehicles" element={<VehicleRegistration />} />
-          <Route path="/admin/users" element={<UserManagement />} />
-          <Route path="/admin/rules" element={<RuleConstraints />} />
-          <Route path="/admin/audit" element={<AuditLog />} />
-          <Route path="/admin/devices" element={<DeviceManagement />} />
-          <Route path="/admin/suppliers" element={<SupplierManagement />} />
-        </Route>
-
-        {/* Admin (CDSO) — settings, operations, parking, violations */}
-        <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-          <Route path="/admin/settings"    element={<SystemSettings />} />
-          <Route path="/admin/entries"     element={<OperationsCenter />} />
-          <Route path="/admin/parking"     element={<ParkingSpaceManagement />} />
-          <Route path="/admin/violations"  element={<ViolationsManagement />} />
-          {/* Legacy URL — Events now lives inside Parking Space Management */}
-          <Route path="/admin/events"      element={<Navigate to="/admin/parking" replace />} />
+          <Route element={<RoleShell />}>
+            <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/admin/vehicles" element={<VehicleRegistration />} />
+            <Route path="/admin/users" element={<UserManagement />} />
+            <Route path="/admin/rules" element={<RuleConstraints />} />
+            <Route path="/admin/audit" element={<AuditLog />} />
+            <Route path="/admin/devices" element={<DeviceManagement />} />
+            <Route path="/admin/suppliers" element={<SupplierManagement />} />
+            {/* Admin (CDSO) — settings, operations, parking, violations */}
+            <Route path="/admin/settings"    element={<SystemSettings />} />
+            <Route path="/admin/entries"     element={<OperationsCenter />} />
+            <Route path="/admin/parking"     element={<ParkingSpaceManagement />} />
+            <Route path="/admin/violations"  element={<ViolationsManagement />} />
+          </Route>
+          {/* Legacy URL — Events now lives inside Parking Space Management.
+              Outside the shell: a redirect renders no content. */}
+          <Route path="/admin/events" element={<Navigate to="/admin/parking" replace />} />
         </Route>
 
         {/* Security Routes */}
         <Route element={<ProtectedRoute allowedRoles={['security']} />}>
+          <Route element={<RoleShell />}>
+            <Route path="/security/entries" element={<SecurityEntryManagement />} />
+            <Route path="/security/gate/:gate/entries" element={<SecurityEntryManagement />} />
+            <Route path="/security/parking" element={<SecurityParkingView />} />
+            <Route path="/security/audit" element={<SecurityAuditLogPage />} />
+          </Route>
           <Route path="/security" element={<Navigate to="/security/entries" replace />} />
-          <Route path="/security/entries" element={<SecurityEntryManagement />} />
-          <Route path="/security/gate/:gate/entries" element={<SecurityEntryManagement />} />
-          <Route path="/security/parking" element={<SecurityParkingView />} />
-          <Route path="/security/audit" element={<SecurityAuditLogPage />} />
         </Route>
 
         {/* Owner Routes */}
         <Route element={<ProtectedRoute allowedRoles={['vehicle_owner']} />}>
-          <Route path="/owner" element={<OwnerDashboard />} />
+          <Route element={<RoleShell />}>
+            <Route path="/owner" element={<OwnerDashboard />} />
+          </Route>
         </Route>
 
-        {/* Help — available to every signed-in role */}
+        {/* Help — one declaration for every signed-in role. RoleShell supplies
+            the right layout, so this must NOT be repeated per role: React
+            Router resolves a duplicate path to the first branch declared,
+            which would have bounced security and owner users. */}
         <Route element={<ProtectedRoute allowedRoles={['admin', 'security', 'vehicle_owner']} />}>
-          <Route path="/help" element={<HelpPage />} />
+          <Route element={<RoleShell />}>
+            <Route path="/help" element={<HelpPage />} />
+          </Route>
         </Route>
 
         {/* 404 */}

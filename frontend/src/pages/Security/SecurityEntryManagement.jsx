@@ -9,7 +9,6 @@ import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
 import QrScanModal from '../../components/QrScanModal'
 import {
   manualEntry, getAccessLogs, getOffices,
@@ -854,7 +853,7 @@ export default function SecurityEntryManagement() {
   }
 
   return (
-    <SecurityLayout fillHeight>
+    <>
       <div className="em-page">
 
         {/* Main grid */}
@@ -1187,6 +1186,6 @@ export default function SecurityEntryManagement() {
           />
         )}
       </div>
-    </SecurityLayout>
+    </>
   )
 }

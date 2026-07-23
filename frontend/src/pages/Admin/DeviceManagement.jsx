@@ -6,7 +6,6 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
 import { getGates } from '../../api/scanning'
 import { useCameraContext } from '../../context/CameraContext'
@@ -364,7 +363,7 @@ export default function DeviceManagement() {
   const parkingCams = cameras.filter(c => c.assignment === 'parking')
 
   return (
-    <AdminLayout>
+    <>
       <div className="device-management-page">
 
         {/* Page Header */}
@@ -654,6 +653,6 @@ export default function DeviceManagement() {
           }}
         />
       )}
-    </AdminLayout>
+    </>
   )
 }

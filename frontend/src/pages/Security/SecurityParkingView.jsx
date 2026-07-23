@@ -5,7 +5,6 @@ import {
   Shield, AlertTriangle, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { zoneApi } from '../../api/parking'
 import { overrideEntry } from '../../api/scanning'
 import { createViolation } from '../../api/violations'
@@ -193,7 +192,7 @@ export default function SecurityParkingView() {
   const sumFr      = Math.max(0, totalCap - occ)
 
   return (
-    <SecurityLayout>
+    <>
       <div className="pm-page">
 
         {/* Header */}
@@ -372,6 +371,6 @@ export default function SecurityParkingView() {
         <IssueViolationModal onClose={() => setShowViolation(false)} />
       )}
 
-    </SecurityLayout>
+    </>
   )
 }

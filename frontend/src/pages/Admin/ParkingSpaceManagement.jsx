@@ -1,4 +1,3 @@
-import AdminLayout from '../../components/Layout/AdminLayout'
 import ParkingManagement from './ParkingManagement'
 import Events from './Events'
 import './ParkingSpaceManagement.css'
@@ -8,10 +7,10 @@ import './ParkingSpaceManagement.css'
 // controls and the event list below.
 export default function ParkingSpaceManagement() {
   return (
-    <AdminLayout>
+    <>
       <ParkingManagement embedded />
       <div className="psm-section-divider" />
       <Events embedded />
-    </AdminLayout>
+    </>
   )
 }

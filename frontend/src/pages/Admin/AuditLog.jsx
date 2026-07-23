@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
@@ -213,7 +212,7 @@ export default function AuditLog() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="al-page">
         <div className="al-header">
           <div>
@@ -381,6 +380,6 @@ export default function AuditLog() {
           </div>
         )}
       </div>
-    </AdminLayout>
+    </>
   )
 }

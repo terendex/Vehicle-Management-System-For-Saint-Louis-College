@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
 import { usersApi } from '../../api/users'
@@ -217,7 +216,7 @@ export default function SystemSettings() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="ss-page">
 
         {/* ── Header ─────────────────────────────────────────────────── */}
@@ -644,6 +643,6 @@ export default function SystemSettings() {
         </div>
       )}
 
-    </AdminLayout>
+    </>
   )
 }

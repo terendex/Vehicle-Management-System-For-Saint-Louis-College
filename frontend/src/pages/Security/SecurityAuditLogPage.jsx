@@ -5,7 +5,6 @@ import {
   ClipboardList, CalendarDays, RefreshCw, Filter,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs } from '../../api/scanning'
 import useAuthStore from '../../stores/authStore'
 import './SecurityAuditLogPage.css'
@@ -93,7 +92,7 @@ export default function SecurityAuditLogPage() {
     : logs
 
   return (
-    <SecurityLayout>
+    <>
       <div className="sal-page">
 
         {/* Header */}
@@ -187,6 +186,6 @@ export default function SecurityAuditLogPage() {
           )}
         </div>
       </div>
-    </SecurityLayout>
+    </>
   )
 }

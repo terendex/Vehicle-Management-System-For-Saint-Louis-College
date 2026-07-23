@@ -8,7 +8,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getAllViolations, resolveViolation,
   issueCDSOReport, clearViolation, exportViolationsReport,
@@ -315,7 +314,7 @@ export default function ViolationsManagement() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="vm-page">
 
         {lightboxSrc && <EvidenceLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
@@ -564,6 +563,6 @@ export default function ViolationsManagement() {
         </div>
       )}
 
-    </AdminLayout>
+    </>
   )
 }

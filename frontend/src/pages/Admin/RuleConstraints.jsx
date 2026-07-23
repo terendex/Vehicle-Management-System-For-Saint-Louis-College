@@ -6,7 +6,6 @@ import {
   CalendarRange, Globe, Plus, CheckCircle, Archive, AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
   getRegistrationPeriods, createRegistrationPeriod,
@@ -360,7 +359,7 @@ export default function RuleConstraints() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="rc-page">
 
         {/* ── Header ──────────────────────────────────────────── */}
@@ -655,6 +654,6 @@ export default function RuleConstraints() {
         )
       })()}
 
-    </AdminLayout>
+    </>
   )
 }

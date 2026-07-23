@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
@@ -241,7 +240,7 @@ export default function VehicleRegistration() {
   const clearFilters = () => { setDatePeriod('all'); setSearch(''); setRegPage(1) }
 
   return (
-    <AdminLayout>
+    <>
       <div className="vehicle-registration-page">
         <div className="page-header vr-header-row">
           <div>
@@ -905,6 +904,6 @@ export default function VehicleRegistration() {
           </div>
         </div>
       )}
-    </AdminLayout>
+    </>
   )
 }

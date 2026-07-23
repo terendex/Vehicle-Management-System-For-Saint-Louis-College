@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
@@ -366,7 +365,7 @@ export default function AdminDashboard() {
   ] : []
 
   return (
-    <AdminLayout>
+    <>
       <div className="ad-page">
         <div className="ad-header">
           <div>
@@ -483,6 +482,6 @@ export default function AdminDashboard() {
           </>
         )}
       </div>
-    </AdminLayout>
+    </>
   )
 }
