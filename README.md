@@ -330,19 +330,32 @@ python -m celery -A config worker -l info
 
 > `--pool=solo` is required on Windows to avoid `billiard` semaphore errors. On Linux, omit it — the default prefork pool works fine.
 
-### Terminal 4 — cloudflare (optional, for external access)
+### Terminal 4 — Cloudflare Tunnel (optional, for external access)
 
-Use cloudflare to expose the app to the internet — useful for testing on other devices or sharing a live demo.
+Exposes the app to the internet — useful for testing on other devices (phone camera, QR scans) or sharing a live demo. Requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
 
-**need cloudflared** 
-  cloudflared.exe tunnel --url http://localhost:5173
-
-**After starting the tunnel, update `backend/.env`:**
+```bash
+cloudflared tunnel --url http://localhost:5173
 ```
 
-Then restart Daphne. The public URL will proxy all API and WebSocket traffic through Vite to the local Django backend — no extra config needed.
+It prints a public URL, e.g. `https://random-words-1234.trycloudflare.com`.
 
-> The `--domain` flag requires a reserved static domain (free ngrok account). Omit it to get a random URL each session, and update `backend/.env` each time.
+Vite already allows `.trycloudflare.com` hosts and proxies `/api` and `/ws` to Django, so API and WebSocket traffic flow through the tunnel with **no frontend changes**.
+
+**After starting the tunnel, update `backend/.env` with the new URL:**
+
+```env
+ALLOWED_HOSTS=localhost,127.0.0.1,.trycloudflare.com
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://random-words-1234.trycloudflare.com
+FRONTEND_URL=https://random-words-1234.trycloudflare.com
+BACKEND_URL=https://random-words-1234.trycloudflare.com
+```
+
+`FRONTEND_URL` matters most — emailed links (password reset, registration status) and the Registration Form QR are built from it.
+
+Then **restart Daphne** so the new `.env` is loaded.
+
+> The free tunnel gets a **new random URL every session**, so update `backend/.env` and restart Daphne each time. A named tunnel on a Cloudflare account gives you a fixed domain instead.
 
 ---
 
