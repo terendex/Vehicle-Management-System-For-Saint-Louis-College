@@ -658,7 +658,11 @@ class AuditLogPdfExportView(APIView):
             generated_by=getattr(request.user, 'full_name', ''),
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
-            col_widths_mm=[10, 34, 42, 22, 38, 121],
+            # Date & Time needs 91pt but only had 86pt, so every single row
+            # wrapped to two lines — doubling the height of the whole report.
+            # Actor was using 64pt of its 109pt, so 5mm moves across and both
+            # fit comfortably. Total is unchanged at 267mm (the printable width).
+            col_widths_mm=[10, 39, 37, 22, 38, 121],
         )
 
 

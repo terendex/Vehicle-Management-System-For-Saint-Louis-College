@@ -125,6 +125,16 @@ CHANNEL_LAYERS = {
 _db_url = os.getenv('DATABASE_URL')
 if _db_url:
     DATABASES = {'default': dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=True)}
+    # Neon is reached through its pgbouncer endpoint (-pooler), which runs in
+    # transaction pooling mode. Django does not support server-side cursors
+    # there — a named cursor can land on a different backend connection than
+    # the one that declared it. QuerySet.iterator() silently falls back to
+    # client-side fetching once this is set.
+    #
+    # It is also a large speed win over a long-haul link: a server-side cursor
+    # costs DECLARE + repeated FETCH + CLOSE, and every one of those is a
+    # separate round trip to Singapore.
+    DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = True
 else:
     DATABASES = {
         'default': {

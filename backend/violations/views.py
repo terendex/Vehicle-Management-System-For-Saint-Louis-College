@@ -348,5 +348,7 @@ class ViolationReportPdfView(APIView):
             generated_by=getattr(request.user, 'full_name', ''),
             headers=VIOLATION_REPORT_HEADERS,
             rows=rows,
-            col_widths_mm=[10, 34, 26, 50, 40, 22, 30, 55],
+            # Owner names ran past their column while Issued By sat mostly
+            # empty (27pt used of 146pt). 6mm moves across; total unchanged.
+            col_widths_mm=[10, 34, 26, 56, 40, 22, 30, 49],
         )
