@@ -1,3 +1,4 @@
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 
@@ -206,6 +207,14 @@ class VehicleRegistration(models.Model):
 
     class Meta:
         db_table = 'tbl_vehicle_registration'
+        indexes = [
+            models.Index(fields=['-created_at'], name='vehreg_created_at'),
+            models.Index(fields=['status', '-created_at'], name='vehreg_status_time'),
+            models.Index(fields=['registrant_type'], name='vehreg_registrant_type'),
+            # campus_days is JSON; the dashboard asks `campus_days__contains=[day]`
+            # once per weekday. Only a GIN index can answer containment.
+            GinIndex(fields=['campus_days'], name='vehreg_campus_days_gin'),
+        ]
         # A plate and an email may each belong to at most ONE active
         # (pending/accepted) registration — enforcing a 1:1 email↔plate pairing
         # at the database level. Rejected registrations are exempt so a

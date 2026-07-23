@@ -76,6 +76,11 @@ class VisitorPass(models.Model):
 
     class Meta:
         db_table = 'tbl_visitor_pass'
+        indexes = [
+            # Dashboard: passes still active for today.
+            models.Index(fields=['status', 'valid_date'],
+                         name='visitorpass_status_date'),
+        ]
 
     @property
     def qr_payload(self):
@@ -126,6 +131,27 @@ class AccessLog(models.Model):
     class Meta:
         db_table = 'tbl_access_log'
         ordering = ['-scanned_at']
+        indexes = [
+            # The scan hot path: _inside_state / _already_inside / _pair_entry_exit
+            # and the three cooldown checks all ask
+            # "(plate, status) within a time window, newest first".
+            models.Index(fields=['plate_number', 'status', '-scanned_at'],
+                         name='accesslog_plate_status_time'),
+            # Meta.ordering — every unfiltered list page sorts by this.
+            models.Index(fields=['-scanned_at'], name='accesslog_scanned_at'),
+            # Dashboard: per-status counts over today / the past week.
+            models.Index(fields=['status', '-scanned_at'],
+                         name='accesslog_status_time'),
+            # Security dashboard + per-guard stats ("my scans today").
+            models.Index(fields=['scanned_by', '-scanned_at'],
+                         name='accesslog_scanned_by_time'),
+            # Per-vehicle entry history.
+            models.Index(fields=['vehicle', '-scanned_at'],
+                         name='accesslog_vehicle_time'),
+            # Gate filtering on the entries/operations screens.
+            models.Index(fields=['gate_id', '-scanned_at'],
+                         name='accesslog_gate_time'),
+        ]
 
     def save(self, *args, **kwargs):
         # scanned_by records whose session triggered the scan (may be an admin
@@ -152,6 +178,15 @@ class GuardShift(models.Model):
     class Meta:
         db_table = 'tbl_guard_shift'
         ordering = ['-clocked_in_at']
+        indexes = [
+            # "shifts for this guard today" and the open-shift lookup.
+            models.Index(fields=['guard', '-clocked_in_at'],
+                         name='guardshift_guard_time'),
+            models.Index(fields=['gate', '-clocked_in_at'],
+                         name='guardshift_gate_time'),
+            # Finding the currently-active shift (clocked_out_at IS NULL).
+            models.Index(fields=['clocked_out_at'], name='guardshift_clocked_out'),
+        ]
 
     def __str__(self):
         return f"{self.guard.full_name} @ {self.gate} — {self.clocked_in_at.strftime('%Y-%m-%d %H:%M')}"
@@ -198,6 +233,12 @@ class MLTrainingSample(models.Model):
     class Meta:
         db_table = 'tbl_ml_training_sample'
         ordering = ['-created_at']
+        # 10k+ rows and growing with every scan — the review queue filters by
+        # status and always sorts newest-first.
+        indexes = [
+            models.Index(fields=['-created_at'], name='mlsample_created_at'),
+            models.Index(fields=['status', '-created_at'], name='mlsample_status_time'),
+        ]
 
     def __str__(self):
         return f"[{self.status}] {self.plate_number or '?'} ({self.source})"

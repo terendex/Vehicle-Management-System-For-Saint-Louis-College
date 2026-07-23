@@ -11,6 +11,7 @@ from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 from accounts.audit import audit
 from accounts.models import AuditLog
+from time_utils import day_range, filter_local_date_range
 
 
 class IsStaffRole(permissions.BasePermission):
@@ -33,7 +34,11 @@ class IsCDSOOrAdmin(permissions.BasePermission):
 
 
 class ViolationViewSet(viewsets.ModelViewSet):
-    queryset           = Violation.objects.select_related('vehicle__user').all()
+    # issued_by / on_duty_guard are read by the serializer too — without them
+    # here each row costs an extra user lookup.
+    queryset           = Violation.objects.select_related(
+        'vehicle__user', 'issued_by', 'on_duty_guard',
+    ).all()
     serializer_class   = ViolationSerializer
     permission_classes = [IsStaffRole]
 
@@ -216,7 +221,8 @@ class GuardViolationsView(APIView):
             try:
                 from datetime import date as _date
                 d = _date.fromisoformat(date_str)
-                qs = qs.filter(issued_at__date=d)
+                _start, _end = day_range(d)
+                qs = qs.filter(issued_at__gte=_start, issued_at__lt=_end)
             except ValueError:
                 pass
         return Response(ViolationSerializer(qs, many=True, context={'request': request}).data)
@@ -258,10 +264,7 @@ def _filter_violations_report(request):
     date_to   = request.query_params.get('date_to', '').strip()
     status_f  = request.query_params.get('status', '').strip()
     search    = request.query_params.get('search', '').strip()
-    if date_from:
-        qs = qs.filter(issued_at__date__gte=date_from)
-    if date_to:
-        qs = qs.filter(issued_at__date__lte=date_to)
+    qs = filter_local_date_range(qs, 'issued_at', date_from, date_to)
     if status_f:
         qs = qs.filter(status=status_f)
     if search:

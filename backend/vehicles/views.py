@@ -1,5 +1,6 @@
 import secrets
 import string
+import threading
 import time as _time
 import uuid
 
@@ -14,6 +15,7 @@ from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, Referenc
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
 from . import parking_camera
 from accounts.audit import audit, AuditedViewSetMixin
+from time_utils import filter_local_date_range
 from accounts.models import AuditLog
 
 class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
@@ -177,7 +179,38 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 
 # ── PTZ helpers (ONVIF ContinuousMove / Stop / GotoHomePosition) ─────────────
 
-def _ptz_soap(endpoint, body_xml, username, password):
+# Discovered PTZ route per camera: which HTTP port, ONVIF paths, SOAP content
+# type and profile token actually work. None of that changes for a given
+# camera, but it used to be re-probed on *every* button press — worst case a
+# port scan plus 10 SOAP attempts at a 5s timeout each. Press-and-hold on an
+# arrow key made that cost repeat per request. Discover once, reuse after.
+_PTZ_LOCK  = threading.Lock()
+_PTZ_CACHE: dict = {}
+
+
+def _ptz_cache_get(cam_id, ip):
+    with _PTZ_LOCK:
+        info = _PTZ_CACHE.get(cam_id)
+    # Ignore the cache if the camera was re-pointed at a different address.
+    return info if info and info.get('ip') == ip else None
+
+
+def _ptz_cache_set(cam_id, info):
+    with _PTZ_LOCK:
+        _PTZ_CACHE[cam_id] = info
+
+
+def _ptz_cache_clear(cam_id):
+    with _PTZ_LOCK:
+        _PTZ_CACHE.pop(cam_id, None)
+
+
+def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
+    """POST an ONVIF SOAP envelope. Returns (response, content_type_that_worked).
+
+    `content_types` pins the encoding to the one already known to work for this
+    camera, skipping the SOAP 1.2 → 1.1 probe.
+    """
     import requests as _rq, base64, hashlib, os, datetime
     nonce_raw = os.urandom(16)
     nonce_b64 = base64.b64encode(nonce_raw).decode()
@@ -203,79 +236,95 @@ def _ptz_soap(endpoint, body_xml, username, password):
     )
     data = envelope.encode('utf-8')
     # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras
-    for ct in ['application/soap+xml; charset=utf-8', 'text/xml; charset=utf-8']:
+    for ct in (content_types or ['application/soap+xml; charset=utf-8',
+                                 'text/xml; charset=utf-8']):
         try:
             r = _rq.post(endpoint, data=data,
                          headers={'Content-Type': ct},
                          timeout=5, auth=(username, password))
             if r.status_code < 500:
-                return r
+                return r, ct
         except Exception:
             pass
     raise Exception(f'SOAP request failed for {endpoint}')
 
 
-def _ptz_get_token(base_url, username, password):
+MEDIA_PATHS = ['/onvif/media_service', '/onvif/Media', '/onvif/media',
+               '/onvif/device_service', '/onvif/']
+PTZ_PATHS   = ['/onvif/PTZ_service', '/onvif/ptz_service', '/onvif/PTZ',
+               '/onvif/ptz', '/onvif/']
+
+
+def _ptz_get_token(base_url, username, password, media_path=None, content_type=None):
+    """Discover the profile token. Returns (token, media_path, content_type).
+
+    Passing a known media_path/content_type turns the probe into one request.
+    """
     from xml.etree import ElementTree as ET
     # Try common ONVIF media service paths — cameras vary on capitalisation
-    for path in ['/onvif/media_service', '/onvif/Media', '/onvif/media',
-                 '/onvif/device_service', '/onvif/']:
+    for path in ([media_path] if media_path else MEDIA_PATHS):
         try:
-            resp = _ptz_soap(f'{base_url}{path}',
-                             '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>',
-                             username, password)
+            resp, ct = _ptz_soap(f'{base_url}{path}',
+                                 '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>',
+                                 username, password,
+                                 [content_type] if content_type else None)
             for el in ET.fromstring(resp.text).iter():
                 t = el.get('token')
                 if t:
-                    return t
+                    return t, path, ct
         except Exception:
             continue
-    return 'Profile_1'
+    if media_path:
+        raise Exception('cached ONVIF media path stopped responding')
+    return 'Profile_1', None, None
 
 
-def _ptz_send(base_url, username, password, body_xml):
-    # Try common PTZ service paths
-    for path in ['/onvif/PTZ_service', '/onvif/ptz_service', '/onvif/PTZ',
-                 '/onvif/ptz', '/onvif/']:
+def _ptz_send(base_url, username, password, body_xml, ptz_path=None, content_type=None):
+    """Send a PTZ command. Returns (ptz_path, content_type) that worked."""
+    for path in ([ptz_path] if ptz_path else PTZ_PATHS):
         try:
-            r = _ptz_soap(f'{base_url}{path}', body_xml, username, password)
+            r, ct = _ptz_soap(f'{base_url}{path}', body_xml, username, password,
+                              [content_type] if content_type else None)
             if r.status_code < 400:
-                return
+                return path, ct
         except Exception:
             continue
     raise Exception('No PTZ service path responded successfully')
 
 
-def _ptz_move(base_url, username, password, token, pan, tilt, zoom):
-    _ptz_send(base_url, username, password,
+def _ptz_move(base_url, username, password, token, pan, tilt, zoom, **route):
+    return _ptz_send(base_url, username, password,
         '<tptz:ContinuousMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
         f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
         '<tptz:Velocity>'
         f'<tt:PanTilt xmlns:tt="http://www.onvif.org/ver10/schema" x="{pan:.2f}" y="{tilt:.2f}"/>'
         f'<tt:Zoom xmlns:tt="http://www.onvif.org/ver10/schema" x="{zoom:.2f}"/>'
-        '</tptz:Velocity></tptz:ContinuousMove>'
+        '</tptz:Velocity></tptz:ContinuousMove>', **route
     )
 
 
-def _ptz_stop(base_url, username, password, token):
-    _ptz_send(base_url, username, password,
+def _ptz_stop(base_url, username, password, token, **route):
+    return _ptz_send(base_url, username, password,
         '<tptz:Stop xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
         f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
         '<tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom>'
-        '</tptz:Stop>'
+        '</tptz:Stop>', **route
     )
 
 
-def _ptz_home(base_url, username, password, token):
-    _ptz_send(base_url, username, password,
+def _ptz_home(base_url, username, password, token, **route):
+    return _ptz_send(base_url, username, password,
         '<tptz:GotoHomePosition xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
         f'<tptz:ProfileToken>{token}</tptz:ProfileToken>'
-        '</tptz:GotoHomePosition>'
+        '</tptz:GotoHomePosition>', **route
     )
 
 
-def _try_cgi_ptz(base_url, username, password, command, speed_int):
-    """CGI fallback for cameras that use HTTP but not ONVIF (Dahua/Hi3510 style)."""
+def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None):
+    """CGI fallback for cameras that use HTTP but not ONVIF (Dahua/Hi3510 style).
+
+    Returns the index of the URL form that worked so it can be reused.
+    """
     import requests as _rq
     dahua_code = {
         'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
@@ -285,16 +334,19 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int):
         'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right',
         'zoom_in': 'zoomadd', 'zoom_out': 'zoomdec', 'stop': 'stop', 'home': 'poscall',
     }.get(command, 'stop')
-    errors = []
-    for url in [
+    forms = [
         f'{base_url}/cgi-bin/ptz.cgi?action=start&channel=1&code={dahua_code}&arg1=0&arg2={speed_int}&arg3=0',
         f'{base_url}/cgi-bin/ptzctrl.cgi?ptzcmd&{hi3510_act}&{speed_int}',
         f'{base_url}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={hi3510_act}&-speed={speed_int}',
-    ]:
+    ]
+    candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None
+                  else list(enumerate(forms)))
+    errors = []
+    for idx, url in candidates:
         try:
             r = _rq.get(url, auth=(username, password), timeout=3)
             if r.status_code < 400:
-                return
+                return idx
             errors.append(f'{r.status_code}')
         except Exception as e:
             errors.append(str(e))
@@ -322,6 +374,18 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Camera added | {cam} | IP: {cam.ip} | By: {request.user.full_name}")
         return Response(serializer.data, status=drf_status.HTTP_201_CREATED)
+
+    def perform_update(self, serializer):
+        # super() keeps the audit-log entry; we only add cache invalidation.
+        # IP/credentials may have changed, so the discovered PTZ route is no
+        # longer trustworthy — force rediscovery on the next command.
+        super().perform_update(serializer)
+        _ptz_cache_clear(serializer.instance.pk)
+
+    def perform_destroy(self, instance):
+        cam_id = instance.pk          # delete() clears the pk
+        super().perform_destroy(instance)
+        _ptz_cache_clear(cam_id)
 
     @action(detail=False, methods=['get'], url_path='next-name')
     def next_name(self, request):
@@ -355,7 +419,53 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         }
 
         speed_int = max(1, round(speed * 10))  # CGI uses integer speeds 1-10
-        last_err  = 'No HTTP port reachable on the camera'
+
+        def _send(base, route):
+            """Run `command` against `base`. Returns the route that worked."""
+            if route.get('method') == 'cgi':
+                idx = _try_cgi_ptz(base, cam.device_id, cam.password, command,
+                                   speed_int, route.get('cgi_form'))
+                return {**route, 'method': 'cgi', 'cgi_form': idx}
+
+            token      = route.get('token')
+            media_path = route.get('media_path')
+            media_ct   = route.get('media_ct')
+            if not token:
+                # Only pay for profile discovery when we haven't got a token
+                # yet. A revoked token surfaces as a failed command below,
+                # which clears the cache and triggers rediscovery.
+                token, media_path, media_ct = _ptz_get_token(
+                    base, cam.device_id, cam.password, media_path, media_ct,
+                )
+            kw = {'ptz_path': route.get('ptz_path'), 'content_type': route.get('ptz_ct')}
+            if command == 'stop':
+                ptz_path, ptz_ct = _ptz_stop(base, cam.device_id, cam.password, token, **kw)
+            elif command == 'home':
+                ptz_path, ptz_ct = _ptz_home(base, cam.device_id, cam.password, token, **kw)
+            elif command in vel_map:
+                pan, tilt, zoom = vel_map[command]
+                ptz_path, ptz_ct = _ptz_move(base, cam.device_id, cam.password,
+                                             token, pan, tilt, zoom, **kw)
+            else:
+                raise Exception(f'Unknown PTZ command: {command}')
+            return {'method': 'onvif', 'token': token,
+                    'media_path': media_path, 'media_ct': media_ct,
+                    'ptz_path': ptz_path, 'ptz_ct': ptz_ct}
+
+        # ── Fast path: reuse the route discovered on a previous press ──────────
+        cached = _ptz_cache_get(cam.pk, cam.ip)
+        if cached:
+            try:
+                route = _send(cached['base'], cached)
+                _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': cached['base']})
+                return Response({'ok': True, 'command': command,
+                                 'method': route['method'], 'cached': True})
+            except Exception:
+                # Camera rebooted, moved, or firmware changed — rediscover below.
+                _ptz_cache_clear(cam.pk)
+
+        # ── Discovery: probe ports, ONVIF paths, then the CGI fallback ─────────
+        last_err = 'No HTTP port reachable on the camera'
         for port in [80, 8080, 8000, 8899]:
             try:
                 with socket.create_connection((cam.ip, port), timeout=1.5):
@@ -365,24 +475,17 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             base = f'http://{cam.ip}' if port == 80 else f'http://{cam.ip}:{port}'
             # Try ONVIF first, then CGI fallback
             onvif_err = None
-            try:
-                token = _ptz_get_token(base, cam.device_id, cam.password)
-                if command == 'stop':
-                    _ptz_stop(base, cam.device_id, cam.password, token)
-                elif command == 'home':
-                    _ptz_home(base, cam.device_id, cam.password, token)
-                elif command in vel_map:
-                    pan, tilt, zoom = vel_map[command]
-                    _ptz_move(base, cam.device_id, cam.password, token, pan, tilt, zoom)
-                return Response({'ok': True, 'command': command, 'method': 'onvif'})
-            except Exception as exc:
-                onvif_err = str(exc)
-            try:
-                _try_cgi_ptz(base, cam.device_id, cam.password, command, speed_int)
-                return Response({'ok': True, 'command': command, 'method': 'cgi'})
-            except Exception as exc:
-                last_err = f'onvif: {onvif_err} | cgi: {exc}'
-                continue
+            for method in ('onvif', 'cgi'):
+                try:
+                    route = _send(base, {'method': method})
+                    _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': base})
+                    return Response({'ok': True, 'command': command,
+                                     'method': route['method'], 'cached': False})
+                except Exception as exc:
+                    if method == 'onvif':
+                        onvif_err = str(exc)
+                    else:
+                        last_err = f'onvif: {onvif_err} | cgi: {exc}'
 
         return Response({'ok': False, 'error': f'PTZ unavailable: {last_err}'}, status=400)
 
@@ -445,18 +548,16 @@ async def parking_stream_view(request, pk):
                     await asyncio.sleep(0.5)
                     continue
 
-                frame = thread.get_frame()
-                if frame is None:
+                # get_jpeg() encodes at most once per frame and shares the
+                # result across every viewer, so N watchers cost the same as
+                # one. Still run in the thread pool — the first viewer to reach
+                # a new frame does the encode and must not block the loop.
+                jpeg_bytes = await loop.run_in_executor(None, thread.get_jpeg)
+                if jpeg_bytes is None:
                     yield _mjpeg_frame(_connecting)
                     await asyncio.sleep(0.1)
                     continue
 
-                # encode in thread-pool so we don't block the event loop
-                fr = frame  # local capture
-                jpeg_bytes = await loop.run_in_executor(
-                    None,
-                    lambda: cv2.imencode('.jpg', fr, [cv2.IMWRITE_JPEG_QUALITY, 75])[1].tobytes()
-                )
                 yield _mjpeg_frame(jpeg_bytes)
                 await asyncio.sleep(1 / 20)  # cap at 20 fps
         except (asyncio.CancelledError, GeneratorExit):
@@ -1858,10 +1959,7 @@ def _filter_registrations_report(request):
     date_to   = request.query_params.get('date_to', '').strip()
     status_f  = request.query_params.get('status', '').strip()
     search    = request.query_params.get('search', '').strip()
-    if date_from:
-        qs = qs.filter(created_at__date__gte=date_from)
-    if date_to:
-        qs = qs.filter(created_at__date__lte=date_to)
+    qs = filter_local_date_range(qs, 'created_at', date_from, date_to)
     if status_f:
         qs = qs.filter(status=status_f)
     if search:

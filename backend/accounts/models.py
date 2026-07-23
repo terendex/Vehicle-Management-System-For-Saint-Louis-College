@@ -133,6 +133,13 @@ class AuditLog(models.Model):
     class Meta:
         db_table = 'tbl_audit_log'
         ordering = ['-created_at']
+        indexes = [
+            # Meta.ordering + the date-range filters on the Vehicle Log screen.
+            models.Index(fields=['-created_at'], name='auditlog_created_at'),
+            # Action filter, and the dashboard's per-actor-role recent lists.
+            models.Index(fields=['action', '-created_at'], name='auditlog_action_time'),
+            models.Index(fields=['actor', '-created_at'], name='auditlog_actor_time'),
+        ]
 
     def __str__(self):
         actor_name = self.actor.full_name if self.actor else 'Unknown'
@@ -167,6 +174,11 @@ class Notification(models.Model):
     class Meta:
         db_table = 'tbl_notification'
         ordering = ['-created_at']
+        indexes = [
+            # The bell feed: newest first, and the unread badge count.
+            models.Index(fields=['-created_at'], name='notification_created_at'),
+            models.Index(fields=['is_read', '-created_at'], name='notification_unread'),
+        ]
 
     def __str__(self):
         return f"[{self.category}] {self.title}"

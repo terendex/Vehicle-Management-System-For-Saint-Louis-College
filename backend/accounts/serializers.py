@@ -39,8 +39,14 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.photo.url
 
     def get_registrant_type(self, obj):
-        reg = obj.registrations.first()
-        return reg.registrant_type if reg else None
+        # `.all()` instead of `.first()`: on a prefetch_related'd queryset
+        # `.first()` re-slices, which discards the prefetch cache and costs one
+        # extra query per row. Picking the lowest pk in Python keeps the exact
+        # same record `.first()` returned (the model has no Meta.ordering).
+        regs = obj.registrations.all()
+        if not regs:
+            return None
+        return min(regs, key=lambda r: r.pk).registrant_type
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):

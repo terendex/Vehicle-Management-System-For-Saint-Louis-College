@@ -60,6 +60,17 @@ class Violation(models.Model):
 
     class Meta:
         db_table = 'tbl_violation'
+        indexes = [
+            # Scan hot path: the once-per-day dedup check before auto-logging.
+            models.Index(fields=['vehicle', 'violation_type', '-issued_at'],
+                         name='violation_vehicle_type_time'),
+            # List screens and the date-range report filters.
+            models.Index(fields=['-issued_at'], name='violation_issued_at'),
+            models.Index(fields=['status', '-issued_at'], name='violation_status_time'),
+            models.Index(fields=['issued_by', '-issued_at'], name='violation_issued_by_time'),
+            # Dashboard: open (unresolved) violation count.
+            models.Index(fields=['is_resolved'], name='violation_is_resolved'),
+        ]
 
     @classmethod
     def compute_offense_number(cls, vehicle, violation_type) -> int:

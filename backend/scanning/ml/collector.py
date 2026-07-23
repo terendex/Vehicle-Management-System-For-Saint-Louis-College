@@ -38,12 +38,16 @@ def _save_raw_image(raw_bytes: bytes) -> str:
     return f"ml_samples/{filename}"
 
 
-def record_scan(raw_bytes: bytes) -> dict | None:
-    if raw_bytes is None or len(raw_bytes) == 0:
-        return None
+def record_scan(raw_bytes: bytes, results: list[dict] | None = None) -> dict | None:
+    """Persist a training sample for a scan.
 
-    img = _decode(raw_bytes)
-    if img is None:
+    `results` is the output of read_plate() for the same bytes. Pass it
+    whenever the caller has already read the plate: detection and OCR are the
+    two most expensive operations in the system, and re-running them here meant
+    every scan paid for the whole pipeline twice. Left optional so callers that
+    only want collection still work.
+    """
+    if raw_bytes is None or len(raw_bytes) == 0:
         return None
 
     plate_texts: list[str] = []
@@ -52,18 +56,32 @@ def record_scan(raw_bytes: bytes) -> dict | None:
     status = "unlabeled"
 
     try:
-        detections = _detect_plates(img)
-        if detections:
-            for det in detections:
-                text, ocr_conf = _ocr_crop(det["crop"])
-                combined_conf = (det["score"] + ocr_conf) / 2 if ocr_conf else det["score"]
+        if results is None:
+            img = _decode(raw_bytes)
+            if img is None:
+                return None
+            for det in _detect_plates(img):
+                text, ocr_conf = _ocr_crop(det["crop"], det.get("aspect_ratio", 1.0))
                 if text:
                     plate_texts.append(text)
-                    confidences.append(combined_conf)
+                    confidences.append(
+                        (det["score"] + ocr_conf) / 2 if ocr_conf else det["score"]
+                    )
                     bboxes.append(det["bbox"])
+        else:
+            for r in results:
+                if not r.get("plate_text"):
+                    continue
+                det_score = r.get("detection_score") or 0.0
+                ocr_conf  = r.get("confidence")
+                plate_texts.append(r["plate_text"])
+                confidences.append(
+                    (det_score + ocr_conf) / 2 if ocr_conf else det_score
+                )
+                bboxes.append(r["bbox"])
 
-            if plate_texts:
-                status = "auto_labeled"
+        if plate_texts:
+            status = "auto_labeled"
 
     except Exception as exc:
         log.error("ML collector error: %s", exc)

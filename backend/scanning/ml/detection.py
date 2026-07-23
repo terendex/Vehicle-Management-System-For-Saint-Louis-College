@@ -308,20 +308,52 @@ def _box_iou(b1, b2) -> float:
 
 
 def _nms(dets: list[dict], iou_thresh: float = 0.45) -> list[dict]:
-    """Per-class NMS to remove duplicate boxes from tiled passes."""
-    dets = sorted(dets, key=lambda d: d["score"], reverse=True)
-    kept = []
-    for d in dets:
-        suppress = False
-        for k in kept:
-            if k["class_name"] != d["class_name"]:
+    """Per-class NMS to remove duplicate boxes from tiled passes.
+
+    Greedy NMS is inherently O(n²) in comparisons, but the suppression step is
+    vectorised so those comparisons run inside NumPy rather than as one Python
+    call per pair. A tiled GPU pass can emit a few hundred boxes, which meant
+    tens of thousands of interpreted _box_iou calls per frame.
+
+    Output is byte-identical to the scalar version: same boxes, same order.
+    """
+    n = len(dets)
+    if n < 2:
+        return list(dets)
+
+    # Descending score, ties broken by original position — matches sorted().
+    order = sorted(range(n), key=lambda i: (-dets[i]["score"], i))
+
+    by_class: dict = {}
+    for i in order:
+        by_class.setdefault(dets[i]["class_name"], []).append(i)
+
+    kept_idx = set()
+    for idxs in by_class.values():
+        boxes = np.asarray([dets[i]["_xyxy"] for i in idxs], dtype=np.float64)
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        alive = np.ones(len(idxs), dtype=bool)
+
+        for pos in range(len(idxs)):
+            if not alive[pos]:
                 continue
-            if _box_iou(d["_xyxy"], k["_xyxy"]) > iou_thresh:
-                suppress = True
-                break
-        if not suppress:
-            kept.append(d)
-    return kept
+            kept_idx.add(idxs[pos])
+
+            rest = np.nonzero(alive[pos + 1:])[0] + pos + 1
+            if rest.size == 0:
+                continue
+
+            b, o = boxes[pos], boxes[rest]
+            iw = np.minimum(b[2], o[:, 2]) - np.maximum(b[0], o[:, 0])
+            ih = np.minimum(b[3], o[:, 3]) - np.maximum(b[1], o[:, 1])
+            inter = np.maximum(iw, 0.0) * np.maximum(ih, 0.0)
+            union = areas[pos] + areas[rest] - inter
+            iou = np.divide(inter, union, out=np.zeros_like(inter),
+                            where=union > 0)
+            alive[rest[iou > iou_thresh]] = False
+
+    # Emit in the same descending-score order the scalar version produced.
+    return [dets[i] for i in order if i in kept_idx]
 
 
 def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
@@ -329,10 +361,23 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
     """Convert YOLO result boxes into detection dicts with padding applied."""
     dets = []
     for r in results:
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            score = float(box.conf[0])
-            cls_id = int(box.cls[0]) if hasattr(box, "cls") else -1
+        boxes = getattr(r, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            continue
+
+        # Pull the whole result off the GPU in three transfers instead of
+        # three *per box*. With max_det up to 200 that was 600 device syncs
+        # per pass, each one stalling the pipeline.
+        xyxy_all  = boxes.xyxy.cpu().numpy()
+        conf_all  = boxes.conf.cpu().numpy()
+        cls_attr  = getattr(boxes, "cls", None)
+        cls_all   = (cls_attr.cpu().numpy().astype(int) if cls_attr is not None
+                     else np.full(len(xyxy_all), -1, dtype=int))
+
+        for _i in range(len(xyxy_all)):
+            x1, y1, x2, y2 = xyxy_all[_i]
+            score  = float(conf_all[_i])
+            cls_id = int(cls_all[_i])
             class_name = model.names.get(cls_id, f"class_{cls_id}")
 
             # Shift tile-relative coords back to full-image coords

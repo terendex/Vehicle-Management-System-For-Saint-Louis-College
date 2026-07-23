@@ -44,6 +44,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Required for GinIndex on VehicleRegistration.campus_days (JSON containment).
+    'django.contrib.postgres',
 
     'rest_framework',
     'rest_framework_simplejwt',
@@ -59,6 +61,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First in the list: revive a stale pooled DB connection before anything
+    # else (sessions, auth) tries to query with it.
+    'config.middleware.IdleConnectionHealthCheckMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

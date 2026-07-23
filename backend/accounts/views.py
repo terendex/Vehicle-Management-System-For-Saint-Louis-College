@@ -8,6 +8,7 @@ from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
+from time_utils import day_range, day_start, day_end, filter_local_date_range
 from .models import User, AuditLog, Notification
 from .serializers import (
     UserSerializer,
@@ -100,7 +101,23 @@ class UserListView(generics.ListAPIView):
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = User.objects.exclude(role='admin').prefetch_related('registrations').order_by('-id')
+        from django.db.models import Prefetch
+        from vehicles.models import VehicleRegistration
+
+        # The serializer only reads registrant_type off the earliest
+        # registration, so fetch just those columns instead of every field
+        # (registrations carry image/document fields we'd otherwise pull down).
+        qs = (
+            User.objects
+            .exclude(role='admin')
+            .prefetch_related(Prefetch(
+                'registrations',
+                queryset=VehicleRegistration.objects.only(
+                    'id', 'user_id', 'registrant_type',
+                ).order_by('id'),
+            ))
+            .order_by('-id')
+        )
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(
@@ -264,40 +281,52 @@ class DashboardStatsView(APIView):
         user = request.user
         today = timezone.localdate()
         week_ago = today - timedelta(days=7)
+        # Half-open UTC bounds so the timestamp indexes are usable — a
+        # `__date` lookup would force a per-row timezone conversion instead.
+        today_start, today_end = day_range(today)
+        week_start = day_start(week_ago)
 
         if user.role == 'admin':
             from django.db.models.functions import ExtractWeekDay
             from vehicles.models import Vehicle, VehicleRegistration
 
-            total_users         = User.objects.count()
-            security_count      = User.objects.filter(role='security').count()
-            vehicle_owner_count = User.objects.filter(role='vehicle_owner').count()
-            active_users        = User.objects.filter(is_active=True).count()
-            disabled_users      = User.objects.filter(is_active=False).count()
+            # Every query is a ~40ms round-trip to the DB, so each block below is
+            # collapsed into ONE aggregate using conditional Count(filter=...)
+            # instead of a series of separate .count() calls.
+            from django.db.models import Q
 
-            total_vehicles        = Vehicle.objects.count()
-            authorized_vehicles   = Vehicle.objects.filter(is_authorized=True).count()
-            unauthorized_vehicles = total_vehicles - authorized_vehicles
-
-            # Registration outcomes (pending / accepted / rejected) for the status pie
-            reg_by_status = {
-                row['status']: row['count']
-                for row in VehicleRegistration.objects.values('status').annotate(count=Count('id'))
-            }
-            pending_registrations  = reg_by_status.get(VehicleRegistration.Status.PENDING, 0)
-            accepted_registrations = reg_by_status.get(VehicleRegistration.Status.ACCEPTED, 0)
-            rejected_registrations = reg_by_status.get(VehicleRegistration.Status.REJECTED, 0)
-
-            # Vehicle-owner category breakdown (active owners split by owner_type,
-            # plus a disabled slice) for the owners pie. Active-by-type + disabled
-            # are mutually exclusive so they sum cleanly in a donut.
-            owner_qs = User.objects.filter(role='vehicle_owner')
+            u_agg = User.objects.aggregate(
+                total=Count('id'),
+                security=Count('id', filter=Q(role='security')),
+                owners=Count('id', filter=Q(role='vehicle_owner')),
+                active=Count('id', filter=Q(is_active=True)),
+                disabled=Count('id', filter=Q(is_active=False)),
+                owners_disabled=Count('id', filter=Q(role='vehicle_owner', is_active=False)),
+                own_student=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='student')),
+                own_employee=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='employee')),
+                own_fetcher=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='fetcher')),
+                own_visitor=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='visitor')),
+            )
+            total_users         = u_agg['total']
+            security_count      = u_agg['security']
+            vehicle_owner_count = u_agg['owners']
+            active_users        = u_agg['active']
+            disabled_users      = u_agg['disabled']
+            owners_disabled     = u_agg['owners_disabled']
             owners_active_by_type = {
-                row['owner_type']: row['count']
-                for row in owner_qs.filter(is_active=True)
-                                   .values('owner_type').annotate(count=Count('id'))
+                'student':  u_agg['own_student'],
+                'employee': u_agg['own_employee'],
+                'fetcher':  u_agg['own_fetcher'],
+                'visitor':  u_agg['own_visitor'],
             }
-            owners_disabled = owner_qs.filter(is_active=False).count()
+
+            v_agg = Vehicle.objects.aggregate(
+                total=Count('id'),
+                authorized=Count('id', filter=Q(is_authorized=True)),
+            )
+            total_vehicles        = v_agg['total']
+            authorized_vehicles   = v_agg['authorized']
+            unauthorized_vehicles = total_vehicles - authorized_vehicles
 
             # Suppliers are their own model (not User owners) but form a registered
             # vehicle category alongside students/employees/fetchers. Counted by
@@ -308,20 +337,26 @@ class DashboardStatsView(APIView):
             # One aggregate query gives the full per-status picture for today
             today_by_status = {
                 row['status']: row['count']
-                for row in AccessLog.objects.filter(scanned_at__date=today)
+                for row in AccessLog.objects.filter(scanned_at__gte=today_start,
+                                                    scanned_at__lt=today_end)
                                             .values('status').annotate(count=Count('id'))
             }
             today_scans      = sum(today_by_status.values())
-            week_scans       = AccessLog.objects.filter(scanned_at__date__gte=week_ago).count()
             authorized_today = today_by_status.get('authorized', 0)
             denied_today     = today_by_status.get('denied', 0) + today_by_status.get('wrong_day', 0)
             unknown_today    = today_by_status.get('unknown', 0)
 
-            # Split today's authorized entries into registered owners vs visitor-pass
-            # entries (visitor passes create an ownerless vehicle, so user is null).
-            visitor_today    = AccessLog.objects.filter(
-                scanned_at__date=today, status='authorized', vehicle__user__isnull=True,
-            ).count()
+            # Week total + today's visitor-pass entries in a single pass.
+            # (Visitor passes create an ownerless vehicle, so user is null.)
+            al_agg = AccessLog.objects.filter(scanned_at__gte=week_start).aggregate(
+                week=Count('id'),
+                visitor_today=Count('id', filter=Q(
+                    scanned_at__gte=today_start, scanned_at__lt=today_end,
+                    status='authorized', vehicle__user__isnull=True,
+                )),
+            )
+            week_scans       = al_agg['week']
+            visitor_today    = al_agg['visitor_today']
             registered_today = authorized_today - visitor_today
 
             # Day distribution: authorized entries per weekday (Mon–Sat)
@@ -329,7 +364,7 @@ class DashboardStatsView(APIView):
             DAY_MAP = {2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu', 6: 'Fri', 7: 'Sat'}
             day_rows = (
                 AccessLog.objects
-                .filter(status='authorized', scanned_at__date__gte=week_ago)
+                .filter(status='authorized', scanned_at__gte=week_start)
                 .annotate(wd=ExtractWeekDay('scanned_at'))
                 .filter(wd__in=DAY_MAP.keys())
                 .values('wd')
@@ -342,26 +377,43 @@ class DashboardStatsView(APIView):
             ]
             authorized_week = sum(day_dist_map.values())
 
-            # Per-day registration load (Mon–Sat): how many active registrations
-            # include each campus day, split accepted/pending, against the daily
-            # slot capacity used by the public registration form.
+            # Registration totals + per-day load (Mon–Sat) in ONE query. This
+            # previously ran 6 days x 2 statuses = 12 separate count queries.
             from vehicles.views import SCHEDULE_SLOT_LIMIT
             WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-            day_registrations = []
-            for _day in WEEK_DAYS:
-                _day_qs = VehicleRegistration.objects.filter(campus_days__contains=[_day])
-                day_registrations.append({
+            _ACC, _PEN = VehicleRegistration.Status.ACCEPTED, VehicleRegistration.Status.PENDING
+            _reg_expr = {
+                'pending':  Count('id', filter=Q(status=_PEN)),
+                'accepted': Count('id', filter=Q(status=_ACC)),
+                'rejected': Count('id', filter=Q(status=VehicleRegistration.Status.REJECTED)),
+            }
+            for _i, _day in enumerate(WEEK_DAYS):
+                _reg_expr[f'd{_i}_acc'] = Count('id', filter=Q(campus_days__contains=[_day], status=_ACC))
+                _reg_expr[f'd{_i}_pen'] = Count('id', filter=Q(campus_days__contains=[_day], status=_PEN))
+            reg_agg = VehicleRegistration.objects.aggregate(**_reg_expr)
+
+            pending_registrations  = reg_agg['pending']
+            accepted_registrations = reg_agg['accepted']
+            rejected_registrations = reg_agg['rejected']
+            day_registrations = [
+                {
                     'day':      _day,
-                    'accepted': _day_qs.filter(status=VehicleRegistration.Status.ACCEPTED).count(),
-                    'pending':  _day_qs.filter(status=VehicleRegistration.Status.PENDING).count(),
+                    'accepted': reg_agg[f'd{_i}_acc'],
+                    'pending':  reg_agg[f'd{_i}_pen'],
                     'capacity': SCHEDULE_SLOT_LIMIT,
-                })
+                }
+                for _i, _day in enumerate(WEEK_DAYS)
+            ]
 
             # Violations & visitor passes — surfaced on the dashboard KPI strip
             from violations.models import Violation
             from scanning.models import VisitorPass
-            open_violations = Violation.objects.filter(is_resolved=False).count()
-            fee_imposed     = Violation.objects.filter(status=Violation.Status.FEE_IMPOSED).count()
+            viol_agg = Violation.objects.aggregate(
+                open=Count('id', filter=Q(is_resolved=False)),
+                fee=Count('id', filter=Q(status=Violation.Status.FEE_IMPOSED)),
+            )
+            open_violations = viol_agg['open']
+            fee_imposed     = viol_agg['fee']
             active_passes   = VisitorPass.objects.filter(
                 valid_date=today, status=VisitorPass.Status.ACTIVE
             ).count()
@@ -430,15 +482,31 @@ class DashboardStatsView(APIView):
                 },
             }
         else:
-            my_scans_today = AccessLog.objects.filter(scanned_by=user, scanned_at__date=today).count()
-            my_scans_week  = AccessLog.objects.filter(scanned_at__date__gte=week_ago, scanned_by=user).count()
-            my_total_scans = AccessLog.objects.filter(scanned_by=user).count()
-            my_authorized  = AccessLog.objects.filter(scanned_by=user, scanned_at__date=today, status='authorized').count()
-            my_denied      = AccessLog.objects.filter(
-                scanned_by=user, scanned_at__date=today, status__in=['denied', 'wrong_day']
-            ).count()
+            # All five figures in one pass instead of five round-trips.
+            from django.db.models import Q
+            my_agg = AccessLog.objects.filter(scanned_by=user).aggregate(
+                total=Count('id'),
+                today=Count('id', filter=Q(scanned_at__gte=today_start, scanned_at__lt=today_end)),
+                week=Count('id', filter=Q(scanned_at__gte=week_start)),
+                authorized=Count('id', filter=Q(scanned_at__gte=today_start, scanned_at__lt=today_end,
+                                                status='authorized')),
+                denied=Count('id', filter=Q(scanned_at__gte=today_start, scanned_at__lt=today_end,
+                                            status__in=['denied', 'wrong_day'])),
+            )
+            my_scans_today = my_agg['today']
+            my_scans_week  = my_agg['week']
+            my_total_scans = my_agg['total']
+            my_authorized  = my_agg['authorized']
+            my_denied      = my_agg['denied']
 
-            my_access_logs = AccessLog.objects.filter(scanned_by=user).order_by('-scanned_at')[:10]
+            # select_related: the serializer reads scanned_by / on_duty_guard /
+            # vehicle.user, which would otherwise fire ~3 extra queries per row.
+            my_access_logs = (
+                AccessLog.objects
+                .select_related('scanned_by', 'on_duty_guard', 'vehicle', 'vehicle__user')
+                .filter(scanned_by=user)
+                .order_by('-scanned_at')[:10]
+            )
 
             from scanning.serializers import AccessLogSerializer
             data = {
@@ -460,6 +528,11 @@ class DashboardStatsView(APIView):
 #  Audit Log Views
 # ──────────────────────────────────────────────
 
+def _apply_created_at_range(qs, date_from, date_to):
+    """Inclusive local-date range filter on AuditLog.created_at."""
+    return filter_local_date_range(qs, 'created_at', date_from, date_to)
+
+
 class AuditLogListView(generics.ListAPIView):
     """List audit logs - admin only."""
     serializer_class   = AuditLogSerializer
@@ -475,10 +548,7 @@ class AuditLogListView(generics.ListAPIView):
 
         date_from = self.request.query_params.get('date_from', '').strip()
         date_to   = self.request.query_params.get('date_to', '').strip()
-        if date_from:
-            qs = qs.filter(created_at__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(created_at__date__lte=date_to)
+        qs = _apply_created_at_range(qs, date_from, date_to)
 
         # Search matches the actor (code / name / email) or the details text
         search = self.request.query_params.get('search', '').strip()
@@ -506,10 +576,7 @@ def _filter_audit_logs(request):
     search    = request.query_params.get('search', '').strip()
     if action:
         qs = qs.filter(action=action)
-    if date_from:
-        qs = qs.filter(created_at__date__gte=date_from)
-    if date_to:
-        qs = qs.filter(created_at__date__lte=date_to)
+    qs = _apply_created_at_range(qs, date_from, date_to)
     if search:
         qs = qs.filter(
             Q(actor__user_code__icontains=search) |
@@ -716,8 +783,9 @@ class AuditLogStatsView(APIView):
         
         stats = {
             'total_logs': AuditLog.objects.count(),
-            'today_logs': AuditLog.objects.filter(created_at__date=today).count(),
-            'week_logs': AuditLog.objects.filter(created_at__date__gte=week_ago).count(),
+            'today_logs': AuditLog.objects.filter(
+                created_at__gte=day_start(today), created_at__lt=day_end(today)).count(),
+            'week_logs': AuditLog.objects.filter(created_at__gte=day_start(week_ago)).count(),
             'by_action': AuditLog.objects.values('action').annotate(count=Count('action')),
         }
         return Response(stats)
