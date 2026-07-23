@@ -35,13 +35,11 @@ def report_filename(report_name, ext):
 
 # ── Letterhead fonts ────────────────────────────────────────────────────────
 # "Saint Louis College" → Old English Text MT (blackletter); the tagline → a
-# formal script. The PDF registers the Windows TTFs and *embeds* the glyphs so
-# the file renders correctly on any viewer. Excel uses the font names (rendered
-# only if the viewer has them installed, else a graceful fallback). If a TTF is
-# missing, the PDF falls back to Times.
+# formal script. The PDF registers the Windows TTF and *embeds* the glyphs so
+# the file renders correctly on any viewer. If the TTF is missing, the PDF
+# falls back to Times. (Excel has no letterhead — it is a plain data table.)
 _WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
 LH_INSTITUTION_TTF = 'OLDENGL.TTF'    # Old English Text MT
-LH_INSTITUTION_XLSX_FONT = 'Old English Text MT'
 
 _fonts_ready = False
 _PDF_INSTITUTION_FONT = 'Times-Bold'     # fallback until registered
@@ -66,81 +64,23 @@ def _register_letterhead_fonts():
 
 
 def branded_excel_response(*, filename, sheet_title, report_title, subtitle, headers, rows, col_widths):
-    """Build a styled .xlsx with the SLC letterhead band, brand header row, footer."""
+    """Build a plain .xlsx data table — column headers on row 1, data from row 2.
+
+    Deliberately has no letterhead/title band: merged cells and floating images
+    break sorting, filtering and pivot tables. `report_title`/`subtitle` are
+    accepted for API parity with the PDF builder but are not rendered.
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
-    from openpyxl.drawing.image import Image as XLImage
 
     wb = Workbook()
     ws = wb.active
     ws.title = sheet_title
     n = len(headers)
     last_col = chr(ord('A') + n - 1)
-    TNR = 'Times New Roman'
 
-    # ── Letterhead: text centred; seal floated just left of the name ─
-    center = Alignment(horizontal='center')
-    ws.merge_cells(f'A1:{last_col}1')
-    ws['A1'] = LH_INSTITUTION
-    ws['A1'].font = Font(name=LH_INSTITUTION_XLSX_FONT, bold=True, size=20, color=REPORT_NAVY_HEX)
-    ws['A1'].alignment = center
-    ws.merge_cells(f'A2:{last_col}2')
-    ws['A2'] = LH_LOCATION
-    ws['A2'].font = Font(name=TNR, size=11, color='333333')
-    ws['A2'].alignment = center
-    ws.merge_cells(f'A3:{last_col}3')
-    ws['A3'] = LH_TAGLINE
-    ws['A3'].font = Font(name=TNR, italic=True, size=10, color='555555')
-    ws['A3'].alignment = center
-    for rh in (1, 2, 3):
-        ws.row_dimensions[rh].height = 16
-
-    if os.path.exists(REPORT_LOGO_PATH):
-        try:
-            from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
-            from openpyxl.drawing.xdr import XDRPositiveSize2D
-            from openpyxl.utils.units import pixels_to_EMU
-            logo = XLImage(REPORT_LOGO_PATH)
-            logo_px = 46
-            logo.width, logo.height = logo_px, logo_px
-            # Float the seal just to the left of the page-centred name.
-            def _col_px(wd):
-                return int(round(wd * 7)) + 5
-            total_px = sum(_col_px(wd) for wd in col_widths)
-            name_px = 250   # approx width of "Saint Louis College" in Old English
-            logo_left = max(0, total_px / 2 - name_px / 2 - 10 - logo_px)
-            acc, col_idx, col_off = 0, 0, 0
-            for i, wd in enumerate(col_widths):
-                cwpx = _col_px(wd)
-                if acc + cwpx > logo_left:
-                    col_idx, col_off = i, logo_left - acc
-                    break
-                acc += cwpx
-            marker = AnchorMarker(col=col_idx, colOff=pixels_to_EMU(col_off),
-                                  row=0, rowOff=pixels_to_EMU(1))
-            logo.anchor = OneCellAnchor(
-                _from=marker, ext=XDRPositiveSize2D(pixels_to_EMU(logo_px), pixels_to_EMU(logo_px)))
-            ws.add_image(logo)
-        except Exception:
-            pass
-
-    ws.merge_cells(f'A5:{last_col}5')
-    ws['A5'] = LH_ACCRED
-    ws['A5'].font = Font(name=TNR, size=8, color='555555')
-    ws['A5'].alignment = center
-
-    # ── Report title + subtitle (centred) ────────────────────────────
-    ws.merge_cells(f'A6:{last_col}6')
-    ws['A6'] = report_title
-    ws['A6'].font = Font(bold=True, size=13, color=REPORT_BRAND_HEX)
-    ws['A6'].alignment = center
-    ws.merge_cells(f'A7:{last_col}7')
-    ws['A7'] = subtitle
-    ws['A7'].font = Font(size=10, color='666666')
-    ws['A7'].alignment = center
-
-    # ── Column headers (row 9) ───────────────────────────────────────
-    header_row = 9
+    # ── Column headers (row 1) ───────────────────────────────────────
+    header_row = 1
     header_fill = PatternFill('solid', fgColor=REPORT_BRAND_HEX)
     for col, title in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=col, value=title)
@@ -160,12 +100,6 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
             cell = ws.cell(row=r, column=col, value=val)
             if col == n:
                 cell.alignment = wrap
-
-    foot = r + 2
-    ws.merge_cells(start_row=foot, start_column=1, end_row=foot, end_column=n)
-    fcell = ws.cell(row=foot, column=1, value='— End of report · Saint Louis College CDSO · Confidential —')
-    fcell.font = Font(size=9, italic=True, color='999999')
-    fcell.alignment = Alignment(horizontal='center')
 
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename="{filename}"'
