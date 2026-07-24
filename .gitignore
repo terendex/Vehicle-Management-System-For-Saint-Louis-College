@@ -90,3 +90,5 @@ ehthumbs.db
 # ===== UPLOADS AND SNAPSHOTS =====
 backend/uploads/
 backend/snapshots/
+# Local pre-restore safety snapshots
+backend/backups/
