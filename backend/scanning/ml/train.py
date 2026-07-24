@@ -260,6 +260,7 @@ def train(
     freeze_layers: int  = 10,
     data_yaml:     Path | None = None,
     gpu_mem_gb:    float = 3.0,
+    lr0:           float = 0.001,
 ) -> None:
     """
     Train or fine-tune the single-class vehicle detector.
@@ -273,6 +274,12 @@ def train(
                        YOLO26 backbone stages, same as YOLOv8).
         data_yaml:     Path to a custom data.yaml. Defaults to vehicle_ds/data.yaml.
         gpu_mem_gb:    Hard VRAM budget for this training process.
+        lr0:           Initial learning rate. Default 0.001 because we force the
+                       Adam optimizer below — YOLO's stock 0.01 is an SGD-scale
+                       rate and is ~10x too high for Adam. Training at 0.01 blows
+                       the EMA up to NaN/Inf, which makes Ultralytics skip the
+                       checkpoint save ("EMA contains NaN/Inf") and silently
+                       leaves best.pt stuck at an early epoch.
     """
     from ultralytics import YOLO
 
@@ -367,6 +374,7 @@ def train(
         amp=True,                # FP16 tensor cores on the RTX 3060 — ~2× speed, ~half VRAM
         cache=False,
         optimizer="Adam",        # YOLO26's default MuSGD/Muon uses BF16 cuBLAS which fails on older GPUs
+        lr0=lr0,                 # must be Adam-scale (~1e-3); 0.01 diverges the EMA to NaN
         **augment_kwargs,
     )
 
@@ -384,15 +392,30 @@ def train(
 
 
 def _print_eval(results) -> None:
-    """Print mAP@0.5 from the final validation run."""
+    """
+    Print the final validation metrics.
+
+    NOTE: `results.maps` is mAP50-95 per class, NOT mAP@0.5 — reporting it as
+    mAP@0.5 understates the model badly (e.g. 0.463 vs the true 0.782).
+    Read mAP@0.5 from `results.box.map50` instead.
+    """
     try:
-        maps = getattr(results, "maps", None)
-        if maps is None or not len(maps):
+        box = getattr(results, "box", None)
+        if box is None:
             return
-        val = float(maps[0])
-        bar = "▓" * int(val * 20) + "░" * (20 - int(val * 20))
-        print("\n📊 mAP@0.5 (final validation):")
-        print(f"   {'vehicle':<20} {bar}  {val:.3f}")
+
+        def _bar(v: float) -> str:
+            filled = int(v * 20)
+            return "▓" * filled + "░" * (20 - filled)
+
+        print("\n📊 Final validation:")
+        for label, val in (
+            ("mAP@0.5",      float(box.map50)),
+            ("mAP@0.5:0.95", float(box.map)),
+            ("precision",    float(box.mp)),
+            ("recall",       float(box.mr)),
+        ):
+            print(f"   {label:<14} {_bar(val)}  {val:.3f}")
     except Exception:
         pass  # eval printing is best-effort
 
@@ -408,6 +431,9 @@ if __name__ == "__main__":
                         help="Batch size (default: auto-sized to fit --gpu-mem-gb on GPU, 8 on CPU)")
     parser.add_argument("--gpu-mem-gb",    type=float, default=3.0,
                         help="Hard VRAM budget for training (default: 3.0 GB)")
+    parser.add_argument("--lr0",           type=float, default=0.001,
+                        help="Initial learning rate (default: 0.001, correct for the "
+                             "Adam optimizer this script forces; 0.01 diverges to NaN)")
     parser.add_argument("--imgsz",         type=int,   default=640)
     parser.add_argument("--model-size",    type=str,   default="m",
                         choices=["n", "s", "m", "l", "x"],
@@ -441,4 +467,5 @@ if __name__ == "__main__":
         freeze_layers=args.freeze_layers,
         data_yaml=Path(args.data) if args.data else None,
         gpu_mem_gb=args.gpu_mem_gb,
+        lr0=args.lr0,
     )
