@@ -180,7 +180,7 @@ export default function AuditLog() {
       <div className="al-page">
         <div className="al-header">
           <div>
-            <h1 className="al-title">Audit Log</h1>
+            <h1 className="al-title">Vehicle Log</h1>
             <p className="al-subtitle">Track all user management actions and vehicle scans.</p>
           </div>
           <div className="al-header-actions">
@@ -249,12 +249,12 @@ export default function AuditLog() {
           {loading ? (
             <div className="al-loading">
               <div className="al-spinner" />
-              <p>Loading audit logs...</p>
+              <p>Loading vehicle logs...</p>
             </div>
           ) : logs.length === 0 ? (
             <div className="al-empty">
               <ClipboardList size={48} />
-              <h3>No audit logs found</h3>
+              <h3>No vehicle logs found</h3>
               <p>{hasFilters ? 'No events match your current filters.' : 'No events recorded yet.'}</p>
             </div>
           ) : (
@@ -274,11 +274,16 @@ export default function AuditLog() {
                     <td>{log.actor_name || 'System'}</td>
                     <td>
                       <span className={`al-action-badge ${actionBadgeClass(log.action)}`}>
-                        {ACTION_LABELS[log.action] || log.action}
+                        {log.exited_at ? 'Vehicle Entered → Exited' : (ACTION_LABELS[log.action] || log.action)}
                       </span>
                     </td>
                     <td className="al-details">
                       <span className="al-details-text">{log.details || '—'}</span>
+                      {log.exited_at && (
+                        <span className="al-details-text" style={{ display: 'block', color: '#059669', marginTop: 2 }}>
+                          Exited {formatDate(log.exited_at)} · Duration: {log.duration_minutes} min
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

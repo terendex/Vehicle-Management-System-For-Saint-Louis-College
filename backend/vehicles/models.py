@@ -25,6 +25,7 @@ class Vehicle(models.Model):
     class Type(models.TextChoices):
         CAR        = 'car',        'Car'
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
+        EBIKE      = 'ebike',      'E-Bike'
         TRUCK      = 'truck',      'Truck'
         VAN        = 'van',        'Van'
         BUS        = 'bus',        'Bus'
@@ -120,6 +121,7 @@ class VehicleRegistration(models.Model):
     contact_number  = models.CharField(max_length=100, blank=True)
     age             = models.PositiveIntegerField(null=True, blank=True)
     drivers_license = models.CharField(max_length=100, blank=True)
+    drivers_license_image = models.ImageField(upload_to='licenses/', null=True, blank=True)
     campus_days     = models.JSONField(default=list)
     schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
@@ -324,6 +326,16 @@ class SystemSettings(models.Model):
         default=False,
         help_text="When enabled, all vehicles are allowed entry regardless of registration or schedule rules.",
     )
+    vehicle_pass_fee          = models.DecimalField(
+        max_digits=8, decimal_places=2, default=300,
+        validators=[MinValueValidator(0)],
+        help_text="Vehicle Pass registration fee (₱) for students and fetchers.",
+    )
+    vehicle_pass_fee_employee = models.DecimalField(
+        max_digits=8, decimal_places=2, default=150,
+        validators=[MinValueValidator(0)],
+        help_text="Vehicle Pass registration fee (₱) for employees.",
+    )
 
     class Meta:
         verbose_name        = "System Settings"
@@ -430,8 +442,16 @@ class ParkingSpace(models.Model):
 
 class Supplier(models.Model):
     """A supplier company whose vehicles are automatically permitted entry."""
+    class Category(models.TextChoices):
+        DELIVERY    = 'delivery',    'Delivery'
+        MAINTENANCE = 'maintenance', 'Maintenance'
+        VENDOR      = 'vendor',      'Vendor'
+        CONTRACTOR  = 'contractor',  'Contractor'
+        OTHER       = 'other',       'Other'
+
     id           = models.BigAutoField(primary_key=True, db_column='supplier_id')
     company_name = models.CharField(max_length=200, unique=True)
+    category     = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
     is_active    = models.BooleanField(default=True)
     created_at   = models.DateTimeField(auto_now_add=True)
     updated_at   = models.DateTimeField(auto_now=True)
@@ -441,6 +461,38 @@ class Supplier(models.Model):
 
     def __str__(self):
         return self.company_name
+
+
+class ScheduledVisit(models.Model):
+    """A visitor or supplier visit coordinated ahead of time, so gate guards
+    know who to expect on a given day before they show up."""
+    class Category(models.TextChoices):
+        DELIVERY    = 'delivery',    'Delivery'
+        MAINTENANCE = 'maintenance', 'Maintenance'
+        VENDOR      = 'vendor',      'Vendor'
+        CONTRACTOR  = 'contractor',  'Contractor'
+        GUEST       = 'guest',       'Guest / Visitor'
+        OTHER       = 'other',       'Other'
+
+    id            = models.BigAutoField(primary_key=True, db_column='scheduled_visit_id')
+    visitor_name  = models.CharField(max_length=200)
+    category      = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    supplier      = models.ForeignKey(
+        Supplier, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='scheduled_visits',
+    )
+    plate_number  = models.CharField(max_length=20, blank=True)
+    purpose       = models.CharField(max_length=255, blank=True)
+    expected_date = models.DateField()
+    notes         = models.TextField(blank=True)
+    is_arrived    = models.BooleanField(default=False)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['expected_date', 'visitor_name']
+
+    def __str__(self):
+        return f"{self.visitor_name} — {self.expected_date}"
 
 
 class SupplierPlate(models.Model):

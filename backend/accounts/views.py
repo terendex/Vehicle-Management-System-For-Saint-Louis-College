@@ -1,3 +1,4 @@
+import re
 from rest_framework import generics, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -277,6 +278,12 @@ class DashboardStatsView(APIView):
             authorized_vehicles   = Vehicle.objects.filter(is_authorized=True).count()
             unauthorized_vehicles = total_vehicles - authorized_vehicles
 
+            # Vehicle-type breakdown (car/motorcycle/e-bike/van/truck/bus) for the fleet-mix chart
+            vehicles_by_type = {
+                row['vehicle_type']: row['count']
+                for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id'))
+            }
+
             # Registration outcomes (pending / accepted / rejected) for the status pie
             reg_by_status = {
                 row['status']: row['count']
@@ -364,6 +371,14 @@ class DashboardStatsView(APIView):
                 valid_date=today, status=VisitorPass.Status.ACTIVE
             ).count()
 
+            # Violation breakdown by type (last 30 days) for the violations trend chart
+            month_ago = today - timedelta(days=30)
+            violations_by_type = {
+                row['violation_type']: row['count']
+                for row in Violation.objects.filter(issued_at__date__gte=month_ago)
+                                            .values('violation_type').annotate(count=Count('id'))
+            }
+
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='admin'
             ).order_by('-created_at')[:10]
@@ -384,6 +399,7 @@ class DashboardStatsView(APIView):
                     'total':        total_vehicles,
                     'authorized':   authorized_vehicles,
                     'unauthorized': unauthorized_vehicles,
+                    'by_type':      vehicles_by_type,
                 },
                 'registrations': {
                     'pending':  pending_registrations,
@@ -416,6 +432,7 @@ class DashboardStatsView(APIView):
                 'violations': {
                     'open':        open_violations,
                     'fee_imposed': fee_imposed,
+                    'by_type':     violations_by_type,
                 },
                 'visitor_passes': {
                     'active_today': active_passes,
@@ -458,6 +475,10 @@ class DashboardStatsView(APIView):
 #  Audit Log Views
 # ──────────────────────────────────────────────
 
+_AUDIT_PLATE_RE    = re.compile(r'Plate:\s*([^|]+)')
+_AUDIT_DURATION_RE = re.compile(r'Duration:\s*(\d+)\s*min')
+
+
 class AuditLogListView(generics.ListAPIView):
     """List audit logs - admin only."""
     serializer_class   = AuditLogSerializer
@@ -489,6 +510,59 @@ class AuditLogListView(generics.ListAPIView):
             )
 
         return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        """Fold a 'Vehicle Exited' row into its matching 'Vehicle Entered' row
+        (same plate, same page) so a completed visit reads as one line with a
+        computed duration, instead of two separate entry/exit log rows."""
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objects = list(page) if page is not None else list(queryset)
+
+        entries_by_plate = {}
+        for log in objects:
+            if log.action == AuditLog.Action.VEHICLE_ENTERED:
+                m = _AUDIT_PLATE_RE.search(log.details or '')
+                if m:
+                    entries_by_plate.setdefault(m.group(1).strip(), []).append(log)
+
+        exit_info = {}       # entry_log.pk -> {exited_at, duration_minutes}
+        merged_exit_pks   = set()
+        claimed_entry_pks = set()
+        for log in objects:
+            if log.action != AuditLog.Action.VEHICLE_EXITED:
+                continue
+            m = _AUDIT_PLATE_RE.search(log.details or '')
+            if not m:
+                continue
+            plate = m.group(1).strip()
+            candidates = entries_by_plate.get(plate) or []
+            match = next(
+                (e for e in candidates if e.created_at < log.created_at and e.pk not in claimed_entry_pks),
+                None,
+            )
+            if match is None:
+                continue
+            claimed_entry_pks.add(match.pk)
+            merged_exit_pks.add(log.pk)
+            dur_m = _AUDIT_DURATION_RE.search(log.details or '')
+            duration = (
+                int(dur_m.group(1)) if dur_m
+                else max(0, round((log.created_at - match.created_at).total_seconds() / 60))
+            )
+            exit_info[match.pk] = {'exited_at': log.created_at, 'duration_minutes': duration}
+
+        visible = [log for log in objects if log.pk not in merged_exit_pks]
+        data = self.get_serializer(visible, many=True).data
+        for row in data:
+            info = exit_info.get(row['id'])
+            if info:
+                row['exited_at'] = info['exited_at']
+                row['duration_minutes'] = info['duration_minutes']
+
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
 
 
 class AuditLogExportView(APIView):

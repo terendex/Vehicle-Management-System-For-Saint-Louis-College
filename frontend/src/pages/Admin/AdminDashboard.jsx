@@ -356,6 +356,33 @@ export default function AdminDashboard() {
     ].filter(sl => sl.value > 0)
   })() : []
 
+  const VEHICLE_TYPE_LABELS = { car: 'Car', motorcycle: 'Motorcycle', ebike: 'E-Bike', van: 'Van', truck: 'Truck', bus: 'Bus' }
+  const vehicleTypeSlices = stats ? [
+    { key: 'car',        color: '#2563EB' },
+    { key: 'motorcycle', color: '#0D9488' },
+    { key: 'ebike',      color: '#059669' },
+    { key: 'van',        color: '#D97706' },
+    { key: 'truck',      color: '#7C3AED' },
+    { key: 'bus',        color: '#DB2777' },
+  ].map(t => ({ name: VEHICLE_TYPE_LABELS[t.key], value: stats.vehicles?.by_type?.[t.key] ?? 0, color: t.color }))
+    .filter(s => s.value > 0) : []
+
+  const VIOLATION_TYPE_LABELS = {
+    unauthorized_entry: 'Unauthorized Entry', double_parking: 'Double Parking',
+    time_exceed: 'Time Exceed', no_sticker: 'No Sticker',
+    expired_registration: 'Expired Registration', unauthorized: 'Unauthorized (Legacy)', other: 'Other',
+  }
+  const violationTypeSlices = stats ? [
+    { key: 'unauthorized_entry',   color: '#DC2626' },
+    { key: 'double_parking',       color: '#D97706' },
+    { key: 'time_exceed',          color: '#EA580C' },
+    { key: 'no_sticker',           color: '#7C3AED' },
+    { key: 'expired_registration', color: '#DB2777' },
+    { key: 'unauthorized',         color: '#8892A4' },
+    { key: 'other',                color: '#2563EB' },
+  ].map(t => ({ name: VIOLATION_TYPE_LABELS[t.key], value: stats.violations?.by_type?.[t.key] ?? 0, color: t.color }))
+    .filter(s => s.value > 0) : []
+
   const kpiItems = stats ? [
     { icon: Users,        label: 'Total Users',      value: stats.users?.total,            color: '#2A2B61', sub: `${stats.users?.active ?? 0} active` },
     { icon: CarIcon,      label: 'Registered Vehicles', value: stats.vehicles?.total,       color: '#059669', sub: `${stats.vehicles?.authorized ?? 0} authorized` },
@@ -447,6 +474,29 @@ export default function AdminDashboard() {
                 subtitle="Accepted + pending vs daily capacity"
               >
                 <DayRegistrationChart data={stats?.day_registrations} />
+              </ChartCard>
+
+              <ChartCard
+                icon={CarIcon}
+                title="Fleet Mix"
+                subtitle={`${stats?.vehicles?.total ?? 0} registered vehicles`}
+              >
+                <DonutChart
+                  slices={vehicleTypeSlices}
+                  centerValue={stats?.vehicles?.total}
+                  centerLabel="Vehicles"
+                />
+              </ChartCard>
+
+              <ChartCard
+                icon={AlertTriangle}
+                title="Violations by Type"
+                subtitle="Last 30 days"
+              >
+                <DonutChart
+                  slices={violationTypeSlices}
+                  centerLabel="Violations"
+                />
               </ChartCard>
 
             </div>

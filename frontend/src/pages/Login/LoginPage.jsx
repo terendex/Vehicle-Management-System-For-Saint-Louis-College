@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { QRCodeSVG } from 'qrcode.react'
-import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight, QrCode, X } from 'lucide-react'
+import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
-
-const REGISTER_URL = `${window.location.origin}/register?type=student`
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -16,7 +13,6 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
   const [showErrorModal, setShowErrorModal] = useState(false)
-  const [showQrModal, setShowQrModal] = useState(false)
 
   const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
 
@@ -185,16 +181,6 @@ export default function LoginPage() {
               <ChevronRight size={16} className="register-cta-arrow" />
             </button>
 
-            <button
-              type="button"
-              className="register-qr-link"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-              onClick={() => setShowQrModal(true)}
-            >
-              <QrCode size={14} />
-              Scan to apply on your phone
-            </button>
-
             <div className="terms-row">
               <button
                 type="button"
@@ -208,31 +194,6 @@ export default function LoginPage() {
           </form>
         </div>
       </main>
-
-      {/* QR Registration Modal */}
-      {showQrModal && (
-        <div className="modal-overlay" onClick={() => setShowQrModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
-            <button
-              type="button"
-              onClick={() => setShowQrModal(false)}
-              style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', color: '#7C80A3' }}
-            >
-              <X size={18} />
-            </button>
-            <h2 className="modal-title">Scan to Apply</h2>
-            <p className="modal-message">
-              Scan this code with your phone's camera to open the Vehicle Pass Application form directly.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '16px 0' }}>
-              <div style={{ padding: 14, background: '#fff', border: '2px solid #E2E6EE', borderRadius: 14 }}>
-                <QRCodeSVG value={REGISTER_URL} size={190} level="M" />
-              </div>
-            </div>
-            <button className="modal-btn" onClick={() => setShowQrModal(false)}>Close</button>
-          </div>
-        </div>
-      )}
 
       {/* Error Modal */}
       {showErrorModal && (

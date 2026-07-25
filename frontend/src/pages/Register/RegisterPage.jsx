@@ -88,15 +88,18 @@ export default function RegisterPage() {
 
   const [loading, setLoading] = useState(true)
   const [registrantType, setRegistrantType] = useState(null)
-  const vehiclePassFee = registrantType === 'employee' ? 150 : 300
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
+  const vehiclePassFee = registrantType === 'employee'
+    ? (regStatus?.vehicle_pass_fee_employee ?? 150)
+    : (regStatus?.vehicle_pass_fee ?? 300)
   const [formErrors, setFormErrors] = useState({})
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
   const [dupChecking, setDupChecking] = useState({})
+  const [licenseImage, setLicenseImage] = useState(null)
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -529,7 +532,17 @@ export default function RegisterPage() {
       }
       delete payload.who_drives
 
-      await registrationApi.submitOpenRegistration(payload)
+      const result = await registrationApi.submitOpenRegistration(payload)
+
+      if (licenseImage && result?.id) {
+        // Best-effort — a failed license photo upload shouldn't block the (already
+        // submitted) registration itself, so any error here is silently ignored.
+        try {
+          await registrationApi.uploadLicenseImage(result.id, payload.email, licenseImage)
+        } catch {
+          /* registration already succeeded; the photo can be added later by CDSO if needed */
+        }
+      }
 
       // Go straight to the success screen
       setSubmitted(true)
@@ -832,6 +845,7 @@ export default function RegisterPage() {
                   <option value="SUV">SUV</option>
                   <option value="Motorcycle">Motorcycle</option>
                   <option value="Tricycle">Tricycle</option>
+                  <option value="E-Bike">E-Bike</option>
                   <option value="Van">Van</option>
                   <option value="Truck">Truck</option>
                   <option value="Other">Other</option>
@@ -1330,6 +1344,17 @@ export default function RegisterPage() {
                   {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
                 </div>
               )}
+
+              <div className="form-group col-span-2">
+                <label>Driver's License Photo (optional)</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setLicenseImage(e.target.files?.[0] || null)}
+                />
+                <span className="field-hint">Upload a clear photo of the driver's license — helps CDSO verify the application faster.</span>
+                {licenseImage && <span className="field-hint">Selected: {licenseImage.name}</span>}
+              </div>
 
               {/* Campus day selector — students only */}
               {isStudent && (

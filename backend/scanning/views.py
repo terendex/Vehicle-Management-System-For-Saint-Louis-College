@@ -7,7 +7,7 @@ from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
-from vehicles.models import Vehicle, SupplierPlate
+from vehicles.models import Vehicle
 from violations.models import Violation
 from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
@@ -247,24 +247,6 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
         'has_violations': False,
         'already_inside': False,
     }
-
-
-def _supplier_rule_denial() -> str | None:
-    """Day/time-window check for supplier entries against the supplier
-    RuleConstraint. Returns a denial message, or None when entry is allowed.
-    Open Campus Mode bypasses the restriction like every other rule."""
-    from vehicles.models import SystemSettings
-    from .entry_logic import _get_active_rule, _is_within_days, _is_within_window
-    rule = _get_active_rule('supplier')
-    if not rule or SystemSettings.get().open_campus_mode:
-        return None
-    if not _is_within_days(rule):
-        day_name = timezone.localdate().strftime('%A')
-        return f'Supplier access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.'
-    if not _is_within_window(rule):
-        return (f'Supplier access restricted. Outside allowed hours '
-                f'({rule.start_time}–{rule.end_time}) per rule: {rule.name}.')
-    return None
 
 
 def _is_standby_fetcher(user) -> bool:
@@ -994,8 +976,28 @@ class AccessLogListView(APIView):
             except Exception:
                 pass  # ignore malformed dates rather than 500
         limit = int(request.query_params.get('limit', 200))
-        logs = qs[:limit]
-        return Response(AccessLogSerializer(logs, many=True).data)
+        logs = list(qs[:limit])
+
+        # Fold each exit row into its paired entry row (one visit = one row),
+        # with a computed duration — only when the entry is also in this result
+        # set, so an exit whose entry fell outside the filter/limit still shows.
+        entries_by_id = {log.id: log for log in logs if log.status == AccessLog.Status.AUTHORIZED}
+        paired_exit_by_entry_id = {}
+        for log in logs:
+            if log.status == AccessLog.Status.EXITED and log.paired_entry_id in entries_by_id:
+                paired_exit_by_entry_id[log.paired_entry_id] = log
+
+        merged_exit_ids = {exit_log.id for exit_log in paired_exit_by_entry_id.values()}
+        visible = [log for log in logs if log.id not in merged_exit_ids]
+
+        data = AccessLogSerializer(visible, many=True).data
+        for row in data:
+            exit_log = paired_exit_by_entry_id.get(row['id'])
+            if exit_log:
+                entry_log = entries_by_id[row['id']]
+                row['exited_at'] = exit_log.scanned_at
+                row['duration_minutes'] = max(0, round((exit_log.scanned_at - entry_log.scanned_at).total_seconds() / 60))
+        return Response(data)
 
 
 class MLTrainingSampleList(APIView):

@@ -2,20 +2,37 @@ import { useState, useEffect, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
-  Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag,
+  Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
+  getScheduledVisits, createScheduledVisit, patchScheduledVisit, deleteScheduledVisit,
 } from '../../api/vehicles'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './SupplierManagement.css'
 
+const SUPPLIER_CATEGORIES = [
+  { value: 'delivery',    label: 'Delivery' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'vendor',      label: 'Vendor' },
+  { value: 'contractor',  label: 'Contractor' },
+  { value: 'other',       label: 'Other' },
+]
+
+const VISIT_CATEGORIES = [
+  ...SUPPLIER_CATEGORIES,
+  { value: 'guest', label: 'Guest / Visitor' },
+]
+
+const categoryLabel = (list, value) => list.find(c => c.value === value)?.label || value
+
 // ── Add Supplier modal ────────────────────────────────────────────────
 function AddSupplierModal({ onClose, onCreated }) {
   const [name, setName]             = useState('')
+  const [category, setCategory]     = useState('other')
   const [plateInput, setPlateInput] = useState('')
   const [plateError, setPlateError] = useState('')
   const [plates, setPlates]         = useState([])
@@ -39,7 +56,7 @@ function AddSupplierModal({ onClose, onCreated }) {
     if (!name.trim()) return
     setSaving(true)
     try {
-      const { data } = await createSupplier({ company_name: name.trim(), plates })
+      const { data } = await createSupplier({ company_name: name.trim(), category, plates })
       onCreated(data)
       toast.success('Supplier added.')
       onClose()
@@ -72,6 +89,13 @@ function AddSupplierModal({ onClose, onCreated }) {
               autoFocus
               required
             />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-label">Category</label>
+            <select className="sp-text-input" value={category} onChange={e => setCategory(e.target.value)}>
+              {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
           </div>
 
           <div className="sp-field">
@@ -134,6 +158,20 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
   const plateRef = useRef(null)
 
   const plates = supplier.plates ?? []
+
+  const [changingCategory, setChangingCategory] = useState(false)
+  const handleCategoryChange = async (e) => {
+    const category = e.target.value
+    setChangingCategory(true)
+    try {
+      const { data } = await patchSupplier(supplier.id, { category })
+      onUpdated(data)
+    } catch {
+      toast.error('Failed to update category.')
+    } finally {
+      setChangingCategory(false)
+    }
+  }
 
   const handleToggleActive = async () => {
     setToggling(true)
@@ -219,6 +257,15 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
           <div className="sp-card-sub">
             <Tag size={12} />
             {plates.length} plate{plates.length !== 1 ? 's' : ''} registered
+            <select
+              value={supplier.category || 'other'}
+              onChange={handleCategoryChange}
+              disabled={changingCategory}
+              style={{ marginLeft: 8, fontSize: 11, border: '1px solid #E2E6EE', borderRadius: 6, padding: '1px 4px' }}
+              onClick={e => e.stopPropagation()}
+            >
+              {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
           </div>
         </div>
 
@@ -323,6 +370,166 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
   )
 }
 
+// ── Scheduled Visits section — advance coordination for visitors/suppliers ──
+const EMPTY_VISIT = { visitor_name: '', category: 'guest', supplier: '', plate_number: '', purpose: '', expected_date: '', notes: '' }
+
+function ScheduledVisitsSection({ suppliers }) {
+  const [visits, setVisits]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm]       = useState(EMPTY_VISIT)
+  const [saving, setSaving]   = useState(false)
+
+  const load = () => {
+    getScheduledVisits()
+      .then(({ data }) => setVisits(data))
+      .catch(() => toast.error('Failed to load scheduled visits.'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+  useLiveUpdates(load, ['scheduledvisit'])
+
+  const handleAdd = async (e) => {
+    e.preventDefault()
+    if (!form.visitor_name.trim() || !form.expected_date) return
+    setSaving(true)
+    try {
+      const { data } = await createScheduledVisit({
+        ...form,
+        plate_number: formatPlateNumber(form.plate_number.trim()),
+        supplier: form.supplier || null,
+      })
+      setVisits(prev => [...prev, data].sort((a, b) => a.expected_date.localeCompare(b.expected_date)))
+      setForm(EMPTY_VISIT)
+      toast.success('Visit scheduled.')
+    } catch (err) {
+      const msg = err.response?.data
+        ? Object.values(err.response.data).flat().join(' ')
+        : 'Failed to schedule visit.'
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleArrived = async (visit) => {
+    try {
+      const { data } = await patchScheduledVisit(visit.id, { is_arrived: !visit.is_arrived })
+      setVisits(prev => prev.map(v => v.id === data.id ? data : v))
+    } catch {
+      toast.error('Failed to update visit.')
+    }
+  }
+
+  const remove = async (visit) => {
+    try {
+      await deleteScheduledVisit(visit.id)
+      setVisits(prev => prev.filter(v => v.id !== visit.id))
+      toast.success('Scheduled visit removed.')
+    } catch {
+      toast.error('Failed to remove visit.')
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const upcoming = visits.filter(v => !v.is_arrived && v.expected_date >= today)
+  const past     = visits.filter(v => v.is_arrived || v.expected_date < today)
+
+  return (
+    <div className="sp-page" style={{ marginTop: 32 }}>
+      <div className="sp-header">
+        <div>
+          <h2 className="sp-title" style={{ fontSize: 18 }}>Scheduled Visits</h2>
+          <p className="sp-subtitle">
+            Coordinate visitors and suppliers ahead of time so gate staff know who to expect.
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={handleAdd} className="sp-modal-form" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
+        <div className="sp-field">
+          <label className="sp-label">Name</label>
+          <input className="sp-text-input" value={form.visitor_name} onChange={e => setForm(f => ({ ...f, visitor_name: e.target.value }))} placeholder="Visitor / company name" required />
+        </div>
+        <div className="sp-field">
+          <label className="sp-label">Category</label>
+          <select className="sp-text-input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+            {VISIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </div>
+        <div className="sp-field">
+          <label className="sp-label">Linked Supplier <span className="sp-label-optional">(optional)</span></label>
+          <select className="sp-text-input" value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))}>
+            <option value="">— None —</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.company_name}</option>)}
+          </select>
+        </div>
+        <div className="sp-field">
+          <label className="sp-label">Expected Date</label>
+          <input className="sp-text-input" type="date" value={form.expected_date} onChange={e => setForm(f => ({ ...f, expected_date: e.target.value }))} required />
+        </div>
+        <div className="sp-field">
+          <label className="sp-label">Plate <span className="sp-label-optional">(optional)</span></label>
+          <input className="sp-text-input" value={form.plate_number} onChange={e => setForm(f => ({ ...f, plate_number: e.target.value }))} placeholder="e.g. ABC 1234" />
+        </div>
+        <div className="sp-field" style={{ gridColumn: 'span 2' }}>
+          <label className="sp-label">Purpose <span className="sp-label-optional">(optional)</span></label>
+          <input className="sp-text-input" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} placeholder="e.g. Quarterly AC maintenance" />
+        </div>
+        <div className="sp-field" style={{ alignSelf: 'end' }}>
+          <button type="submit" className="sp-btn sp-btn-primary" disabled={saving}>
+            {saving ? <Loader2 size={14} className="sp-spinner" /> : <Plus size={14} />}
+            Schedule
+          </button>
+        </div>
+      </form>
+
+      {loading ? (
+        <div className="sp-loading"><Loader2 size={24} className="sp-spinner" /><span>Loading scheduled visits…</span></div>
+      ) : visits.length === 0 ? (
+        <div className="sp-empty-state">
+          <CalendarClock size={36} className="sp-empty-icon" />
+          <p>No visits scheduled yet.</p>
+        </div>
+      ) : (
+        <div className="sp-list">
+          {[...upcoming, ...past].map(v => (
+            <div key={v.id} className="sp-card" style={{ opacity: v.is_arrived ? 0.6 : 1 }}>
+              <div className="sp-card-head">
+                <div className="sp-card-meta">
+                  <div className="sp-card-name-row">
+                    <CalendarClock size={16} className="sp-card-icon" />
+                    <span className="sp-card-name">{v.visitor_name}</span>
+                    {v.is_arrived && <span className="sp-inactive-badge">Arrived</span>}
+                  </div>
+                  <div className="sp-card-sub">
+                    {categoryLabel(VISIT_CATEGORIES, v.category)} · Expected {v.expected_date}
+                    {v.supplier_name && <> · {v.supplier_name}</>}
+                    {v.plate_number && <> · {v.plate_number}</>}
+                    {v.purpose && <> · {v.purpose}</>}
+                  </div>
+                </div>
+                <div className="sp-card-actions">
+                  <button
+                    className={`sp-status-btn${v.is_arrived ? ' sp-status-btn--on' : ''}`}
+                    onClick={() => toggleArrived(v)}
+                    title={v.is_arrived ? 'Mark as not arrived' : 'Mark as arrived'}
+                  >
+                    <Check size={13} /> {v.is_arrived ? 'Arrived' : 'Mark Arrived'}
+                  </button>
+                  <button className="sp-delete-btn" onClick={() => remove(v)} title="Remove">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────
 export default function SupplierManagement() {
   const [suppliers, setSuppliers]     = useState([])
@@ -387,6 +594,8 @@ export default function SupplierManagement() {
           </div>
         )}
       </div>
+
+      <ScheduledVisitsSection suppliers={suppliers} />
 
       {showAdd && (
         <AddSupplierModal

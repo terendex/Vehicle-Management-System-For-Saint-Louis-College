@@ -165,6 +165,11 @@ export default function SecurityAuditLogPage() {
                       <div className="sal-row-top">
                         <span className="sal-plate">{log.plate_number || '—'}</span>
                         <span className={`sal-badge ${cls}`}>{label}</span>
+                        {log.exited_at && (
+                          <span className="sal-badge exited">
+                            Exited {fmtTime(log.exited_at)} · {log.duration_minutes} min
+                          </span>
+                        )}
                       </div>
                       {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
                         <div className="sal-row-sub">

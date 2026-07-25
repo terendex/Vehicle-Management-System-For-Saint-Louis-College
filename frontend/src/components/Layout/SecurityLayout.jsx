@@ -348,7 +348,9 @@ function ForcePasswordModal({ onLogout }) {
     try {
       await usersApi.changePassword(form.current, form.new, form.confirm)
       clearMustChangePassword()
-      toast.success('Password changed! Your QR badge can now be issued by the admin.')
+      toast.success('Password changed! Please log in again with your new password.')
+      // Force a fresh login with the new password instead of keeping the old session active.
+      setTimeout(onLogout, 1200)
     } catch (err) {
       const data = err.response?.data
       if (data?.errors) setErrors(data.errors)

@@ -167,9 +167,10 @@ export default function OwnerDashboard() {
       clearMustChangePassword()
       setPwSuccess(true)
       setPwForm({ current: '', new: '', confirm: '' })
+      // Force a fresh login with the new password instead of keeping the old session active.
       setTimeout(() => {
-        setPwModal(false)
-        setPwSuccess(false)
+        logout()
+        window.location.href = '/login?passwordChanged=1'
       }, 1800)
     } catch (err) {
       const data = err.response?.data

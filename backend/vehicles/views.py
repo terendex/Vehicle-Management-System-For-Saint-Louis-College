@@ -2,6 +2,7 @@ import secrets
 import string
 import time as _time
 import uuid
+from decimal import Decimal, InvalidOperation
 
 import cv2
 from django.http import StreamingHttpResponse, HttpResponse
@@ -10,8 +11,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from rest_framework import status as drf_status
-from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event
-from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer
+from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event, ScheduledVisit
+from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
 from . import parking_camera
 from accounts.audit import audit, AuditedViewSetMixin
 from accounts.models import AuditLog
@@ -470,6 +471,7 @@ async def parking_stream_view(request, pk):
 
 from rest_framework.views import APIView
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import VehicleRegistration
@@ -494,7 +496,7 @@ class PendingRegistrationsListView(APIView):
     def get(self, request):
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
         registrations = VehicleRegistration.objects.filter(status=status_filter).order_by('-created_at')
-        return Response(VehicleRegistrationSerializer(registrations, many=True).data)
+        return Response(VehicleRegistrationSerializer(registrations, many=True, context={'request': request}).data)
 
 
 def _generate_temp_password():
@@ -524,6 +526,8 @@ _VEHICLE_TYPE_MAP = {
     'other':      Vehicle.Type.CAR,
     'motorcycle': Vehicle.Type.MOTORCYCLE,
     'tricycle':   Vehicle.Type.MOTORCYCLE,
+    'e-bike':     Vehicle.Type.EBIKE,
+    'ebike':      Vehicle.Type.EBIKE,
     'van':        Vehicle.Type.VAN,
     'truck':      Vehicle.Type.TRUCK,
     'bus':        Vehicle.Type.BUS,
@@ -1065,6 +1069,11 @@ SCHEDULE_SLOT_LIMIT      = 100  # per day
 
 
 def _registration_window():
+    settings_obj = SystemSettings.get()
+    fees = {
+        "vehicle_pass_fee":          float(settings_obj.vehicle_pass_fee),
+        "vehicle_pass_fee_employee": float(settings_obj.vehicle_pass_fee_employee),
+    }
     period = RegistrationPeriod.get_active()
     if period:
         today = timezone.localdate()
@@ -1074,12 +1083,14 @@ def _registration_window():
             "open_date":  period.start_date.isoformat(),
             "close_date": period.end_date.isoformat(),
             "slot_limit": SCHEDULE_SLOT_LIMIT,
+            **fees,
         }
     return {
         "is_open":    False,
         "open_date":  None,
         "close_date": None,
         "slot_limit": SCHEDULE_SLOT_LIMIT,
+        **fees,
     }
 
 
@@ -1277,8 +1288,43 @@ class PublicOpenRegistrationView(APIView):
                 send_pending_email(registration)
             except Exception:
                 pass  # don't fail the submission if email errors
-            return Response({"message": "Registration submitted successfully. Please wait for CDSO review."}, status=status.HTTP_201_CREATED)
+            return Response(
+                {"message": "Registration submitted successfully. Please wait for CDSO review.", "id": registration.id},
+                status=status.HTTP_201_CREATED,
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UploadLicenseImageView(APIView):
+    """Public follow-up step to PublicOpenRegistrationView — attaches a photo of the
+    driver's license to a just-submitted registration. Kept as a separate multipart
+    request so the main JSON registration payload (with its nested campus_days /
+    fetcher_students structures) doesn't have to be reworked into form-data."""
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        registration_id = request.data.get('registration_id')
+        email = (request.data.get('email') or '').strip()
+        image = request.FILES.get('image')
+
+        if not registration_id or not email:
+            return Response({"error": "registration_id and email are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not image:
+            return Response({"error": "No image uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            registration = VehicleRegistration.objects.get(
+                id=registration_id,
+                email__iexact=email,
+                status=VehicleRegistration.Status.PENDING,
+            )
+        except VehicleRegistration.DoesNotExist:
+            return Response({"error": "Registration not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        registration.drivers_license_image = image
+        registration.save(update_fields=['drivers_license_image'])
+        return Response({"message": "License image uploaded."}, status=status.HTTP_200_OK)
 
 
 # ──────────────────────────────────────────────
@@ -1376,6 +1422,8 @@ class SystemSettingsView(APIView):
             "open_campus_mode":   obj.open_campus_mode,
             "registration_start": obj.registration_start.isoformat() if obj.registration_start else None,
             "registration_end":   obj.registration_end.isoformat()   if obj.registration_end   else None,
+            "vehicle_pass_fee":          float(obj.vehicle_pass_fee),
+            "vehicle_pass_fee_employee": float(obj.vehicle_pass_fee_employee),
         }
 
     def get(self, request):
@@ -1394,6 +1442,8 @@ class SystemSettingsView(APIView):
         open_campus_mode     = request.data.get("open_campus_mode",   obj.open_campus_mode)
         registration_start   = request.data.get("registration_start", obj.registration_start)
         registration_end     = request.data.get("registration_end",   obj.registration_end)
+        vehicle_pass_fee          = request.data.get("vehicle_pass_fee",          obj.vehicle_pass_fee)
+        vehicle_pass_fee_employee = request.data.get("vehicle_pass_fee_employee", obj.vehicle_pass_fee_employee)
 
         try:
             retention_years = int(retention_years)
@@ -1430,6 +1480,20 @@ class SystemSettingsView(APIView):
         if not errors and registration_start and registration_end and registration_end < registration_start:
             errors["registration_end"] = "End date must be on or after the start date."
 
+        try:
+            vehicle_pass_fee = Decimal(str(vehicle_pass_fee))
+            if vehicle_pass_fee < 0:
+                errors["vehicle_pass_fee"] = "Must be zero or greater."
+        except (TypeError, ValueError, InvalidOperation):
+            errors["vehicle_pass_fee"] = "Must be a number."
+
+        try:
+            vehicle_pass_fee_employee = Decimal(str(vehicle_pass_fee_employee))
+            if vehicle_pass_fee_employee < 0:
+                errors["vehicle_pass_fee_employee"] = "Must be zero or greater."
+        except (TypeError, ValueError, InvalidOperation):
+            errors["vehicle_pass_fee_employee"] = "Must be a number."
+
         if errors:
             return Response(errors, status=400)
 
@@ -1440,6 +1504,8 @@ class SystemSettingsView(APIView):
         obj.open_campus_mode   = bool(open_campus_mode)
         obj.registration_start = registration_start
         obj.registration_end   = registration_end
+        obj.vehicle_pass_fee          = vehicle_pass_fee
+        obj.vehicle_pass_fee_employee = vehicle_pass_fee_employee
         obj.save()
 
         after   = self._serialize(obj)
@@ -1786,7 +1852,11 @@ class SupplierListCreateView(APIView):
             if existing:
                 return Response({'plates': f"Plate(s) already registered: {', '.join(existing)}."}, status=400)
 
-        supplier = Supplier.objects.create(company_name=company_name)
+        category = request.data.get('category') or Supplier.Category.OTHER
+        if category not in Supplier.Category.values:
+            return Response({'category': 'Invalid supplier category.'}, status=400)
+
+        supplier = Supplier.objects.create(company_name=company_name, category=category)
         SupplierPlate.objects.bulk_create(
             SupplierPlate(supplier=supplier, plate_number=p) for p in plate_numbers
         )
@@ -1807,6 +1877,11 @@ class SupplierDetailView(APIView):
             supplier.company_name = name
         if 'is_active' in request.data:
             supplier.is_active = bool(request.data['is_active'])
+        if 'category' in request.data:
+            category = request.data['category']
+            if category not in Supplier.Category.values:
+                return Response({'category': 'Invalid supplier category.'}, status=400)
+            supplier.category = category
         supplier.save()
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Supplier updated | {supplier.company_name} | Active: {supplier.is_active} | By: {request.user.full_name}")
@@ -1844,4 +1919,66 @@ class SupplierPlateView(APIView):
         plate.delete()
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Supplier plate removed | {desc} | By: {request.user.full_name}")
+        return Response(status=204)
+
+
+class ScheduledVisitListCreateView(APIView):
+    """Advance coordination for visitors/suppliers — lets CDSO log who is
+    expected on a given day, before they show up at the gate."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        visits = ScheduledVisit.objects.select_related('supplier').all()
+        upcoming_only = request.query_params.get('upcoming')
+        if upcoming_only:
+            visits = visits.filter(expected_date__gte=timezone.localdate(), is_arrived=False)
+        return Response(ScheduledVisitSerializer(visits, many=True).data)
+
+    def post(self, request):
+        visitor_name = (request.data.get('visitor_name') or '').strip()
+        expected_date = request.data.get('expected_date')
+        category = request.data.get('category') or ScheduledVisit.Category.OTHER
+
+        if not visitor_name:
+            return Response({'visitor_name': 'Name is required.'}, status=400)
+        if not expected_date:
+            return Response({'expected_date': 'Expected date is required.'}, status=400)
+        if category not in ScheduledVisit.Category.values:
+            return Response({'category': 'Invalid category.'}, status=400)
+
+        supplier = None
+        supplier_id = request.data.get('supplier')
+        if supplier_id:
+            supplier = get_object_or_404(Supplier, pk=supplier_id)
+
+        visit = ScheduledVisit.objects.create(
+            visitor_name=visitor_name,
+            category=category,
+            supplier=supplier,
+            plate_number=_normalize_plate(request.data.get('plate_number') or ''),
+            purpose=(request.data.get('purpose') or '').strip(),
+            expected_date=expected_date,
+            notes=(request.data.get('notes') or '').strip(),
+        )
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Scheduled visit added | {visitor_name} expected {expected_date} | By: {request.user.full_name}")
+        return Response(ScheduledVisitSerializer(visit).data, status=201)
+
+
+class ScheduledVisitDetailView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def patch(self, request, pk):
+        visit = get_object_or_404(ScheduledVisit, pk=pk)
+        if 'is_arrived' in request.data:
+            visit.is_arrived = bool(request.data['is_arrived'])
+        visit.save()
+        return Response(ScheduledVisitSerializer(visit).data)
+
+    def delete(self, request, pk):
+        visit = get_object_or_404(ScheduledVisit, pk=pk)
+        desc = f"{visit.visitor_name} ({visit.expected_date})"
+        visit.delete()
+        audit(request, AuditLog.Action.RECORD_DELETED,
+              f"Scheduled visit removed | {desc} | By: {request.user.full_name}")
         return Response(status=204)

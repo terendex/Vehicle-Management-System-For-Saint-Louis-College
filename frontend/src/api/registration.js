@@ -22,6 +22,25 @@ export const registrationApi = {
     const { data } = await api.post('/vehicles/register/open/', registrationData)
     return data
   },
+  // Follow-up multipart upload — attaches a driver's license photo to a registration
+  // that was just created by submitOpenRegistration (kept separate so the main
+  // payload, with its nested campus_days/fetcher_students, can stay plain JSON).
+  // Uses fetch (not the shared axios instance) so the browser sets the multipart
+  // Content-Type boundary itself instead of inheriting axios's default JSON header.
+  uploadLicenseImage: async (registrationId, email, file) => {
+    const form = new FormData()
+    form.append('registration_id', registrationId)
+    form.append('email', email)
+    form.append('image', file)
+    const res = await fetch('/api/vehicles/register/license-image/', { method: 'POST', body: form })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error(data?.error || 'Failed to upload license image.')
+      err.response = { data }
+      throw err
+    }
+    return data
+  },
   // Live duplicate check for the registration form's plate/email/license/student/employee ID fields
   checkAvailability: async ({ plate_number, email, drivers_license, student_id, employee_id }) => {
     const { data } = await api.get('/vehicles/register/availability/', {
