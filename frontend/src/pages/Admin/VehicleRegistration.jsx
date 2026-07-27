@@ -46,6 +46,7 @@ export default function VehicleRegistration() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('pending')
   const [datePeriod, setDatePeriod] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
   const [search, setSearch] = useState('')
 
   // Pagination
@@ -231,6 +232,7 @@ export default function VehicleRegistration() {
 
   const filteredRegistrations = registrations.filter(r => {
     if (datePeriod !== 'all' && new Date(r.created_at) < getPeriodStart(datePeriod)) return false
+    if (typeFilter !== 'all' && r.registrant_type !== typeFilter) return false
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       if (
@@ -243,8 +245,8 @@ export default function VehicleRegistration() {
   })
   const paginatedRegistrations = filteredRegistrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
   const totalRegPages = Math.ceil(filteredRegistrations.length / itemsPerPage)
-  const hasActiveFilters = datePeriod !== 'all' || search.trim() !== ''
-  const clearFilters = () => { setDatePeriod('all'); setSearch(''); setRegPage(1) }
+  const hasActiveFilters = datePeriod !== 'all' || typeFilter !== 'all' || search.trim() !== ''
+  const clearFilters = () => { setDatePeriod('all'); setTypeFilter('all'); setSearch(''); setRegPage(1) }
 
   return (
     <>
@@ -297,6 +299,16 @@ export default function VehicleRegistration() {
               </div>
             </div>
             <div className="vr-toolbar-right">
+              <select
+                className="filter-select"
+                value={typeFilter}
+                onChange={(e) => { setTypeFilter(e.target.value); setRegPage(1) }}
+              >
+                <option value="all">All Types</option>
+                <option value="student">Student</option>
+                <option value="employee">Employee</option>
+                <option value="fetcher">Fetcher / Drop &amp; Go</option>
+              </select>
               <select
                 className="filter-select"
                 value={statusFilter}
@@ -473,6 +485,18 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
+              {selectedReg.drivers_license_image && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">Driver's License Photo</div>
+                  <a href={selectedReg.drivers_license_image} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={selectedReg.drivers_license_image}
+                      alt="Driver's license"
+                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #E2E6EE', marginTop: 4 }}
+                    />
+                  </a>
+                </div>
+              )}
 
               {/* Authorized driver — set when the student is a minor / non-driver */}
               {selectedReg.driver_name && (

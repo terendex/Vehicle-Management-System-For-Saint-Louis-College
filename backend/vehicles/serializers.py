@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice, Supplier, SupplierPlate
+from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice, Supplier, SupplierPlate, ScheduledVisit
 from accounts.models import User
 
 
@@ -174,5 +174,17 @@ class SupplierSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Supplier
-        fields = ['id', 'company_name', 'is_active', 'plate_count', 'plates', 'created_at', 'updated_at']
+        fields = ['id', 'company_name', 'category', 'is_active', 'plate_count', 'plates', 'created_at', 'updated_at']
         read_only_fields = ['id', 'plate_count', 'created_at', 'updated_at']
+
+
+class ScheduledVisitSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.company_name', read_only=True, default=None)
+
+    class Meta:
+        model  = ScheduledVisit
+        fields = [
+            'id', 'visitor_name', 'category', 'supplier', 'supplier_name',
+            'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']

@@ -16,8 +16,6 @@ import {
   EyeOff,
   KeyRound,
   Menu,
-  HelpCircle,
-  Shield,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -350,7 +348,9 @@ function ForcePasswordModal({ onLogout }) {
     try {
       await usersApi.changePassword(form.current, form.new, form.confirm)
       clearMustChangePassword()
-      toast.success('Password changed! Your QR badge can now be issued by the admin.')
+      toast.success('Password changed! Please log in again with your new password.')
+      // Force a fresh login with the new password instead of keeping the old session active.
+      setTimeout(onLogout, 1200)
     } catch (err) {
       const data = err.response?.data
       if (data?.errors) setErrors(data.errors)
@@ -587,12 +587,6 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           </button>
 
           <div className="footer-actions">
-            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
-              <HelpCircle size={18} />
-            </button>
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
-              <Shield size={18} />
-            </button>
             <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
               <LogOut size={16} />
               <span>Log Out</span>

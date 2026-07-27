@@ -34,3 +34,8 @@ export const patchSupplier   = (id, data)   => api.patch(`/vehicles/suppliers/${
 export const deleteSupplier  = (id)         => api.delete(`/vehicles/suppliers/${id}/`)
 export const addSupplierPlate    = (id, data) => api.post(`/vehicles/suppliers/${id}/plates/`, data)
 export const deleteSupplierPlate = (id, plateId) => api.delete(`/vehicles/suppliers/${id}/plates/${plateId}/`)
+
+export const getScheduledVisits    = (upcomingOnly) => api.get('/vehicles/scheduled-visits/', { params: upcomingOnly ? { upcoming: 1 } : {} })
+export const createScheduledVisit  = (data)     => api.post('/vehicles/scheduled-visits/', data)
+export const patchScheduledVisit   = (id, data) => api.patch(`/vehicles/scheduled-visits/${id}/`, data)
+export const deleteScheduledVisit  = (id)       => api.delete(`/vehicles/scheduled-visits/${id}/`)

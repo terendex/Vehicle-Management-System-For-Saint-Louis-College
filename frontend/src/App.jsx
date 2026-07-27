@@ -141,6 +141,11 @@ export default function App() {
           <Route path="/admin/events" element={<Navigate to="/admin/parking" replace />} />
         </Route>
 
+        {/* CDSO Routes — landing redirects to settings */}
+        <Route element={<ProtectedRoute allowedRoles={['cdso']} />}>
+          <Route path="/cdso" element={<Navigate to="/admin/settings" replace />} />
+        </Route>
+
         {/* Security Routes */}
         <Route element={<ProtectedRoute allowedRoles={['security']} />}>
           <Route element={<RoleShell />}>

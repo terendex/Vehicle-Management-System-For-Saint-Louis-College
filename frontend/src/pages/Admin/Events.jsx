@@ -334,7 +334,6 @@ function EventCard({ event, onUpdated, onDeleted }) {
             type="date"
             className="ev-text-input ev-reschedule-input"
             value={newDate}
-            min={new Date().toISOString().slice(0, 10)}
             onChange={e => setNewDate(e.target.value)}
           />
           <button

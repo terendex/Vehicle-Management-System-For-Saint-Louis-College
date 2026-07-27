@@ -40,11 +40,11 @@ class Office(models.Model):
     contact = models.CharField(max_length=50, blank=True)
     email   = models.EmailField(blank=True)
 
-    class Meta:
-        db_table = 'tbl_office'
-
     def __str__(self):
         return self.name
+
+    class Meta:
+        db_table = 'tbl_office'
 
 
 class VisitorPass(models.Model):

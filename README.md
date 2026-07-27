@@ -8,12 +8,17 @@ An AI-powered smart parking and vehicle verification system using license plate 
 
 - [Overview](#overview)
 - [Features](#features)
+- [Entry Rules](#entry-rules)
+- [Tech Stack](#tech-stack)
+- [ML Pipeline](#ml-pipeline)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
 - [Running the Project](#running-the-project)
 - [API Endpoints](#api-endpoints)
+- [Git Workflow](#git-workflow)
+- [Team](#team)
 
 ---
 
@@ -41,6 +46,143 @@ This system automates vehicle entry and parking monitoring at Saint Louis Colleg
 - **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
 - **Access logs** — full history of every scan and entry attempt
 - **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
+
+---
+
+## Entry Rules
+
+| Owner Type | Entry Rule |
+|---|---|
+| **Student** | Only on their assigned schedule (MWF or TTHS) |
+| **Fetcher / Dropper** | Only on their assigned schedule (MWF or TTHS) |
+| **Employee** | Allowed any day, any time |
+| **Visitor** | Must have a visitor pass confirmed by the destination office |
+
+### Schedule Days
+| Schedule | Allowed Days |
+|---|---|
+| MWF | Monday, Wednesday, Friday |
+| TTHS | Tuesday, Thursday, Saturday |
+
+### Visitor Flow
+```
+1. Visitor arrives at gate
+2. Guard scans plate → "No pass found"
+3. Guard creates visitor pass (vehicle, office, purpose)
+4. Office staff confirms or rejects the pass
+5. Guard re-scans → "Authorized" if confirmed
+```
+
+---
+
+## Tech Stack
+
+### Backend
+| Package | Purpose |
+|---|---|
+| Django | Web framework |
+| Django REST Framework | REST API |
+| djangorestframework-simplejwt | JWT authentication |
+| django-cors-headers | Cross-origin requests from React |
+| django-channels | WebSocket support |
+| Daphne | ASGI server for WebSockets |
+| psycopg2-binary | PostgreSQL connector |
+| dj-database-url | Parse DATABASE_URL connection string |
+| django-storages + boto3 | Cloudflare R2 image storage |
+| Pillow | Image handling |
+| EasyOCR | Plate text extraction |
+| OpenCV | Image preprocessing |
+| YOLOv8 (Ultralytics) | Plate region detection |
+| python-dotenv | Environment variable loading |
+| Celery + Redis | Background tasks |
+
+### Frontend
+| Package | Purpose |
+|---|---|
+| React + Vite | UI framework and build tool |
+| Tailwind CSS v4 | Styling (via `@tailwindcss/vite` plugin) |
+| React Router v6 | Navigation |
+| TanStack Query | Server state and caching |
+| Zustand | Global state management |
+| Axios | HTTP client |
+| react-webcam | Camera access on mobile |
+| Lucide React | Icons |
+| Sonner | Toast notifications |
+| date-fns | Date formatting and manipulation |
+| React Hook Form + Zod | Forms and validation |
+| TanStack Table | Data tables |
+
+### Infrastructure
+| Service | Purpose |
+|---|---|
+| Neon (PostgreSQL) | Shared cloud database — no local PostgreSQL needed |
+| Cloudflare R2 | Image storage for scan snapshots, ML samples, owner photos |
+| Redis (Memurai on Windows) | Celery task queue — still runs locally |
+
+---
+
+## ML Pipeline
+
+### How detection works
+
+Every camera frame goes through the following stages:
+
+```
+Camera JPEG (webcam or RTSP)
+    │
+    ▼
+YOLOv8 (detection.py)
+    │  Adaptive preprocessing — CLAHE + gamma for dark/glare/dim frames
+    │  Rotation fallback — retries at ±20°, ±40°, ±60° when no plate found
+    │  Per-class NMS — removes duplicate overlapping boxes
+    │
+    ├── bicycle / e_bike / electric_scooter  →  DROPPED (ignored, not processed)
+    ├── vehicle / motorcycle                 →  Tracked, shown on screen
+    └── license_plate                        →  Tracked + sent to EasyOCR
+            │
+            ▼
+    ProximityTracker (proximity_tracker.py)
+        Assigns stable track IDs across frames using centroid distance matching.
+        Persists last-known box position for up to 1.5s during detection gaps.
+            │
+            ├── Non-plate tracks  →  {"type":"tracks"} sent to frontend
+            └── Plate tracks      →  EasyOCR queue
+                    │
+                    ▼
+            EasyOCR (reader.py)
+                Runs on plate crops only. Tries binary/inverted/CLAHE variants
+                + left/middle/right region splits. Corrects common PH plate
+                misreads (O↔0, I↔1, etc.). Returns when confidence ≥ 0.60.
+                    │
+                    ▼
+            {"type":"ocr_update"} + DB lookup → {"type":"result"}
+```
+
+### Detected classes
+
+| Class | Processed? | Notes |
+|---|---|---|
+| `license_plate` | Yes | Cropped and sent to EasyOCR |
+| `vehicle` | Yes | Tracked, shown with green box |
+| `motorcycle` | Yes | Tracked, shown with blue box |
+| `bicycle` | No | Detected by model but discarded in software |
+| `e_bike` | No | Detected by model but discarded in software |
+| `electric_scooter` | No | Detected by model but discarded in software |
+
+To re-enable any ignored class, remove it from `_IGNORED_CLASSES` in `backend/scanning/ml/detection.py`.
+
+### Tracking
+
+`ProximityTracker` matches each new YOLO detection to an existing track by finding the closest track center within **100 pixels**. Unmatched tracks are re-emitted at their last known position until they expire (1.5 seconds of no match). This keeps bounding boxes stable on screen even at low ML frame rates.
+
+### Performance
+
+| Environment | YOLO inference | ML frame rate |
+|---|---|---|
+| CPU (no GPU) | ~200–500ms/frame | ~2–5 fps |
+| GPU (CUDA) | ~10–30ms/frame | ~30–100 fps |
+
+The frontend always renders at **60fps** using LERP interpolation between backend positions, so the UI is smooth regardless of backend speed. GPU mode is detected automatically — no config change needed.
 
 ---
 
@@ -532,6 +674,25 @@ Then **restart Daphne** so the new `.env` is loaded.
 
 ---
 
+## Git Workflow
+
+### Branch Structure
+```
+main          ← production only, never push directly
+│
+└── dev       ← integration branch, all PRs merge here
+    ├── feat/plate-scanner
+    ├── feat/auth
+    ├── feat/vehicle-crud
+    ├── feat/visitor-pass
+    ├── feat/violations
+    └── feat/mobile-scan-ui
+```
+
+> **Rule:** Nobody pushes directly to `main` or `dev`. Everything goes through a Pull Request.
+
+---
+
 ## User Roles
 
 | Role | Access |
@@ -548,6 +709,19 @@ Then **restart Daphne** so the new `.env` is loaded.
 | Security | guard@slc.edu.ph | guard123 |
 
 > Use these credentials to log in at `http://localhost:5173`.
+
+---
+
+## Team
+
+| Name | Role |
+
+
+|---|---|
+| | ML / Plate Recognition |
+| | Backend / API |
+| | Frontend / Mobile UI |
+| | Database / DevOps |
 
 ---
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload, Receipt } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
@@ -7,7 +7,7 @@ import { usersApi } from '../../api/users'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
-  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60 }
+  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150 }
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
@@ -49,6 +49,8 @@ export default function SystemSettings() {
         const normalized = {
           retention_years:    data.retention_years    ?? 5,
           scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
+          vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
+          vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
         }
         setForm(normalized)
         setSaved(normalized)
@@ -191,6 +193,7 @@ export default function SystemSettings() {
   }
 
   const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
+    || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
 
   const handleChange = (e) => {
@@ -227,7 +230,7 @@ export default function SystemSettings() {
           </div>
           <span className="ss-badge">
             <Settings2 size={13} />
-            CDSO
+            CDSO / Admin
           </span>
         </div>
 
@@ -277,6 +280,60 @@ export default function SystemSettings() {
               <div className="ss-info-row">
                 <ShieldAlert size={13} />
                 Records older than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> will be permanently deleted and cannot be recovered.
+              </div>
+            </div>
+
+            {/* ── Vehicle Pass Fee ──────────────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon ss-icon-blue">
+                  <Receipt size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Vehicle Pass Fee</h2>
+                  <p className="ss-card-desc">
+                    Amount registrants are asked to pay at the Accounting Office. Shown on the
+                    public registration form.
+                  </p>
+                </div>
+              </div>
+
+              <div className="ss-field">
+                <label className="ss-label" htmlFor="vehicle_pass_fee">
+                  Student / Fetcher fee
+                </label>
+                <div className="ss-input-row">
+                  <span className="ss-unit">₱</span>
+                  <input
+                    id="vehicle_pass_fee"
+                    name="vehicle_pass_fee"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.vehicle_pass_fee}
+                    onChange={handleChange}
+                    className="ss-input"
+                  />
+                </div>
+              </div>
+
+              <div className="ss-field">
+                <label className="ss-label" htmlFor="vehicle_pass_fee_employee">
+                  Employee fee
+                </label>
+                <div className="ss-input-row">
+                  <span className="ss-unit">₱</span>
+                  <input
+                    id="vehicle_pass_fee_employee"
+                    name="vehicle_pass_fee_employee"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.vehicle_pass_fee_employee}
+                    onChange={handleChange}
+                    className="ss-input"
+                  />
+                </div>
               </div>
             </div>
 

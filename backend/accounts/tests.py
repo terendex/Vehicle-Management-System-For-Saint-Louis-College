@@ -196,10 +196,10 @@ class NotificationBellTests(TestCase):
         client.force_authenticate(user=guard)
         self.assertEqual(client.get('/api/accounts/notifications/').status_code, 403)
 
-    def test_cdso_admin_can_access_notifications(self):
+    def test_cdso_can_access_notifications(self):
         from rest_framework.test import APIClient
         cdso = User.objects.create_user(
-            email='c@slc.edu.ph', full_name='C', password='Passw0rd!23', role='admin',
+            email='c@slc.edu.ph', full_name='C', password='Passw0rd!23', role='cdso',
         )
         client = APIClient()
         client.force_authenticate(user=cdso)

@@ -13,9 +13,48 @@ import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildRtspUrl(ip, deviceId, password) {
-  if (!ip || !deviceId || !password) return ''
-  return `rtsp://${deviceId}:${password}@${ip}/stream1`
+// Different camera vendors expose RTSP on different paths/query strings, and
+// some (Dahua/IMOU in particular) authenticate RTSP as "admin" regardless of
+// the device ID printed on the unit — so the URL can't always be built from
+// just IP + Device ID + password.
+const URL_FORMATS = [
+  {
+    id: 'generic',
+    label: 'Generic',
+    build: ({ ip, deviceId, password }) => `rtsp://${deviceId}:${password}@${ip}/stream1`,
+  },
+  {
+    id: 'dahua',
+    label: 'Dahua / IMOU',
+    build: ({ ip, username, password, subtype }) =>
+      `rtsp://${username}:${password}@${ip}/cam/realmonitor?channel=1&subtype=${subtype}`,
+  },
+  {
+    id: 'hikvision',
+    label: 'Hikvision',
+    build: ({ ip, username, password }) => `rtsp://${username}:${password}@${ip}/Streaming/Channels/101`,
+  },
+  {
+    id: 'custom',
+    label: 'Custom',
+    build: null,
+  },
+]
+
+const DAHUA_RE = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/cam\/realmonitor\?channel=\d+&subtype=(\d+)/
+const HIK_RE   = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/Streaming\/Channels\/\d+/
+
+// Best-effort match of an existing camera's stored URL to one of the formats
+// above, so the edit modal opens with the right template + extracted username.
+function detectFormat(rtspUrl) {
+  const fallback = { id: 'generic', username: 'admin', subtype: '0' }
+  if (!rtspUrl) return fallback
+  const dahua = DAHUA_RE.exec(rtspUrl)
+  if (dahua) return { id: 'dahua', username: dahua[1], subtype: dahua[2] }
+  const hik = HIK_RE.exec(rtspUrl)
+  if (hik) return { id: 'hikvision', username: hik[1], subtype: '0' }
+  if (/\/stream1$/.test(rtspUrl)) return fallback
+  return { id: 'custom', username: 'admin', subtype: '0' }
 }
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
@@ -63,10 +102,15 @@ function apiErrorMessage(err, fallback) {
 
 function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved }) {
   const isEdit = mode === 'edit'
+  const initialFormat = detectFormat(camera?.rtsp_url)
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
   const [password,   setPassword]   = useState(camera?.password   ?? '')
+  const [urlFormat,  setUrlFormat]  = useState(initialFormat.id)
+  const [username,   setUsername]   = useState(initialFormat.username)
+  const [subtype,    setSubtype]    = useState(initialFormat.subtype)
+  const [customUrl,  setCustomUrl]  = useState(initialFormat.id === 'custom' ? (camera?.rtsp_url ?? '') : '')
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
   const [showPw,     setShowPw]     = useState(false)
@@ -97,6 +141,14 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       toast.error('Enter a valid IP address (e.g. 192.168.137.86).')
       return
     }
+    if (urlFormat === 'custom' && !customUrl.trim()) {
+      toast.error("Enter the camera's RTSP URL.")
+      return
+    }
+    if ((urlFormat === 'dahua' || urlFormat === 'hikvision') && !username.trim()) {
+      toast.error('Enter the RTSP username.')
+      return
+    }
     if (assignment === 'entry' && !gateId) {
       toast.error('Please select a gate for this entry camera.')
       return
@@ -115,7 +167,12 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
     }
     setSaving(true)
     try {
-      const rtspUrl = buildRtspUrl(ip.trim(), deviceId.trim(), password.trim())
+      const rtspUrl = urlFormat === 'custom'
+        ? customUrl.trim()
+        : URL_FORMATS.find(f => f.id === urlFormat).build({
+            ip: ip.trim(), deviceId: deviceId.trim(), username: username.trim(),
+            password: password.trim(), subtype,
+          })
       const payload = {
         ip: ip.trim(),
         device_id: deviceId.trim(),
@@ -191,6 +248,75 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 </button>
               </div>
             </div>
+
+            <p className="dm-section-label" style={{ marginTop: '20px' }}>RTSP URL Format</p>
+            <div className="dm-gate-row">
+              {URL_FORMATS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`dm-gate-btn ${urlFormat === id ? 'dm-gate-btn-active' : ''}`}
+                  onClick={() => setUrlFormat(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {(urlFormat === 'dahua' || urlFormat === 'hikvision') && (
+              <div className="dm-field-row" style={{ marginTop: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">RTSP Username <span className="required">*</span></label>
+                  <input className="form-input" placeholder="admin" value={username} onChange={(e) => setUsername(e.target.value)} />
+                </div>
+                {urlFormat === 'dahua' && (
+                  <div className="form-group">
+                    <label className="form-label">Stream</label>
+                    <div className="dm-gate-row">
+                      <button
+                        type="button"
+                        className={`dm-gate-btn ${subtype === '0' ? 'dm-gate-btn-active' : ''}`}
+                        onClick={() => setSubtype('0')}
+                      >
+                        Main
+                      </button>
+                      <button
+                        type="button"
+                        className={`dm-gate-btn ${subtype === '1' ? 'dm-gate-btn-active' : ''}`}
+                        onClick={() => setSubtype('1')}
+                      >
+                        Sub
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {urlFormat === 'custom' ? (
+              <div className="form-group" style={{ marginTop: '12px' }}>
+                <label className="form-label">RTSP URL <span className="required">*</span></label>
+                <input
+                  className="form-input"
+                  placeholder="rtsp://user:pass@192.168.1.x/..."
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                />
+              </div>
+            ) : (
+              <p className="dm-gate-hint">
+                Will connect to:{' '}
+                <span className="token-link">
+                  {URL_FORMATS.find(f => f.id === urlFormat).build({
+                    ip: ip.trim() || '<ip>',
+                    deviceId: deviceId.trim() || '<device id>',
+                    username: (username || 'admin').trim(),
+                    password: password ? '••••••' : '<password>',
+                    subtype,
+                  })}
+                </span>
+              </p>
+            )}
 
             <p className="dm-section-label" style={{ marginTop: '20px' }}>Assignment</p>
             <div className="dm-assignment-row">

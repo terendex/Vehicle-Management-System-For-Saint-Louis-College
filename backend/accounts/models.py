@@ -48,6 +48,7 @@ class User(AbstractUser):
         'admin':         'ADM',
         'security':      'SEC',
         'vehicle_owner': 'OWN',
+        'cdso':          'CDS',
     }
 
     class Gate(models.TextChoices):
@@ -88,9 +89,6 @@ class User(AbstractUser):
 
     objects = UserManager()
 
-    class Meta:
-        db_table = 'tbl_user'
-
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Generate user_code once after pk is available
@@ -101,6 +99,9 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.full_name} ({self.role})"
+
+    class Meta:
+        db_table = 'tbl_user'
 
 
 class AuditLog(models.Model):

@@ -16,6 +16,7 @@ urlpatterns = [
     path('register/status/',         views.RegistrationStatusView.as_view(),          name='registration-status'),
     path('register/schedule-slots/', views.ScheduleSlotsView.as_view(),               name='schedule-slots'),
     path('register/availability/',   views.RegistrationAvailabilityView.as_view(),    name='registration-availability'),
+    path('register/license-image/',  views.UploadLicenseImageView.as_view(),          name='upload-license-image'),
 
     # CDSO walk-in direct registration (auto-accepted, no pending)
     path('register/direct/', views.CdsoDirectRegisterView.as_view(), name='direct-registration'),
@@ -57,6 +58,10 @@ urlpatterns = [
     path('suppliers/<int:pk>/',                    views.SupplierDetailView.as_view(),     name='supplier-detail'),
     path('suppliers/<int:pk>/plates/',             views.SupplierPlateView.as_view(),      name='supplier-plate-add'),
     path('suppliers/<int:pk>/plates/<int:plate_pk>/', views.SupplierPlateView.as_view(),   name='supplier-plate-delete'),
+
+    # Scheduled visits — advance coordination for visitors/suppliers (admin only)
+    path('scheduled-visits/',        views.ScheduledVisitListCreateView.as_view(), name='scheduled-visit-list'),
+    path('scheduled-visits/<int:pk>/', views.ScheduledVisitDetailView.as_view(),   name='scheduled-visit-detail'),
 
     path('', include(router.urls)),
 ]

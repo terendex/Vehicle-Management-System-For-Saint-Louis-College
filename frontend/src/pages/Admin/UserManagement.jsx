@@ -4,7 +4,6 @@ import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
-import { toUpperName, normalizeEmail } from '../../utils/textFormat'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
@@ -122,6 +121,7 @@ export default function UserManagement() {
 
   /* ── QR open ── */
   const openQrModal = async (user) => {
+    if (user.role !== 'security') return
     if (badgeLocked(user)) {
       toast.info('QR badge is locked until this guard logs in and changes their temporary password.')
       return
@@ -129,18 +129,13 @@ export default function UserManagement() {
     setQrUser(user)
     setQrToken(null)
     setQrLoading(true)
-    if (user.role === 'security') {
-      try {
-        const data = await usersApi.getGuardQR(user.id)
-        setQrToken(data.qr_token)
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Failed to load QR token.')
-        setQrUser(null)
-      } finally {
-        setQrLoading(false)
-      }
-    } else {
-      setQrToken(user.user_code || user.email || String(user.id))
+    try {
+      const data = await usersApi.getGuardQR(user.id)
+      setQrToken(data.qr_token)
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to load QR token.')
+      setQrUser(null)
+    } finally {
       setQrLoading(false)
     }
   }
@@ -329,7 +324,7 @@ export default function UserManagement() {
       await usersApi.replaceAdmin({
         full_name: adminForm.full_name.trim(), email: adminForm.email.trim(),
       })
-      showResult('CDSO replaced. Login credentials have been emailed. Logging out…')
+      showResult('Admin replaced. Login credentials have been emailed. Logging out…')
       setTimeout(() => { logout(); window.location.href = '/login' }, 1500)
     } catch (err) {
       const data = err.response?.data
@@ -339,7 +334,7 @@ export default function UserManagement() {
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         setFormErrors(errors); setModal('add')
-      } else { showResult('Failed to replace CDSO', 'error') }
+      } else { showResult('Failed to replace admin', 'error') }
       setSubmitting(false)
     }
   }
@@ -370,7 +365,6 @@ export default function UserManagement() {
       if (user.registrant_type === 'fetcher')  return 'Fetcher'
       return 'Vehicle Owner'
     }
-    if (user.role === 'admin') return 'CDSO'
     return user.role
   }
   const roleBadgeClass = (user) => {
@@ -498,21 +492,23 @@ export default function UserManagement() {
                       {u.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </td>
-                  {/* QR — visible for all users */}
+                  {/* QR — guards only; their badge is scanned to authenticate at gate kiosks */}
                   <td>
-                    <button
-                      className="um-qr-btn"
-                      disabled={badgeLocked(u)}
-                      title={
-                        badgeLocked(u)
-                          ? 'Locked — guard must log in and change their temporary password first'
-                          : u.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'
-                      }
-                      onClick={() => openQrModal(u)}
-                    >
-                      {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />}
-                      <span>{u.role === 'security' ? 'Badge' : 'ID'}</span>
-                    </button>
+                    {u.role === 'security' ? (
+                      <button
+                        className="um-qr-btn"
+                        disabled={badgeLocked(u)}
+                        title={
+                          badgeLocked(u)
+                            ? 'Locked — guard must log in and change their temporary password first'
+                            : 'Guard QR Badge'
+                        }
+                        onClick={() => openQrModal(u)}
+                      >
+                        {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />}
+                        <span>Badge</span>
+                      </button>
+                    ) : '—'}
                   </td>
                   <td style={{ position: 'relative' }}>
                     <button
@@ -579,7 +575,7 @@ export default function UserManagement() {
         <div className="um-modal-overlay" onClick={closeModal}>
           <div className="um-modal um-modal--wide" onClick={(e) => e.stopPropagation()}>
             <div className="um-modal-header">
-              <h2>{addType === 'admin' ? 'Replace CDSO' : 'Add Security Guard'}</h2>
+              <h2>{addType === 'admin' ? 'Replace Admin' : 'Add Security Guard'}</h2>
               <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
             </div>
 
@@ -606,8 +602,8 @@ export default function UserManagement() {
                     : { opacity: 0.75 }}
                 >
                   <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
-                  <span className="um-type-option-label">New CDSO</span>
-                  <span className="um-type-option-desc">Replaces current CDSO account</span>
+                  <span className="um-type-option-label">New Admin</span>
+                  <span className="um-type-option-desc">Replaces current admin account</span>
                 </div>
               </div>
 
@@ -624,7 +620,6 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={guardForm.full_name}
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
-                      onBlur={e => setGuardForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="e.g. Juan Dela Cruz" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
@@ -634,7 +629,6 @@ export default function UserManagement() {
                       type="email"
                       value={guardForm.email}
                       onChange={e => setGuardForm({ ...guardForm, email: e.target.value })}
-                      onBlur={e => setGuardForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="e.g. guard@slc.edu.ph" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
@@ -670,12 +664,12 @@ export default function UserManagement() {
                   <div className="um-admin-warning">
                     <AlertTriangle size={18} />
                     <div className="um-admin-warning-text">
-                      <strong>Warning:</strong> This will <strong>delete your current CDSO account</strong> and create a new one. You will be logged out immediately.
+                      <strong>Warning:</strong> This will <strong>delete your current admin account</strong> and create a new one. You will be logged out immediately.
                     </div>
                   </div>
                   <div className="um-info-banner">
                     <Info size={14} />
-                    A temporary password will be auto-generated and emailed to the new CDSO.
+                    A temporary password will be auto-generated and emailed to the new admin.
                     They must change it on first login.
                   </div>
                   <div className="um-form-group">
@@ -683,7 +677,6 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={adminForm.full_name}
                       onChange={e => setAdminForm({ ...adminForm, full_name: e.target.value })}
-                      onBlur={e => setAdminForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="Enter full name" />
                     {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
@@ -692,7 +685,6 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
                       type="email" value={adminForm.email}
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
-                      onBlur={e => setAdminForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="Enter email address" />
                     {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
@@ -875,14 +867,16 @@ export default function UserManagement() {
                   <button className="um-btn-secondary" onClick={startEdit}>
                     <Pencil size={15} /> Edit Details
                   </button>
-                  <button
-                    className="um-btn-primary"
-                    disabled={badgeLocked(selectedUser)}
-                    title={badgeLocked(selectedUser) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                    onClick={() => { closeModal(); openQrModal(selectedUser) }}
-                  >
-                    {badgeLocked(selectedUser) ? <Lock size={15} /> : <QrCode size={15} />} View QR
-                  </button>
+                  {selectedUser.role === 'security' && (
+                    <button
+                      className="um-btn-primary"
+                      disabled={badgeLocked(selectedUser)}
+                      title={badgeLocked(selectedUser) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                      onClick={() => { closeModal(); openQrModal(selectedUser) }}
+                    >
+                      {badgeLocked(selectedUser) ? <Lock size={15} /> : <QrCode size={15} />} View QR
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -960,8 +954,8 @@ export default function UserManagement() {
             <div className="um-modal-body">
               <div className="um-confirm-body">
                 <div className="um-confirm-icon info"><UserPlus size={24} /></div>
-                <h3>{addType === 'admin' ? 'Replace CDSO?' : 'Create User?'}</h3>
-                <p>Are you sure you want to {addType === 'admin' ? 'replace the current CDSO' : 'create this new account'}?</p>
+                <h3>{addType === 'admin' ? 'Replace Admin?' : 'Create User?'}</h3>
+                <p>Are you sure you want to {addType === 'admin' ? 'replace the current admin' : 'create this new account'}?</p>
               </div>
             </div>
             <div className="um-modal-footer">
@@ -981,7 +975,7 @@ export default function UserManagement() {
             <div className="um-modal-header">
               <h2>
                 <QrCode size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
-                {qrUser.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'}
+                Guard QR Badge
               </h2>
               <button className="um-modal-close" onClick={() => setQrUser(null)}><X size={18} /></button>
             </div>
@@ -990,10 +984,7 @@ export default function UserManagement() {
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{qrUser.full_name}</p>
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
                   {qrUser.user_code}
-                  {qrUser.role === 'security' && (
-                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
-                  )}
-                  {qrUser.role !== 'security' && <> · Vehicle Owner</>}
+                  <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
                 </p>
               </div>
               {qrLoading ? (
@@ -1009,24 +1000,16 @@ export default function UserManagement() {
                   <div ref={qrCanvasRef} style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', opacity: 0, pointerEvents: 'none' }} aria-hidden="true">
                     <QRCodeCanvas value={qrToken} size={512} level="M" />
                   </div>
-                  {qrUser.role === 'security' ? (
-                    <>
-                      <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 320 }}>
-                        Token: {qrToken}
-                      </p>
-                      <p style={{ margin: 0, fontSize: 11, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 10px' }}>
-                        Print this QR code as the guard's badge. Do not share digitally.
-                      </p>
-                    </>
-                  ) : (
-                    <p style={{ margin: 0, fontSize: 11, color: '#5A5F72', background: '#F0F2F7', borderRadius: 6, padding: '5px 12px' }}>
-                      Scan to identify this vehicle owner — encodes their User ID.
-                    </p>
-                  )}
+                  <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 320 }}>
+                    Token: {qrToken}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 11, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 10px' }}>
+                    Print this QR code as the guard's badge. Do not share digitally.
+                  </p>
                 </>
               ) : null}
             </div>
-            <div className="um-modal-footer" style={{ justifyContent: qrUser.role === 'security' ? 'space-between' : 'flex-end' }}>
+            <div className="um-modal-footer" style={{ justifyContent: 'space-between' }}>
               {qrUser.role === 'security' && (
                 <button
                   className="um-btn-primary"

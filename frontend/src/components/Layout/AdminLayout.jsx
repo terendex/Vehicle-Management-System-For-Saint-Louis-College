@@ -18,14 +18,13 @@ import {
   Truck,
   Menu,
   X,
-  Shield,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
-function buildNavGroups(isAdmin) {
+function buildNavGroups(isAdmin, isCdso) {
   const groups = []
 
   if (isAdmin) {
@@ -43,15 +42,21 @@ function buildNavGroups(isAdmin) {
         { name: 'Suppliers',            path: '/admin/suppliers',  icon: <Truck size={18} /> },
       ],
     })
+  }
+
+  if (isAdmin || isCdso) {
     groups.push({
       id: 'operations', type: 'group', name: 'Operations',
       icon: <TowerControl size={18} />,
       children: [
-        { name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> },
+        ...(isAdmin ? [{ name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> }] : []),
         { name: 'Parking Space Management', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
         { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
       ],
     })
+  }
+
+  if (isAdmin || isCdso) {
     groups.push({
       id: 'system', type: 'group', name: 'System',
       icon: <Settings2 size={18} />,
@@ -81,8 +86,9 @@ export default function AdminLayout({ children, fillHeight = false }) {
   const location = useLocation()
 
   const isAdmin = user?.role === 'admin'
+  const isCdso  = user?.role === 'cdso'
 
-  const navGroups = buildNavGroups(isAdmin)
+  const navGroups = buildNavGroups(isAdmin, isCdso)
 
   const [openGroup, setOpenGroup] = useState(() => getGroupForPath(navGroups, location.pathname))
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -126,7 +132,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
-          <span className="brand-text">SLC CDSO</span>
+          <span className="brand-text">SLC Admin</span>
           <NotificationBell />
           <button
             className="admin-sidebar-close"
@@ -193,16 +199,13 @@ export default function AdminLayout({ children, fillHeight = false }) {
               {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
             </div>
             <div className="user-info">
-              <span className="user-name">{user?.full_name || 'CDSO'}</span>
-              <span className="user-role">CDSO</span>
+              <span className="user-name">{user?.full_name || 'System Admin'}</span>
+              <span className="user-role">{user?.role === 'cdso' ? 'CDSO Staff' : 'Administrator'}</span>
             </div>
           </div>
           <div className="footer-actions">
-            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
-              <HelpCircle size={18} />
-            </button>
             <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
-              <Shield size={18} />
+              <HelpCircle size={18} />
             </button>
             <button className="logout-btn" onClick={handleLogout}>
               <LogOut size={16} />

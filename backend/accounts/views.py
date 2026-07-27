@@ -1,10 +1,9 @@
-import os
+import re
 from rest_framework import generics, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
-from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
@@ -59,12 +58,12 @@ class IsAdminRole(permissions.BasePermission):
 
 
 class IsAdminOrCdso(permissions.BasePermission):
-    """Allow access to the CDSO (admin) role."""
+    """Allow access to admin and CDSO staff."""
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role == 'admin'
+            and request.user.role in ('admin', 'cdso')
         )
 
 
@@ -313,6 +312,10 @@ class DashboardStatsView(APIView):
             active_users        = u_agg['active']
             disabled_users      = u_agg['disabled']
             owners_disabled     = u_agg['owners_disabled']
+
+            # Vehicle-owner category breakdown (active owners split by owner_type,
+            # plus a disabled slice) for the owners pie. Active-by-type + disabled
+            # are mutually exclusive so they sum cleanly in a donut.
             owners_active_by_type = {
                 'student':  u_agg['own_student'],
                 'employee': u_agg['own_employee'],
@@ -327,6 +330,12 @@ class DashboardStatsView(APIView):
             total_vehicles        = v_agg['total']
             authorized_vehicles   = v_agg['authorized']
             unauthorized_vehicles = total_vehicles - authorized_vehicles
+
+            # Vehicle-type breakdown (car/motorcycle/van/truck/bus) for the fleet-mix chart
+            vehicles_by_type = {
+                row['vehicle_type']: row['count']
+                for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id'))
+            }
 
             # Suppliers are their own model (not User owners) but form a registered
             # vehicle category alongside students/employees/fetchers. Counted by
@@ -418,6 +427,14 @@ class DashboardStatsView(APIView):
                 valid_date=today, status=VisitorPass.Status.ACTIVE
             ).count()
 
+            # Violation breakdown by type (last 30 days) for the violations trend chart
+            month_ago = today - timedelta(days=30)
+            violations_by_type = {
+                row['violation_type']: row['count']
+                for row in Violation.objects.filter(issued_at__date__gte=month_ago)
+                                            .values('violation_type').annotate(count=Count('id'))
+            }
+
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='admin'
             ).order_by('-created_at')[:10]
@@ -438,6 +455,7 @@ class DashboardStatsView(APIView):
                     'total':        total_vehicles,
                     'authorized':   authorized_vehicles,
                     'unauthorized': unauthorized_vehicles,
+                    'by_type':      vehicles_by_type,
                 },
                 'registrations': {
                     'pending':  pending_registrations,
@@ -470,6 +488,7 @@ class DashboardStatsView(APIView):
                 'violations': {
                     'open':        open_violations,
                     'fee_imposed': fee_imposed,
+                    'by_type':     violations_by_type,
                 },
                 'visitor_passes': {
                     'active_today': active_passes,
@@ -533,6 +552,10 @@ def _apply_created_at_range(qs, date_from, date_to):
     return filter_local_date_range(qs, 'created_at', date_from, date_to)
 
 
+_AUDIT_PLATE_RE    = re.compile(r'Plate:\s*([^|]+)')
+_AUDIT_DURATION_RE = re.compile(r'Duration:\s*(\d+)\s*min')
+
+
 class AuditLogListView(generics.ListAPIView):
     """List audit logs - admin only."""
     serializer_class   = AuditLogSerializer
@@ -561,6 +584,59 @@ class AuditLogListView(generics.ListAPIView):
             )
 
         return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        """Fold a 'Vehicle Exited' row into its matching 'Vehicle Entered' row
+        (same plate, same page) so a completed visit reads as one line with a
+        computed duration, instead of two separate entry/exit log rows."""
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objects = list(page) if page is not None else list(queryset)
+
+        entries_by_plate = {}
+        for log in objects:
+            if log.action == AuditLog.Action.VEHICLE_ENTERED:
+                m = _AUDIT_PLATE_RE.search(log.details or '')
+                if m:
+                    entries_by_plate.setdefault(m.group(1).strip(), []).append(log)
+
+        exit_info = {}       # entry_log.pk -> {exited_at, duration_minutes}
+        merged_exit_pks   = set()
+        claimed_entry_pks = set()
+        for log in objects:
+            if log.action != AuditLog.Action.VEHICLE_EXITED:
+                continue
+            m = _AUDIT_PLATE_RE.search(log.details or '')
+            if not m:
+                continue
+            plate = m.group(1).strip()
+            candidates = entries_by_plate.get(plate) or []
+            match = next(
+                (e for e in candidates if e.created_at < log.created_at and e.pk not in claimed_entry_pks),
+                None,
+            )
+            if match is None:
+                continue
+            claimed_entry_pks.add(match.pk)
+            merged_exit_pks.add(log.pk)
+            dur_m = _AUDIT_DURATION_RE.search(log.details or '')
+            duration = (
+                int(dur_m.group(1)) if dur_m
+                else max(0, round((log.created_at - match.created_at).total_seconds() / 60))
+            )
+            exit_info[match.pk] = {'exited_at': log.created_at, 'duration_minutes': duration}
+
+        visible = [log for log in objects if log.pk not in merged_exit_pks]
+        data = self.get_serializer(visible, many=True).data
+        for row in data:
+            info = exit_info.get(row['id'])
+            if info:
+                row['exited_at'] = info['exited_at']
+                row['duration_minutes'] = info['duration_minutes']
+
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
 
 
 def _filter_audit_logs(request):
