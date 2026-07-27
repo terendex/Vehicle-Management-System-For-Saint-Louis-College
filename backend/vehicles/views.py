@@ -588,7 +588,7 @@ class IsAdminRole(permissions.BasePermission):
 
 class IsAdminOrCdso(permissions.BasePermission):
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role in ('admin', 'cdso'))
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'admin')
 
 
 class PendingRegistrationsListView(APIView):
@@ -1763,8 +1763,8 @@ class ParkingNoticeView(APIView):
         return Response(ParkingNoticeSerializer(notices, many=True).data)
 
     def post(self, request):
-        """Admin/CDSO create and broadcast a notice to all vehicle owners."""
-        if request.user.role not in ('admin', 'cdso'):
+        """CDSO (admin) create and broadcast a notice to all vehicle owners."""
+        if request.user.role != 'admin':
             return Response({'error': 'Permission denied.'}, status=403)
 
         serializer = ParkingNoticeSerializer(data=request.data)
@@ -1832,8 +1832,8 @@ class ParkingNoticeDetailView(APIView):
         return [permissions.IsAuthenticated()]
 
     def delete(self, request, pk):
-        """Admin/CDSO deactivate (soft-delete) a notice."""
-        if request.user.role not in ('admin', 'cdso'):
+        """CDSO (admin) deactivate (soft-delete) a notice."""
+        if request.user.role != 'admin':
             return Response({'error': 'Permission denied.'}, status=403)
         notice = get_object_or_404(ParkingNotice, pk=pk)
         notice.is_active = False

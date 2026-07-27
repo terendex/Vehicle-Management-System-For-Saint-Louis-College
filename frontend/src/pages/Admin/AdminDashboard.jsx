@@ -507,12 +507,12 @@ export default function AdminDashboard() {
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
                     <Shield size={13} />
-                    <span>Admin Actions</span>
+                    <span>CDSO Actions</span>
                   </div>
                   <div className="ad-activity-list">
                     {stats?.recent_activity?.admin?.length > 0
                       ? stats.recent_activity.admin.map(log => <ActivityItem key={log.id} log={log} />)
-                      : <EmptyActivity message="No recent admin activity." />}
+                      : <EmptyActivity message="No recent CDSO activity." />}
                   </div>
                 </div>
 

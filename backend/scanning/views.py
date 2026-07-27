@@ -929,7 +929,7 @@ class GateListView(APIView):
     def get(self, request):
         from .models import Gate
         qs = Gate.objects.all()
-        is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')
+        is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'
         if not (is_staff and request.query_params.get('all')):
             qs = qs.filter(is_active=True)
         return Response([_gate_dict(g) for g in qs])
@@ -937,7 +937,7 @@ class GateListView(APIView):
     def post(self, request):
         from .models import Gate
         import re as _re
-        if not (request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')):
+        if not (request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'):
             return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
 
         gate_id = (request.data.get('gate_id') or '').strip().lower()
@@ -963,7 +963,7 @@ class GateDetailView(APIView):
 
     def patch(self, request, pk):
         from .models import Gate
-        if getattr(request.user, 'role', '') not in ('admin', 'cdso'):
+        if getattr(request.user, 'role', '') != 'admin':
             return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             gate = Gate.objects.get(pk=pk)
@@ -1251,7 +1251,7 @@ class GuardMonitorView(APIView):
     """Admin-only: per-gate activity, current shifts, and cross-gate discrepancies."""
 
     def get(self, request):
-        if not request.user.is_authenticated or request.user.role not in ('admin', 'cdso'):
+        if not request.user.is_authenticated or request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
 
@@ -1833,7 +1833,7 @@ class GuardShiftListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if request.user.role not in ('admin', 'cdso'):
+        if request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
 

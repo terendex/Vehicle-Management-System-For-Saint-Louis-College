@@ -25,7 +25,7 @@ import useAuthStore from '../../stores/authStore'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
-function buildNavGroups(isAdmin, isCdso) {
+function buildNavGroups(isAdmin) {
   const groups = []
 
   if (isAdmin) {
@@ -45,19 +45,19 @@ function buildNavGroups(isAdmin, isCdso) {
     })
   }
 
-  if (isAdmin || isCdso) {
+  if (isAdmin) {
     groups.push({
       id: 'operations', type: 'group', name: 'Operations',
       icon: <TowerControl size={18} />,
       children: [
-        ...(isAdmin ? [{ name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> }] : []),
+        { name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> },
         { name: 'Parking Space Management', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
         { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
       ],
     })
   }
 
-  if (isAdmin || isCdso) {
+  if (isAdmin) {
     groups.push({
       id: 'system', type: 'group', name: 'System',
       icon: <Settings2 size={18} />,
@@ -87,9 +87,8 @@ export default function AdminLayout({ children, fillHeight = false }) {
   const location = useLocation()
 
   const isAdmin = user?.role === 'admin'
-  const isCdso  = user?.role === 'cdso'
 
-  const navGroups = buildNavGroups(isAdmin, isCdso)
+  const navGroups = buildNavGroups(isAdmin)
 
   const [openGroup, setOpenGroup] = useState(() => getGroupForPath(navGroups, location.pathname))
   const [sidebarOpen, setSidebarOpen] = useState(false)

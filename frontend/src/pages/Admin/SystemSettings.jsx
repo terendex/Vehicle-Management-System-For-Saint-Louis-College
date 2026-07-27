@@ -230,7 +230,7 @@ export default function SystemSettings() {
           </div>
           <span className="ss-badge">
             <Settings2 size={13} />
-            CDSO / Admin
+            CDSO
           </span>
         </div>
 
