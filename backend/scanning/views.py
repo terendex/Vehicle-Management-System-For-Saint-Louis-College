@@ -253,6 +253,24 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
     }
 
 
+def _supplier_rule_denial() -> str | None:
+    """Day/time-window check for supplier entries against the supplier
+    RuleConstraint. Returns a denial message, or None when entry is allowed.
+    Open Campus Mode bypasses the restriction like every other rule."""
+    from vehicles.models import SystemSettings
+    from .entry_logic import _get_active_rule, _is_within_days, _is_within_window
+    rule = _get_active_rule('supplier')
+    if not rule or SystemSettings.get().open_campus_mode:
+        return None
+    if not _is_within_days(rule):
+        day_name = timezone.localdate().strftime('%A')
+        return f'Supplier access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.'
+    if not _is_within_window(rule):
+        return (f'Supplier access restricted. Outside allowed hours '
+                f'({rule.start_time}–{rule.end_time}) per rule: {rule.name}.')
+    return None
+
+
 def _is_standby_fetcher(user) -> bool:
     """Standby fetchers are allowed to park inside campus while waiting, so the
     fetcher max-stay limit does not apply to them (only to Drop & Go)."""

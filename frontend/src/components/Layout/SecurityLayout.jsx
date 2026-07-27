@@ -16,6 +16,8 @@ import {
   EyeOff,
   KeyRound,
   Menu,
+  HelpCircle,
+  Shield,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -587,6 +589,12 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           </button>
 
           <div className="footer-actions">
+            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
+              <HelpCircle size={18} />
+            </button>
+            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+              <Shield size={18} />
+            </button>
             <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
               <LogOut size={16} />
               <span>Log Out</span>

@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
-  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText
+  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
 } from 'lucide-react'
 import { reportFileName } from '../../utils/reportName'
 import './AuditLog.css'
@@ -23,7 +23,7 @@ const ACTION_LABELS = {
   user_deleted:    'User Deleted',
   user_disabled:   'User Disabled',
   user_enabled:    'User Enabled',
-  admin_replaced:  'Admin Replaced',
+  admin_replaced:  'CDSO Replaced',
   device_created:  'Device Added',
   device_updated:  'Device Updated',
   device_deleted:  'Device Removed',
@@ -68,7 +68,7 @@ export default function AuditLog() {
   const [totalCount, setTotalCount] = useState(0)
   const searchTimer = useRef(null)
 
-  const hasFilters = search || actionFilter || datePeriod !== 'all'
+  const hasFilters = search || actionFilter || datePeriod !== 'all' || dateFrom || dateTo
 
   const fetchLogs = useCallback(async (currentPage, currentSearch) => {
     setLoading(true)
@@ -179,6 +179,18 @@ export default function AuditLog() {
     }
   }
 
+  // Manual Date From/To — clears the active preset and validates ordering
+  const onDateFromChange = (value) => {
+    setDatePeriod('')
+    if (value && dateTo && value > dateTo) setDateTo(value)
+    setDateFrom(value)
+  }
+  const onDateToChange = (value) => {
+    setDatePeriod('')
+    if (value && dateFrom && value < dateFrom) setDateFrom(value)
+    setDateTo(value)
+  }
+
   const formatDate = (iso) => {
     if (!iso) return '—'
     return new Date(iso).toLocaleString('en-US', {
@@ -224,53 +236,81 @@ export default function AuditLog() {
         </div>
 
         <div className="al-toolbar">
-          <div className="al-period-btns">
-            {DATE_PERIODS.map(p => (
-              <button
-                key={p.value}
-                className={`al-period-btn ${datePeriod === p.value ? 'active' : ''}`}
-                onClick={() => applyPeriod(p.value)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="al-search-wrapper">
-            <Search size={15} />
-            <input
-              className="al-search-input"
-              type="text"
-              placeholder="Search actor, plate, details…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button className="al-search-clear" onClick={() => setSearch('')}>
-                <X size={12} />
-              </button>
-            )}
-          </div>
-
-          <span className="al-sep" />
-
-          <div className="al-filter-item">
-            <Filter size={13} />
-            <select
-              className="al-form-select"
-              value={actionFilter}
-              onChange={(e) => setAction(e.target.value)}
-            >
-              <option value="">All Actions</option>
-              {Object.entries(ACTION_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
+          {/* Row 1 — date range: quick presets or a custom From/To */}
+          <div className="al-toolbar-row">
+            <span className="al-toolbar-label"><Calendar size={14} /> Date range</span>
+            <div className="al-period-btns">
+              {DATE_PERIODS.map(p => (
+                <button
+                  key={p.value}
+                  className={`al-period-btn ${datePeriod === p.value ? 'active' : ''}`}
+                  onClick={() => applyPeriod(p.value)}
+                >
+                  {p.label}
+                </button>
               ))}
-            </select>
+            </div>
+            <span className="al-daterange-or">or pick</span>
+            <div className="al-daterange">
+              <input
+                className="al-date-input"
+                type="date"
+                value={dateFrom}
+                max={dateTo || today}
+                onChange={(e) => onDateFromChange(e.target.value)}
+                title="Date From"
+                aria-label="Date From"
+              />
+              <span className="al-daterange-sep">to</span>
+              <input
+                className="al-date-input"
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                max={today}
+                onChange={(e) => onDateToChange(e.target.value)}
+                title="Date To"
+                aria-label="Date To"
+              />
+            </div>
           </div>
 
-          <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
-            <RefreshCw size={14} />
-          </button>
+          {/* Row 2 — search + action filter */}
+          <div className="al-toolbar-row">
+            <div className="al-search-wrapper">
+              <Search size={15} />
+              <input
+                className="al-search-input"
+                type="text"
+                placeholder="Search actor, plate, or details…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button className="al-search-clear" onClick={() => setSearch('')}>
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            <div className="al-filter-item">
+              <Filter size={13} />
+              <select
+                className="al-form-select"
+                value={actionFilter}
+                onChange={(e) => setAction(e.target.value)}
+              >
+                <option value="">All Actions</option>
+                {Object.entries(ACTION_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+
+            <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
 
         <div className="al-table-container">
@@ -307,6 +347,8 @@ export default function AuditLog() {
                     </td>
                     <td className="al-details">
                       <span className="al-details-text">{log.details || '—'}</span>
+                      {/* A completed visit is folded into one row by the API, which
+                          attaches the matching exit time and computed duration. */}
                       {log.exited_at && (
                         <span className="al-details-text" style={{ display: 'block', color: '#059669', marginTop: 2 }}>
                           Exited {formatDate(log.exited_at)} · Duration: {log.duration_minutes} min

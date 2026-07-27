@@ -81,14 +81,44 @@
 
 .al-toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
   background: #fff;
   border: 1.5px solid #E2E6EE;
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
+}
+
+.al-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.al-toolbar-row:first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #EEF1F7;
+}
+
+.al-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2A2B61;
+  white-space: nowrap;
+}
+
+.al-toolbar-label svg { color: #9CA3AF; }
+
+.al-daterange-or {
+  font-size: 11.5px;
+  color: #9CA3AF;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .al-sep {
@@ -101,7 +131,8 @@
 
 .al-search-wrapper {
   position: relative;
-  width: 200px;
+  flex: 1 1 260px;
+  min-width: 220px;
 }
 
 .al-search-wrapper > svg:first-child {
@@ -164,14 +195,15 @@
 .al-period-btns {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   background: #F0F2F7;
-  border-radius: 8px;
+  border: 1px solid #E2E6EE;
+  border-radius: 9px;
   padding: 3px;
 }
 
 .al-period-btn {
-  padding: 4px 11px;
+  padding: 5px 13px;
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -183,8 +215,8 @@
   transition: all 0.15s;
 }
 
-.al-period-btn:hover { background: #fff; color: #2A2B61; }
-.al-period-btn.active { background: #fff; color: #2A2B61; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.al-period-btn:hover { background: #E5E9F3; color: #2A2B61; }
+.al-period-btn.active { background: #fff; color: #2A2B61; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
 .al-filter-item {
   display: flex;
@@ -195,6 +227,39 @@
 
 .al-filter-item svg {
   color: #9CA3AF;
+}
+
+.al-daterange {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.al-daterange > svg {
+  color: #9CA3AF;
+  flex-shrink: 0;
+}
+
+.al-date-input {
+  padding: 5px 9px;
+  border: 1.5px solid #CBD2E0;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #1A1D2E;
+  background: #fff;
+  outline: none;
+  cursor: pointer;
+}
+
+.al-date-input:hover { border-color: #2A2B61; }
+.al-date-input:focus { border-color: #2A2B61; box-shadow: 0 0 0 3px rgba(42,43,97,0.10); }
+
+.al-daterange-sep {
+  font-size: 12px;
+  color: #9CA3AF;
+  font-weight: 600;
 }
 
 .al-form-select {
@@ -211,17 +276,6 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%235A5F72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 2px center;
-}
-
-.al-date-input {
-  padding: 4px 2px;
-  border: none;
-  background: transparent;
-  font-size: 13px;
-  font-family: inherit;
-  color: #1A1D2E;
-  outline: none;
-  min-width: 120px;
 }
 
 .al-refresh-btn {
