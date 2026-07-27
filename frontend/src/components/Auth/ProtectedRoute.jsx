@@ -18,8 +18,6 @@ export default function ProtectedRoute({ allowedRoles }) {
       return <Navigate to="/security" replace />
     } else if (user.role === 'vehicle_owner') {
       return <Navigate to="/owner" replace />
-    } else if (user.role === 'cdso') {
-      return <Navigate to="/admin/settings" replace />
     } else {
       return <Navigate to="/login" replace />
     }
