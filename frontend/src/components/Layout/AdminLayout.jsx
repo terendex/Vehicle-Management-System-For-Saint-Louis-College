@@ -18,6 +18,7 @@ import {
   Truck,
   Menu,
   X,
+  Shield,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -132,7 +133,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
           <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
-          <span className="brand-text">SLC Admin</span>
+          <span className="brand-text">SLC CDSO</span>
           <NotificationBell />
           <button
             className="admin-sidebar-close"
@@ -199,13 +200,16 @@ export default function AdminLayout({ children, fillHeight = false }) {
               {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
             </div>
             <div className="user-info">
-              <span className="user-name">{user?.full_name || 'System Admin'}</span>
-              <span className="user-role">{user?.role === 'cdso' ? 'CDSO Staff' : 'Administrator'}</span>
+              <span className="user-name">{user?.full_name || 'CDSO'}</span>
+              <span className="user-role">CDSO</span>
             </div>
           </div>
           <div className="footer-actions">
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
               <HelpCircle size={18} />
+            </button>
+            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+              <Shield size={18} />
             </button>
             <button className="logout-btn" onClick={handleLogout}>
               <LogOut size={16} />
