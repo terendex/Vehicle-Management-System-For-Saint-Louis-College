@@ -50,12 +50,19 @@ database is in `ap-southeast-1`. Same-region traffic is ~1–5 ms per query;
 running the container in a US region puts ~200 ms on *every* query, and a page
 that makes ten queries becomes two seconds slower for no other reason.
 
-## 3. Add Redis
+## 3. Redis — not needed, and skipping it saves money
 
-Railway → **New** → **Database** → **Redis**. Then reference it in the
-variables below. Without Redis the app still runs, but live updates broadcast
-from the Celery worker never reach browsers, because the fallback channel layer
-is per-process.
+**Do not add a Redis service for this deployment.** It would be a second
+always-on container for no benefit.
+
+The in-memory channel layer is per-process, which only matters when something
+*outside* the web process needs to push to browsers. Nothing here does:
+`broadcast_change` is called solely from views and signals, both of which run
+inside the same Daphne process, and no Celery task calls it. With a single
+replica and no worker service, in-memory is sufficient.
+
+Add Redis only if you later run a Celery worker or raise the replica count.
+`settings.py` already picks it up from `REDIS_URL` with no code change.
 
 ## 4. Environment variables
 
@@ -68,9 +75,6 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 | `SECRET_KEY` | *(50+ random chars)* | Generate: `python -c "import secrets;print(secrets.token_urlsafe(64))"` |
 | `DEBUG` | `false` | Already the default on Railway — the platform's own env vars flip it, so forgetting this variable fails closed rather than exposing stack traces. The app refuses to boot without `SECRET_KEY` when it is off. |
 | `DATABASE_URL` | *(Neon pooled connection string)* | Use the `-pooler` host |
-| `REDIS_URL` | `${{Redis.REDIS_URL}}` | Railway resolves this reference |
-| `CELERY_BROKER_URL` | `${{Redis.REDIS_URL}}` | |
-| `CELERY_RESULT_BACKEND` | `${{Redis.REDIS_URL}}` | |
 | `USE_R2` | `true` | **Required** — see the warning below |
 | `R2_ACCESS_KEY_ID` | | |
 | `R2_SECRET_ACCESS_KEY` | | |
@@ -123,8 +127,22 @@ gates the deploy on `/healthz`.
 campus LAN (`192.168.137.x`, see `IP_CAMERA_IPS.md`) and a cloud container
 cannot route to a private address. Everything else — registration, approvals,
 violations, reports, QR scanning, parking records, the admin UI — works fully.
-Restoring live scanning requires an on-campus agent that owns the RTSP streams
-and posts detections up to this API; that is not built yet.
+
+To get scanning back, run the same app on a campus machine against this same
+database: see **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No code changes, no extra
+hosting cost.
+
+**Nothing Celery-based runs**, because no worker service is deployed:
+
+- The **ML retrain button** does nothing — it is the only `.delay()` call in the
+  codebase. Restoring it needs a worker service (start command
+  `cd backend && celery -A config worker --loglevel=info --pool=solo`, same
+  variables) plus Redis as a broker — two extra always-on containers.
+- The **daily maintenance jobs** (`auto_manage_events`, `purge_old_records`) are
+  on a beat schedule that nothing is running. These matter more: without them
+  the events list stops rolling over. Fix them for free with
+  `python manage.py run_maintenance` on a schedule — see
+  **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No broker, no worker, no cost.
 
 **Keep this service at a single replica.** The YOLO/Paddle models are loaded per
 process and the parking-camera threads hold per-process state, so scaling out
