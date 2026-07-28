@@ -8,17 +8,13 @@ An AI-powered smart parking and vehicle verification system using license plate 
 
 - [Overview](#overview)
 - [Features](#features)
-- [Entry Rules](#entry-rules)
-- [Tech Stack](#tech-stack)
-- [ML Pipeline](#ml-pipeline)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
 - [Running the Project](#running-the-project)
 - [API Endpoints](#api-endpoints)
-- [Git Workflow](#git-workflow)
-- [Team](#team)
+- [User Roles](#user-roles)
 
 ---
 
@@ -42,147 +38,15 @@ This system automates vehicle entry and parking monitoring at Saint Louis Colleg
 - **Visitor pass system** — visitors declare office destination, office confirms entry
 - **Violation tracking** — flags vehicles with unresolved violations
 - **Mobile web scanner** — guards can scan plates from any device
-- **Secure Registration** — admin generates one-time tokens for self-registration
-- **Role-based access** — Guard, Supervisor, Admin, and Office Staff roles
+- **Open registration** — public application form with live duplicate checking; CDSO reviews and accepts or rejects
+- **Role-based access** — CDSO (admin), Security, and Vehicle Owner roles
 - **Access logs** — full history of every scan and entry attempt
-- **ML feedback loop** — automatically collects scan data and retrains YOLOv8 when enough new samples accumulate
-
----
-
-## Entry Rules
-
-| Owner Type | Entry Rule |
-|---|---|
-| **Student** | Only on their assigned schedule (MWF or TTHS) |
-| **Fetcher / Dropper** | Only on their assigned schedule (MWF or TTHS) |
-| **Employee** | Allowed any day, any time |
-| **Visitor** | Must have a visitor pass confirmed by the destination office |
-
-### Schedule Days
-| Schedule | Allowed Days |
-|---|---|
-| MWF | Monday, Wednesday, Friday |
-| TTHS | Tuesday, Thursday, Saturday |
-
-### Visitor Flow
-```
-1. Visitor arrives at gate
-2. Guard scans plate → "No pass found"
-3. Guard creates visitor pass (vehicle, office, purpose)
-4. Office staff confirms or rejects the pass
-5. Guard re-scans → "Authorized" if confirmed
-```
-
----
-
-## Tech Stack
-
-### Backend
-| Package | Purpose |
-|---|---|
-| Django | Web framework |
-| Django REST Framework | REST API |
-| djangorestframework-simplejwt | JWT authentication |
-| django-cors-headers | Cross-origin requests from React |
-| django-channels | WebSocket support |
-| Daphne | ASGI server for WebSockets |
-| psycopg2-binary | PostgreSQL connector |
-| dj-database-url | Parse DATABASE_URL connection string |
-| django-storages + boto3 | Cloudflare R2 image storage |
-| Pillow | Image handling |
-| EasyOCR | Plate text extraction |
-| OpenCV | Image preprocessing |
-| YOLOv8 (Ultralytics) | Plate region detection |
-| python-dotenv | Environment variable loading |
-| Celery + Redis | Background tasks |
-
-### Frontend
-| Package | Purpose |
-|---|---|
-| React + Vite | UI framework and build tool |
-| Tailwind CSS v4 | Styling (via `@tailwindcss/vite` plugin) |
-| React Router v6 | Navigation |
-| TanStack Query | Server state and caching |
-| Zustand | Global state management |
-| Axios | HTTP client |
-| react-webcam | Camera access on mobile |
-| Lucide React | Icons |
-| Sonner | Toast notifications |
-| date-fns | Date formatting and manipulation |
-| React Hook Form + Zod | Forms and validation |
-| TanStack Table | Data tables |
-
-### Infrastructure
-| Service | Purpose |
-|---|---|
-| Neon (PostgreSQL) | Shared cloud database — no local PostgreSQL needed |
-| Cloudflare R2 | Image storage for scan snapshots, ML samples, owner photos |
-| Redis (Memurai on Windows) | Celery task queue — still runs locally |
-
----
-
-## ML Pipeline
-
-### How detection works
-
-Every camera frame goes through the following stages:
-
-```
-Camera JPEG (webcam or RTSP)
-    │
-    ▼
-YOLOv8 (detection.py)
-    │  Adaptive preprocessing — CLAHE + gamma for dark/glare/dim frames
-    │  Rotation fallback — retries at ±20°, ±40°, ±60° when no plate found
-    │  Per-class NMS — removes duplicate overlapping boxes
-    │
-    ├── bicycle / e_bike / electric_scooter  →  DROPPED (ignored, not processed)
-    ├── vehicle / motorcycle                 →  Tracked, shown on screen
-    └── license_plate                        →  Tracked + sent to EasyOCR
-            │
-            ▼
-    ProximityTracker (proximity_tracker.py)
-        Assigns stable track IDs across frames using centroid distance matching.
-        Persists last-known box position for up to 1.5s during detection gaps.
-            │
-            ├── Non-plate tracks  →  {"type":"tracks"} sent to frontend
-            └── Plate tracks      →  EasyOCR queue
-                    │
-                    ▼
-            EasyOCR (reader.py)
-                Runs on plate crops only. Tries binary/inverted/CLAHE variants
-                + left/middle/right region splits. Corrects common PH plate
-                misreads (O↔0, I↔1, etc.). Returns when confidence ≥ 0.60.
-                    │
-                    ▼
-            {"type":"ocr_update"} + DB lookup → {"type":"result"}
-```
-
-### Detected classes
-
-| Class | Processed? | Notes |
-|---|---|---|
-| `license_plate` | Yes | Cropped and sent to EasyOCR |
-| `vehicle` | Yes | Tracked, shown with green box |
-| `motorcycle` | Yes | Tracked, shown with blue box |
-| `bicycle` | No | Detected by model but discarded in software |
-| `e_bike` | No | Detected by model but discarded in software |
-| `electric_scooter` | No | Detected by model but discarded in software |
-
-To re-enable any ignored class, remove it from `_IGNORED_CLASSES` in `backend/scanning/ml/detection.py`.
-
-### Tracking
-
-`ProximityTracker` matches each new YOLO detection to an existing track by finding the closest track center within **100 pixels**. Unmatched tracks are re-emitted at their last known position until they expire (1.5 seconds of no match). This keeps bounding boxes stable on screen even at low ML frame rates.
-
-### Performance
-
-| Environment | YOLO inference | ML frame rate |
-|---|---|---|
-| CPU (no GPU) | ~200–500ms/frame | ~2–5 fps |
-| GPU (CUDA) | ~10–30ms/frame | ~30–100 fps |
-
-The frontend always renders at **60fps** using LERP interpolation between backend positions, so the UI is smooth regardless of backend speed. GPU mode is detected automatically — no config change needed.
+- **ML sample collection** — every scan is stored for later review; retraining is triggered manually and never runs on its own from live scans
+- **Reports** — Audit Log, Violations and Vehicle Registrations exportable as branded PDF or Excel
+- **Backup & restore** — download a full JSON snapshot of system data, or restore from one; a safety snapshot is taken automatically before any restore
+- **Vehicle pass fees** — configurable student/fetcher and employee amounts, shown on the public registration form
+- **Scheduled visits** — log expected visitors and suppliers ahead of arrival
+- **Help & user manual** — in-app guidance for every role
 
 ---
 
@@ -431,7 +295,7 @@ Open a terminal per service in VS Code (`` Ctrl+` `` to open, split icon to add 
 |---|---|---|---|
 | 1 | **Backend** | `cd backend` → activate venv → `daphne -b 127.0.0.1 -p 8000 config.asgi:application` | `Listening on TCP address 127.0.0.1:8000` |
 | 2 | **Frontend** | `cd frontend` → `npm run dev` | `Local: http://localhost:5173/` |
-| 3 | Celery *(optional — ML tasks)* | `cd backend` → activate venv → `python -m celery -A config worker -l info --pool=solo` | `celery@… ready` |
+| 3 | Celery *(optional — manual retrain)* | `cd backend` → activate venv → `python -m celery -A config worker -l info --pool=solo` | `celery@… ready` |
 | 4 | Tunnel *(optional — public access)* | `cloudflared tunnel --url http://localhost:5173` | the `https://….trycloudflare.com` URL |
 
 > ⚠️ **Order matters.** The tunnel forwards to **Vite on `5173`**, *not* Django. If Vite isn't running when you start the tunnel, the public URL returns **HTTP 530** (Cloudflare can't reach the origin). Always start the tunnel **last**.
@@ -472,7 +336,7 @@ npm run dev
 |---|---|
 | `http://localhost:5173` | React web app |
 
-### Terminal 3 — Celery Worker (required for ML retraining)
+### Terminal 3 — Celery Worker (required for manual ML retraining)
 
 ```bash
 cd backend
@@ -560,6 +424,9 @@ Then **restart Daphne** so the new `.env` is loaded.
 | `POST` | `/api/accounts/replace-admin/` | Replace current admin | Admin |
 | `GET` | `/api/accounts/audit-logs/` | List audit logs | Yes |
 | `GET` | `/api/accounts/audit-logs/stats/` | Audit log statistics | Admin |
+| `GET` | `/api/accounts/audit-logs/export/` | Download the filtered audit log as Excel | Admin |
+| `GET` | `/api/accounts/audit-logs/export-pdf/` | Download the filtered audit log as PDF | Admin |
+| `DELETE` | `/api/accounts/audit-logs/clear/` | Delete all audit log records | Admin |
 
 ### Vehicles and Owners
 | Method | Endpoint | Description | Auth |
@@ -575,19 +442,24 @@ Then **restart Daphne** so the new `.env` is loaded.
 | `GET` | `/api/vehicles/vehicle-types/` | List vehicle type access rules | Admin |
 | `POST` | `/api/vehicles/vehicle-types/` | Create vehicle type rule | Admin |
 
-### Secure Registration
+### Registration
+
+Registration is open to the public — no invite token is required. Applications
+land in a pending queue for the CDSO to accept or reject.
+
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| `POST` | `/api/vehicles/tokens/generate/` | Generate a new registration token | Admin |
-| `GET` | `/api/vehicles/tokens/` | List all registration tokens | Admin |
-| `DELETE` | `/api/vehicles/tokens/{id}/` | Delete a registration token | Admin |
-| `POST` | `/api/vehicles/tokens/{id}/toggle/` | Enable/disable registration token | Admin |
-| `DELETE` | `/api/vehicles/tokens/clear/` | Clear used/expired tokens | Admin |
-| `GET` | `/api/vehicles/register/validate-token/{token}/` | Validate a public token | No |
-| `POST` | `/api/vehicles/register/submit/` | Submit vehicle registration application | No |
+| `POST` | `/api/vehicles/register/open/` | Submit a vehicle registration application | No |
+| `GET` | `/api/vehicles/register/status/` | Whether registration is open, plus the current vehicle pass fees | No |
+| `GET` | `/api/vehicles/register/schedule-slots/` | Remaining capacity per schedule day | No |
+| `GET` | `/api/vehicles/register/availability/` | Live duplicate check for plate, email, licence, student/employee ID | No |
+| `POST` | `/api/vehicles/register/license-image/` | Attach a driver's licence photo to a submitted application | No |
+| `POST` | `/api/vehicles/register/direct/` | CDSO walk-in registration (auto-accepted, skips the queue) | Admin |
 | `GET` | `/api/vehicles/registrations/pending/` | List pending registrations | Admin |
 | `POST` | `/api/vehicles/registrations/{id}/accept/` | Accept registration | Admin |
 | `POST` | `/api/vehicles/registrations/{id}/reject/` | Reject registration | Admin |
+| `GET` | `/api/vehicles/registrations/report/excel/` | Download the filtered registrations report as Excel | Admin |
+| `GET` | `/api/vehicles/registrations/report/pdf/` | Download the filtered registrations report as PDF | Admin |
 
 ### Scanning
 | Method | Endpoint | Description | Auth |
@@ -597,7 +469,10 @@ Then **restart Daphne** so the new `.env` is loaded.
 | `GET` | `/api/scan/offices/` | List all offices | Yes |
 | `GET` | `/api/scan/visitor-pass/` | List today's visitor passes | Yes |
 | `POST` | `/api/scan/visitor-pass/` | Create visitor pass at gate | Yes |
-| `PATCH` | `/api/scan/visitor-pass/{id}/` | Confirm or reject visitor pass | Yes |
+| `POST` | `/api/scan/visitor-pass/{id}/printed/` | Confirm the slip was printed — logs the entry | Yes |
+| `PATCH` | `/api/scan/visitor-pass/{id}/extend/` | Extend the allowed stay | Yes |
+| `POST` | `/api/scan/visitor-pass/{id}/exit/` | Record the visitor's exit | Yes |
+| `POST` | `/api/scan/visitor-pass/exit-scan/` | Record an exit by scanning the pass QR | Yes |
 
 ### WebSocket Endpoints (Daphne required)
 
@@ -641,6 +516,22 @@ Then **restart Daphne** so the new `.env` is loaded.
 | `GET` | `/api/violations/` | List all violations | Yes |
 | `POST` | `/api/violations/` | Add a violation | Yes |
 | `PATCH` | `/api/violations/{id}/` | Update or resolve violation | Yes |
+| `GET` | `/api/violations/report/excel/` | Download the filtered violations report as Excel | Admin |
+| `GET` | `/api/violations/report/pdf/` | Download the filtered violations report as PDF | Admin |
+
+### System Settings, Backup & Scheduling
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `GET` | `/api/vehicles/system-settings/` | Read system settings (retention, dedup window, vehicle pass fees) | Yes |
+| `PATCH` | `/api/vehicles/system-settings/` | Update system settings | Admin |
+| `GET` | `/api/accounts/system/backup/` | Download a JSON snapshot of all application data | Admin |
+| `POST` | `/api/accounts/system/restore/` | Restore from an uploaded JSON backup (atomic, auto safety snapshot) | Admin |
+| `GET` | `/api/vehicles/scheduled-visits/` | List scheduled visits (`?upcoming=1` for pending arrivals) | Admin |
+| `POST` | `/api/vehicles/scheduled-visits/` | Log an expected visitor or supplier | Admin |
+| `PATCH` | `/api/vehicles/scheduled-visits/{id}/` | Update or mark a scheduled visit as arrived | Admin |
+| `GET` | `/api/scan/gates/` | List gates (`?all=1` includes inactive) | Yes |
+| `POST` | `/api/scan/gates/` | Create a gate | Admin |
+| `PATCH` | `/api/scan/gates/{id}/` | Rename a gate or toggle it active | Admin |
 
 ### Scan Response Examples
 
@@ -674,30 +565,11 @@ Then **restart Daphne** so the new `.env` is loaded.
 
 ---
 
-## Git Workflow
-
-### Branch Structure
-```
-main          ← production only, never push directly
-│
-└── dev       ← integration branch, all PRs merge here
-    ├── feat/plate-scanner
-    ├── feat/auth
-    ├── feat/vehicle-crud
-    ├── feat/visitor-pass
-    ├── feat/violations
-    └── feat/mobile-scan-ui
-```
-
-> **Rule:** Nobody pushes directly to `main` or `dev`. Everything goes through a Pull Request.
-
----
-
 ## User Roles
 
 | Role | Access |
 |---|---|
-| **Admin** | Full system access — manage users, vehicles, owners, rules, tokens, violations, audits |
+| **CDSO (Admin)** | Full system access — manage users, vehicles, owners, rules, violations, reports, backups, audits |
 | **Security** | Scan plates, view logs, manage visitor passes, view own statistics |
 | **Vehicle Owner** | View own registered vehicles, history, and entry status |
 
@@ -709,19 +581,6 @@ main          ← production only, never push directly
 | Security | guard@slc.edu.ph | guard123 |
 
 > Use these credentials to log in at `http://localhost:5173`.
-
----
-
-## Team
-
-| Name | Role |
-
-
-|---|---|
-| | ML / Plate Recognition |
-| | Backend / API |
-| | Frontend / Mobile UI |
-| | Database / DevOps |
 
 ---
 
