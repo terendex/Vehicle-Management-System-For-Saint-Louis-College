@@ -14,14 +14,18 @@ WORKDIR /app
 # the old paddlepaddle-gpu==2.6.2.post120 pin is not on PyPI and breaks numpy 2.
 RUN pip install --no-cache-dir paddlepaddle==3.0.0
 
+# NOTE: this Dockerfile builds from the REPOSITORY ROOT, not ./backend — see
+# docker-compose.yml. The canonical dependency list lives at the root, and
+# backend/requirements.txt only redirects to it with a relative `-r ../`, which
+# cannot resolve from a ./backend build context.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy entrypoint outside /app so the volume mount does not override it
-COPY entrypoint.sh /entrypoint.sh
+COPY backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-COPY . .
+COPY backend/ .
 
 ENTRYPOINT ["/entrypoint.sh"]
 

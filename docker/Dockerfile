@@ -48,7 +48,9 @@ RUN pip install --no-cache-dir \
 # PaddlePaddle CPU build. Paddle 3.x is required for numpy 2 compatibility.
 RUN pip install --no-cache-dir paddlepaddle==3.0.0
 
-COPY backend/requirements.txt .
+# The canonical list is the root one; backend/requirements.txt only redirects to
+# it, and that relative -r would not resolve from this stage's working directory.
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 

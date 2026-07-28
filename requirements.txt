@@ -1,12 +1,112 @@
-# Detection marker for Railpack — the real pin list lives in
-# backend/requirements.txt and this file just defers to it.
+# ─────────────────────────────────────────────────────────────────────────────
+#  Canonical Python dependency list.
 #
-# Railpack decides both *that* this is a Python project and *which* package
-# manager to use by looking for a dependency file at the repository root. The
-# Django app lives in backend/, so without this file the build can fail with
-# "Railpack could not determine how to build the app".
+#  This lives at the repository root because that is the only place a root-context
+#  builder reliably finds it. Railpack's install step copies just the dependency
+#  file it detected into its layer — not the whole repo — so a list under
+#  backend/ is not present when pip runs, and an `-r backend/requirements.txt`
+#  indirection fails with "Could not open requirements file".
 #
-# Note: railpack.json overrides the install step and installs CPU-only torch
-# from the PyTorch index before this list, so nothing here pulls the ~2.5GB
-# CUDA build. Local development should keep using backend/requirements.txt.
--r backend/requirements.txt
+#  backend/requirements.txt defers to this file, so the documented local command
+#  still works unchanged:
+#      pip install -r backend/requirements.txt
+#
+#  torch/torchvision are pinned here without an index. The Railpack build and
+#  docker/Dockerfile both install the CPU-only wheels from
+#  https://download.pytorch.org/whl/cpu BEFORE this file, which satisfies these
+#  pins and stops pip pulling the ~2.5GB CUDA build from PyPI.
+# ─────────────────────────────────────────────────────────────────────────────
+amqp==5.3.1
+asgiref==3.11.1
+billiard==4.2.4
+celery==5.6.3
+certifi==2026.5.20
+charset-normalizer==3.4.7
+click==8.1.8
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+colorama==0.4.6
+contourpy==1.3.0
+cycler==0.12.1
+Django==4.2.30
+django-cors-headers==4.9.0
+djangorestframework==3.16.1
+djangorestframework_simplejwt==5.5.1
+# paddlepaddle (CPU) is installed by the builder before this file; paddle 3.x is
+# required for numpy 2 compatibility.
+paddleocr==2.10.0
+albumentations==1.4.24
+filelock==3.19.1
+fonttools==4.59.2
+fsspec==2026.4.0
+idna==3.16
+ImageIO==2.37.3
+Jinja2==3.1.6
+kiwisolver==1.5.0
+kombu==5.6.2
+lazy-loader==0.5
+MarkupSafe==3.0.3
+matplotlib==3.10.9
+mpmath==1.3.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.4.6
+# Both of these stay pinned, and at the SAME version, on purpose. ultralytics
+# and paddleocr both hard-depend on non-headless opencv-python, so dropping it
+# here does not remove it — pip pulls it back in unpinned and it can drift from
+# the headless pin. The two distributions install the same `cv2` module, so a
+# version mismatch means whichever landed last silently wins.
+opencv-python==4.13.0.92
+opencv-python-headless==4.13.0.92
+packaging==26.2
+pillow==12.2.0
+polars==1.41.0
+polars-runtime-32==1.41.0
+prompt_toolkit==3.0.52
+psutil==7.2.2
+psycopg2-binary==2.9.12
+pyclipper==1.4.0
+PyJWT==2.13.0
+pyparsing==3.3.2
+python-bidi==0.6.10
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+PyYAML==6.0.3
+qrcode==8.2
+redis==7.4.0
+requests==2.34.2
+scikit-image==0.26.0
+scipy==1.17.1
+setuptools==81.0.0
+shapely==2.1.2
+six==1.17.0
+sqlparse==0.5.5
+sympy==1.14.0
+tifffile==2026.5.15
+# NOTE: plain pins install the CPU wheels. For local GPU training (RTX 3060):
+#   pip install --force-reinstall --no-deps torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cu130
+torch==2.12.0
+torchvision==0.27.0
+typing_extensions==4.15.0
+tzdata==2026.2
+tzlocal==5.3.1
+ultralytics==8.4.55
+ultralytics-thop==2.0.19
+urllib3==2.7.0
+vine==5.1.0
+wcwidth==0.7.0
+channels~=4.2
+channels-redis~=4.2
+daphne~=4.1
+twisted~=24.11
+autobahn~=24.4
+django-redis~=5.4
+# Serves the built React bundle + Django static files from the app process, so
+# the deployment needs no separate web server or CDN.
+whitenoise[brotli]~=6.8
+dj-database-url==2.3.0
+django-storages[s3]==1.14.4
+boto3==1.38.28
+openpyxl==3.1.5
+reportlab==5.0.0

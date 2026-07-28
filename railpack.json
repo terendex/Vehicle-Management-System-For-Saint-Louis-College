@@ -27,7 +27,7 @@
         "pip install --upgrade pip",
         "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.0 torchvision==0.27.0",
         "pip install paddlepaddle==3.0.0",
-        "pip install -r backend/requirements.txt",
+        "pip install -r requirements.txt",
         "npm --prefix frontend ci"
       ]
     },

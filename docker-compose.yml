@@ -8,7 +8,11 @@ services:
 
   # ── Django / Daphne (ASGI) ────────────────────────────────────────────────
   backend:
-    build: ./backend
+    # Built from the repo root so the canonical root requirements.txt is in the
+    # build context; backend/requirements.txt only redirects to it.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     # CMD from Dockerfile: daphne -b 0.0.0.0 -p 8000 config.asgi:application
     volumes:
       - ./backend:/app                                      # live code reload
@@ -32,7 +36,9 @@ services:
 
   # ── Celery worker ─────────────────────────────────────────────────────────
   celery:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: celery -A config worker --loglevel=info --pool=solo
     volumes:
       - ./backend:/app
