@@ -476,7 +476,7 @@ export default function UserManagement() {
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#5C7B92', fontWeight: 600 }}>
                       {u.user_code || `#${u.id}`}
                     </span>
                   </td>
@@ -591,7 +591,7 @@ export default function UserManagement() {
                   className="um-type-option"
                   onClick={() => switchAddType('guard')}
                   style={addType === 'guard'
-                    ? { borderColor: '#2A2B61', background: '#F5F6FF', boxShadow: '0 0 0 1px #2A2B61' }
+                    ? { borderColor: '#03396C', background: '#F7FAFC', boxShadow: '0 0 0 1px #03396C' }
                     : { opacity: 0.75 }}
                 >
                   <div className="um-type-option-icon"><Shield size={20} /></div>
@@ -602,7 +602,7 @@ export default function UserManagement() {
                   className="um-type-option"
                   onClick={() => switchAddType('admin')}
                   style={addType === 'admin'
-                    ? { borderColor: '#B45309', background: '#FFFBEB', boxShadow: '0 0 0 1px #B45309' }
+                    ? { borderColor: '#8A6B00', background: '#FEF9E4', boxShadow: '0 0 0 1px #8A6B00' }
                     : { opacity: 0.75 }}
                 >
                   <div className="um-type-option-icon"><ShieldAlert size={20} /></div>
@@ -731,7 +731,7 @@ export default function UserManagement() {
                     <img
                       src={selectedUser.photo_url}
                       alt={selectedUser.full_name}
-                      style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE', display: 'block' }}
+                      style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid #D3E1EC', display: 'block' }}
                     />
                   ) : (
                     <div
@@ -742,7 +742,7 @@ export default function UserManagement() {
                     </div>
                   )}
                 </div>
-                <h3 style={{ margin: 0, color: '#1A1D2E', fontSize: 18 }}>{selectedUser.full_name}</h3>
+                <h3 style={{ margin: 0, color: '#0B2340', fontSize: 18 }}>{selectedUser.full_name}</h3>
                 <span className={`um-role-badge ${roleBadgeClass(selectedUser)}`} style={{ marginTop: 8, display: 'inline-flex' }}>
                   {roleLabel(selectedUser)}
                 </span>
@@ -826,7 +826,7 @@ export default function UserManagement() {
                   </div>
                   <div className="um-profile-item">
                     <span className="um-profile-label">User ID</span>
-                    <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2A2B61' }}>
+                    <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#03396C' }}>
                       {selectedUser.user_code || `#${selectedUser.id}`}
                     </span>
                   </div>
@@ -988,7 +988,7 @@ export default function UserManagement() {
             <div className="um-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '24px 20px' }}>
               <div>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{qrUser.full_name}</p>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#5C7B92' }}>
                   {qrUser.user_code}
                   {qrUser.role === 'security' && (
                     <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
@@ -1002,7 +1002,7 @@ export default function UserManagement() {
                 </div>
               ) : qrToken ? (
                 <>
-                  <div style={{ padding: 14, background: '#fff', border: '2px solid #E2E6EE', borderRadius: 14, boxShadow: '0 2px 12px rgba(42,43,97,0.08)' }}>
+                  <div style={{ padding: 14, background: '#fff', border: '2px solid #D3E1EC', borderRadius: 14, boxShadow: '0 2px 12px rgba(3, 57, 108,0.08)' }}>
                     <QRCodeSVG value={qrToken} size={190} level="M" />
                   </div>
                   {/* Hidden high-res canvas — source for the PDF badge export */}
@@ -1011,15 +1011,15 @@ export default function UserManagement() {
                   </div>
                   {qrUser.role === 'security' ? (
                     <>
-                      <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', wordBreak: 'break-all', maxWidth: 320 }}>
+                      <p style={{ margin: 0, fontSize: 11, color: '#64839C', wordBreak: 'break-all', maxWidth: 320 }}>
                         Token: {qrToken}
                       </p>
-                      <p style={{ margin: 0, fontSize: 11, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 10px' }}>
+                      <p style={{ margin: 0, fontSize: 11, color: '#8A6B00', background: '#FDF0BE', border: '1px solid #F7E08A', borderRadius: 6, padding: '4px 10px' }}>
                         Print this QR code as the guard's badge. Do not share digitally.
                       </p>
                     </>
                   ) : (
-                    <p style={{ margin: 0, fontSize: 11, color: '#5A5F72', background: '#F0F2F7', borderRadius: 6, padding: '5px 12px' }}>
+                    <p style={{ margin: 0, fontSize: 11, color: '#4A6B85', background: '#EEF4F9', borderRadius: 6, padding: '5px 12px' }}>
                       Scan to identify this vehicle owner — encodes their User ID.
                     </p>
                   )}

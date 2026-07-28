@@ -1,18 +1,18 @@
 /* ============================================================
    ADMIN LAYOUT STYLES
    Matches Login Page Theme:
-   - Primary:    #2A2B61 (SLC Navy)
-   - Background: #F0F2F7
+   - Primary:    #03396C (SLC Navy)
+   - Background: #EEF4F9
    - Card/Panel: #FFFFFF
-   - Border:     #E2E6EE
-   - Text:       #1A1D2E / #5A5F72
+   - Border:     #D3E1EC
+   - Text:       #0B2340 / #4A6B85
    ============================================================ */
 
 .admin-layout {
   display: flex;
   height: 100vh;
   width: 100vw;
-  background: #F0F2F7;
+  background: #EEF4F9;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   overflow: hidden;
 }
@@ -34,10 +34,10 @@
 .admin-sidebar {
   width: 260px;
   background: #FFFFFF;
-  border-right: 1px solid #E2E6EE;
+  border-right: 1px solid #D3E1EC;
   display: flex;
   flex-direction: column;
-  box-shadow: 2px 0 10px rgba(42, 43, 97, 0.03);
+  box-shadow: 2px 0 10px rgba(3, 57, 108, 0.03);
   z-index: 20;
 }
 
@@ -47,20 +47,33 @@
   align-items: center;
   padding: 0 1.5rem;
   gap: 12px;
-  border-bottom: 2.5px solid #2A2B61;
+  position: relative;
+  border-bottom: 2.5px solid var(--navy);
+}
+
+/* Gold hairline under the brand bar — the one bit of gold always on screen */
+.sidebar-brand::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2.5px;
+  height: 2.5px;
+  background: var(--gold);
+  clip-path: inset(0 62% 0 0);
 }
 
 .brand-logo {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 1.5px solid #2A2B61;
+  border: 1.5px solid #03396C;
 }
 
 .brand-text {
   font-size: 14px;
   font-weight: 800;
-  color: #2A2B61;
+  color: #03396C;
   letter-spacing: 0.5px;
   text-transform: uppercase;
   line-height: 1.1;
@@ -81,7 +94,7 @@
   gap: 12px;
   padding: 12px 14px;
   border-radius: 10px;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 14px;
   font-weight: 500;
   text-decoration: none;
@@ -90,18 +103,32 @@
 }
 
 .nav-item:hover {
-  background: #FAFBFD;
-  color: #2A2B61;
-  border-color: #E2E6EE;
+  background: #F7FAFC;
+  color: #03396C;
+  border-color: #D3E1EC;
   transform: translateX(2px);
 }
 
 .nav-item.active {
-  background: #F0F0FA;
-  color: #2A2B61;
+  position: relative;
+  background: var(--sky-50);
+  color: var(--navy);
   font-weight: 600;
-  border-color: #2A2B61;
-  box-shadow: 0 2px 6px rgba(42, 43, 97, 0.08);
+  border-color: var(--sky);
+  box-shadow: 0 2px 6px rgba(3, 57, 108, 0.08);
+}
+
+/* Gold rail marks the current page */
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--gold);
 }
 
 .nav-item svg {
@@ -110,7 +137,7 @@
 
 .nav-item.active svg,
 .nav-item:hover svg {
-  color: #2A2B61;
+  color: #03396C;
 }
 
 
@@ -128,7 +155,7 @@
   border-radius: 10px;
   background: none;
   border: 1px solid transparent;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -139,14 +166,14 @@
 }
 
 .nav-group-header:hover {
-  background: #FAFBFD;
-  color: #2A2B61;
-  border-color: #E2E6EE;
+  background: #F7FAFC;
+  color: #03396C;
+  border-color: #D3E1EC;
   transform: translateX(2px);
 }
 
 .nav-group-header.has-active {
-  color: #2A2B61;
+  color: #03396C;
   font-weight: 600;
 }
 
@@ -159,7 +186,7 @@
 .nav-group-chevron {
   transition: transform 0.22s ease;
   flex-shrink: 0;
-  color: #9ca3af;
+  color: #64839C;
 }
 
 .nav-group-chevron.open {
@@ -196,7 +223,7 @@
 /* --- Sidebar Footer --- */
 .sidebar-footer {
   padding: 1.25rem 1.5rem;
-  border-top: 1px solid #E2E6EE;
+  border-top: 1px solid #D3E1EC;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -212,14 +239,14 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #2A2B61;
+  background: #03396C;
   color: #FFFFFF;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 15px;
-  box-shadow: 0 2px 6px rgba(42, 43, 97, 0.2);
+  box-shadow: 0 2px 6px rgba(3, 57, 108, 0.2);
 }
 
 .user-info {
@@ -231,13 +258,13 @@
 .user-name {
   font-size: 13.5px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 .user-role {
   font-size: 11.5px;
   font-weight: 500;
-  color: #7C80A3;
+  color: #6B8CA6;
   margin-top: 2px;
 }
 
@@ -255,16 +282,16 @@
   height: 38px;
   border-radius: 8px;
   background: #FFFFFF;
-  border: 1.5px solid #E2E6EE;
-  color: #5A5F72;
+  border: 1.5px solid #D3E1EC;
+  color: #4A6B85;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .action-btn:hover {
-  background: #F0F0FA;
-  color: #2A2B61;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 .logout-btn {
@@ -275,8 +302,8 @@
   gap: 8px;
   height: 38px;
   background: #FFFFFF;
-  color: #DC2626;
-  border: 1.5px solid #FECACA;
+  color: #C62828;
+  border: 1.5px solid #F3C0C0;
   border-radius: 8px;
   font-size: 13.5px;
   font-weight: 600;
@@ -285,9 +312,9 @@
 }
 
 .logout-btn:hover {
-  background: #FEF2F2;
-  border-color: #DC2626;
-  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.1);
+  background: #FCEDED;
+  border-color: #C62828;
+  box-shadow: 0 2px 6px rgba(198, 40, 40, 0.1);
 }
 
 /* --- Content Wrapper --- */
@@ -319,10 +346,10 @@
     width: 40px;
     height: 40px;
     background: #FFFFFF;
-    border: 1.5px solid #E2E6EE;
+    border: 1.5px solid #D3E1EC;
     border-radius: 10px;
-    color: #2A2B61;
-    box-shadow: 0 2px 8px rgba(42, 43, 97, 0.12);
+    color: #03396C;
+    box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
     z-index: 40;
     cursor: pointer;
   }
@@ -336,7 +363,7 @@
     margin-left: auto;
     background: none;
     border: none;
-    color: #5A5F72;
+    color: #4A6B85;
     cursor: pointer;
     flex-shrink: 0;
   }
@@ -345,7 +372,7 @@
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(10, 14, 28, 0.5);
+    background: rgba(4, 18, 31, 0.5);
     z-index: 45;
   }
 
@@ -357,7 +384,7 @@
     transform: translateX(-100%);
     transition: transform 0.25s ease;
     z-index: 50;
-    box-shadow: 4px 0 24px rgba(42, 43, 97, 0.18);
+    box-shadow: 4px 0 24px rgba(3, 57, 108, 0.18);
   }
 
   .admin-sidebar.open {

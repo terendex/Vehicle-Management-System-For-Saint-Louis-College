@@ -505,7 +505,7 @@ export default function OwnerDashboard() {
                                     </td>
                                     <td className="od-viol-notes">{v.notes || '—'}</td>
                                     <td className="od-viol-fine">
-                                      {parseFloat(v.fine_amount) > 0 ? `₱${parseFloat(v.fine_amount).toFixed(2)}` : <span style={{ color: '#9CA3AF' }}>₱0</span>}
+                                      {parseFloat(v.fine_amount) > 0 ? `₱${parseFloat(v.fine_amount).toFixed(2)}` : <span style={{ color: '#64839C' }}>₱0</span>}
                                     </td>
                                     <td>
                                       {v.evidence_url ? (

@@ -42,7 +42,7 @@ function RouteFallback() {
   return (
     <div style={{
       minHeight: '60vh', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', color: '#8892A4', fontSize: 14,
+      justifyContent: 'center', color: '#5C7B92', fontSize: 14,
       fontFamily: 'system-ui, sans-serif',
     }}>
       Loading…

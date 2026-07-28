@@ -16,10 +16,10 @@ import './AdminDashboard.css'
 
 const TOOLTIP_STYLE = {
   background: '#fff',
-  border: '1px solid #E8EBF4',
+  border: '1px solid #D3E1EC',
   borderRadius: 10,
   fontSize: 12,
-  boxShadow: '0 4px 16px rgba(42,43,97,0.08)',
+  boxShadow: '0 4px 16px rgba(3, 57, 108,0.08)',
 }
 
 // ── Donut Chart ───────────────────────────────────────────────────────────────
@@ -89,25 +89,25 @@ function DayBarChart({ data, weekTotal }) {
       )}
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F7" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#EEF4F9" vertical={false} />
           <XAxis
             dataKey="day"
-            tick={{ fontSize: 11.5, fill: '#8892A4', fontWeight: 600 }}
+            tick={{ fontSize: 11.5, fill: '#5C7B92', fontWeight: 600 }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: '#B0B8CC' }}
+            tick={{ fontSize: 11, fill: '#9DB6C9' }}
             axisLine={false}
             tickLine={false}
             allowDecimals={false}
           />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
-            cursor={{ fill: '#F0F2F7', radius: 4 }}
+            cursor={{ fill: '#EEF4F9', radius: 4 }}
             formatter={(val) => [val, 'Entries']}
           />
-          <Bar dataKey="count" name="Entries" fill="#2A2B61" radius={[6, 6, 0, 0]} maxBarSize={48} />
+          <Bar dataKey="count" name="Entries" fill="#03396C" radius={[6, 6, 0, 0]} maxBarSize={48} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -137,15 +137,15 @@ function DayRegistrationChart({ data }) {
       </div>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F7" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#EEF4F9" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fontSize: 11.5, fill: '#8892A4', fontWeight: 600 }}
+            tick={{ fontSize: 11.5, fill: '#5C7B92', fontWeight: 600 }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: '#B0B8CC' }}
+            tick={{ fontSize: 11, fill: '#9DB6C9' }}
             axisLine={false}
             tickLine={false}
             allowDecimals={false}
@@ -153,29 +153,29 @@ function DayRegistrationChart({ data }) {
           />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
-            cursor={{ fill: '#F0F2F7', radius: 4 }}
+            cursor={{ fill: '#EEF4F9', radius: 4 }}
             formatter={(val, name) => [val, name]}
             labelFormatter={(label, payload) => {
               const row = payload?.[0]?.payload
               return row ? `${row.day} — ${row.accepted + row.pending}/${row.capacity} slots used` : label
             }}
           />
-          <Bar dataKey="accepted" stackId="regs" name="Accepted" fill="#059669" maxBarSize={48} />
-          <Bar dataKey="pending"  stackId="regs" name="Pending"  fill="#F59E0B" radius={[6, 6, 0, 0]} maxBarSize={48} />
-          <ReferenceLine y={capacity} stroke="#DC2626" strokeDasharray="4 4" />
+          <Bar dataKey="accepted" stackId="regs" name="Accepted" fill="#0F7A5A" maxBarSize={48} />
+          <Bar dataKey="pending"  stackId="regs" name="Pending"  fill="#E0B00C" radius={[6, 6, 0, 0]} maxBarSize={48} />
+          <ReferenceLine y={capacity} stroke="#C62828" strokeDasharray="4 4" />
         </BarChart>
       </ResponsiveContainer>
       <div className="ad-donut-legend" style={{ marginTop: 8 }}>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#059669' }} />
+          <span className="ad-donut-legend-dot" style={{ background: '#0F7A5A' }} />
           <span className="ad-donut-legend-label">Accepted</span>
         </div>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#F59E0B' }} />
+          <span className="ad-donut-legend-dot" style={{ background: '#E0B00C' }} />
           <span className="ad-donut-legend-label">Pending</span>
         </div>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#DC2626' }} />
+          <span className="ad-donut-legend-dot" style={{ background: '#C62828' }} />
           <span className="ad-donut-legend-label">Capacity ({capacity})</span>
         </div>
       </div>
@@ -263,7 +263,7 @@ function ActivityItem({ log }) {
             {chips.map((c, i) => (
               <span key={i} style={{
                 fontSize: 10.5, lineHeight: 1.4, padding: '2px 7px', borderRadius: 5,
-                background: '#F0F2F7', color: '#5A5F72', border: '1px solid #E5E8F0',
+                background: '#EEF4F9', color: '#4A6B85', border: '1px solid #D3E1EC',
                 maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {c}
@@ -328,41 +328,41 @@ export default function AdminDashboard() {
 
   // Registration outcome breakdown (accepted / pending / denied)
   const vehicleSlices = stats ? [
-    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: '#059669' },
-    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: '#D97706' },
-    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: '#DC2626' },
+    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: '#0F7A5A' },
+    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: '#8A6B00' },
+    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: '#C62828' },
   ].filter(s => s.value > 0) : []
 
   // Registered categories: owner types + suppliers, plus a disabled slice
   const userSlices = stats ? [
-    { name: 'Students',  value: stats.owners?.student   ?? 0, color: '#7C3AED' },
-    { name: 'Employees', value: stats.owners?.employee  ?? 0, color: '#0D9488' },
-    { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: '#D97706' },
-    { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: '#DB2777' },
-    { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: '#94A3B8' },
+    { name: 'Students',  value: stats.owners?.student   ?? 0, color: '#1072B3' },
+    { name: 'Employees', value: stats.owners?.employee  ?? 0, color: '#0F7A5A' },
+    { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: '#8A6B00' },
+    { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: '#1072B3' },
+    { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: '#64839C' },
   ].filter(s => s.value > 0) : []
 
   const scanSlices = stats ? (() => {
     const s = stats.scans?.today_by_status ?? {}
     return [
-      { name: 'Authorized',   value: stats.scans?.registered_today ?? 0, color: '#059669' },
-      { name: 'Denied',       value: s.denied ?? 0,                      color: '#DC2626' },
-      { name: 'Wrong Day',    value: s.wrong_day ?? 0,                   color: '#EA580C' },
-      { name: 'Exited',       value: s.exited ?? 0,                      color: '#2563EB' },
-      { name: 'Visitor',      value: stats.scans?.visitor_today ?? 0,    color: '#0D9488' },
-      { name: 'Unregistered', value: s.unknown ?? 0,                     color: '#7C3AED' },
-      { name: 'Unreadable',   value: s.unreadable ?? 0,                  color: '#8892A4' },
+      { name: 'Authorized',   value: stats.scans?.registered_today ?? 0, color: '#0F7A5A' },
+      { name: 'Denied',       value: s.denied ?? 0,                      color: '#C62828' },
+      { name: 'Wrong Day',    value: s.wrong_day ?? 0,                   color: '#8A6B00' },
+      { name: 'Exited',       value: s.exited ?? 0,                      color: '#1072B3' },
+      { name: 'Visitor',      value: stats.scans?.visitor_today ?? 0,    color: '#0F7A5A' },
+      { name: 'Unregistered', value: s.unknown ?? 0,                     color: '#1072B3' },
+      { name: 'Unreadable',   value: s.unreadable ?? 0,                  color: '#5C7B92' },
     ].filter(sl => sl.value > 0)
   })() : []
 
   const VEHICLE_TYPE_LABELS = { car: 'Car', motorcycle: 'Motorcycle', ebike: 'E-Bike', van: 'Van', truck: 'Truck', bus: 'Bus' }
   const vehicleTypeSlices = stats ? [
-    { key: 'car',        color: '#2563EB' },
-    { key: 'motorcycle', color: '#0D9488' },
-    { key: 'ebike',      color: '#059669' },
-    { key: 'van',        color: '#D97706' },
-    { key: 'truck',      color: '#7C3AED' },
-    { key: 'bus',        color: '#DB2777' },
+    { key: 'car',        color: '#1072B3' },
+    { key: 'motorcycle', color: '#0F7A5A' },
+    { key: 'ebike',      color: '#0F7A5A' },
+    { key: 'van',        color: '#8A6B00' },
+    { key: 'truck',      color: '#1072B3' },
+    { key: 'bus',        color: '#1072B3' },
   ].map(t => ({ name: VEHICLE_TYPE_LABELS[t.key], value: stats.vehicles?.by_type?.[t.key] ?? 0, color: t.color }))
     .filter(s => s.value > 0) : []
 
@@ -372,23 +372,23 @@ export default function AdminDashboard() {
     expired_registration: 'Expired Registration', unauthorized: 'Unauthorized (Legacy)', other: 'Other',
   }
   const violationTypeSlices = stats ? [
-    { key: 'unauthorized_entry',   color: '#DC2626' },
-    { key: 'double_parking',       color: '#D97706' },
-    { key: 'time_exceed',          color: '#EA580C' },
-    { key: 'no_sticker',           color: '#7C3AED' },
-    { key: 'expired_registration', color: '#DB2777' },
-    { key: 'unauthorized',         color: '#8892A4' },
-    { key: 'other',                color: '#2563EB' },
+    { key: 'unauthorized_entry',   color: '#C62828' },
+    { key: 'double_parking',       color: '#8A6B00' },
+    { key: 'time_exceed',          color: '#8A6B00' },
+    { key: 'no_sticker',           color: '#1072B3' },
+    { key: 'expired_registration', color: '#1072B3' },
+    { key: 'unauthorized',         color: '#5C7B92' },
+    { key: 'other',                color: '#1072B3' },
   ].map(t => ({ name: VIOLATION_TYPE_LABELS[t.key], value: stats.violations?.by_type?.[t.key] ?? 0, color: t.color }))
     .filter(s => s.value > 0) : []
 
   const kpiItems = stats ? [
-    { icon: Users,        label: 'Total Users',      value: stats.users?.total,            color: '#2A2B61', sub: `${stats.users?.active ?? 0} active` },
-    { icon: CarIcon,      label: 'Registered Vehicles', value: stats.vehicles?.total,       color: '#059669', sub: `${stats.vehicles?.authorized ?? 0} authorized` },
-    { icon: ClipboardList, label: 'Pending Reviews', value: stats.registrations?.pending,  color: '#D97706', sub: 'awaiting approval' },
-    { icon: AlertTriangle, label: 'Open Violations', value: stats.violations?.open,         color: '#DC2626', sub: `${stats.violations?.fee_imposed ?? 0} with fee imposed` },
-    { icon: ShieldCheck,  label: 'Visitor Passes',   value: stats.visitor_passes?.active_today, color: '#2563EB', sub: 'active today' },
-    { icon: Activity,     label: "Today's Scans",    value: stats.scans?.today,             color: '#7C3AED', sub: `${stats.scans?.week ?? 0} this week` },
+    { icon: Users,        label: 'Total Users',      value: stats.users?.total,            color: '#03396C', sub: `${stats.users?.active ?? 0} active` },
+    { icon: CarIcon,      label: 'Registered Vehicles', value: stats.vehicles?.total,       color: '#0F7A5A', sub: `${stats.vehicles?.authorized ?? 0} authorized` },
+    { icon: ClipboardList, label: 'Pending Reviews', value: stats.registrations?.pending,  color: '#8A6B00', sub: 'awaiting approval' },
+    { icon: AlertTriangle, label: 'Open Violations', value: stats.violations?.open,         color: '#C62828', sub: `${stats.violations?.fee_imposed ?? 0} with fee imposed` },
+    { icon: ShieldCheck,  label: 'Visitor Passes',   value: stats.visitor_passes?.active_today, color: '#1072B3', sub: 'active today' },
+    { icon: Activity,     label: "Today's Scans",    value: stats.scans?.today,             color: '#1072B3', sub: `${stats.scans?.week ?? 0} this week` },
   ] : []
 
   return (

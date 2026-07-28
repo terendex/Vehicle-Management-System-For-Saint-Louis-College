@@ -505,15 +505,15 @@ export default function SystemSettings() {
                     key={g.id}
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '10px 14px', border: '1px solid #E2E6EE', borderRadius: 10, marginBottom: 8,
-                      background: g.is_active ? '#fff' : '#FAFAFA',
+                      padding: '10px 14px', border: '1px solid #D3E1EC', borderRadius: 10, marginBottom: 8,
+                      background: g.is_active ? '#fff' : '#F7FAFC',
                     }}
                   >
                     <div>
-                      <strong style={{ fontSize: 13.5, color: '#1A1D2E' }}>{g.label}</strong>
-                      <span style={{ marginLeft: 8, fontSize: 12, color: '#9CA3AF', fontFamily: 'monospace' }}>{g.gate_id}</span>
+                      <strong style={{ fontSize: 13.5, color: '#0B2340' }}>{g.label}</strong>
+                      <span style={{ marginLeft: 8, fontSize: 12, color: '#64839C', fontFamily: 'monospace' }}>{g.gate_id}</span>
                       {!g.is_active && (
-                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#B45309', background: '#FEF3C7', padding: '2px 8px', borderRadius: 6 }}>
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#8A6B00', background: '#FDF0BE', padding: '2px 8px', borderRadius: 6 }}>
                           Inactive
                         </span>
                       )}

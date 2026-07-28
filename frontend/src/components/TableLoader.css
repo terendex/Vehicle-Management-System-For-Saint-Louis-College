@@ -5,14 +5,14 @@
 .tbl-loading {
   text-align: center;
   padding: 60px 20px;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .tbl-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid #E2E6EE;
-  border-top-color: #2A2B61;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: tbl-spin 0.8s linear infinite;
   margin: 0 auto 16px;
@@ -43,6 +43,6 @@
 .tbl-empty {
   text-align: center;
   padding: 48px 20px;
-  color: #8892A4;
+  color: #5C7B92;
   font-size: 14px;
 }

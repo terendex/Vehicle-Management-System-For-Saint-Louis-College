@@ -76,18 +76,18 @@ export default function QrScanModal({ onClose, onDetected, title = 'Scan QR Code
         </div>
         <div className="em-modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
           {cameraErr ? (
-            <div style={{ textAlign: 'center', color: '#dc2626', fontSize: 13, padding: '20px 8px' }}>
+            <div style={{ textAlign: 'center', color: '#C62828', fontSize: 13, padding: '20px 8px' }}>
               <Camera size={28} style={{ marginBottom: 8, opacity: 0.7 }} />
               <p style={{ margin: 0 }}>{cameraErr}</p>
             </div>
           ) : (
             <>
-              <div style={{ position: 'relative', width: '100%', aspectRatio: '1 / 1', background: '#0d1117', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ position: 'relative', width: '100%', aspectRatio: '1 / 1', background: '#04121F', borderRadius: 12, overflow: 'hidden' }}>
                 <video ref={videoRef} muted playsInline
                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                 <div style={{
                   position: 'absolute', inset: '18%',
-                  border: '3px solid rgba(96,165,250,0.9)', borderRadius: 12,
+                  border: '3px solid rgba(92, 169, 220,0.9)', borderRadius: 12,
                   boxShadow: '0 0 0 100vmax rgba(0,0,0,0.35)',
                 }} />
                 {busy && (
@@ -96,7 +96,7 @@ export default function QrScanModal({ onClose, onDetected, title = 'Scan QR Code
                   </div>
                 )}
               </div>
-              <p style={{ margin: 0, fontSize: 12, color: '#6b7280', textAlign: 'center' }}>
+              <p style={{ margin: 0, fontSize: 12, color: '#5C7B92', textAlign: 'center' }}>
                 {hint || 'Hold the QR code steady inside the frame.'}
               </p>
             </>

@@ -695,12 +695,12 @@ export default function DeviceManagement() {
                         <div className="dm-feed-overlay">
                           {sc.wsActive ? (
                             <>
-                              <Loader2 size={28} className="dm-spin" style={{ color: '#60a5fa' }} />
+                              <Loader2 size={28} className="dm-spin" style={{ color: '#5CA9DC' }} />
                               <span>{sc.statusMsg || 'Connecting…'}</span>
                             </>
                           ) : (
                             <>
-                              <WifiOff size={28} style={{ color: '#374151' }} />
+                              <WifiOff size={28} style={{ color: '#2E4C63' }} />
                               <span>Disconnected</span>
                             </>
                           )}

@@ -363,7 +363,7 @@ function ForcePasswordModal({ onLogout }) {
   }
 
   const fieldStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
-  const labelStyle = { fontSize: 12, fontWeight: 600, color: '#5A5F72' }
+  const labelStyle = { fontSize: 12, fontWeight: 600, color: '#4A6B85' }
 
   return (
     <div className="cs-overlay">
@@ -375,7 +375,7 @@ function ForcePasswordModal({ onLogout }) {
           </div>
         </div>
 
-        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.5 }}>
+        <p style={{ margin: 0, fontSize: 13, color: '#2E4C63', lineHeight: 1.5 }}>
           You are using a temporary password. Set a new one to continue — your QR badge
           stays locked until you do.
         </p>
@@ -428,7 +428,7 @@ function ForcePasswordModal({ onLogout }) {
             {showPw ? 'Hide passwords' : 'Show passwords'}
           </button>
 
-          <p style={{ margin: 0, fontSize: 11.5, color: '#9ca3af', lineHeight: 1.45 }}>
+          <p style={{ margin: 0, fontSize: 11.5, color: '#64839C', lineHeight: 1.45 }}>
             At least 8 characters with an uppercase letter, lowercase letter, number and special character.
           </p>
 
@@ -443,8 +443,8 @@ function ForcePasswordModal({ onLogout }) {
             <button
               type="button"
               style={{
-                flex: 1, height: 38, border: '1.5px solid #E2E6EE', borderRadius: 8,
-                background: '#fff', color: '#374151', fontSize: 13, fontWeight: 600,
+                flex: 1, height: 38, border: '1.5px solid #D3E1EC', borderRadius: 8,
+                background: '#fff', color: '#2E4C63', fontSize: 13, fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit', display: 'flex',
                 alignItems: 'center', justifyContent: 'center', gap: 6,
               }}
@@ -457,7 +457,7 @@ function ForcePasswordModal({ onLogout }) {
               disabled={submitting}
               style={{
                 flex: 1.4, height: 38, border: 'none', borderRadius: 8,
-                background: '#2A2B61', color: '#fff', fontSize: 13, fontWeight: 600,
+                background: '#03396C', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.7 : 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 gap: 6, fontFamily: 'inherit',
@@ -530,8 +530,8 @@ export default function SecurityLayout({ children, fillHeight = false }) {
             <span className="brand-text">SLC Security</span>
             {gate && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                <MapPin size={10} style={{ color: '#10b981', flexShrink: 0 }} />
-                <span style={{ fontSize: 10, color: '#10b981', fontWeight: 600, letterSpacing: 0.3 }}>
+                <MapPin size={10} style={{ color: '#14A374', flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: '#14A374', fontWeight: 600, letterSpacing: 0.3 }}>
                   {gateLabel}
                 </span>
               </div>
@@ -563,7 +563,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
         <div className="sidebar-footer">
           <div className="user-profile">
             {user?.photo_url ? (
-              <img src={user.photo_url} alt={user.full_name} style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid #E2E6EE' }} />
+              <img src={user.photo_url} alt={user.full_name} style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid #D3E1EC' }} />
             ) : (
               <div className="user-avatar">
                 {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'S'}
@@ -635,24 +635,24 @@ export default function SecurityLayout({ children, fillHeight = false }) {
           <div className="cs-modal" style={{ maxWidth: 340 }}>
             <div className="cs-modal-head">
               <div className="cs-modal-head-left">
-                <LogOut size={15} style={{ color: '#dc2626' }} />
+                <LogOut size={15} style={{ color: '#C62828' }} />
                 <span className="cs-modal-title">Log Out</span>
               </div>
               <button className="cs-close" onClick={() => setShowLogoutConfirm(false)}><X size={17} /></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <p style={{ margin: 0, fontSize: 13.5, color: '#374151', lineHeight: 1.5 }}>
+              <p style={{ margin: 0, fontSize: 13.5, color: '#2E4C63', lineHeight: 1.5 }}>
                 Are you sure you want to log out?
               </p>
-              <p style={{ margin: 0, fontSize: 12, color: '#9ca3af' }}>
-                Your shift at <strong style={{ color: '#5A5F72' }}>{gateLabel}</strong> will be ended.
+              <p style={{ margin: 0, fontSize: 12, color: '#64839C' }}>
+                Your shift at <strong style={{ color: '#4A6B85' }}>{gateLabel}</strong> will be ended.
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button
                 style={{
-                  flex: 1, height: 38, border: '1.5px solid #E2E6EE', borderRadius: 8,
-                  background: '#fff', color: '#374151', fontSize: 13, fontWeight: 600,
+                  flex: 1, height: 38, border: '1.5px solid #D3E1EC', borderRadius: 8,
+                  background: '#fff', color: '#2E4C63', fontSize: 13, fontWeight: 600,
                   cursor: 'pointer', fontFamily: 'inherit',
                 }}
                 onClick={() => setShowLogoutConfirm(false)}
@@ -662,7 +662,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
               <button
                 style={{
                   flex: 1, height: 38, border: 'none', borderRadius: 8,
-                  background: '#dc2626', color: '#fff', fontSize: 13, fontWeight: 600,
+                  background: '#C62828', color: '#fff', fontSize: 13, fontWeight: 600,
                   cursor: 'pointer', display: 'flex', alignItems: 'center',
                   justifyContent: 'center', gap: 6, fontFamily: 'inherit',
                 }}

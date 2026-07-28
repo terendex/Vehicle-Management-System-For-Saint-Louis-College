@@ -4,6 +4,84 @@
   --font-sans: "Inter", system-ui, sans-serif;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   SLC brand palette
+   Navy #03396C · Blue #1072B3 · Sky #BDD4E5 · Gold #F6CE11 · White
+
+   Navy and blue carry the chrome and the primary actions; gold is an
+   accent only (active nav, focus highlights, key badges) because gold
+   on white is ~1.7:1 and can never carry text. Red and green survive
+   as status colours — approved vs rejected has to stay readable at a
+   glance — but are retuned deeper so they sit against the navy.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  /* Brand */
+  --navy-900: #021F3D;
+  --navy-800: #032C55;
+  --navy:     #03396C;
+  --navy-600: #084A85;
+  --navy-500: #0B5C9C;
+  --blue:     #1072B3;
+  --blue-400: #2E8CCB;
+  --blue-300: #5CA9DC;
+  --blue-200: #8FC4E8;
+  --sky:      #BDD4E5;
+  --sky-100:  #DCE9F2;
+  --sky-50:   #EAF2F8;
+
+  /* Gold accent — never used for text on a light surface */
+  --gold:        #F6CE11;
+  --gold-400:    #F8DA55;
+  --gold-border: #F7E08A;
+  --gold-bg:     #FEF9E4;
+  --gold-deep:   #8A6B00;
+  --gold-ink:    #7A5C00;
+
+  /* Cool neutrals */
+  --ink:        #0B2340;
+  --ink-2:      #16374F;
+  --text:       #2E4C63;
+  --text-2:     #3E5B72;
+  --muted:      #4A6B85;
+  --muted-2:    #5C7B92;
+  --muted-3:    #6B8CA6;
+  --placeholder:#64839C;
+  --disabled:   #9DB6C9;
+  --line:       #D3E1EC;
+  --line-strong:#BDD4E5;
+  --surface:    #FFFFFF;
+  --surface-2:  #F7FAFC;
+  --surface-3:  #F4F8FB;
+  --bg:         #EEF4F9;
+
+  /* Status */
+  --success:        #0F7A5A;
+  --success-bright: #14A374;
+  --success-border: #A8DCC8;
+  --success-bg:     #E6F5EF;
+  --success-ink:    #0A5C43;
+  --danger:         #C62828;
+  --danger-bright:  #D93B3B;
+  --danger-border:  #F3C0C0;
+  --danger-bg:      #FCEDED;
+  --danger-ink:     #841818;
+  --warning:        #8A6B00;
+  --warning-bright: #F6CE11;
+  --warning-border: #F7E08A;
+  --warning-bg:     #FEF9E4;
+  --warning-ink:    #7A5C00;
+
+  /* Signature navy→blue sweep from the brand sheet */
+  --brand-gradient: linear-gradient(90deg, #03396C 0%, #0B5C9C 55%, #1072B3 100%);
+  --brand-gradient-diag: linear-gradient(135deg, #03396C 0%, #0B5C9C 55%, #1072B3 100%);
+
+  /* Shadows, tinted navy rather than neutral black */
+  --shadow-sm: 0 1px 2px rgba(3, 57, 108, 0.06);
+  --shadow:    0 2px 8px rgba(3, 57, 108, 0.08);
+  --shadow-md: 0 6px 20px rgba(3, 57, 108, 0.10);
+  --shadow-lg: 0 16px 40px rgba(3, 57, 108, 0.14);
+}
+
 *,
 *::before,
 *::after {
@@ -22,8 +100,8 @@ body {
   margin: 0;
   padding: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #F0F2F7;
-  color: #1A1D2E;
+  background: #EEF4F9;
+  color: #0B2340;
   line-height: 1.5;
 }
 
@@ -43,6 +121,6 @@ img {
 
 /* Focus visible styles for accessibility */
 :focus-visible {
-  outline: 2px solid #2A2B61;
+  outline: 2px solid #03396C;
   outline-offset: 2px;
 }

@@ -350,7 +350,7 @@ export default function AuditLog() {
                       {/* A completed visit is folded into one row by the API, which
                           attaches the matching exit time and computed duration. */}
                       {log.exited_at && (
-                        <span className="al-details-text" style={{ display: 'block', color: '#059669', marginTop: 2 }}>
+                        <span className="al-details-text" style={{ display: 'block', color: '#0F7A5A', marginTop: 2 }}>
                           Exited {formatDate(log.exited_at)} · Duration: {log.duration_minutes} min
                         </span>
                       )}

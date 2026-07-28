@@ -1,6 +1,6 @@
 /* ================================================================
    ADMIN DASHBOARD
-   Theme: SLC Navy #2A2B61 | Background #F0F2F7 | Card #FFFFFF
+   Theme: SLC Navy #03396C | Background #EEF4F9 | Card #FFFFFF
    ================================================================ */
 
 .ad-page {
@@ -18,26 +18,26 @@
   gap: 16px;
   margin-bottom: 24px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #E8EBF4;
+  border-bottom: 1px solid #D3E1EC;
 }
 
 .ad-title {
   font-size: 22px;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 0;
   letter-spacing: -0.4px;
 }
 
 .ad-subtitle {
   font-size: 13.5px;
-  color: #8892A4;
+  color: #5C7B92;
   margin: 5px 0 0;
   font-weight: 500;
 }
 
 .ad-last-updated {
-  color: #B0B8CC;
+  color: #64839C;
 }
 
 .ad-refresh-btn {
@@ -46,9 +46,9 @@
   gap: 7px;
   padding: 9px 16px;
   border-radius: 10px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
@@ -60,10 +60,10 @@
 }
 
 .ad-refresh-btn:hover:not(:disabled) {
-  background: #F5F6FC;
-  color: #2A2B61;
-  border-color: #2A2B61;
-  box-shadow: 0 2px 8px rgba(42, 43, 97, 0.12);
+  background: #F7FAFC;
+  color: #03396C;
+  border-color: #03396C;
+  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
 }
 
 .ad-refresh-btn:disabled {
@@ -86,7 +86,7 @@
   align-items: center;
   justify-content: center;
   padding: 80px 20px;
-  color: #8892A4;
+  color: #5C7B92;
   gap: 16px;
   font-size: 14px;
 }
@@ -94,8 +94,8 @@
 .ad-spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #E2E6EE;
-  border-top-color: #2A2B61;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -111,7 +111,7 @@
   gap: 10px;
   font-size: 11px;
   font-weight: 700;
-  color: #2A2B61;
+  color: #03396C;
   text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 12px;
@@ -121,14 +121,14 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: linear-gradient(to right, #E2E6EE, transparent);
+  background: linear-gradient(to right, #D3E1EC, transparent);
 }
 
 .ad-live-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #059669;
+  background: #0F7A5A;
   flex-shrink: 0;
   animation: ad-pulse 2s ease-in-out infinite;
 }
@@ -145,9 +145,9 @@
   align-items: stretch;
   gap: 0;
   background: #FFFFFF;
-  border: 1px solid #E8EBF4;
+  border: 1px solid #D3E1EC;
   border-radius: 14px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
   margin-bottom: 24px;
   overflow: hidden;
 }
@@ -158,7 +158,7 @@
   align-items: center;
   gap: 12px;
   padding: 16px 20px;
-  border-right: 1px solid #F0F2F7;
+  border-right: 1px solid #EEF4F9;
   transition: background 0.15s;
 }
 
@@ -167,7 +167,7 @@
 }
 
 .ad-kpi-item:hover {
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .ad-kpi-icon {
@@ -190,7 +190,7 @@
 .ad-kpi-val {
   font-size: 22px;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   line-height: 1;
   letter-spacing: -0.8px;
 }
@@ -198,7 +198,7 @@
 .ad-kpi-label {
   font-size: 11px;
   font-weight: 600;
-  color: #8892A4;
+  color: #5C7B92;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -209,7 +209,7 @@
 .ad-kpi-sub {
   margin-left: auto;
   font-size: 11.5px;
-  color: #B0B8CC;
+  color: #64839C;
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;
@@ -225,9 +225,9 @@
 
 .ad-chart-card {
   background: #FFFFFF;
-  border: 1px solid #E8EBF4;
+  border: 1px solid #D3E1EC;
   border-radius: 16px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -235,14 +235,14 @@
 
 .ad-chart-head {
   padding: 14px 20px 12px;
-  border-bottom: 1px solid #F0F2F7;
-  background: #FAFBFD;
+  border-bottom: 1px solid #EEF4F9;
+  background: #F7FAFC;
 }
 
 .ad-chart-subtitle {
   display: block;
   font-size: 12px;
-  color: #8892A4;
+  color: #5C7B92;
   font-weight: 500;
   margin-top: 3px;
 }
@@ -261,12 +261,12 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 0;
 }
 
 .ad-section-title svg {
-  color: #2A2B61;
+  color: #03396C;
 }
 
 /* ── Donut Chart ────────────────────────────────────────────── */
@@ -295,7 +295,7 @@
   display: block;
   font-size: 28px;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   line-height: 1;
   letter-spacing: -1px;
 }
@@ -304,7 +304,7 @@
   display: block;
   font-size: 10.5px;
   font-weight: 700;
-  color: #8892A4;
+  color: #5C7B92;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   margin-top: 4px;
@@ -334,13 +334,13 @@
 
 .ad-donut-legend-label {
   flex: 1;
-  color: #5A5F72;
+  color: #4A6B85;
   font-weight: 500;
 }
 
 .ad-donut-legend-val {
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
   font-size: 13.5px;
   min-width: 28px;
   text-align: right;
@@ -362,14 +362,14 @@
 .ad-bar-summary-val {
   font-size: 28px;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   letter-spacing: -1px;
   line-height: 1;
 }
 
 .ad-bar-summary-label {
   font-size: 12.5px;
-  color: #8892A4;
+  color: #5C7B92;
   font-weight: 500;
 }
 
@@ -380,19 +380,19 @@
   justify-content: center;
   height: 120px;
   font-size: 13px;
-  color: #B8C0D4;
+  color: #64839C;
   font-weight: 500;
-  background: #FAFBFD;
+  background: #F7FAFC;
   border-radius: 10px;
-  border: 1px dashed #E2E6EE;
+  border: 1px dashed #D3E1EC;
 }
 
 /* ── Activity Section ───────────────────────────────────────── */
 .ad-activity-section {
   background: #FFFFFF;
-  border: 1px solid #E8EBF4;
+  border: 1px solid #D3E1EC;
   border-radius: 16px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.05);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
   overflow: hidden;
 }
 
@@ -402,7 +402,7 @@
 }
 
 .ad-activity-card {
-  border-right: 1px solid #F0F2F7;
+  border-right: 1px solid #EEF4F9;
 }
 
 .ad-activity-card:last-child {
@@ -416,15 +416,15 @@
   gap: 7px;
   font-size: 11px;
   font-weight: 700;
-  color: #8892A4;
+  color: #5C7B92;
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  background: #FAFBFD;
-  border-bottom: 1px solid #F0F2F7;
+  background: #F7FAFC;
+  border-bottom: 1px solid #EEF4F9;
 }
 
 .ad-activity-card-head svg {
-  color: #2A2B61;
+  color: #03396C;
 }
 
 .ad-activity-list {
@@ -437,7 +437,7 @@
   align-items: flex-start;
   gap: 10px;
   padding: 10px 20px;
-  border-bottom: 1px solid #F8F9FC;
+  border-bottom: 1px solid #F4F8FB;
   transition: background 0.15s;
 }
 
@@ -446,14 +446,14 @@
 }
 
 .ad-activity-item:hover {
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .ad-activity-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #2A2B61;
+  background: #03396C;
   flex-shrink: 0;
   margin-top: 5px;
 }
@@ -468,20 +468,20 @@
 
 .ad-activity-text {
   font-size: 13px;
-  color: #1A1D2E;
+  color: #0B2340;
   font-weight: 500;
   line-height: 1.4;
 }
 
 .ad-activity-target {
   font-size: 11.5px;
-  color: #2A2B61;
+  color: #03396C;
   font-weight: 600;
 }
 
 .ad-activity-details {
   font-size: 12px;
-  color: #8892A4;
+  color: #5C7B92;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -489,7 +489,7 @@
 
 .ad-activity-time {
   font-size: 11px;
-  color: #B8C0D4;
+  color: #64839C;
   font-weight: 500;
 }
 
@@ -503,13 +503,13 @@
 }
 
 .ad-activity-empty-icon {
-  color: #D8DCE8;
+  color: #D3E1EC;
 }
 
 .ad-activity-empty p {
   margin: 0;
   font-size: 13px;
-  color: #B8C0D4;
+  color: #64839C;
 }
 
 /* ── Responsive ─────────────────────────────────────────────── */
@@ -537,7 +537,7 @@
   }
   .ad-activity-card {
     border-right: none;
-    border-bottom: 1px solid #F0F2F7;
+    border-bottom: 1px solid #EEF4F9;
   }
   .ad-activity-card:last-child {
     border-bottom: none;

@@ -84,7 +84,7 @@ function GuardDailyCard({ guard }) {
                 <span className="gam-shift-chip-gate">{GATE_LABELS[s.gate] ?? s.gate}</span>
                 {fmt(s.clocked_in_at)}
                 {' → '}
-                {s.clocked_out_at ? fmt(s.clocked_out_at) : <span style={{ color: '#10b981' }}>Now</span>}
+                {s.clocked_out_at ? fmt(s.clocked_out_at) : <span style={{ color: '#14A374' }}>Now</span>}
               </span>
             ))}
           </div>
@@ -137,7 +137,7 @@ function GuardDailyCard({ guard }) {
 function CrossGateFlags({ flags }) {
   if (!flags?.length) return (
     <div className="gam-card gam-flags-empty">
-      <CheckCircle size={20} style={{ color: '#10b981' }} />
+      <CheckCircle size={20} style={{ color: '#14A374' }} />
       <span>No cross-gate discrepancies today.</span>
     </div>
   )
@@ -151,16 +151,16 @@ function CrossGateFlags({ flags }) {
       <div className="gam-flags-list">
         {flags.map((f, i) => (
           <div key={i} className="gam-flag-item">
-            <ArrowRightLeft size={14} style={{ color: '#d97706', flexShrink: 0 }} />
+            <ArrowRightLeft size={14} style={{ color: '#8A6B00', flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <span className="gam-log-plate" style={{ fontSize: 13 }}>{f.plate_number}</span>
               {f.owner_name && f.owner_name !== '—' && (
-                <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 6 }}>{f.owner_name}</span>
+                <span style={{ fontSize: 11, color: '#5C7B92', marginLeft: 6 }}>{f.owner_name}</span>
               )}
-              <span style={{ fontSize: 11, color: '#92400e', marginLeft: 6 }}>
+              <span style={{ fontSize: 11, color: '#7A5C00', marginLeft: 6 }}>
                 Entered {GATE_LABELS[f.entry_gate] ?? f.entry_gate} → Exited {GATE_LABELS[f.exit_gate] ?? f.exit_gate}
               </span>
-              <div style={{ fontSize: 10, color: '#b45309', marginTop: 1 }}>
+              <div style={{ fontSize: 10, color: '#8A6B00', marginTop: 1 }}>
                 In: {fmtFull(f.entered_at)} · Out: {fmtFull(f.exited_at)}
               </div>
             </div>
@@ -213,7 +213,7 @@ export default function GateActivityMonitor() {
             <p className="gam-subtitle">
               Daily report — {today}
               {lastRefresh && (
-                <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 11 }}>
+                <span style={{ color: '#64839C', marginLeft: 8, fontSize: 11 }}>
                   · Updated {format(lastRefresh, 'h:mm:ss a')}
                 </span>
               )}
@@ -252,12 +252,12 @@ export default function GateActivityMonitor() {
 
         {/* Guard cards */}
         {loading && guards.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 0', color: '#9ca3af', fontSize: 13 }}>
+          <div style={{ textAlign: 'center', padding: '40px 0', color: '#64839C', fontSize: 13 }}>
             Loading guard activity…
           </div>
         ) : guards.length === 0 ? (
           <div className="gam-card gam-flags-empty">
-            <Shield size={20} style={{ color: '#d1d5db' }} />
+            <Shield size={20} style={{ color: '#BDD4E5' }} />
             <span>No security guards found.</span>
           </div>
         ) : (

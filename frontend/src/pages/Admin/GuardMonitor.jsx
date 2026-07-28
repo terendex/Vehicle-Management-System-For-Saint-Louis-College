@@ -150,7 +150,7 @@ export default function GuardMonitor() {
         <div className="gm-page-head">
           <div>
             <h1 className="gm-page-title">
-              <Shield size={20} style={{ color: '#2A2B61' }} />
+              <Shield size={20} style={{ color: '#03396C' }} />
               Guard Monitor
             </h1>
             <p className="gm-page-subtitle">
@@ -183,12 +183,12 @@ export default function GuardMonitor() {
           </div>
         ) : error ? (
           <div className="gm-state">
-            <XCircle size={40} style={{ color: '#ef4444' }} />
+            <XCircle size={40} style={{ color: '#D93B3B' }} />
             <p>Could not load guard data. Retrying…</p>
           </div>
         ) : guards.length === 0 ? (
           <div className="gm-state">
-            <Users size={40} style={{ color: '#9ca3af' }} />
+            <Users size={40} style={{ color: '#64839C' }} />
             <p>No security personnel accounts found.</p>
           </div>
         ) : (

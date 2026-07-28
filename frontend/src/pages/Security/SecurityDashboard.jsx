@@ -30,15 +30,15 @@ function ScanRow({ log }) {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
   })
   const statusColors = {
-    authorized: '#059669',
-    open_entry: '#059669',
-    denied:     '#DC2626',
-    wrong_day:  '#DC2626',
-    pending:    '#D97706',
-    unknown:    '#7C3AED',
-    unreadable: '#6B7280',
+    authorized: '#0F7A5A',
+    open_entry: '#0F7A5A',
+    denied:     '#C62828',
+    wrong_day:  '#C62828',
+    pending:    '#8A6B00',
+    unknown:    '#1072B3',
+    unreadable: '#5C7B92',
   }
-  const color = statusColors[log.status] || '#6B7280'
+  const color = statusColors[log.status] || '#5C7B92'
 
   return (
     <div className="sd-scan-item">
@@ -187,35 +187,35 @@ export default function SecurityDashboard() {
                 label="Scans Today"
                 value={stats?.scans?.today}
                 sub={`${stats?.scans?.week ?? 0} this week`}
-                color="#2A2B61"
+                color="#03396C"
               />
               <StatCard
                 icon={CheckCircle}
                 label="Authorized Today"
                 value={stats?.scans?.authorized_today}
                 sub="Allowed entry"
-                color="#059669"
+                color="#0F7A5A"
               />
               <StatCard
                 icon={XCircle}
                 label="Denied Today"
                 value={stats?.scans?.denied_today}
                 sub="Blocked entry"
-                color="#DC2626"
+                color="#C62828"
               />
               <StatCard
                 icon={Clock}
                 label="Total Scans"
                 value={stats?.scans?.total}
                 sub="All time"
-                color="#7C3AED"
+                color="#1072B3"
               />
               <StatCard
                 icon={TrendingUp}
                 label="Weekly Activity"
                 value={stats?.scans?.week}
                 sub="Last 7 days"
-                color="#D97706"
+                color="#8A6B00"
               />
             </div>
 

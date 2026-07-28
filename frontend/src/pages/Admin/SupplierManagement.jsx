@@ -260,7 +260,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               value={supplier.category || 'other'}
               onChange={handleCategoryChange}
               disabled={changingCategory}
-              style={{ marginLeft: 8, fontSize: 11, border: '1px solid #E2E6EE', borderRadius: 6, padding: '1px 4px' }}
+              style={{ marginLeft: 8, fontSize: 11, border: '1px solid #D3E1EC', borderRadius: 6, padding: '1px 4px' }}
               onClick={e => e.stopPropagation()}
             >
               {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}

@@ -86,12 +86,12 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   @media print { @page { size: 80mm auto; margin: 0; } }
   body { font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0 auto; padding: 6px; }
   h2 { text-align: center; font-size: 13px; margin: 4px 0 2px; }
-  .sub { text-align: center; font-size: 10px; color: #555; margin-bottom: 8px; }
-  hr { border: none; border-top: 1px dashed #999; margin: 6px 0; }
+  .sub { text-align: center; font-size: 10px; color: #3E5B72; margin-bottom: 8px; }
+  hr { border: none; border-top: 1px dashed #64839C; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; margin: 3px 0; }
-  .label { color: #555; }
+  .label { color: #3E5B72; }
   .plate { font-size: 20px; font-weight: bold; text-align: center; letter-spacing: 3px; margin: 8px 0; border: 2px solid #000; padding: 4px; }
-  .footer { text-align: center; font-size: 9px; color: #888; margin-top: 10px; }
+  .footer { text-align: center; font-size: 9px; color: #64839C; margin-top: 10px; }
   .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
 </style></head><body>
 <h2>SAINT LOUIS COLLEGE</h2>
@@ -173,7 +173,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
               <input className="em-input" value={plate} readOnly />
             </div>
             <div className="em-field">
-              <label className="em-label">Destination Office <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
+              <label className="em-label">Destination Office <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
               <select className="em-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)}>
                 <option value="">No specific office</option>
                 {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -190,7 +190,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
                 placeholder="15"
                 onChange={(e) => setDuration(e.target.value.replace(/\D/g, '').slice(0, 3))}
                 onBlur={() => setDuration(String(durationNum))} />
-              <span style={{ fontSize: 11, color: '#9ca3af', marginTop: 4, display: 'block' }}>
+              <span style={{ fontSize: 11, color: '#64839C', marginTop: 4, display: 'block' }}>
                 Defaults to 15 minutes. Guards can extend an active pass by +30 min anytime.
               </span>
             </div>
@@ -243,13 +243,13 @@ function OverrideModal({ plate, onClose, onOverridden }) {
               <textarea className="em-textarea" placeholder="e.g. Event day — general admission…"
                 value={reason} onChange={(e) => setReason(e.target.value)} rows={3} required />
             </div>
-            <p style={{ margin: 0, fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+            <p style={{ margin: 0, fontSize: 12, color: '#8A6B00', background: '#FEF9E4', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
               This override will be logged in the audit trail.
             </p>
           </div>
           <div className="em-modal-foot">
             <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="em-btn em-btn-primary" disabled={loading} style={{ background: '#d97706', borderColor: '#d97706' }}>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading} style={{ background: '#8A6B00', borderColor: '#8A6B00' }}>
               {loading ? <><div className="em-spinner" /> Overriding…</> : 'Confirm Override'}
             </button>
           </div>
@@ -279,11 +279,11 @@ function DenyEntryModal({ plate, onClose, onDenied }) {
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="em-modal">
         <div className="em-modal-head">
-          <span className="em-modal-title"><Ban size={17} style={{ color: '#dc2626' }} /> Deny Entry</span>
+          <span className="em-modal-title"><Ban size={17} style={{ color: '#C62828' }} /> Deny Entry</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
         <div className="em-modal-body">
-          <p style={{ margin: '0 0 10px', fontSize: 13, color: '#1A1D2E' }}>
+          <p style={{ margin: '0 0 10px', fontSize: 13, color: '#0B2340' }}>
             Deny entry for <strong>{plate}</strong>? The vehicle will be turned away
             and the denial logged at this gate.
           </p>
@@ -292,14 +292,14 @@ function DenyEntryModal({ plate, onClose, onDenied }) {
             <textarea className="em-textarea" placeholder="e.g. No valid purpose of visit…"
               value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
           </div>
-          <p style={{ margin: 0, fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+          <p style={{ margin: 0, fontSize: 12, color: '#8A6B00', background: '#FEF9E4', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
             This denial will be logged in the audit trail. No violation is issued.
           </p>
         </div>
         <div className="em-modal-foot">
           <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
           <button type="button" className="em-btn em-btn-primary" disabled={loading}
-            style={{ background: '#dc2626', borderColor: '#dc2626' }}
+            style={{ background: '#C62828', borderColor: '#C62828' }}
             onClick={handleConfirm}>
             {loading ? <><div className="em-spinner" /> Denying…</> : 'Confirm Denial'}
           </button>
@@ -328,7 +328,7 @@ function CircleCountdown({ duration = 5, onDismiss }) {
     return () => cancelAnimationFrame(rafRef.current)
   }, [duration])
 
-  // green (#22c55e) → yellow (#f59e0b) → red (#ef4444)
+  // green (#1BA968) → yellow (#E0B00C) → red (#D93B3B)
   let r, g, b
   if (progress < 0.5) {
     const p = progress * 2
@@ -391,12 +391,12 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
   if (!result) return (
     <div className="em-card em-result em-result-idle-compact">
       <div className="em-idle-compact-inner">
-        <div className="em-result-icon" style={{ width: 36, height: 36, borderRadius: 8, background: '#F3F4F8', flexShrink: 0 }}>
-          <Search size={16} style={{ color: '#9BA3BF' }} />
+        <div className="em-result-icon" style={{ width: 36, height: 36, borderRadius: 8, background: '#F4F8FB', flexShrink: 0 }}>
+          <Search size={16} style={{ color: '#64839C' }} />
         </div>
         <div>
-          <p className="em-result-status" style={{ color: '#9BA3BF', margin: 0 }}>AWAITING LOOKUP</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#C8CCDE' }}>Type a plate and press Check Entry</p>
+          <p className="em-result-status" style={{ color: '#64839C', margin: 0 }}>AWAITING LOOKUP</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#BDD4E5' }}>Type a plate and press Check Entry</p>
         </div>
       </div>
     </div>
@@ -465,7 +465,7 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
               {result.already_inside && (
                 <div className="em-result-row">
                   <span className="em-result-row-label">Warning</span>
-                  <span className="em-violation-pill" style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+                  <span className="em-violation-pill" style={{ background: '#FDF0BE', border: '1px solid #F7E08A', color: '#7A5C00' }}>
                     <AlertTriangle size={10} /> Already inside — no exit logged
                   </span>
                 </div>
@@ -473,7 +473,7 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
               {result.organizer_event && (
                 <div className="em-result-row">
                   <span className="em-result-row-label">Organizer</span>
-                  <span className="em-violation-pill" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8' }}>
+                  <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
                     <Star size={10} /> {result.organizer_event.name}
                   </span>
                 </div>
@@ -491,7 +491,7 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
               {result.organizer_event && (
                 <div className="em-result-row">
                   <span className="em-result-row-label">Organizer</span>
-                  <span className="em-violation-pill" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8' }}>
+                  <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
                     <Star size={10} /> {result.organizer_event.name}
                   </span>
                 </div>
@@ -505,13 +505,13 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
               </button>
             )}
             {isVisitor && (
-              <button className="em-btn" style={{ width: '100%', background: '#dc2626', color: '#fff', border: 'none', justifyContent: 'center' }}
+              <button className="em-btn" style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}
                 onClick={openDeny}>
                 <Ban size={14} /> Deny Entry
               </button>
             )}
             {isDeniable && (
-              <button className="em-btn" style={{ width: '100%', background: '#d97706', color: '#fff', border: 'none', justifyContent: 'center' }}
+              <button className="em-btn" style={{ width: '100%', background: '#8A6B00', color: '#fff', border: 'none', justifyContent: 'center' }}
                 onClick={openOverride}>
                 <Shield size={14} /> Override Entry
               </button>
@@ -868,13 +868,13 @@ export default function SecurityEntryManagement() {
                   ? <><Wifi size={12} /> No cameras</>
                   : isLive
                     ? <><Video size={12} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} live</>
-                    : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>
+                    : <><div className="em-spinner" style={{ borderTopColor: '#2E8CCB', borderColor: 'rgba(46, 140, 203,.2)' }} /> Connecting…</>
                 }
               </span>
             </div>
 
             {/* Viewport */}
-            <div className="em-viewport" style={{ background: '#0d1117', minHeight: 280, position: 'relative' }}>
+            <div className="em-viewport" style={{ background: '#04121F', minHeight: 280, position: 'relative' }}>
               {rtspCameras.length > 0 ? (
                 <div style={{ position: 'relative', width: '100%', minHeight: 260 }}>
                   {rtspCameras.map((cam, idx) => (
@@ -890,20 +890,20 @@ export default function SecurityEntryManagement() {
                   ))}
                   {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
-                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.15)' }} />
-                      <p style={{ color: '#93c5fd', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
+                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#5CA9DC', borderColor: 'rgba(92, 169, 220,0.15)' }} />
+                      <p style={{ color: '#8FC4E8', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
                     </div>
                   )}
                   <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#1BA968' : '#E0B00C', display: 'inline-block' }} />
                     {rtspActiveCam?.name || 'Camera'}
                   </div>
                   {/* Bottom-left status stack: Open Campus pill sits beside the ML status */}
                   <div style={{ position: 'absolute', bottom: 10, left: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: 'calc(100% - 20px)' }}>
                     {openCampus && (
                       <div style={{
-                        background: 'rgba(59,130,246,0.20)', color: '#93c5fd',
-                        border: '1px solid rgba(59,130,246,0.40)',
+                        background: 'rgba(46, 140, 203,0.20)', color: '#8FC4E8',
+                        border: '1px solid rgba(46, 140, 203,0.40)',
                         padding: '4px 9px', borderRadius: 7, fontSize: 11,
                         fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5,
                         pointerEvents: 'none', backdropFilter: 'blur(4px)',
@@ -917,13 +917,13 @@ export default function SecurityEntryManagement() {
                       if (!s || s === 'idle') return null
                       if (s === 'ready') return (
                         <div style={{
-                          background: 'rgba(16,185,129,0.18)', color: '#10b981',
-                          border: '1px solid rgba(16,185,129,0.35)',
+                          background: 'rgba(20, 163, 116,0.18)', color: '#14A374',
+                          border: '1px solid rgba(20, 163, 116,0.35)',
                           padding: '4px 9px', borderRadius: 7, fontSize: 11,
                           fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
                           pointerEvents: 'none', backdropFilter: 'blur(4px)',
                         }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0 }} />
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#14A374', display: 'inline-block', flexShrink: 0 }} />
                           Detection Ready
                         </div>
                       )
@@ -934,7 +934,7 @@ export default function SecurityEntryManagement() {
                           fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
                           pointerEvents: 'none', backdropFilter: 'blur(4px)',
                         }}>
-                          <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.2)', flexShrink: 0 }} />
+                          <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#5CA9DC', borderColor: 'rgba(92, 169, 220,0.2)', flexShrink: 0 }} />
                           {m || 'Initializing…'}
                         </div>
                       )
@@ -943,7 +943,7 @@ export default function SecurityEntryManagement() {
                 </div>
               ) : (
                 <div className="em-cam-off">
-                  <Wifi size={40} style={{ color: '#374151' }} />
+                  <Wifi size={40} style={{ color: '#2E4C63' }} />
                   <p>No entry cameras configured.</p>
                 </div>
               )}
@@ -951,7 +951,7 @@ export default function SecurityEntryManagement() {
 
             {/* Camera thumbnail strip */}
             {rtspCameras.length > 1 && (
-              <div className="em-cam-thumbnails" style={{ borderTop: '1px solid #1e2235' }}>
+              <div className="em-cam-thumbnails" style={{ borderTop: '1px solid #0F2A47' }}>
                 {rtspCameras.map(cam => (
                   <div
                     key={`thumb-${cam.id}`}
@@ -959,18 +959,18 @@ export default function SecurityEntryManagement() {
                     onClick={() => setRtspActiveCam(cam.id)}
                     style={{ position: 'relative' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#5CA9DC' : '#4A6B85' }}>
                       <Wifi size={18} />
                     </div>
                     <div className="em-cam-thumb-label">{cam.name}</div>
-                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280' }} />
+                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }} />
                   </div>
                 ))}
               </div>
             )}
 
             {/* Combined Plate Input */}
-            <div style={{ padding: '8px 16px 10px', borderTop: '1px solid #f3f4f6' }}>
+            <div style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
               <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate Number</span>
               <form onSubmit={handleCheckEntry} style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                 <input
@@ -984,7 +984,7 @@ export default function SecurityEntryManagement() {
                   }}
                   placeholder="E.G. ABC 123"
                   style={{
-                    flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #E2E6EE',
+                    flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #D3E1EC',
                     borderRadius: 9, fontSize: 14, fontWeight: 700, letterSpacing: 2,
                     textTransform: 'uppercase', outline: 'none', fontFamily: 'monospace',
                     boxSizing: 'border-box',
@@ -1009,15 +1009,15 @@ export default function SecurityEntryManagement() {
                   <ScanLine size={15} /> Scan QR
                 </button>
               </form>
-              <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9BA3BF', textAlign: 'center' }}>
+              <p style={{ margin: '6px 0 0', fontSize: 11, color: '#64839C', textAlign: 'center' }}>
                 Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
               </p>
               {exitResult && (
-                <div style={{ marginTop: 8, padding: '7px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, fontSize: 12, color: '#166534' }}>
+                <div style={{ marginTop: 8, padding: '7px 10px', background: '#EFF9F5', border: '1px solid #C4E8D9', borderRadius: 7, fontSize: 12, color: '#0A5C43' }}>
                   <strong>{exitResult.plate_number}</strong> exited
                   {exitResult.duration_minutes != null && <> · inside <strong>{exitResult.duration_minutes} min</strong></>}
                   {exitResult.overstay_minutes > 0 && (
-                    <> · <span style={{ color: '#dc2626', fontWeight: 700 }}>overstayed {exitResult.overstay_minutes} min</span></>
+                    <> · <span style={{ color: '#C62828', fontWeight: 700 }}>overstayed {exitResult.overstay_minutes} min</span></>
                   )}
                 </div>
               )}
@@ -1070,7 +1070,7 @@ export default function SecurityEntryManagement() {
                   <button
                     onClick={refreshLogs}
                     title="Refresh"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#64839C', display: 'flex', alignItems: 'center' }}
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
@@ -1081,7 +1081,7 @@ export default function SecurityEntryManagement() {
               </div>
               {logs.length === 0 ? (
                 <div className="em-audit-empty">
-                  <ClipboardList size={22} style={{ color: '#d1d5db' }} />
+                  <ClipboardList size={22} style={{ color: '#BDD4E5' }} />
                   <p>No entries recorded yet today.</p>
                 </div>
               ) : (
@@ -1124,7 +1124,7 @@ export default function SecurityEntryManagement() {
                 <span className="em-logs-count">{passes.length}</span>
               </div>
               {passes.length === 0 ? (
-                <p style={{ margin: 0, padding: '10px 2px', fontSize: 12, color: '#9ca3af' }}>
+                <p style={{ margin: 0, padding: '10px 2px', fontSize: 12, color: '#64839C' }}>
                   No visitors currently inside.
                 </p>
               ) : (
@@ -1137,21 +1137,21 @@ export default function SecurityEntryManagement() {
                         style={{
                           display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px',
                           borderRadius: 8,
-                          background: t.overdue ? '#fef2f2' : '#f8fafc',
-                          border: `1px solid ${t.overdue ? '#fecaca' : '#e2e8f0'}`,
+                          background: t.overdue ? '#FCEDED' : '#F7FAFC',
+                          border: `1px solid ${t.overdue ? '#F3C0C0' : '#D3E1EC'}`,
                         }}
                       >
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 12.5, fontFamily: "'Courier New', monospace", letterSpacing: 0.5 }}>
                             {p.plate_number}
                           </div>
-                          <div style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <div style={{ fontSize: 11, color: '#5C7B92', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
                           </div>
                         </div>
                         <span style={{
                           fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                          color: t.overdue ? '#dc2626' : t.soon ? '#d97706' : '#059669',
+                          color: t.overdue ? '#C62828' : t.soon ? '#8A6B00' : '#0F7A5A',
                         }}>
                           {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
                           {t.label}
@@ -1161,8 +1161,8 @@ export default function SecurityEntryManagement() {
                           title="Extend by 30 minutes"
                           style={{
                             fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 6,
-                            border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer',
-                            color: '#374151', whiteSpace: 'nowrap',
+                            border: '1px solid #BDD4E5', background: '#fff', cursor: 'pointer',
+                            color: '#2E4C63', whiteSpace: 'nowrap',
                           }}
                         >
                           +30m

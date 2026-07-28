@@ -535,7 +535,7 @@ export default function ParkingManagement({ embedded = false }) {
                     ))}
                   </select>
                   {deviceCams.length === 0 && (
-                    <span style={{ color: '#A8ACC4' }}>None registered — add one in Device Management</span>
+                    <span style={{ color: '#9DB6C9' }}>None registered — add one in Device Management</span>
                   )}
                 </div>
 
@@ -663,9 +663,9 @@ export default function ParkingManagement({ embedded = false }) {
                   const w  = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                   const id = s._id ?? s.id
                   const sel    = id === selDraft
-                  const color  = s.is_occupied ? '#EF4444' : '#22C55E'
-                  const fill   = s.is_occupied ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.25)'
-                  const stroke = sel ? '#FBBF24' : color
+                  const color  = s.is_occupied ? '#D93B3B' : '#1BA968'
+                  const fill   = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
+                  const stroke = sel ? '#F6CE11' : color
                   return (
                     <g
                       key={id}
@@ -706,7 +706,7 @@ export default function ParkingManagement({ embedded = false }) {
                         <text
                           x={x + w/2} y={y + h/2 + 0.023}
                           textAnchor="middle" dominantBaseline="middle"
-                          fill="#FECACA" fontSize={0.02} fontWeight="600"
+                          fill="#F3C0C0" fontSize={0.02} fontWeight="600"
                           style={{ paintOrder:'stroke', stroke:'rgba(0,0,0,0.5)', strokeWidth:'0.004' }}
                         >
                           {s.occupied_by}
@@ -723,8 +723,8 @@ export default function ParkingManagement({ embedded = false }) {
                     <rect
                       x={Math.min(x1,x2)} y={Math.min(y1,y2)}
                       width={Math.abs(x2-x1)} height={Math.abs(y2-y1)}
-                      fill="rgba(42,43,97,0.15)"
-                      stroke="#2A2B61"
+                      fill="rgba(3, 57, 108,0.15)"
+                      stroke="#03396C"
                       strokeWidth={0.004}
                       strokeDasharray="0.018 0.008"
                       rx={0.004}
@@ -741,7 +741,7 @@ export default function ParkingManagement({ embedded = false }) {
                         + (penCursor ? ` ${penCursor.x},${penCursor.y}` : '')
                       }
                       fill="none"
-                      stroke="#2A2B61"
+                      stroke="#03396C"
                       strokeWidth={0.003}
                       strokeDasharray="0.01 0.006"
                     />
@@ -750,7 +750,7 @@ export default function ParkingManagement({ embedded = false }) {
                         key={i}
                         cx={p.x} cy={p.y}
                         r={i === 0 ? 0.01 : 0.006}
-                        fill={i === 0 ? '#FBBF24' : '#2A2B61'}
+                        fill={i === 0 ? '#F6CE11' : '#03396C'}
                         stroke="#fff"
                         strokeWidth={0.0015}
                       />
@@ -847,14 +847,14 @@ export default function ParkingManagement({ embedded = false }) {
                     <div className="pm-cam-main-badge">
                       <span
                         style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                          background: pkActiveCam?.streamConnected ? '#22c55e' : pkActiveCam?.wsActive ? '#f59e0b' : '#6b7280' }}
+                          background: pkActiveCam?.streamConnected ? '#1BA968' : pkActiveCam?.wsActive ? '#E0B00C' : '#5C7B92' }}
                       />
                       {pkActiveCam?.name || 'Camera'}
                     </div>
                   </>
                 ) : (
                   <div className="pm-cam-empty" style={{ minHeight: 160 }}>
-                    <Video size={28} style={{ color: '#374151' }} />
+                    <Video size={28} style={{ color: '#2E4C63' }} />
                     <p>Add a camera below</p>
                   </div>
                 )}
@@ -884,7 +884,7 @@ export default function ParkingManagement({ embedded = false }) {
                     >
                       <span
                         className="pm-cam-strip-dot"
-                        style={{ background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280' }}
+                        style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
                       />
                       <Wifi size={14} />
                       <span className="pm-cam-strip-label">{cam.name}</span>
@@ -894,7 +894,7 @@ export default function ParkingManagement({ embedded = false }) {
               )}
 
               {parkingCams.length === 0 && (
-                <p style={{ fontSize: 12, color: '#7C80A3', margin: '8px 0 0', textAlign: 'center' }}>
+                <p style={{ fontSize: 12, color: '#6B8CA6', margin: '8px 0 0', textAlign: 'center' }}>
                   No parking cameras configured — add them in Device Management.
                 </p>
               )}

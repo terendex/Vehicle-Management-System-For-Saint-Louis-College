@@ -1,7 +1,7 @@
 /* ============================================================
    SUPPLIER MANAGEMENT PAGE
-   Palette: SLC Navy #2A2B61 · Background #F0F2F7
-            Card #FFFFFF · Border #E2E6EE · Text #1A1D2E / #5A5F72
+   Palette: SLC Navy #03396C · Background #EEF4F9
+            Card #FFFFFF · Border #D3E1EC · Text #0B2340 / #4A6B85
    ============================================================ */
 
 .sp-page {
@@ -24,13 +24,13 @@
 .sp-title {
   font-size: 1.4rem;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 0 0 3px;
 }
 
 .sp-subtitle {
   font-size: 0.85rem;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 0;
   max-width: 520px;
 }
@@ -41,7 +41,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 0.9rem;
   padding: 2rem 0;
 }
@@ -52,12 +52,12 @@
   align-items: center;
   gap: 8px;
   padding: 4rem 0;
-  color: #5A5F72;
+  color: #4A6B85;
   text-align: center;
 }
 
 .sp-empty-icon {
-  color: #C5C9D9;
+  color: #BDD4E5;
   margin-bottom: 4px;
 }
 
@@ -68,7 +68,7 @@
 
 .sp-empty-hint {
   font-size: 0.82rem !important;
-  color: #8B90A7;
+  color: #6B8CA6;
 }
 
 /* ── List ───────────────────────────────────────────────────── */
@@ -83,14 +83,14 @@
 
 .sp-card {
   background: #fff;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 10px;
   overflow: hidden;
   transition: border-color 0.15s;
 }
 
 .sp-card--active {
-  border-color: #2A2B61;
+  border-color: #03396C;
 }
 
 .sp-card-head {
@@ -117,14 +117,14 @@
 }
 
 .sp-card-icon {
-  color: #2A2B61;
+  color: #03396C;
   flex-shrink: 0;
 }
 
 .sp-card-name {
   font-size: 0.97rem;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 .sp-card-sub {
@@ -132,15 +132,15 @@
   align-items: center;
   gap: 5px;
   font-size: 0.78rem;
-  color: #7C80A3;
+  color: #6B8CA6;
 }
 
 .sp-inactive-badge {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #8B90A7;
-  background: #F0F2F7;
-  border: 1px solid #D5D9E8;
+  color: #6B8CA6;
+  background: #EEF4F9;
+  border: 1px solid #D3E1EC;
   border-radius: 20px;
   padding: 1px 8px;
 }
@@ -160,9 +160,9 @@
   gap: 5px;
   padding: 5px 12px;
   border-radius: 6px;
-  border: 1.5px solid #D5D9E8;
+  border: 1.5px solid #D3E1EC;
   background: #fff;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
@@ -170,13 +170,13 @@
 }
 
 .sp-status-btn--on {
-  border-color: #2A2B61;
-  background: #ECEDF8;
-  color: #2A2B61;
+  border-color: #03396C;
+  background: #EAF2F8;
+  color: #03396C;
 }
 
 .sp-status-btn:hover:not(:disabled) {
-  background: #F5F6FC;
+  background: #F7FAFC;
 }
 
 .sp-expand-btn {
@@ -186,15 +186,15 @@
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #fff;
-  color: #5A5F72;
+  color: #4A6B85;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .sp-expand-btn:hover {
-  background: #F0F2F7;
+  background: #EEF4F9;
 }
 
 .sp-delete-btn {
@@ -204,32 +204,32 @@
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  border: 1.5px solid #FFD6D6;
-  background: #FFF5F5;
-  color: #D9534F;
+  border: 1.5px solid #F3C0C0;
+  background: #FDF4F4;
+  color: #C62828;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .sp-delete-btn:hover:not(:disabled) {
-  background: #FFE5E5;
+  background: #FADEDE;
 }
 
 /* ── Plates Section ──────────────────────────────────────────── */
 
 .sp-plates-section {
-  border-top: 1px solid #E2E6EE;
+  border-top: 1px solid #D3E1EC;
   padding: 14px 18px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .sp-plates-label {
   font-size: 0.8rem;
   font-weight: 700;
-  color: #2A2B61;
+  color: #03396C;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -242,17 +242,17 @@
 .sp-text-input {
   flex: 1;
   padding: 7px 11px;
-  border: 1.5px solid #D5D9E8;
+  border: 1.5px solid #D3E1EC;
   border-radius: 6px;
   font-size: 0.85rem;
-  color: #1A1D2E;
+  color: #0B2340;
   background: #fff;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .sp-text-input:focus {
-  border-color: #2A2B61;
+  border-color: #03396C;
 }
 
 .sp-plate-field {
@@ -261,26 +261,26 @@
 }
 
 .sp-text-input.sp-input-error {
-  border-color: #DC2626;
-  background: #FFF8F8;
+  border-color: #C62828;
+  background: #FDF7F7;
 }
 
 .sp-text-input.sp-input-error:focus {
-  border-color: #DC2626;
-  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.08);
+  border-color: #C62828;
+  box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.08);
 }
 
 .sp-field-hint {
   display: block;
   font-size: 11px;
-  color: #9CA3B0;
+  color: #64839C;
   margin-top: 4px;
 }
 
 .sp-field-error-msg {
   display: block;
   font-size: 11px;
-  color: #DC2626;
+  color: #C62828;
   font-weight: 500;
   margin-top: 4px;
 }
@@ -291,8 +291,8 @@
   gap: 5px;
   padding: 7px 14px;
   border-radius: 6px;
-  border: 1.5px solid #2A2B61;
-  background: #2A2B61;
+  border: 1.5px solid #03396C;
+  background: #03396C;
   color: #fff;
   font-size: 0.82rem;
   font-weight: 600;
@@ -302,7 +302,7 @@
 }
 
 .sp-add-plate-btn:hover:not(:disabled) {
-  background: #1e1f47;
+  background: #032C55;
 }
 
 .sp-add-plate-btn:disabled {
@@ -312,7 +312,7 @@
 
 .sp-no-plates {
   font-size: 0.82rem;
-  color: #8B90A7;
+  color: #6B8CA6;
   margin: 0;
 }
 
@@ -327,12 +327,12 @@
   align-items: center;
   gap: 5px;
   padding: 3px 8px 3px 10px;
-  background: #ECEDF8;
-  border: 1px solid #C8CAE8;
+  background: #EAF2F8;
+  border: 1px solid #BDD4E5;
   border-radius: 20px;
   font-size: 0.78rem;
   font-weight: 700;
-  color: #2A2B61;
+  color: #03396C;
   letter-spacing: 0.04em;
 }
 
@@ -343,13 +343,13 @@
   border: none;
   background: none;
   cursor: pointer;
-  color: #6366A8;
+  color: #2E8CCB;
   border-radius: 50%;
   transition: color 0.12s;
 }
 
 .sp-plate-tag button:hover:not(:disabled) {
-  color: #D9534F;
+  color: #C62828;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────── */
@@ -368,33 +368,33 @@
 }
 
 .sp-btn-primary {
-  background: #2A2B61;
+  background: #03396C;
   color: #fff;
-  border-color: #2A2B61;
+  border-color: #03396C;
 }
 
 .sp-btn-primary:hover:not(:disabled) {
-  background: #1e1f47;
+  background: #032C55;
 }
 
 .sp-btn-ghost {
   background: #fff;
-  color: #5A5F72;
-  border-color: #D5D9E8;
+  color: #4A6B85;
+  border-color: #D3E1EC;
 }
 
 .sp-btn-ghost:hover:not(:disabled) {
-  background: #F0F2F7;
+  background: #EEF4F9;
 }
 
 .sp-btn-danger {
-  background: #D9534F;
+  background: #C62828;
   color: #fff;
-  border-color: #D9534F;
+  border-color: #C62828;
 }
 
 .sp-btn-danger:hover:not(:disabled) {
-  background: #c0392b;
+  background: #9B1C1C;
 }
 
 .sp-btn:disabled {
@@ -417,7 +417,7 @@
 .sp-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(20, 22, 40, 0.45);
+  background: rgba(8, 32, 58, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -449,13 +449,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid #E2E6EE;
+  border-bottom: 1px solid #D3E1EC;
 }
 
 .sp-modal-title {
   font-size: 1rem;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 0;
 }
 
@@ -467,14 +467,14 @@
   height: 28px;
   border: none;
   background: none;
-  color: #8B90A7;
+  color: #6B8CA6;
   cursor: pointer;
   border-radius: 6px;
   transition: background 0.12s;
 }
 
 .sp-modal-close:hover {
-  background: #F0F2F7;
+  background: #EEF4F9;
 }
 
 .sp-modal-form {
@@ -493,12 +493,12 @@
 .sp-label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: #374151;
+  color: #2E4C63;
 }
 
 .sp-label-optional {
   font-weight: 400;
-  color: #9CA3AF;
+  color: #64839C;
 }
 
 .sp-modal-actions {
@@ -510,11 +510,11 @@
 
 .sp-modal-body {
   font-size: 0.88rem;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 0;
   line-height: 1.5;
 }
 
 .sp-warn-icon {
-  color: #D9534F;
+  color: #C62828;
 }

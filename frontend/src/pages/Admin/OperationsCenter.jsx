@@ -454,22 +454,22 @@ export default function OperationsCenter() {
                       key={p.id}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8,
-                        background: t.overdue ? '#fef2f2' : '#f8fafc',
-                        border: `1px solid ${t.overdue ? '#fecaca' : '#e6e8f0'}`,
+                        background: t.overdue ? '#FCEDED' : '#F7FAFC',
+                        border: `1px solid ${t.overdue ? '#F3C0C0' : '#D3E1EC'}`,
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <span className="oc-log-plate">{p.plate_number}</span>
-                        <div style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <div style={{ fontSize: 11, color: '#5C7B92', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
                         </div>
                         {p.issued_by_name && (
-                          <div style={{ fontSize: 10.5, color: '#9ca3af' }}>Issued by {p.issued_by_name}</div>
+                          <div style={{ fontSize: 10.5, color: '#64839C' }}>Issued by {p.issued_by_name}</div>
                         )}
                       </div>
                       <span style={{
                         fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                        color: t.overdue ? '#dc2626' : t.soon ? '#d97706' : '#059669',
+                        color: t.overdue ? '#C62828' : t.soon ? '#8A6B00' : '#0F7A5A',
                       }}>
                         {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
                         {t.label}

@@ -1225,7 +1225,7 @@ export default function RegisterPage() {
                   {/* SpEd: optional grade level */}
                   {formData.student_level === 'sped' && (
                     <div className="form-group">
-                      <label>Grade Level <span style={{ color: '#7C80A3', fontWeight: 400 }}>(optional)</span></label>
+                      <label>Grade Level <span style={{ color: '#6B8CA6', fontWeight: 400 }}>(optional)</span></label>
                       <select name="student_grade" value={formData.student_grade} onChange={handleInputChange}>
                         <option value="">Not specified</option>
                         <option value="Kinder 1">Kinder 1</option>
