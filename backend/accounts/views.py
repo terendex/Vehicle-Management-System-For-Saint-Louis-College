@@ -1166,6 +1166,12 @@ class PasswordResetConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if user.check_password(new_password):
+            return Response(
+                {'error': 'New password must be different from your current password.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Validate password strength (same rules as ChangePasswordView)
         errors = []
         if len(new_password) < 8:

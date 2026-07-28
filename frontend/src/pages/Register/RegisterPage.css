@@ -391,6 +391,142 @@
   box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.08);
 }
 
+/* --- Driver's license photo upload --- */
+.label-optional {
+  font-weight: 500;
+  color: #9CA3B0;
+}
+
+.license-upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1.5px dashed #C7CCDB;
+  border-radius: 10px;
+  background: #FAFBFD;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.license-upload:hover,
+.license-upload:focus-within {
+  border-color: #2A2B61;
+  background: #F4F6FB;
+}
+
+.license-upload:focus-within {
+  box-shadow: 0 0 0 4px rgba(42, 43, 97, 0.08);
+}
+
+/* Visually hidden but still keyboard-focusable */
+.license-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.license-upload-icon {
+  color: #2A2B61;
+  flex-shrink: 0;
+}
+
+.license-upload-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.license-upload-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2A2B61;
+}
+
+.license-upload-text span {
+  font-size: 11px;
+  color: #9CA3B0;
+}
+
+.license-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #E2E6EE;
+  border-radius: 10px;
+  background: #FFFFFF;
+}
+
+.license-preview-img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #E2E6EE;
+  flex-shrink: 0;
+  background: #F1F3F9;
+}
+
+.license-preview-noimg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #7C80A3;
+}
+
+.license-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.license-preview-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #2A2B61;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.license-preview-size {
+  font-size: 11px;
+  color: #9CA3B0;
+}
+
+.license-preview-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: #F1F3F9;
+  color: #7C80A3;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+.license-preview-remove:hover {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
 .field-hint {
   font-size: 11px;
   color: #9CA3B0;
@@ -1246,6 +1382,26 @@
 }
 
 /* Next steps */
+.success-license-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  border: 1px solid #FDE68A;
+  border-radius: 12px;
+  background: #FFFBEB;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #92400E;
+  text-align: left;
+}
+
+.success-license-warn svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 .success-next-steps {
   background: #F8F9FC;
   border: 1px solid #E8EBF4;

@@ -160,6 +160,24 @@
   animation: alertShake 0.4s ease;
 }
 
+.success-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #ECFDF5;
+  border: 1px solid #A7F3D0;
+  border-radius: 10px;
+  color: #047857;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 1.25rem;
+}
+
+.success-alert svg {
+  flex-shrink: 0;
+}
+
 @keyframes alertShake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-6px); }
@@ -795,23 +813,6 @@
 
 .register-cta-btn:hover .register-cta-arrow {
   transform: translateX(3px);
-}
-
-.register-qr-link {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px;
-  color: #7C80A3;
-  font-size: 12px;
-  font-weight: 500;
-  transition: color 0.2s;
-}
-
-.register-qr-link:hover {
-  color: #2A2B61;
 }
 
 /* ── Registration type modal ── */

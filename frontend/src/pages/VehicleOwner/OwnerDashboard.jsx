@@ -167,10 +167,8 @@ export default function OwnerDashboard() {
       setPwSuccess(true)
       setPwForm({ current: '', new: '', confirm: '' })
       // Force a fresh login with the new password instead of keeping the old session active.
-      setTimeout(() => {
-        logout()
-        window.location.href = '/login?passwordChanged=1'
-      }, 1800)
+      // logout() handles the redirect itself, so hand it the destination.
+      setTimeout(() => logout('/login?passwordChanged=1'), 1800)
     } catch (err) {
       const data = err.response?.data
       if (data?.errors) {
@@ -207,7 +205,7 @@ export default function OwnerDashboard() {
               <div className="od-pw-success">
                 <div className="od-pw-success-icon"><ShieldCheck size={36} /></div>
                 <h3>Password Changed!</h3>
-                <p>Your password has been updated successfully. Welcome to the portal!</p>
+                <p>For your security you're being signed out. Please log in again with your new password.</p>
               </div>
             ) : (
               <>
@@ -221,7 +219,7 @@ export default function OwnerDashboard() {
 
                 <form onSubmit={handlePwChange} className="od-pw-form">
                   <div className="od-form-group">
-                    <label>Current (Temporary) Password</label>
+                    <label>{mustChange ? 'Current (Temporary) Password' : 'Current Password'}</label>
                     <div className="od-pw-wrap">
                       <input type={showCurrent ? 'text' : 'password'} value={pwForm.current} onChange={e => setPwForm({ ...pwForm, current: e.target.value })} placeholder="Enter current password" required autoComplete="current-password" />
                       <button type="button" className="od-pw-eye" onClick={() => setShowCurrent(v => !v)}>{showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}</button>

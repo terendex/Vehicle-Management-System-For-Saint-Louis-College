@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2 } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
@@ -485,18 +485,32 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
-              {selectedReg.drivers_license_image && (
-                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
-                  <div className="detail-label">Driver's License Photo</div>
-                  <a href={selectedReg.drivers_license_image} target="_blank" rel="noopener noreferrer">
+              {/* Always rendered so a reviewer can tell "no photo submitted" apart from a missing field */}
+              <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                <div className="detail-label">Driver's License Photo</div>
+                {selectedReg.drivers_license_image ? (
+                  <a
+                    href={selectedReg.drivers_license_image}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open full size in a new tab"
+                    style={{ display: 'inline-block', marginTop: 4 }}
+                  >
                     <img
                       src={selectedReg.drivers_license_image}
                       alt="Driver's license"
-                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #E2E6EE', marginTop: 4 }}
+                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #E2E6EE', display: 'block' }}
                     />
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: '#7C80A3' }}>
+                      <Maximize2 size={11} /> Click to view full size
+                    </span>
                   </a>
-                </div>
-              )}
+                ) : (
+                  <div className="detail-value" style={{ color: '#9CA3B0', fontStyle: 'italic' }}>
+                    Not provided
+                  </div>
+                )}
+              </div>
 
               {/* Authorized driver — set when the student is a minor / non-driver */}
               {selectedReg.driver_name && (

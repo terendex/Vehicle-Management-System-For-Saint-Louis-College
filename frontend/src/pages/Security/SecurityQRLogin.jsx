@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ShieldCheck, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import jsQR from 'jsqr'
@@ -20,7 +20,11 @@ const DEFAULT_GATES = [
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
   const { gateParam }                            = useParams()
+  const [searchParams]                           = useSearchParams()
   const { qrLogin, guardLogin, isLoading, user } = useAuthStore()
+
+  // Set by the forced password change, which signs the guard out on purpose
+  const passwordChanged = searchParams.get('passwordChanged') === '1'
 
   // Kiosk mode: /security/guard-login/gate1, /security/guard-login/gate4, … locks the gate.
   // Gates are dynamic (admin can add more), so accept any gateN slug.
@@ -309,6 +313,12 @@ export default function SecurityQRLogin() {
                   </div>
 
                   <form className="sqr-cred-form" onSubmit={handleCredentialLogin}>
+                    {passwordChanged && !credError && (
+                      <div className="sqr-cred-success" role="status">
+                        <CheckCircle size={15} />
+                        <span>Password changed. Please sign in with your new password.</span>
+                      </div>
+                    )}
                     {credError && (
                       <div className="sqr-cred-error" role="alert">
                         <AlertCircle size={15} />

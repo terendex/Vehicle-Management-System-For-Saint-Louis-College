@@ -352,7 +352,7 @@ function ForcePasswordModal({ onLogout }) {
       clearMustChangePassword()
       toast.success('Password changed! Please log in again with your new password.')
       // Force a fresh login with the new password instead of keeping the old session active.
-      setTimeout(onLogout, 1200)
+      setTimeout(() => onLogout({ passwordChanged: true }), 1200)
     } catch (err) {
       const data = err.response?.data
       if (data?.errors) setErrors(data.errors)
@@ -491,7 +491,11 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   }, [location.pathname])
 
   // Return kiosks to their own gate's login URL after logout
-  const handleLogout = () => { logout(gate ? `/security/guard-login/${gate}` : '/security/guard-login') }
+  const handleLogout = (opts) => {
+    const base = gate ? `/security/guard-login/${gate}` : '/security/guard-login'
+    // logout() hard-navigates, so a toast wouldn't survive — pass the notice in the URL
+    logout(opts?.passwordChanged ? `${base}?passwordChanged=1` : base)
+  }
 
   const entryPath = gate ? `/security/gate/${gate}/entries` : '/security/entries'
 
