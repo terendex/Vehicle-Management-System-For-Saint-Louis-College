@@ -114,3 +114,6 @@ backend/scanning/ml/runs/plate_detector/*
 !backend/scanning/ml/runs/plate_detector/weights/
 backend/scanning/ml/runs/plate_detector/weights/*
 !backend/scanning/ml/runs/plate_detector/weights/best.pt
+
+# Docker build artefact: the built SPA copied into the backend image
+backend/frontend_build/

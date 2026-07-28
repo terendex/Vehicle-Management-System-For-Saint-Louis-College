@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-
-const WS_BASE =
-  import.meta.env.VITE_WS_URL ||
-  (import.meta.env.VITE_API_URL || "http://localhost:5173").replace("http", "ws");
+import { WS_BASE } from "../api/wsBase";
 
 
 // ── Bounding-box colours (must match backend CLASS_NAMES) ────────────────────

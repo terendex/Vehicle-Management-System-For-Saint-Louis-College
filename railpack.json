@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "packages": {
+    "python": "3.12",
+    "node": "22"
+  },
+  "buildAptPackages": [
+    "libgl1",
+    "libglib2.0-0",
+    "libgomp1"
+  ],
+  "caches": {
+    "pip": {
+      "directory": "/root/.cache/pip",
+      "type": "shared"
+    },
+    "npm": {
+      "directory": "/root/.npm",
+      "type": "shared"
+    }
+  },
+  "steps": {
+    "install": {
+      "caches": ["pip", "npm"],
+      "commands": [
+        "pip install --upgrade pip",
+        "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.0 torchvision==0.27.0",
+        "pip install paddlepaddle==3.0.0",
+        "pip install -r backend/requirements.txt",
+        "npm --prefix frontend ci"
+      ]
+    },
+    "build": {
+      "commands": [
+        "npm --prefix frontend run build",
+        "rm -rf backend/frontend_build",
+        "cp -r frontend/dist backend/frontend_build",
+        "cd backend && DEBUG=false SECRET_KEY=build-only-not-a-real-secret python manage.py collectstatic --noinput --clear",
+        "python -m compileall -q backend || true"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "cd backend && sh start.sh",
+    "aptPackages": [
+      "libgl1",
+      "libglib2.0-0",
+      "libgomp1"
+    ],
+    "variables": {
+      "PYTHONUNBUFFERED": "1",
+      "YOLO_CONFIG_DIR": "/tmp/ultralytics",
+      "MPLCONFIGDIR": "/tmp/matplotlib",
+      "OMP_NUM_THREADS": "2"
+    }
+  }
+}

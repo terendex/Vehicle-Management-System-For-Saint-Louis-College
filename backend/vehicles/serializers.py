@@ -28,13 +28,47 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         model = VehicleRegistration
         fields = '__all__'
 
+    @staticmethod
+    def build_block_counts(registrations):
+        """Count blocking violations for a whole page of registrations at once.
+
+        Serialising a list otherwise costs one COUNT query per row, so the round
+        trips grow with the result size. Pass the returned map in as the
+        'block_counts' serializer context and the whole page costs one query
+        regardless of how many rows it holds.
+        """
+        from django.db.models import Count
+        from violations.models import Violation
+
+        plates = {(r.plate_number or '').strip().upper() for r in registrations}
+        plates.discard('')
+        if not plates:
+            return {}
+
+        rows = (Violation.objects
+                .filter(vehicle__plate_number__in=plates, registration_blocked=True)
+                .values('vehicle__plate_number')
+                .annotate(n=Count('id')))
+        return {row['vehicle__plate_number']: row['n'] for row in rows}
+
     def get_registration_block_count(self, instance):
         """Number of prior violations that flag this plate for additional review."""
+        plate = (instance.plate_number or '').strip().upper()
+
+        # Prefer the batch-built map when the caller supplied one. A plate that
+        # is absent from the map simply has no blocking violations.
+        block_counts = self.context.get('block_counts')
+        if block_counts is not None:
+            return block_counts.get(plate, 0)
+
+        # Single-object callers keep the direct query.
         from violations.models import Violation
         return Violation.registration_block_for_plate(instance.plate_number).count()
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        # instance.department is a FK: without select_related('department') on
+        # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
         return data
 

@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-
-const WS_BASE = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/^http/, "ws")
-  : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+import { WS_BASE } from "../api/wsBase";
 
 const TRACK_COLORS = {
   license_plate: "#14A374",

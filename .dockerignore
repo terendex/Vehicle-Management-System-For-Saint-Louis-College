@@ -1,0 +1,75 @@
+# Build context for the root Dockerfile (Railway). Everything excluded here is
+# either rebuilt inside the image, unusable in a container, or too large to ship.
+
+# ── Version control / tooling ────────────────────────────────────────────────
+.git/
+.gitattributes
+.claude/
+.vscode/
+.idea/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+backend/venv/
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Node ─────────────────────────────────────────────────────────────────────
+# node_modules is reinstalled by `npm ci` in the build stage; copying the host's
+# Windows-built tree in would both bloat the context and break native binaries.
+frontend/node_modules/
+# dist is rebuilt in the frontend stage — never ship a stale local build.
+frontend/dist/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# Config comes from Railway's environment variables, never from a baked file.
+**/.env
+**/.env.*
+!**/.env.example
+
+# ── ML assets ────────────────────────────────────────────────────────────────
+# Model weights are large — exclude them all, then re-admit only the two
+# deployable detectors. These negations are required: a path excluded here is
+# absent from the build context entirely, and the Dockerfile's COPY of it would
+# fail with "file not found" rather than silently skipping.
+*.pt
+!backend/scanning/ml/runs/plate_detector/weights/best.pt
+!backend/scanning/ml/runs/vehicle_detector/weights/best.pt
+*.pth
+*.onnx
+*.zip
+backend/scanning/ml/dataset/
+backend/scanning/ml/raw_frames/
+backend/scanning/ml/labeled/
+backend/scanning/ml/used/
+backend/scanning/ml/visualizations/
+backend/scanning/ml/_rf_downloads/
+backend/scanning/ml/unplated_dataset/
+backend/scanning/ml/motorcycle_ds/
+backend/scanning/ml/vehicle_ds/
+backend/scanning/ml/elevated_ds/
+backend/scanning/ml/combined_ds/
+backend/scanning/ml/test_results/
+backend/unplated_ds/
+backend/dl_temp/
+runs/
+backend/runs/
+
+# ── Local artefacts ──────────────────────────────────────────────────────────
+backend/media/
+backend/staticfiles/
+backend/backups/
+backend/uploads/
+backend/snapshots/
+# Debug frames written by the OCR pipeline during local tuning.
+backend/*.jpg
+backend/*.log
+backend/backup.sql
+plate_db.dump
+*.sqlite3
+*.db
+
+# ── Docs ─────────────────────────────────────────────────────────────────────
+*.md
+!backend/scanning/ml/README.md

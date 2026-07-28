@@ -597,8 +597,23 @@ class PendingRegistrationsListView(APIView):
 
     def get(self, request):
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
-        registrations = VehicleRegistration.objects.filter(status=status_filter).order_by('-created_at')
-        return Response(VehicleRegistrationSerializer(registrations, many=True, context={'request': request}).data)
+        # select_related pulls the department in the same SELECT, and the
+        # prebuilt block-count map replaces one COUNT per row with one query for
+        # the page — together they turn a 2N+1 query pattern into a flat 2.
+        registrations = list(
+            VehicleRegistration.objects
+            .filter(status=status_filter)
+            .select_related('department')
+            .order_by('-created_at')
+        )
+        return Response(VehicleRegistrationSerializer(
+            registrations,
+            many=True,
+            context={
+                'request': request,
+                'block_counts': VehicleRegistrationSerializer.build_block_counts(registrations),
+            },
+        ).data)
 
 
 def _generate_temp_password():

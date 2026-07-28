@@ -1,31 +1,42 @@
-"""
-URL configuration for config project.
+"""URL configuration for config project.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+In production the React SPA and this API share a single origin (see
+FRONTEND_BUILD_DIR in settings): WhiteNoise serves the bundle's hashed assets,
+and the catch-all at the bottom of this file hands every non-API path to
+index.html so client-side routing survives a hard refresh or a shared link.
 """
+import re
+
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse, HttpResponse
 from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
 from accounts.views import CustomTokenObtainPairView, QRLoginView, GuardCredentialLoginView
 
+
+def healthz(_request):
+    """Liveness probe for Railway's deploy gate.
+
+    Deliberately does not touch the database: this answers whether the container
+    is up and serving. A slow cross-region query should not make a healthy
+    deploy look dead. Exempted from SECURE_SSL_REDIRECT in settings, because
+    Railway probes it over plain HTTP from inside the private network.
+    """
+    return JsonResponse({'status': 'ok'})
+
+
 urlpatterns = [
-    path('admin/',                      admin.site.urls),
+    # Django's admin is NOT at /admin/ — the React app owns that route on this
+    # shared origin (/admin, /admin/vehicles, /admin/users, ...). Override the
+    # prefix with the DJANGO_ADMIN_URL env var.
+    path(f'{settings.DJANGO_ADMIN_URL}/', admin.site.urls),
+
+    path('healthz',                     healthz,                              name='healthz'),
 
     # JWT Auth
     path('api/auth/login/',             CustomTokenObtainPairView.as_view(),  name='token_obtain'),
@@ -39,4 +50,37 @@ urlpatterns = [
     path('api/vehicles/',               include('vehicles.urls')),
     path('api/scan/',                   include('scanning.urls')),
     path('api/violations/',             include('violations.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+# Local media serving. With USE_R2=true this is a no-op — files are served from
+# R2's public domain instead.
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+# ── SPA fallback ──────────────────────────────────────────────────────────────
+# Registered only when a built frontend is present, so local development (Vite
+# on :5173 proxying to :8000) is completely unaffected.
+if settings.FRONTEND_BUILD_DIR.exists():
+    _INDEX_HTML = (settings.FRONTEND_BUILD_DIR / 'index.html').read_bytes()
+
+    def spa_index(_request):
+        # index.html must never be cached: a browser holding the previous copy
+        # would keep requesting the old deploy's hashed asset filenames, which
+        # no longer exist, and the app would fail to boot.
+        resp = HttpResponse(_INDEX_HTML, content_type='text/html; charset=utf-8')
+        resp['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return resp
+
+    # Anything that is not an API, admin, media or static path is a client-side
+    # route: serve the shell and let React Router resolve it. The admin prefix
+    # is escaped because it is user-supplied via DJANGO_ADMIN_URL and would
+    # otherwise be interpreted as a regex.
+    urlpatterns += [
+        re_path(
+            r'^(?!api/|healthz|media/|static/|{}/).*$'.format(
+                re.escape(settings.DJANGO_ADMIN_URL)
+            ),
+            spa_index,
+            name='spa',
+        ),
+    ]

@@ -25,13 +25,39 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+def _env_bool(name, default='false'):
+    return os.getenv(name, default).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _env_list(name, default=''):
+    return [v.strip() for v in os.getenv(name, default).split(',') if v.strip()]
+
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Railway injects these at runtime; their presence is a reliable signal that
+# this process is a deployment rather than someone's laptop.
+RAILWAY_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
+ON_RAILWAY = bool(RAILWAY_DOMAIN or os.getenv('RAILWAY_ENVIRONMENT'))
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# SECURITY WARNING: don't run with debug turned on in production!
+# The default is inverted on Railway: forgetting to set DEBUG should fail
+# closed (no stack traces to the public internet), not open. Locally it still
+# defaults to True, so the existing dev workflow is unchanged.
+DEBUG = _env_bool('DEBUG', 'false' if ON_RAILWAY else 'true')
+
+if not DEBUG and not SECRET_KEY:
+    raise RuntimeError('SECRET_KEY must be set when DEBUG is off.')
+
+ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+
+if RAILWAY_DOMAIN:
+    # Saves hand-editing ALLOWED_HOSTS every time the domain changes.
+    ALLOWED_HOSTS.append(RAILWAY_DOMAIN)
+    # Railway's deploy healthcheck calls in over the internal network with its
+    # own Host header; without this the probe 400s and the deploy is marked bad.
+    ALLOWED_HOSTS.append('healthcheck.railway.app')
 
 
 # Application definition
@@ -66,6 +92,12 @@ MIDDLEWARE = [
     'config.middleware.IdleConnectionHealthCheckMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Serves the built React bundle and Django's own static files straight from
+    # the app process — must sit directly after SecurityMiddleware.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    # Compresses JSON payloads; the report/list endpoints shrink by ~80%, which
+    # is the difference that shows over a long-haul link.
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -83,6 +115,11 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Without a default page size every list endpoint serialises the whole
+    # table — cost grows with the row count instead of staying flat. Clients
+    # that pass no ?page= still get page 1, so responses stay bounded.
+    'DEFAULT_PAGINATION_CLASS': 'config.pagination.DefaultPagination',
+    'PAGE_SIZE': int(os.getenv('DRF_PAGE_SIZE', 50)),
 }
 
 SIMPLE_JWT = {
@@ -113,11 +150,36 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 AUTH_USER_MODEL = 'accounts.User'
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
-    },
-}
+# A Redis channel layer is what makes `broadcast_change` actually reach
+# browsers: the in-memory layer is per-process, so anything sent from the
+# Celery worker (a separate process) was being dropped on the floor, and any
+# second web replica would only notify the clients attached to itself.
+# Falls back to in-memory when no Redis is configured, so local dev without a
+# broker keeps working.
+REDIS_URL = os.getenv('REDIS_URL') or os.getenv('CELERY_BROKER_URL', '')
+
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL], 'capacity': 1500, 'expiry': 10},
+        },
+    }
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
+            'KEY_PREFIX': 'slcvms',
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
+    CACHES = {
+        'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -182,13 +244,37 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL  = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# ── Built React bundle ────────────────────────────────────────────────────────
+# The Docker build drops Vite's output here. WhiteNoise serves it at the web
+# root, so the SPA and the API share one origin: axios' relative '/api' baseURL
+# works untouched, there is no CORS preflight on any request, and there is a
+# single Railway URL to open. Empty in local dev (Vite serves the app itself).
+FRONTEND_BUILD_DIR = BASE_DIR / 'frontend_build'
+WHITENOISE_ROOT = FRONTEND_BUILD_DIR if FRONTEND_BUILD_DIR.exists() else None
+# index.html must stay uncached or browsers pin a stale bundle across deploys;
+# the hashed files under /assets/ are safe to cache forever.
+WHITENOISE_INDEX_FILE = True
+WHITENOISE_MAX_AGE = 31536000
+WHITENOISE_SKIP_COMPRESS_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'zip',
+                                       'gz', 'tgz', 'bz2', 'tbz', 'xz', 'br', 'pt']
+
+# CompressedStaticFilesStorage, not the *Manifest* variant: the manifest raises
+# a hard 500 on any unresolved reference in a CSS/JS file, which is a common way
+# for a deploy to come up broken. Compression is the part that matters here —
+# the React bundle's cache-busting comes from Vite's content hashes.
+_STATIC_BACKEND = (
+    'whitenoise.storage.CompressedStaticFilesStorage' if not DEBUG
+    else 'django.contrib.staticfiles.storage.StaticFilesStorage'
+)
 
 if os.getenv('USE_R2', 'false').lower() == 'true':
     STORAGES = {
         "default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"},
-        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+        "staticfiles": {"BACKEND": _STATIC_BACKEND},
     }
     AWS_ACCESS_KEY_ID       = os.getenv('R2_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY   = os.getenv('R2_SECRET_ACCESS_KEY')
@@ -204,6 +290,16 @@ if os.getenv('USE_R2', 'false').lower() == 'true':
     _r2_public_host         = os.getenv('R2_PUBLIC_URL', '').replace('https://', '').replace('http://', '').strip('/')
     AWS_S3_CUSTOM_DOMAIN    = _r2_public_host
     MEDIA_URL               = f"https://{_r2_public_host}/"
+else:
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": _STATIC_BACKEND},
+    }
+    if not DEBUG:
+        # Railway containers have an ephemeral filesystem: every redeploy wipes
+        # MEDIA_ROOT, taking licence photos and violation evidence with it.
+        print('[settings] WARNING: USE_R2=false in production — uploaded files '
+              'will be lost on every redeploy. Set USE_R2=true.')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -233,3 +329,45 @@ CELERY_WORKER_POOL = os.getenv('CELERY_WORKER_POOL', 'solo')
 # ML Feedback Loop Configuration
 ML_SAMPLE_BATCH_SIZE = int(os.getenv('ML_SAMPLE_BATCH_SIZE', 50))
 ML_AUTO_RETRAIN_ENABLED = os.getenv('ML_AUTO_RETRAIN_ENABLED', 'true').lower() == 'true'
+
+# ── Production hardening ──────────────────────────────────────────────────────
+# Everything below is a no-op in local development (DEBUG=True).
+
+# Railway terminates TLS at its edge and forwards plain HTTP to the container.
+# Without this header mapping Django believes every request is insecure: it
+# would redirect HTTPS traffic into an infinite loop and refuse to set secure
+# cookies. This line is what makes the rest of the block safe to enable.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
+# Django requires the scheme on trusted origins. Accepts either a full origin
+# or a bare host in CSRF_TRUSTED_ORIGINS, and always trusts the Railway domain.
+CSRF_TRUSTED_ORIGINS = [
+    o if o.startswith('http') else f'https://{o}'
+    for o in _env_list('CSRF_TRUSTED_ORIGINS')
+]
+if RAILWAY_DOMAIN:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{RAILWAY_DOMAIN}')
+
+# The SPA is served from the same origin as the API, so no cross-origin request
+# is expected in production. CORS_ALLOWED_ORIGINS stays configurable for the
+# on-campus scanning agent, which does call in from another host.
+CORS_ALLOW_CREDENTIALS = True
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', 'true')
+    # Railway's healthcheck probes over plain HTTP internally; redirecting it
+    # to HTTPS makes the deploy fail its own health gate.
+    SECURE_REDIRECT_EXEMPT = [r'^healthz/?$']
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    SESSION_COOKIE_HTTPONLY = True
+
+# Django's admin lives under a non-default prefix because the React app owns
+# the '/admin' route on this shared origin (see config/urls.py).
+DJANGO_ADMIN_URL = os.getenv('DJANGO_ADMIN_URL', 'django-admin').strip('/')

@@ -1,0 +1,12 @@
+# Detection marker for Railpack — the real pin list lives in
+# backend/requirements.txt and this file just defers to it.
+#
+# Railpack decides both *that* this is a Python project and *which* package
+# manager to use by looking for a dependency file at the repository root. The
+# Django app lives in backend/, so without this file the build can fail with
+# "Railpack could not determine how to build the app".
+#
+# Note: railpack.json overrides the install step and installs CPU-only torch
+# from the PyTorch index before this list, so nothing here pulls the ~2.5GB
+# CUDA build. Local development should keep using backend/requirements.txt.
+-r backend/requirements.txt

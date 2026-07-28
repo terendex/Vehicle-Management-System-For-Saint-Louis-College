@@ -34,6 +34,11 @@ mpmath==1.3.0
 networkx==3.6.1
 ninja==1.13.0
 numpy==2.4.6
+# Both of these stay pinned, and at the SAME version, on purpose. ultralytics
+# and paddleocr both hard-depend on non-headless opencv-python, so dropping it
+# here does not remove it — pip pulls it back in unpinned and it can drift from
+# the headless pin. The two distributions install the same `cv2` module, so a
+# version mismatch means whichever landed last silently wins.
 opencv-python==4.13.0.92
 opencv-python-headless==4.13.0.92
 packaging==26.2
@@ -74,10 +79,14 @@ urllib3==2.7.0
 vine==5.1.0
 wcwidth==0.7.0
 channels~=4.2
+channels-redis~=4.2
 daphne~=4.1
 twisted~=24.11
 autobahn~=24.4
 django-redis~=5.4
+# Serves the built React bundle + Django static files from the app process, so
+# the deployment needs no separate web server or CDN.
+whitenoise[brotli]~=6.8
 dj-database-url==2.3.0
 django-storages[s3]==1.14.4
 boto3==1.38.28
