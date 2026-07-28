@@ -652,14 +652,29 @@ land in a pending queue for the CDSO to accept or reject.
 | **Security** | Scan plates, view logs, manage visitor passes, view own statistics |
 | **Vehicle Owner** | View own registered vehicles, history, and entry status |
 
-### Demo Credentials
+### Accounts
+
+The system ships with one seeded administrator; all other accounts are created
+through the app.
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@slc.edu.ph | Admin123! |
-| Security | guard@slc.edu.ph | guard123 |
+| Admin | `admin@slc.edu.ph` | set on first setup — see below |
 
-> Use these credentials to log in at `http://localhost:5173`.
+Passwords are intentionally **not** listed here: this is a public repository and
+the deployment is reachable on the public internet, so a working credential in
+this file is a live account anyone could use.
+
+**First-time login / forgotten password** — reset it against the database, then
+log in at `/login`:
+
+```bash
+cd backend && python manage.py changepassword admin@slc.edu.ph
+```
+
+On Railway, run that from the service's **Console** tab. Locally, run it from an
+activated virtual environment. To create additional administrators, use
+`python manage.py createsuperuser`.
 
 ---
 
