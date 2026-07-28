@@ -10,34 +10,25 @@
     "libglib2.0-0",
     "libgomp1"
   ],
-  "caches": {
-    "pip": {
-      "directory": "/root/.cache/pip",
-      "type": "shared"
-    },
-    "npm": {
-      "directory": "/root/.npm",
-      "type": "shared"
-    }
-  },
   "steps": {
     "install": {
-      "caches": ["pip", "npm"],
       "commands": [
-        "pip install --upgrade pip",
+        "python -m venv /app/.venv",
+        { "path": "/app/.venv/bin" },
         "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.0 torchvision==0.27.0",
         "pip install paddlepaddle==3.0.0",
-        "pip install -r requirements.txt",
-        "npm --prefix frontend ci"
+        { "src": "requirements.txt", "dest": "requirements.txt" },
+        "pip install -r requirements.txt"
       ]
     },
     "build": {
       "commands": [
+        { "path": "/app/.venv/bin" },
+        "npm --prefix frontend ci",
         "npm --prefix frontend run build",
         "rm -rf backend/frontend_build",
         "cp -r frontend/dist backend/frontend_build",
-        "cd backend && DEBUG=false SECRET_KEY=build-only-not-a-real-secret python manage.py collectstatic --noinput --clear",
-        "python -m compileall -q backend || true"
+        "cd backend && DEBUG=false SECRET_KEY=build-only-not-a-real-secret python manage.py collectstatic --noinput --clear"
       ]
     }
   },
