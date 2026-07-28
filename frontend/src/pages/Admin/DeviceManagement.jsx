@@ -6,7 +6,6 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { camerasApi } from '../../api/cameras'
 import { getGates } from '../../api/scanning'
 import { useCameraContext } from '../../context/CameraContext'
@@ -490,7 +489,7 @@ export default function DeviceManagement() {
   const parkingCams = cameras.filter(c => c.assignment === 'parking')
 
   return (
-    <AdminLayout>
+    <>
       <div className="device-management-page">
 
         {/* Page Header */}
@@ -696,12 +695,12 @@ export default function DeviceManagement() {
                         <div className="dm-feed-overlay">
                           {sc.wsActive ? (
                             <>
-                              <Loader2 size={28} className="dm-spin" style={{ color: '#60a5fa' }} />
+                              <Loader2 size={28} className="dm-spin" style={{ color: '#5CA9DC' }} />
                               <span>{sc.statusMsg || 'Connecting…'}</span>
                             </>
                           ) : (
                             <>
-                              <WifiOff size={28} style={{ color: '#374151' }} />
+                              <WifiOff size={28} style={{ color: '#2E4C63' }} />
                               <span>Disconnected</span>
                             </>
                           )}
@@ -780,6 +779,6 @@ export default function DeviceManagement() {
           }}
         />
       )}
-    </AdminLayout>
+    </>
   )
 }

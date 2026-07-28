@@ -5,7 +5,6 @@ import {
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
@@ -261,7 +260,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               value={supplier.category || 'other'}
               onChange={handleCategoryChange}
               disabled={changingCategory}
-              style={{ marginLeft: 8, fontSize: 11, border: '1px solid #E2E6EE', borderRadius: 6, padding: '1px 4px' }}
+              style={{ marginLeft: 8, fontSize: 11, border: '1px solid #D3E1EC', borderRadius: 6, padding: '1px 4px' }}
               onClick={e => e.stopPropagation()}
             >
               {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -553,7 +552,7 @@ export default function SupplierManagement() {
   const handleDeleted  = (id) => setSuppliers(prev => prev.filter(x => x.id !== id))
 
   return (
-    <AdminLayout>
+    <>
       <div className="sp-page">
 
         {/* ── Header ──────────────────────────────── */}
@@ -603,6 +602,6 @@ export default function SupplierManagement() {
           onCreated={handleCreated}
         />
       )}
-    </AdminLayout>
+    </>
   )
 }

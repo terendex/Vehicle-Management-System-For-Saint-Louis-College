@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { Shield, LogOut } from 'lucide-react'
+import { Shield, LogOut, HelpCircle } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './OwnerLayout.css'
@@ -28,6 +28,9 @@ export default function OwnerLayout({ children }) {
           <span className="user-greeting">
             {user?.full_name ? `Hi, ${user.full_name}` : 'Vehicle Owner'}
           </span>
+          <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
+            <HelpCircle size={18} />
+          </button>
           <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
             <Shield size={18} />
           </button>

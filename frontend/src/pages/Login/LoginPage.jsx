@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight, ShieldCheck } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // Set by the change-password flow, which signs the user out on purpose
+  const passwordChanged = searchParams.get('passwordChanged') === '1'
 
   const [email, setEmail] = useState(localStorage.getItem('rememberedEmail') || '')
   const [password, setPassword] = useState('')
@@ -74,6 +77,13 @@ export default function LoginPage() {
             <h1 className="card-title">Account Login</h1>
             <p className="card-subtitle">Sign in to access the smart parking and vehicle verification system</p>
           </div>
+
+          {passwordChanged && !error && (
+            <div className="success-alert" role="status">
+              <ShieldCheck size={16} />
+              <span>Password changed. Please sign in with your new password.</span>
+            </div>
+          )}
 
           {error && !showErrorModal && (
             <div className="error-alert" id="login-error" role="alert">

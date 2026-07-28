@@ -69,9 +69,9 @@
   gap: 6px;
   width: 100%;
   padding: 8px 10px;
-  background: #f0fdf4;
-  color: #166534;
-  border: 1.5px solid #bbf7d0;
+  background: #EFF9F5;
+  color: #0A5C43;
+  border: 1.5px solid #C4E8D9;
   border-radius: 8px;
   font-size: 12.5px;
   font-weight: 600;
@@ -81,15 +81,15 @@
 }
 
 .cs-trigger-btn:hover {
-  background: #dcfce7;
-  border-color: #86efac;
+  background: #D6F0E6;
+  border-color: #A8DCC8;
 }
 
 /* ── Change Shift overlay ── */
 .cs-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(10, 14, 28, 0.72);
+  background: rgba(4, 18, 31, 0.72);
   backdrop-filter: blur(4px);
   z-index: 200;
   display: flex;
@@ -121,18 +121,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #2A2B61;
+  color: #03396C;
 }
 
 .cs-modal-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 .cs-gate-pill {
-  background: #EEF0FB;
-  color: #2A2B61;
+  background: #EAF2F8;
+  color: #03396C;
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
@@ -146,22 +146,22 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  background: #f3f4f6;
+  background: #EEF4F9;
   border: none;
   border-radius: 8px;
-  color: #6b7280;
+  color: #5C7B92;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .cs-close:hover {
-  background: #e5e7eb;
-  color: #111827;
+  background: #D3E1EC;
+  color: #0B2340;
 }
 
 .cs-instruction {
   font-size: 13px;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 0;
   line-height: 1.5;
 }
@@ -171,7 +171,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #9CA3AF;
+  color: #64839C;
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -183,7 +183,7 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: #E2E6EE;
+  background: #D3E1EC;
 }
 
 /* Camera viewport */
@@ -191,7 +191,7 @@
   position: relative;
   border-radius: 12px;
   overflow: hidden;
-  background: #0d1117;
+  background: #04121F;
   aspect-ratio: 1;
   display: flex;
   flex-direction: column;
@@ -220,7 +220,7 @@
   position: absolute;
   width: 48px;
   height: 48px;
-  border-color: #10b981;
+  border-color: #14A374;
   border-style: solid;
   border-width: 0;
 }
@@ -263,7 +263,7 @@
   flex: 1;
   height: 40px;
   padding: 0 12px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 8px;
   font-size: 14px;
   font-family: 'Courier New', monospace;
@@ -272,7 +272,7 @@
 }
 
 .cs-input:focus {
-  border-color: #2A2B61;
+  border-color: #03396C;
 }
 
 .cs-eye,
@@ -283,19 +283,19 @@
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #fff;
-  color: #5A5F72;
+  color: #4A6B85;
   cursor: pointer;
   flex-shrink: 0;
   transition: all 0.15s;
 }
 
-.cs-eye:hover { background: #f9fafb; color: #1A1D2E; }
+.cs-eye:hover { background: #F7FAFC; color: #0B2340; }
 
 .cs-submit {
-  background: #2A2B61;
-  border-color: #2A2B61;
+  background: #03396C;
+  border-color: #03396C;
   color: #fff;
 }
 
@@ -305,19 +305,19 @@
 }
 
 .cs-submit:not(:disabled):hover {
-  background: #1e1f4a;
+  background: #032C55;
 }
 
 .cs-err-text {
   font-size: 12px;
-  color: #dc2626;
+  color: #C62828;
   margin: 0;
 }
 
 .cs-toggle-btn {
   background: none;
   border: none;
-  color: #6b7280;
+  color: #5C7B92;
   font-size: 12px;
   cursor: pointer;
   text-decoration: underline;
@@ -326,7 +326,7 @@
   font-family: inherit;
 }
 
-.cs-toggle-btn:hover { color: #2A2B61; }
+.cs-toggle-btn:hover { color: #03396C; }
 
 /* Status states */
 .cs-state {
@@ -336,14 +336,14 @@
   gap: 10px;
   padding: 24px 0;
   text-align: center;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .cs-state h3 {
   margin: 0;
   font-size: 17px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 .cs-state p {
@@ -351,22 +351,22 @@
   font-size: 14px;
 }
 
-.cs-state-success { color: #10b981; }
-.cs-state-success h3 { color: #065f46; }
+.cs-state-success { color: #14A374; }
+.cs-state-success h3 { color: #0A5C43; }
 
-.cs-state-error { color: #ef4444; }
-.cs-state-error h3 { color: #991b1b; }
+.cs-state-error { color: #D93B3B; }
+.cs-state-error h3 { color: #841818; }
 
 .cs-hint {
   font-size: 12px !important;
-  color: #9ca3af !important;
+  color: #64839C !important;
 }
 
 .cs-spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid rgba(42, 43, 97, 0.15);
-  border-top-color: #2A2B61;
+  border: 3px solid rgba(3, 57, 108, 0.15);
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: cs-spin 0.8s linear infinite;
 }

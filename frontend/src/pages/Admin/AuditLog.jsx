@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
-  RefreshCw, ChevronLeft, ChevronRight, Download, X
+  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
 } from 'lucide-react'
+import { reportFileName } from '../../utils/reportName'
 import './AuditLog.css'
 
 const ACTION_LABELS = {
@@ -23,7 +23,7 @@ const ACTION_LABELS = {
   user_deleted:    'User Deleted',
   user_disabled:   'User Disabled',
   user_enabled:    'User Enabled',
-  admin_replaced:  'Admin Replaced',
+  admin_replaced:  'CDSO Replaced',
   device_created:  'Device Added',
   device_updated:  'Device Updated',
   device_deleted:  'Device Removed',
@@ -68,7 +68,7 @@ export default function AuditLog() {
   const [totalCount, setTotalCount] = useState(0)
   const searchTimer = useRef(null)
 
-  const hasFilters = search || actionFilter || datePeriod !== 'all'
+  const hasFilters = search || actionFilter || datePeriod !== 'all' || dateFrom || dateTo
 
   const fetchLogs = useCallback(async (currentPage, currentSearch) => {
     setLoading(true)
@@ -130,29 +130,65 @@ export default function AuditLog() {
     }
   }
 
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting]       = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
+
+  const today = toDateStr(new Date())
+
+  const buildExportParams = () => {
+    const params = {}
+    if (actionFilter) params.action    = actionFilter
+    if (dateFrom)     params.date_from = dateFrom
+    if (dateTo)       params.date_to   = dateTo
+    if (search)       params.search    = search
+    return params
+  }
+
+  const downloadBlob = (blob, ext) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = reportFileName('Audit Log Report', ext)
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Server-generated Excel report of ALL rows matching the current filters
   const exportExcel = async () => {
     setExporting(true)
     try {
-      const params = {}
-      if (actionFilter) params.action    = actionFilter
-      if (dateFrom)     params.date_from = dateFrom
-      if (dateTo)       params.date_to   = dateTo
-      if (search)       params.search    = search
-      const blob = await usersApi.exportAuditLogsExcel(params)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `audit-log-report-${toDateStr(new Date())}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
+      const blob = await usersApi.exportAuditLogsExcel(buildExportParams())
+      downloadBlob(blob, 'xlsx')
     } catch {
       // download failed silently — surface nothing destructive
     } finally {
       setExporting(false)
     }
+  }
+
+  // Server-generated branded PDF report of ALL rows matching the current filters
+  const exportPdf = async () => {
+    setExportingPdf(true)
+    try {
+      const blob = await usersApi.exportAuditLogsPdf(buildExportParams())
+      downloadBlob(blob, 'pdf')
+    } catch {
+      // download failed silently
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
+  // Manual Date From/To — clears the active preset and validates ordering
+  const onDateFromChange = (value) => {
+    setDatePeriod('')
+    if (value && dateTo && value > dateTo) setDateTo(value)
+    setDateFrom(value)
+  }
+  const onDateToChange = (value) => {
+    setDatePeriod('')
+    if (value && dateFrom && value < dateFrom) setDateFrom(value)
+    setDateTo(value)
   }
 
   const formatDate = (iso) => {
@@ -176,11 +212,11 @@ export default function AuditLog() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="al-page">
         <div className="al-header">
           <div>
-            <h1 className="al-title">Vehicle Log</h1>
+            <h1 className="al-title">Audit Log</h1>
             <p className="al-subtitle">Track all user management actions and vehicle scans.</p>
           </div>
           <div className="al-header-actions">
@@ -188,6 +224,10 @@ export default function AuditLog() {
               <ClipboardList size={16} />
               <span>{totalCount} events</span>
             </div>
+            <button className="al-export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Download all filtered entries as a branded PDF report">
+              <FileText size={14} />
+              <span>{exportingPdf ? 'Exporting…' : 'Export PDF'}</span>
+            </button>
             <button className="al-export-btn" onClick={exportExcel} disabled={exporting || totalCount === 0} title="Download all filtered entries as an Excel report">
               <Download size={14} />
               <span>{exporting ? 'Exporting…' : 'Export Excel'}</span>
@@ -196,65 +236,93 @@ export default function AuditLog() {
         </div>
 
         <div className="al-toolbar">
-          <div className="al-period-btns">
-            {DATE_PERIODS.map(p => (
-              <button
-                key={p.value}
-                className={`al-period-btn ${datePeriod === p.value ? 'active' : ''}`}
-                onClick={() => applyPeriod(p.value)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="al-search-wrapper">
-            <Search size={15} />
-            <input
-              className="al-search-input"
-              type="text"
-              placeholder="Search actor, plate, details…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button className="al-search-clear" onClick={() => setSearch('')}>
-                <X size={12} />
-              </button>
-            )}
-          </div>
-
-          <span className="al-sep" />
-
-          <div className="al-filter-item">
-            <Filter size={13} />
-            <select
-              className="al-form-select"
-              value={actionFilter}
-              onChange={(e) => setAction(e.target.value)}
-            >
-              <option value="">All Actions</option>
-              {Object.entries(ACTION_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
+          {/* Row 1 — date range: quick presets or a custom From/To */}
+          <div className="al-toolbar-row">
+            <span className="al-toolbar-label"><Calendar size={14} /> Date range</span>
+            <div className="al-period-btns">
+              {DATE_PERIODS.map(p => (
+                <button
+                  key={p.value}
+                  className={`al-period-btn ${datePeriod === p.value ? 'active' : ''}`}
+                  onClick={() => applyPeriod(p.value)}
+                >
+                  {p.label}
+                </button>
               ))}
-            </select>
+            </div>
+            <span className="al-daterange-or">or pick</span>
+            <div className="al-daterange">
+              <input
+                className="al-date-input"
+                type="date"
+                value={dateFrom}
+                max={dateTo || today}
+                onChange={(e) => onDateFromChange(e.target.value)}
+                title="Date From"
+                aria-label="Date From"
+              />
+              <span className="al-daterange-sep">to</span>
+              <input
+                className="al-date-input"
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                max={today}
+                onChange={(e) => onDateToChange(e.target.value)}
+                title="Date To"
+                aria-label="Date To"
+              />
+            </div>
           </div>
 
-          <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
-            <RefreshCw size={14} />
-          </button>
+          {/* Row 2 — search + action filter */}
+          <div className="al-toolbar-row">
+            <div className="al-search-wrapper">
+              <Search size={15} />
+              <input
+                className="al-search-input"
+                type="text"
+                placeholder="Search actor, plate, or details…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button className="al-search-clear" onClick={() => setSearch('')}>
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            <div className="al-filter-item">
+              <Filter size={13} />
+              <select
+                className="al-form-select"
+                value={actionFilter}
+                onChange={(e) => setAction(e.target.value)}
+              >
+                <option value="">All Actions</option>
+                {Object.entries(ACTION_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+
+            <button className="al-refresh-btn" onClick={() => fetchLogs(page, search)} title="Refresh">
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
 
         <div className="al-table-container">
           {loading ? (
             <div className="al-loading">
               <div className="al-spinner" />
-              <p>Loading vehicle logs...</p>
+              <p>Loading audit logs…</p>
             </div>
           ) : logs.length === 0 ? (
             <div className="al-empty">
               <ClipboardList size={48} />
-              <h3>No vehicle logs found</h3>
+              <h3>No audit logs found</h3>
               <p>{hasFilters ? 'No events match your current filters.' : 'No events recorded yet.'}</p>
             </div>
           ) : (
@@ -279,8 +347,10 @@ export default function AuditLog() {
                     </td>
                     <td className="al-details">
                       <span className="al-details-text">{log.details || '—'}</span>
+                      {/* A completed visit is folded into one row by the API, which
+                          attaches the matching exit time and computed duration. */}
                       {log.exited_at && (
-                        <span className="al-details-text" style={{ display: 'block', color: '#059669', marginTop: 2 }}>
+                        <span className="al-details-text" style={{ display: 'block', color: '#0F7A5A', marginTop: 2 }}>
                           Exited {formatDate(log.exited_at)} · Duration: {log.duration_minutes} min
                         </span>
                       )}
@@ -317,6 +387,6 @@ export default function AuditLog() {
           </div>
         )}
       </div>
-    </AdminLayout>
+    </>
   )
 }

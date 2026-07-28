@@ -68,6 +68,30 @@ export const usersApi = {
     return data
   },
 
+  /** Download the filtered audit log as a branded PDF report (admin only). */
+  exportAuditLogsPdf: async (params = {}) => {
+    const { data } = await api.get('/accounts/audit-logs/export-pdf/', {
+      params, responseType: 'blob',
+    })
+    return data
+  },
+
+  /** Download a full JSON backup of all application data (admin only). */
+  downloadBackup: async () => {
+    const { data } = await api.get('/accounts/system/backup/', { responseType: 'blob' })
+    return data
+  },
+
+  /** Restore application data from an uploaded JSON backup file (admin only). */
+  restoreBackup: async (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    const { data } = await api.post('/accounts/system/restore/', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
+  },
+
   /** Create an audit log entry manually (used for device management actions). */
   createAuditLog: async (payload) => {
     const { data } = await api.post('/accounts/audit-logs/', payload)

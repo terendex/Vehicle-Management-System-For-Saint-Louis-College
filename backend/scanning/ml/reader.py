@@ -170,6 +170,19 @@ _OCR_LOCK = threading.Lock()
 # Confidence above which we skip the expensive L/M/R tiled passes
 _OCR_EARLY_EXIT_CONF = 0.60
 
+# Gamma-brighten lookup table (gamma 1/1.8). Constant, so build it once at
+# import instead of running a 256-iteration Python loop on every OCR call.
+_GAMMA_LUT = np.array(
+    [min(255, int(255 * ((i / 255.0) ** (1.0 / 1.8)))) for i in range(256)],
+    dtype=np.uint8,
+)
+
+# Order the preprocessing variants are tried in. Colour and grayscale first —
+# PaddleOCR's detector works on gradient information that binary thresholding
+# destroys, so those usually win and let the rest be skipped.
+_VARIANT_ORDER = ("color", "clahe", "gray", "bw", "bw_inv",
+                  "adaptive", "bilateral", "gamma")
+
 
 
 def _get_ocr():
@@ -433,27 +446,56 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     if ocr is None:
         return None, None
 
-    # Convert to B&W variants fed to PaddleOCR
-    bw     = _to_bw(deskewed)
-    bw_inv = cv2.bitwise_not(bw)
-    _gray  = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY) if len(deskewed.shape) == 3 else deskewed
-    # CLAHE-sharpened — good for faded / low-contrast plates
-    _cl         = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    _cl_applied = _cl.apply(_gray)
-    clahe_sharp = cv2.addWeighted(_cl_applied, 1.5,
-                                  cv2.GaussianBlur(_cl_applied, (3, 3), 0), -0.5, 0)
-    # Adaptive threshold — handles uneven lighting across the plate (night / shadows)
-    _denoised = cv2.medianBlur(_gray, 3)
-    adaptive  = cv2.adaptiveThreshold(
-        _denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10
-    )
-    # Bilateral + Otsu — edge-preserving denoise before threshold (good for RTSP compression artifacts)
-    _bilateral = cv2.bilateralFilter(_gray, 9, 75, 75)
-    _, bilateral_bw = cv2.threshold(_bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # Gamma-brightened — lifts underexposed nighttime frames so Otsu gets a cleaner histogram
-    _gamma_lut = np.array([min(255, int(255 * ((i / 255.0) ** (1.0 / 1.8)))) for i in range(256)], dtype=np.uint8)
-    _gamma_gray = cv2.LUT(_gray, _gamma_lut)
-    _, gamma_bw  = cv2.threshold(_gamma_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Preprocessing variants fed to PaddleOCR.
+    #
+    # These used to all be computed up front, but the loop below very often
+    # succeeds on the first ("color") variant and returns — so the bilateral
+    # filter, CLAHE, adaptive threshold and two Otsu passes were paid for on
+    # every plate and thrown away. They are now built on first use and
+    # memoised, which keeps the variants and their order exactly the same
+    # while charging only for the ones actually reached.
+    def _gray_of():
+        return (cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY)
+                if len(deskewed.shape) == 3 else deskewed)
+
+    def _build_clahe():
+        # CLAHE-sharpened — good for faded / low-contrast plates
+        cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(_variant("gray"))
+        return cv2.addWeighted(cl, 1.5, cv2.GaussianBlur(cl, (3, 3), 0), -0.5, 0)
+
+    def _build_adaptive():
+        # Handles uneven lighting across the plate (night / shadows)
+        return cv2.adaptiveThreshold(
+            cv2.medianBlur(_variant("gray"), 3), 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10,
+        )
+
+    def _build_bilateral():
+        # Edge-preserving denoise before threshold (RTSP compression artifacts)
+        blurred = cv2.bilateralFilter(_variant("gray"), 9, 75, 75)
+        return cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    def _build_gamma():
+        # Lifts underexposed nighttime frames so Otsu gets a cleaner histogram
+        brightened = cv2.LUT(_variant("gray"), _GAMMA_LUT)
+        return cv2.threshold(brightened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    _builders = {
+        "color":     lambda: deskewed,
+        "gray":      _gray_of,
+        "bw":        lambda: _to_bw(deskewed),
+        "bw_inv":    lambda: cv2.bitwise_not(_variant("bw")),
+        "clahe":     _build_clahe,
+        "adaptive":  _build_adaptive,
+        "bilateral": _build_bilateral,
+        "gamma":     _build_gamma,
+    }
+    _built: dict = {}
+
+    def _variant(label):
+        if label not in _built:
+            _built[label] = _builders[label]()
+        return _built[label]
 
 
     def _run_ocr(img: np.ndarray, label: str):
@@ -486,21 +528,8 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
     candidates: list[tuple[float, str]] = []
     fallback:   list[tuple[float, str]] = []
 
-    # Color and grayscale first — PaddleOCR's detector works on gradient information
-    # that binary thresholding can destroy; color/grayscale variants tend to outperform
-    # pure binary for plate OCR in practice.
-    _variants = [
-        (deskewed,    "color"),
-        (clahe_sharp, "clahe"),
-        (_gray,       "gray"),
-        (bw,          "bw"),
-        (bw_inv,      "bw_inv"),
-        (adaptive,    "adaptive"),
-        (bilateral_bw,"bilateral"),
-        (gamma_bw,    "gamma"),
-    ]
-    for img_v, label in _variants:
-        for text, conf, valid in _run_ocr(img_v, label):
+    for label in _VARIANT_ORDER:
+        for text, conf, valid in _run_ocr(_variant(label), label):
             if valid and conf > 0.08:
                 candidates.append((conf, text))
                 if conf >= _OCR_EARLY_EXIT_CONF:
@@ -509,13 +538,16 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
             elif conf > 0.05:
                 fallback.append((conf, text))
 
-    # L/M/R tiled pass — helps when text is split across regions
-    h_img, w_img = bw.shape[:2]
+    # L/M/R tiled pass — helps when text is split across regions.
+    # This is 8 variants x 3 regions = 24 more OCR invocations, so it is by far
+    # the most expensive part of the function.
+    h_img, w_img = _variant("bw").shape[:2]
     if w_img > 90:
         third      = w_img // 3
         two_thirds = 2 * third
         lmr_texts: dict[str, str] = {}
-        for img_v, label in _variants:
+        for label in _VARIANT_ORDER:
+            img_v = _variant(label)
             for sv, sl in [
                 (img_v[:, :third],          f"{label}_L"),
                 (img_v[:, third:two_thirds],f"{label}_M"),
@@ -524,6 +556,13 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
                 for text, conf, valid in _run_ocr(sv, sl):
                     if valid and conf > 0.08:
                         candidates.append((conf, text))
+                        # Same early exit the main loop already applies: a
+                        # high-confidence valid plate ends the search rather
+                        # than grinding through the remaining region passes.
+                        if conf >= _OCR_EARLY_EXIT_CONF:
+                            log.info("[OCR-CROP] Early exit (LMR) — high-conf valid plate: "
+                                     "'%s' (%.2f)", text, conf)
+                            return text, conf
                     elif conf > 0.05:
                         fallback.append((conf, text))
                     region = sl.split("_")[-1]
@@ -633,6 +672,9 @@ def read_plate(image_bytes: bytes) -> list[dict]:
                 "plate_text": plate_text,
                 "bbox": det["bbox"],
                 "confidence": conf,
+                # Detector (not OCR) score — lets record_scan reuse this result
+                # instead of re-running the whole detect+OCR pipeline.
+                "detection_score": det["score"],
             })
 
     if results:

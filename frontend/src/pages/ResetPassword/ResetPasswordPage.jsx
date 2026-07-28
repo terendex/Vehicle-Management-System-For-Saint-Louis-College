@@ -20,7 +20,7 @@ function StrengthBar({ password }) {
   const checks = useMemo(() => strengthCheck(password), [password])
   const score  = Object.values(checks).filter(Boolean).length
 
-  const colors = ['#e2e6ee', '#DC2626', '#F97316', '#EAB308', '#16A34A', '#15803D']
+  const colors = ['#D3E1EC', '#C62828', '#E0B00C', '#D4B00E', '#12915A', '#0F7A5A']
   const labels = ['', 'Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong']
 
   if (!password) return null
@@ -32,7 +32,7 @@ function StrengthBar({ password }) {
           <div
             key={i}
             className="rp-strength-bar"
-            style={{ background: i <= score ? colors[score] : '#e2e6ee' }}
+            style={{ background: i <= score ? colors[score] : '#D3E1EC' }}
           />
         ))}
       </div>

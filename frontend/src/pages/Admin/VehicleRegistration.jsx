@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2 } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
+import ReportExportBar from '../../components/ReportExportBar'
+import { TableLoaderRow } from '../../components/TableLoader'
 import './VehicleRegistration.css'
 
 const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
@@ -42,6 +43,7 @@ function getPeriodStart(period) {
 export default function VehicleRegistration() {
   // Registrations State
   const [registrations, setRegistrations] = useState([])
+  const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('pending')
   const [datePeriod, setDatePeriod] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -80,11 +82,16 @@ export default function VehicleRegistration() {
   }, [statusFilter])
 
   const fetchRegistrations = async () => {
+    setLoading(true)
     try {
       const data = await registrationApi.getPendingRegistrations(statusFilter)
       setRegistrations(data)
     } catch (error) {
       console.error('Failed to fetch registrations:', error)
+    } finally {
+      // finally, so a failed request still clears the spinner instead of
+      // leaving the table loading forever.
+      setLoading(false)
     }
   }
 
@@ -114,10 +121,10 @@ export default function VehicleRegistration() {
     win.document.write(`<!DOCTYPE html><html><head><title>${qrDisplayData.title}</title>
       <style>
         body { font-family: Arial, sans-serif; text-align: center; padding: 40px; }
-        h1 { font-size: 20px; color: #2A2B61; margin-bottom: 8px; }
-        p { color: #555; font-size: 13px; margin: 4px 0; }
+        h1 { font-size: 20px; color: #03396C; margin-bottom: 8px; }
+        p { color: #3E5B72; font-size: 13px; margin: 4px 0; }
         svg { width: 300px; height: 300px; margin: 24px 0; }
-        .link { font-size: 12px; word-break: break-all; color: #333; margin-top: 8px; }
+        .link { font-size: 12px; word-break: break-all; color: #2E4C63; margin-top: 8px; }
       </style></head><body>
       <h1>Vehicle Registration — Saint Louis College</h1>
       <p>Scan this QR code with your phone camera to open the vehicle registration form.</p>
@@ -242,7 +249,7 @@ export default function VehicleRegistration() {
   const clearFilters = () => { setDatePeriod('all'); setTypeFilter('all'); setSearch(''); setRegPage(1) }
 
   return (
-    <AdminLayout>
+    <>
       <div className="vehicle-registration-page">
         <div className="page-header vr-header-row">
           <div>
@@ -253,6 +260,12 @@ export default function VehicleRegistration() {
             <QrCode size={18} /> Registration Form QR
           </button>
         </div>
+
+        <ReportExportBar
+          label="Registrations Report"
+          fileBase="registrations-report"
+          fetchBlob={registrationApi.exportRegistrationsReport}
+        />
 
         {/* SECTION: Registrations */}
         <div className="section-container">
@@ -326,7 +339,8 @@ export default function VehicleRegistration() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedRegistrations.map(r => (
+                {loading && <TableLoaderRow colSpan={7} label="Loading registrations…" />}
+                {!loading && paginatedRegistrations.map(r => (
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
@@ -348,7 +362,7 @@ export default function VehicleRegistration() {
                     </td>
                   </tr>
                 ))}
-                {filteredRegistrations.length === 0 && (
+                {!loading && filteredRegistrations.length === 0 && (
                   <tr className="empty-row">
                     <td colSpan="7">No {statusFilter} registrations found{datePeriod !== 'all' ? ' for this period' : ''}.</td>
                   </tr>
@@ -442,11 +456,11 @@ export default function VehicleRegistration() {
                       <div className="detail-label">Students to Fetch ({selectedReg.fetcher_students.length})</div>
                       <div className="detail-value" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
                         {selectedReg.fetcher_students.map((s, i) => (
-                          <div key={i} style={{ padding: '6px 12px', background: '#F5F6FF', border: '1px solid #E2E6EE', borderRadius: 8, fontSize: 13 }}>
+                          <div key={i} style={{ padding: '6px 12px', background: '#F7FAFC', border: '1px solid #D3E1EC', borderRadius: 8, fontSize: 13 }}>
                             <strong>{s.full_name}</strong>
-                            {s.student_id && <span style={{ color: '#7C80A3' }}> · ID: {s.student_id}</span>}
-                            {s.student_level && <span style={{ color: '#7C80A3' }}> · {s.student_level.toUpperCase()}</span>}
-                            {s.program_year && <span style={{ color: '#7C80A3' }}> · {s.program_year}</span>}
+                            {s.student_id && <span style={{ color: '#6B8CA6' }}> · ID: {s.student_id}</span>}
+                            {s.student_level && <span style={{ color: '#6B8CA6' }}> · {s.student_level.toUpperCase()}</span>}
+                            {s.program_year && <span style={{ color: '#6B8CA6' }}> · {s.program_year}</span>}
                           </div>
                         ))}
                       </div>
@@ -471,18 +485,32 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
-              {selectedReg.drivers_license_image && (
-                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
-                  <div className="detail-label">Driver's License Photo</div>
-                  <a href={selectedReg.drivers_license_image} target="_blank" rel="noopener noreferrer">
+              {/* Always rendered so a reviewer can tell "no photo submitted" apart from a missing field */}
+              <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                <div className="detail-label">Driver's License Photo</div>
+                {selectedReg.drivers_license_image ? (
+                  <a
+                    href={selectedReg.drivers_license_image}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open full size in a new tab"
+                    style={{ display: 'inline-block', marginTop: 4 }}
+                  >
                     <img
                       src={selectedReg.drivers_license_image}
                       alt="Driver's license"
-                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #E2E6EE', marginTop: 4 }}
+                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #D3E1EC', display: 'block' }}
                     />
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: '#6B8CA6' }}>
+                      <Maximize2 size={11} /> Click to view full size
+                    </span>
                   </a>
-                </div>
-              )}
+                ) : (
+                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic' }}>
+                    Not provided
+                  </div>
+                )}
+              </div>
 
               {/* Authorized driver — set when the student is a minor / non-driver */}
               {selectedReg.driver_name && (
@@ -491,12 +519,12 @@ export default function VehicleRegistration() {
                   <div className="detail-value">
                     {selectedReg.driver_name}
                     {selectedReg.driver_relationship && (
-                      <span style={{ color: '#7C80A3', fontWeight: 500 }}>
+                      <span style={{ color: '#6B8CA6', fontWeight: 500 }}>
                         {' '}— {selectedReg.driver_relationship.replace('_', ' ')}
                       </span>
                     )}
                     {selectedReg.driver_contact && (
-                      <span style={{ color: '#7C80A3', fontWeight: 500 }}> · {selectedReg.driver_contact}</span>
+                      <span style={{ color: '#6B8CA6', fontWeight: 500 }}> · {selectedReg.driver_contact}</span>
                     )}
                   </div>
                 </div>
@@ -507,7 +535,7 @@ export default function VehicleRegistration() {
                   <div className="detail-label">Campus Days</div>
                   <div className="detail-value" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
                     {selectedReg.campus_days.map(day => (
-                      <span key={day} style={{ display: 'inline-block', padding: '3px 12px', borderRadius: '50px', background: '#2A2B61', color: '#fff', fontSize: '12px', fontWeight: 600 }}>{day}</span>
+                      <span key={day} style={{ display: 'inline-block', padding: '3px 12px', borderRadius: '50px', background: '#03396C', color: '#fff', fontSize: '12px', fontWeight: 600 }}>{day}</span>
                     ))}
                   </div>
                 </div>
@@ -516,14 +544,14 @@ export default function VehicleRegistration() {
               {selectedReg.or_number && (
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <div className="detail-label">Official Receipt (OR) No.</div>
-                  <div className="detail-value token-link" style={{ fontWeight: 700, color: '#059669' }}>{selectedReg.or_number}</div>
+                  <div className="detail-value token-link" style={{ fontWeight: 700, color: '#0F7A5A' }}>{selectedReg.or_number}</div>
                 </div>
               )}
 
               {selectedReg.status === 'accepted' && (
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <div className="detail-label">System ID (Assigned)</div>
-                  <div className="detail-value token-link" style={{ fontSize: '15px', fontWeight: 700, color: '#059669', letterSpacing: '0.5px' }}>
+                  <div className="detail-value token-link" style={{ fontSize: '15px', fontWeight: 700, color: '#0F7A5A', letterSpacing: '0.5px' }}>
                     {selectedReg.registrant_type === 'student'
                       ? selectedReg.system_student_id || '—'
                       : selectedReg.system_employee_id || '—'}
@@ -641,7 +669,7 @@ export default function VehicleRegistration() {
                       {daysOverride.length > 0 ? (
                         <p className="form-hint">Assigned: <strong>{daysOverride.join(', ')}</strong></p>
                       ) : (
-                        <p className="form-hint" style={{ color: '#dc2626' }}>No days selected — original choice will be kept.</p>
+                        <p className="form-hint" style={{ color: '#C62828' }}>No days selected — original choice will be kept.</p>
                       )}
                     </div>
                   )}
@@ -795,14 +823,14 @@ export default function VehicleRegistration() {
               {blockPrompt.detail}
             </p>
             {blockPrompt.registration_block && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', margin: '4px 0 12px', fontSize: 13, textAlign: 'left' }}>
+              <div style={{ background: '#FCEDED', border: '1px solid #F3C0C0', borderRadius: 8, padding: '10px 14px', margin: '4px 0 12px', fontSize: 13, textAlign: 'left' }}>
                 <div><strong>Flagged violations:</strong> {blockPrompt.registration_block.count}</div>
                 <div><strong>Most recent:</strong> {blockPrompt.registration_block.latest_type} ({blockPrompt.registration_block.latest_status})</div>
               </div>
             )}
             <div className="confirm-actions" style={{ display: 'flex', gap: 8 }}>
               <button className="btn-secondary" onClick={() => setBlockPrompt(null)} disabled={submitting} style={{ flex: 1, justifyContent: 'center' }}>Cancel</button>
-              <button className="btn-primary" onClick={() => confirmAccept(true)} disabled={submitting} style={{ flex: 1, justifyContent: 'center', background: '#dc2626', borderColor: '#dc2626' }}>
+              <button className="btn-primary" onClick={() => confirmAccept(true)} disabled={submitting} style={{ flex: 1, justifyContent: 'center', background: '#C62828', borderColor: '#C62828' }}>
                 {submitting ? 'Accepting…' : 'Reviewed — Accept Anyway'}
               </button>
             </div>
@@ -864,14 +892,14 @@ export default function VehicleRegistration() {
               <div className="account-cred-row">
                 <KeyRound size={14} />
                 <span className="account-cred-field">Password</span>
-                <span className="account-cred-val" style={{ color: '#7C80A3', fontStyle: 'italic' }}>Sent securely to owner's email</span>
+                <span className="account-cred-val" style={{ color: '#6B8CA6', fontStyle: 'italic' }}>Sent securely to owner's email</span>
               </div>
               {emailFailed ? (
-                <p className="account-cred-warning" style={{ color: '#DC2626' }}>
+                <p className="account-cred-warning" style={{ color: '#C62828' }}>
                   ⚠ Email failed to send. Please check SMTP settings and share credentials manually.
                 </p>
               ) : (
-                <p className="account-cred-warning" style={{ color: '#059669' }}>
+                <p className="account-cred-warning" style={{ color: '#0F7A5A' }}>
                   ✓ Credentials have been emailed to the vehicle owner.
                 </p>
               )}
@@ -922,6 +950,6 @@ export default function VehicleRegistration() {
           </div>
         </div>
       )}
-    </AdminLayout>
+    </>
   )
 }

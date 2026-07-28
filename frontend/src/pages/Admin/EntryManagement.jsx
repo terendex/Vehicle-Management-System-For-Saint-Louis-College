@@ -117,8 +117,8 @@ function ResultCard({ result, offices, onPassCreated }) {
         <div className="em-result-banner idle">
           <div className="em-result-icon idle"><Camera size={20} /></div>
           <div className="em-result-text">
-            <p className="em-result-status" style={{ color: '#9BA3BF' }}>Awaiting scan</p>
-            <p className="em-result-plate" style={{ color: '#C8CCDE', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
+            <p className="em-result-status" style={{ color: '#64839C' }}>Awaiting scan</p>
+            <p className="em-result-plate" style={{ color: '#BDD4E5', fontSize: 15, letterSpacing: 1 }}>— — — — —</p>
           </div>
         </div>
         <p className="em-idle-hint">Point the CCTV camera at a license plate to begin scanning.</p>
@@ -392,7 +392,7 @@ export default function EntryManagement() {
             </div>
 
             {/* Viewport */}
-            <div className="em-viewport" style={{ background: '#0d1117', minHeight: 340, position: 'relative' }}>
+            <div className="em-viewport" style={{ background: '#04121F', minHeight: 340, position: 'relative' }}>
               {rtspCameras.length > 0 ? (
                 <div style={{ position: 'relative', width: '100%', minHeight: 300 }}>
                   {rtspCameras.map((cam, idx) => (
@@ -408,23 +408,23 @@ export default function EntryManagement() {
                   ))}
                   {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
-                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#60a5fa', borderColor: 'rgba(96,165,250,0.15)' }} />
-                      <p style={{ color: '#93c5fd', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
+                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#5CA9DC', borderColor: 'rgba(92, 169, 220,0.15)' }} />
+                      <p style={{ color: '#8FC4E8', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
                     </div>
                   )}
                   <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none' }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#22c55e' : '#f59e0b', display: 'inline-block' }} />
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#1BA968' : '#E0B00C', display: 'inline-block' }} />
                     {rtspActiveCam?.name || 'IP Camera'}
                   </div>
                   {rtspCameras.length > 1 && (
-                    <div style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.65)', color: '#60a5fa', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, pointerEvents: 'none' }}>
+                    <div style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.65)', color: '#5CA9DC', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, pointerEvents: 'none' }}>
                       {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} live
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="em-cam-off">
-                  <Wifi size={52} style={{ color: '#374151' }} />
+                  <Wifi size={52} style={{ color: '#2E4C63' }} />
                   <p>No entry cameras configured. Add cameras in Device Management.</p>
                 </div>
               )}
@@ -432,7 +432,7 @@ export default function EntryManagement() {
 
             {/* Camera thumbnail strip */}
             {rtspCameras.length > 0 && (
-              <div className="em-cam-thumbnails" style={{ marginTop: 0, borderTop: '1px solid #1e2235' }}>
+              <div className="em-cam-thumbnails" style={{ marginTop: 0, borderTop: '1px solid #0F2A47' }}>
                 {rtspCameras.map(cam => (
                   <div
                     key={`rthumb-${cam.id}`}
@@ -440,11 +440,11 @@ export default function EntryManagement() {
                     onClick={() => setRtspActiveCam(cam.id)}
                     style={{ position: 'relative' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#60A5FA' : '#5A5F72' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#5CA9DC' : '#4A6B85' }}>
                       <Wifi size={20} />
                     </div>
                     <div className="em-cam-thumb-label">{cam.name}</div>
-                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#22c55e' : cam.wsActive ? '#f59e0b' : '#6b7280', display: 'inline-block' }} />
+                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92', display: 'inline-block' }} />
                   </div>
                 ))}
               </div>
@@ -458,7 +458,7 @@ export default function EntryManagement() {
                     ? <><Video size={13} /> No entry cameras configured — add them in Device Management</>
                     : isLive
                       ? <><Zap size={13} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} camera{rtspCameras.length !== 1 ? 's' : ''} live</>
-                      : <><div className="em-spinner" style={{ borderTopColor: '#3b82f6', borderColor: 'rgba(59,130,246,.2)' }} /> Connecting…</>
+                      : <><div className="em-spinner" style={{ borderTopColor: '#2E8CCB', borderColor: 'rgba(46, 140, 203,.2)' }} /> Connecting…</>
                   }
                 </div>
               </div>

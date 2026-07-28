@@ -1,6 +1,6 @@
 /* ================================================================
    SECURITY DASHBOARD
-   Theme: SLC Navy #2A2B61 | Background #F0F2F7 | Card #FFFFFF
+   Theme: SLC Navy #03396C | Background #EEF4F9 | Card #FFFFFF
    ================================================================ */
 
 .sd-page {
@@ -24,13 +24,13 @@
 .sd-title {
   font-size: 1.4rem;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 0 0 3px;
 }
 
 .sd-subtitle {
   font-size: 0.85rem;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 0;
 }
 
@@ -41,18 +41,18 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #5A5F72;
+  color: #4A6B85;
   cursor: pointer;
   transition: all 0.2s ease;
   flex-shrink: 0;
 }
 
 .sd-refresh-btn:hover:not(:disabled) {
-  background: #F8F9FC;
-  color: #2A2B61;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 .sd-refresh-btn:disabled {
@@ -66,15 +66,15 @@
   align-items: center;
   justify-content: center;
   padding: 80px 20px;
-  color: #5A5F72;
+  color: #4A6B85;
   gap: 16px;
 }
 
 .sd-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid #E2E6EE;
-  border-top-color: #2A2B61;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -95,15 +95,15 @@
   align-items: center;
   gap: 14px;
   background: #FFFFFF;
-  border: 1px solid #E2E6EE;
+  border: 1px solid #D3E1EC;
   border-radius: 14px;
   padding: 16px 18px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
   transition: all 0.2s ease;
 }
 
 .sd-card:hover {
-  box-shadow: 0 4px 16px rgba(42, 43, 97, 0.08);
+  box-shadow: 0 4px 16px rgba(3, 57, 108, 0.08);
   transform: translateY(-1px);
 }
 
@@ -127,7 +127,7 @@
 .sd-card-label {
   font-size: 12px;
   font-weight: 600;
-  color: #5A5F72;
+  color: #4A6B85;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
@@ -135,22 +135,22 @@
 .sd-card-value {
   font-size: 24px;
   font-weight: 800;
-  color: #1A1D2E;
+  color: #0B2340;
   line-height: 1.2;
 }
 
 .sd-card-sub {
   font-size: 11.5px;
-  color: #9BA3BF;
+  color: #64839C;
   font-weight: 500;
 }
 
 /* ── Recent Scans ───────────────────────────────────────────── */
 .sd-recent-card {
   background: #FFFFFF;
-  border: 1px solid #E2E6EE;
+  border: 1px solid #D3E1EC;
   border-radius: 14px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
   overflow: hidden;
   flex: 1;
   display: flex;
@@ -160,7 +160,7 @@
 
 .sd-recent-head {
   padding: 14px 20px;
-  border-bottom: 1px solid #E2E6EE;
+  border-bottom: 1px solid #D3E1EC;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -172,18 +172,18 @@
   gap: 8px;
   font-size: 13.5px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 .sd-recent-title svg {
-  color: #2A2B61;
+  color: #03396C;
 }
 
 .sd-recent-count {
   font-size: 11px;
   font-weight: 700;
-  background: #F0F2F7;
-  color: #5A5F72;
+  background: #EEF4F9;
+  color: #4A6B85;
   border-radius: 20px;
   padding: 2px 8px;
 }
@@ -199,7 +199,7 @@
   align-items: center;
   gap: 12px;
   padding: 10px 20px;
-  border-bottom: 1px solid #F4F5F9;
+  border-bottom: 1px solid #F4F8FB;
   transition: background 0.15s;
 }
 
@@ -208,14 +208,14 @@
 }
 
 .sd-scan-item:hover {
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .sd-scan-plate {
   flex: 1;
   font-size: 13px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
   font-family: 'Courier New', monospace;
   letter-spacing: 1px;
 }
@@ -231,7 +231,7 @@
 
 .sd-scan-time {
   font-size: 11px;
-  color: #9BA3BF;
+  color: #64839C;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -239,16 +239,16 @@
 .sd-recent-empty {
   padding: 40px 20px;
   text-align: center;
-  color: #9BA3BF;
+  color: #64839C;
   font-size: 13px;
 }
 
 /* ── CCTV Camera Monitor ────────────────────────────────────── */
 .sd-cam-panel {
   background: #fff;
-  border: 1px solid #E2E6EE;
+  border: 1px solid #D3E1EC;
   border-radius: 14px;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
   overflow: hidden;
 }
 
@@ -257,8 +257,8 @@
   align-items: center;
   gap: 10px;
   padding: 12px 18px;
-  border-bottom: 1px solid #E2E6EE;
-  background: #f9fafb;
+  border-bottom: 1px solid #D3E1EC;
+  background: #F7FAFC;
 }
 
 .sd-cam-label {
@@ -267,11 +267,11 @@
   gap: 6px;
   font-size: 13px;
   font-weight: 700;
-  color: #1A1D2E;
+  color: #0B2340;
   flex: 1;
 }
 
-.sd-cam-label svg { color: #2A2B61; }
+.sd-cam-label svg { color: #03396C; }
 
 .sd-live-pill {
   display: inline-flex;
@@ -282,9 +282,9 @@
   padding: 3px 9px;
   border-radius: 20px;
 }
-.sd-live-pill.live        { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
-.sd-live-pill.connecting  { background: #fef3c7; color: #d97706; border: 1px solid #fcd34d; }
-.sd-live-pill.none        { background: #f9fafb; color: #9ca3af; border: 1px solid #e5e7eb; }
+.sd-live-pill.live        { background: #E6F5EF; color: #0F7A5A; border: 1px solid #A8DCC8; }
+.sd-live-pill.connecting  { background: #FDF0BE; color: #8A6B00; border: 1px solid #F8DA55; }
+.sd-live-pill.none        { background: #F7FAFC; color: #64839C; border: 1px solid #D3E1EC; }
 
 .sd-live-dot {
   width: 6px; height: 6px;
@@ -300,7 +300,7 @@
 
 .sd-cam-viewport {
   position: relative;
-  background: #111;
+  background: #0B2340;
   min-height: 300px;
 }
 
@@ -345,9 +345,9 @@
   width: 6px; height: 6px;
   border-radius: 50%;
 }
-.sd-cam-dot.live { background: #22c55e; animation: sd-blink 1.6s ease-in-out infinite; }
-.sd-cam-dot.wait { background: #fbbf24; }
-.sd-cam-dot.off  { background: #6b7280; }
+.sd-cam-dot.live { background: #1BA968; animation: sd-blink 1.6s ease-in-out infinite; }
+.sd-cam-dot.wait { background: #F6CE11; }
+.sd-cam-dot.off  { background: #5C7B92; }
 
 .sd-cam-empty {
   display: flex;
@@ -356,18 +356,18 @@
   justify-content: center;
   gap: 8px;
   padding: 60px 20px;
-  color: #6b7280;
+  color: #5C7B92;
   text-align: center;
 }
-.sd-cam-empty p { font-size: 14px; font-weight: 600; margin: 0; color: #9ca3af; }
-.sd-cam-empty span { font-size: 12px; color: #c4c9d4; }
-.sd-cam-empty svg { color: #d1d5db; }
+.sd-cam-empty p { font-size: 14px; font-weight: 600; margin: 0; color: #64839C; }
+.sd-cam-empty span { font-size: 12px; color: #BDD4E5; }
+.sd-cam-empty svg { color: #BDD4E5; }
 
 .sd-cam-strip {
   display: flex;
   gap: 6px;
   padding: 10px 14px;
-  background: #1a1a2e;
+  background: #0B2340;
   overflow-x: auto;
 }
 
@@ -379,7 +379,7 @@
   border-radius: 8px;
   border: 1.5px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
-  color: #cbd5e1;
+  color: #BDD4E5;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -387,7 +387,7 @@
   transition: all 0.15s;
 }
 .sd-cam-thumb:hover  { background: rgba(255,255,255,0.12); color: #fff; }
-.sd-cam-thumb.active { background: #2A2B61; border-color: #4f50a0; color: #fff; }
+.sd-cam-thumb.active { background: #03396C; border-color: #1072B3; color: #fff; }
 
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 768px) {

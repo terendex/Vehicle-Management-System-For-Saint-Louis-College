@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('vehicles', '0052_alter_parkingnotice_id_alter_parkingspace_id_and_more'),
+        ('vehicles', '0053_vehicleregistration_vehreg_created_at_and_more'),
     ]
 
     operations = [

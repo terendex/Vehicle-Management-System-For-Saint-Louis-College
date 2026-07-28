@@ -11,15 +11,16 @@ from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 from accounts.audit import audit
 from accounts.models import AuditLog
+from time_utils import day_range, filter_local_date_range
 
 
 class IsStaffRole(permissions.BasePermission):
-    """Allow access only to admin, cdso, or security roles."""
+    """Allow access only to the CDSO (admin) or security roles."""
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role in ('admin', 'cdso', 'security')
+            and request.user.role in ('admin', 'security')
         )
 
 
@@ -28,12 +29,16 @@ class IsCDSOOrAdmin(permissions.BasePermission):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role in ('admin', 'cdso')
+            and request.user.role == 'admin'
         )
 
 
 class ViolationViewSet(viewsets.ModelViewSet):
-    queryset           = Violation.objects.select_related('vehicle__user').all()
+    # issued_by / on_duty_guard are read by the serializer too — without them
+    # here each row costs an extra user lookup.
+    queryset           = Violation.objects.select_related(
+        'vehicle__user', 'issued_by', 'on_duty_guard',
+    ).all()
     serializer_class   = ViolationSerializer
     permission_classes = [IsStaffRole]
 
@@ -216,7 +221,8 @@ class GuardViolationsView(APIView):
             try:
                 from datetime import date as _date
                 d = _date.fromisoformat(date_str)
-                qs = qs.filter(issued_at__date=d)
+                _start, _end = day_range(d)
+                qs = qs.filter(issued_at__gte=_start, issued_at__lt=_end)
             except ValueError:
                 pass
         return Response(ViolationSerializer(qs, many=True, context={'request': request}).data)
@@ -245,3 +251,104 @@ class MyViolationsView(APIView):
             Q(is_released=True) | Q(is_resolved=True)
         ).select_related('vehicle__user', 'issued_by').order_by('-issued_at')
         return Response(ViolationSerializer(violations, many=True, context={'request': request}).data)
+
+
+# ── Violations Report (CDSO/admin — branded PDF & Excel) ─────────────────────
+VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation', 'Fee (PHP)', 'Status', 'Issued By']
+
+
+def _filter_violations_report(request):
+    """Filter the violations for a report — same knobs as the management page."""
+    qs = Violation.objects.select_related('vehicle', 'vehicle__user', 'issued_by').all()
+    date_from = request.query_params.get('date_from', '').strip()
+    date_to   = request.query_params.get('date_to', '').strip()
+    status_f  = request.query_params.get('status', '').strip()
+    search    = request.query_params.get('search', '').strip()
+    qs = filter_local_date_range(qs, 'issued_at', date_from, date_to)
+    if status_f:
+        qs = qs.filter(status=status_f)
+    if search:
+        qs = qs.filter(Q(vehicle__plate_number__icontains=search) |
+                       Q(vehicle__user__full_name__icontains=search))
+
+    status_labels = dict(Violation.Status.choices)
+    desc = []
+    if date_from or date_to:
+        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+    if status_f:
+        desc.append(f"Status: {status_labels.get(status_f, status_f)}")
+    if search:
+        desc.append(f"Search: '{search}'")
+    return qs.order_by('-issued_at'), desc
+
+
+def _violation_report_rows(qs):
+    from django.utils import timezone as tz
+    type_labels   = dict(Violation.Type.choices)
+    status_labels = dict(Violation.Status.choices)
+    rows = []
+    for i, v in enumerate(qs, start=1):
+        plate     = v.vehicle.plate_number if v.vehicle else '—'
+        owner     = v.vehicle.user.full_name if (v.vehicle and v.vehicle.user) else '—'
+        issued_by = v.issued_by.full_name if v.issued_by else 'System'
+        rows.append([
+            i,
+            tz.localtime(v.issued_at).strftime('%b %d, %Y %I:%M %p'),
+            plate, owner,
+            type_labels.get(v.violation_type, v.violation_type),
+            f"{v.fine_amount:.2f}",
+            status_labels.get(v.status, v.status),
+            issued_by,
+        ])
+    return rows
+
+
+def _violation_report_subtitle(request, desc, count):
+    from django.utils import timezone as tz
+    body = ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
+    return body
+
+
+class ViolationReportExcelView(APIView):
+    """Download the (filtered) violations as a branded Excel report — admin only."""
+    permission_classes = [IsCDSOOrAdmin]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_excel_response, report_filename
+        qs, desc = _filter_violations_report(request)
+        rows = _violation_report_rows(qs[:5000])
+        subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                    f"by {getattr(request.user, 'full_name', '')} · "
+                    + _violation_report_subtitle(request, desc, len(rows)))
+        return branded_excel_response(
+            filename=report_filename('Violations Report', 'xlsx'),
+            sheet_title='Violations',
+            report_title='Violations Report',
+            subtitle=subtitle,
+            headers=VIOLATION_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 21, 16, 26, 22, 12, 14, 22],
+        )
+
+
+class ViolationReportPdfView(APIView):
+    """Download the (filtered) violations as a branded PDF report — admin only."""
+    permission_classes = [IsCDSOOrAdmin]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_pdf_response, report_filename
+        qs, desc = _filter_violations_report(request)
+        rows = _violation_report_rows(qs[:5000])
+        return branded_pdf_response(
+            filename=report_filename('Violations Report', 'pdf'),
+            report_title='Violations Report',
+            subtitle=_violation_report_subtitle(request, desc, len(rows)),
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=VIOLATION_REPORT_HEADERS,
+            rows=rows,
+            # Owner names ran past their column while Issued By sat mostly
+            # empty (27pt used of 146pt). 6mm moves across; total unchanged.
+            col_widths_mm=[10, 34, 26, 56, 40, 22, 30, 49],
+        )

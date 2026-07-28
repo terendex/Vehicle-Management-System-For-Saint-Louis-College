@@ -8,11 +8,12 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getAllViolations, resolveViolation,
-  issueCDSOReport, clearViolation,
+  issueCDSOReport, clearViolation, exportViolationsReport,
 } from '../../api/violations'
+import ReportExportBar from '../../components/ReportExportBar'
+import TableLoader from '../../components/TableLoader'
 import './ViolationsManagement.css'
 
 const TYPE_LABELS = {
@@ -314,7 +315,7 @@ export default function ViolationsManagement() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="vm-page">
 
         {lightboxSrc && <EvidenceLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
@@ -342,6 +343,12 @@ export default function ViolationsManagement() {
             </div>
           )}
         </div>
+
+        <ReportExportBar
+          label="Violations Report"
+          fileBase="violations-report"
+          fetchBlob={exportViolationsReport}
+        />
 
         <div className="vm-toolbar">
           <div className="vm-filters">
@@ -410,7 +417,7 @@ export default function ViolationsManagement() {
 
         <div className="vm-card">
           {loading ? (
-            <div className="vm-empty">Loading violations…</div>
+            <TableLoader label="Loading violations…" />
           ) : filtered.length === 0 ? (
             <div className="vm-empty">No violations found.</div>
           ) : (
@@ -557,6 +564,6 @@ export default function ViolationsManagement() {
         </div>
       )}
 
-    </AdminLayout>
+    </>
   )
 }

@@ -6,10 +6,10 @@ const WS_BASE = import.meta.env.VITE_API_URL
   : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
 
 const TRACK_COLORS = {
-  license_plate: '#00ff88',
-  vehicle:       '#00ff88',
-  motorcycle:    '#3b82f6',
-  _default:      '#facc15',
+  license_plate: '#14A374',
+  vehicle:       '#14A374',
+  motorcycle:    '#2E8CCB',
+  _default:      '#F6CE11',
 }
 const VEHICLE_TYPE_LABELS = { motorcycle: 'Motorcycle' }
 const LERP = 0.25
@@ -77,7 +77,7 @@ export function CameraProvider({ children }) {
       if (img && img.complete && img.naturalWidth > 0) {
         ctx.drawImage(img, 0, 0, vw, vh)
       } else {
-        ctx.fillStyle = '#0d1117'
+        ctx.fillStyle = '#04121F'
         ctx.fillRect(0, 0, vw, vh)
       }
 

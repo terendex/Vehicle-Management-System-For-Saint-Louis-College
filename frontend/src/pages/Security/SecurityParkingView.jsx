@@ -5,7 +5,6 @@ import {
   Shield, AlertTriangle, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { zoneApi } from '../../api/parking'
 import { overrideEntry } from '../../api/scanning'
 import { createViolation } from '../../api/violations'
@@ -44,34 +43,34 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div style={{ background: '#fff', borderRadius: 14, width: 360, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #E2E6EE', background: '#fffbeb' }}>
-          <span style={{ fontWeight: 700, fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #D3E1EC', background: '#FEF9E4' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#7A5C00', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Shield size={15} /> Parking Override
           </span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={15} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} style={{ padding: 18 }}>
-          <p style={{ margin: '0 0 12px', fontSize: 12, color: '#b45309', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 10px' }}>
+          <p style={{ margin: '0 0 12px', fontSize: 12, color: '#8A6B00', background: '#FDF0BE', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
             Allow a vehicle to park in <strong>{zoneName}</strong> even if the zone is full. This will be logged.
           </p>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>License Plate</label>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate</label>
           <input
             value={plate} onChange={e => setPlate(e.target.value)}
             placeholder="e.g. ABC 123"
-            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }}
+            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }}
             required
           />
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Reason</label>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Reason</label>
           <textarea
             value={reason} onChange={e => setReason(e.target.value)}
             placeholder="e.g. Event day, special clearance…"
             rows={2}
-            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
             required
           />
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #BDD4E5', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#8A6B00', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
               {loading ? 'Logging…' : 'Confirm Override'}
             </button>
           </div>
@@ -107,22 +106,22 @@ function IssueViolationModal({ onClose }) {
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #E2E6EE', background: '#FEF2F2' }}>
-          <span style={{ fontWeight: 700, fontSize: 14, color: '#991b1b', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #D3E1EC', background: '#FCEDED' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#841818', display: 'flex', alignItems: 'center', gap: 6 }}>
             <AlertTriangle size={15} /> Issue Violation
           </span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={15} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>License Plate *</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate *</label>
             <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required
-              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', textTransform: 'uppercase' }} />
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', textTransform: 'uppercase' }} />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Violation Type</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Violation Type</label>
             <select value={type} onChange={e => setType(e.target.value)}
-              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', background: '#fff' }}>
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', background: '#fff' }}>
               <option value="no_sticker">No Sticker</option>
               <option value="expired_registration">Expired Registration</option>
               <option value="unauthorized">Unauthorized Entry</option>
@@ -130,13 +129,13 @@ function IssueViolationModal({ onClose }) {
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Notes</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Notes</label>
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Optional additional details…"
-              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #BDD4E5', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#C62828', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
               {loading ? 'Issuing…' : 'Issue Violation'}
             </button>
           </div>
@@ -193,7 +192,7 @@ export default function SecurityParkingView() {
   const sumFr      = Math.max(0, totalCap - occ)
 
   return (
-    <SecurityLayout>
+    <>
       <div className="pm-page">
 
         {/* Header */}
@@ -254,12 +253,12 @@ export default function SecurityParkingView() {
                     <span className="pm-sum-total">{totalCap} capacity</span>
                   </div>
                   {isFull && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FADEDE', border: '1px solid #F0B4B4', color: '#9B1C1C', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
                       <AlertTriangle size={11} /> FULL
                     </span>
                   )}
                   {selZone?.capacity_override != null && (
-                    <span style={{ fontSize: 11, color: '#92400e', background: '#fef9c3', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: 20, fontWeight: 600 }}>
+                    <span style={{ fontSize: 11, color: '#7A5C00', background: '#FDF0BE', border: '1px solid #F7E08A', padding: '2px 8px', borderRadius: 20, fontWeight: 600 }}>
                       event capacity override
                     </span>
                   )}
@@ -272,14 +271,14 @@ export default function SecurityParkingView() {
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button
                     onClick={() => setShowViolation(true)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#C62828', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     title="Issue a violation to a vehicle"
                   >
                     <AlertTriangle size={13} /> Issue Violation
                   </button>
                   <button
                     onClick={() => setShowOverride(true)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#d97706', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#8A6B00', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     title="Allow a vehicle to park regardless of zone capacity"
                   >
                     <Shield size={13} /> Override Parking
@@ -309,8 +308,8 @@ export default function SecurityParkingView() {
                   {liveSpaces.map(s => {
                     const x     = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2)
                     const w     = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
-                    const color = s.is_occupied ? '#EF4444' : '#22C55E'
-                    const fill  = s.is_occupied ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.25)'
+                    const color = s.is_occupied ? '#D93B3B' : '#1BA968'
+                    const fill  = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
                     return (
                       <g key={s.id}>
                         <rect
@@ -330,7 +329,7 @@ export default function SecurityParkingView() {
                           <text
                             x={x + w / 2} y={y + h / 2 + 0.023}
                             textAnchor="middle" dominantBaseline="middle"
-                            fill="#FECACA" fontSize={0.02} fontWeight="600"
+                            fill="#F3C0C0" fontSize={0.02} fontWeight="600"
                             style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.5)', strokeWidth: '0.004' }}
                           >
                             {s.occupied_by}
@@ -372,6 +371,6 @@ export default function SecurityParkingView() {
         <IssueViolationModal onClose={() => setShowViolation(false)} />
       )}
 
-    </SecurityLayout>
+    </>
   )
 }

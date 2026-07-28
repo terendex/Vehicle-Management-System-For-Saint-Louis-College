@@ -1,6 +1,6 @@
 /* ============================================================
    AUDIT LOG STYLES (Admin)
-   Theme: SLC Navy (#2A2B61), BG (#F0F2F7), Card (#FFF)
+   Theme: SLC Navy (#03396C), BG (#EEF4F9), Card (#FFF)
    ============================================================ */
 
 .al-page {
@@ -21,14 +21,14 @@
 .al-title {
   font-size: 24px;
   font-weight: 800;
-  color: #2A2B61;
+  color: #03396C;
   margin: 0;
   letter-spacing: -0.3px;
 }
 
 .al-subtitle {
   font-size: 14px;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 4px 0 0;
 }
 
@@ -44,11 +44,11 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #EEF0FA;
+  background: #EAF2F8;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #2A2B61;
+  color: #03396C;
 }
 
 .al-export-btn {
@@ -57,9 +57,9 @@
   gap: 6px;
   padding: 8px 14px;
   border-radius: 10px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
@@ -69,9 +69,9 @@
 }
 
 .al-export-btn:hover:not(:disabled) {
-  background: #F8F9FC;
-  color: #2A2B61;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 .al-export-btn:disabled {
@@ -81,27 +81,58 @@
 
 .al-toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
   background: #fff;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
+}
+
+.al-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.al-toolbar-row:first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #EAF2F8;
+}
+
+.al-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #03396C;
+  white-space: nowrap;
+}
+
+.al-toolbar-label svg { color: #64839C; }
+
+.al-daterange-or {
+  font-size: 11.5px;
+  color: #64839C;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .al-sep {
   width: 1px;
   height: 20px;
-  background: #E2E6EE;
+  background: #D3E1EC;
   flex-shrink: 0;
   margin: 0 2px;
 }
 
 .al-search-wrapper {
   position: relative;
-  width: 200px;
+  flex: 1 1 260px;
+  min-width: 220px;
 }
 
 .al-search-wrapper > svg:first-child {
@@ -109,7 +140,7 @@
   left: 8px;
   top: 50%;
   transform: translateY(-50%);
-  color: #9CA3AF;
+  color: #64839C;
   pointer-events: none;
 }
 
@@ -125,15 +156,15 @@
   height: 20px;
   border-radius: 50%;
   border: none;
-  background: #E2E6EE;
-  color: #5A5F72;
+  background: #D3E1EC;
+  color: #4A6B85;
   cursor: pointer;
   padding: 0;
   transition: background 0.15s;
 }
 
 .al-search-clear:hover {
-  background: #C7CAD9;
+  background: #BDD4E5;
 }
 
 .al-search-input {
@@ -143,39 +174,40 @@
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
-  background: #F0F2F7;
-  color: #1A1D2E;
+  background: #EEF4F9;
+  color: #0B2340;
   outline: none;
   transition: background 0.15s;
 }
-.al-search-input:focus { background: #E8EAF2; }
+.al-search-input:focus { background: #D3E1EC; }
 
 .al-search-input::placeholder {
-  color: #9CA3AF;
+  color: #64839C;
 }
 
 .al-search-input:focus {
   outline: none;
-  border-color: #2A2B61;
-  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
+  border-color: #03396C;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.08);
 }
 
 
 .al-period-btns {
   display: flex;
   align-items: center;
-  gap: 4px;
-  background: #F0F2F7;
-  border-radius: 8px;
+  gap: 3px;
+  background: #EEF4F9;
+  border: 1px solid #D3E1EC;
+  border-radius: 9px;
   padding: 3px;
 }
 
 .al-period-btn {
-  padding: 4px 11px;
+  padding: 5px 13px;
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -183,8 +215,8 @@
   transition: all 0.15s;
 }
 
-.al-period-btn:hover { background: #fff; color: #2A2B61; }
-.al-period-btn.active { background: #fff; color: #2A2B61; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.al-period-btn:hover { background: #D3E1EC; color: #03396C; }
+.al-period-btn.active { background: #fff; color: #03396C; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
 .al-filter-item {
   display: flex;
@@ -194,7 +226,40 @@
 }
 
 .al-filter-item svg {
-  color: #9CA3AF;
+  color: #64839C;
+}
+
+.al-daterange {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.al-daterange > svg {
+  color: #64839C;
+  flex-shrink: 0;
+}
+
+.al-date-input {
+  padding: 5px 9px;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #0B2340;
+  background: #fff;
+  outline: none;
+  cursor: pointer;
+}
+
+.al-date-input:hover { border-color: #03396C; }
+.al-date-input:focus { border-color: #03396C; box-shadow: 0 0 0 3px rgba(3, 57, 108,0.10); }
+
+.al-daterange-sep {
+  font-size: 12px;
+  color: #64839C;
+  font-weight: 600;
 }
 
 .al-form-select {
@@ -203,7 +268,7 @@
   background: transparent;
   font-size: 13px;
   font-family: inherit;
-  color: #1A1D2E;
+  color: #0B2340;
   outline: none;
   min-width: 130px;
   cursor: pointer;
@@ -213,17 +278,6 @@
   background-position: right 2px center;
 }
 
-.al-date-input {
-  padding: 4px 2px;
-  border: none;
-  background: transparent;
-  font-size: 13px;
-  font-family: inherit;
-  color: #1A1D2E;
-  outline: none;
-  min-width: 120px;
-}
-
 .al-refresh-btn {
   display: flex;
   align-items: center;
@@ -231,25 +285,25 @@
   width: 30px;
   height: 30px;
   border-radius: 6px;
-  border: 1.5px solid #E2E6EE;
-  background: #F0F2F7;
-  color: #5A5F72;
+  border: 1.5px solid #D3E1EC;
+  background: #EEF4F9;
+  color: #4A6B85;
   cursor: pointer;
   transition: all 0.15s;
   flex-shrink: 0;
 }
 
 .al-refresh-btn:hover {
-  background: #F8F9FC;
-  color: #2A2B61;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 .al-table-container {
   background: #FFFFFF;
   border-radius: 14px;
-  border: 1px solid #E2E6EE;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  border: 1px solid #D3E1EC;
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
   overflow-x: auto;
   position: relative;
 }
@@ -266,14 +320,14 @@
 }
 
 .al-table thead {
-  background: #F8F9FC;
-  border-bottom: 2px solid #E2E6EE;
+  background: #F4F8FB;
+  border-bottom: 2px solid #D3E1EC;
 }
 
 .al-table th {
   text-align: left;
   padding: 12px 16px;
-  color: #5A5F72;
+  color: #4A6B85;
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
@@ -283,8 +337,8 @@
 
 .al-table td {
   padding: 12px 16px;
-  color: #1A1D2E;
-  border-bottom: 1px solid #F0F2F7;
+  color: #0B2340;
+  border-bottom: 1px solid #EEF4F9;
   vertical-align: middle;
 }
 
@@ -293,7 +347,7 @@
 }
 
 .al-table tbody tr:hover {
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .al-table tbody tr:last-child td {
@@ -312,63 +366,63 @@
 }
 
 .al-action-badge.created {
-  background: #ECFDF5;
-  color: #059669;
+  background: #E6F5EF;
+  color: #0F7A5A;
 }
 
 .al-action-badge.updated {
-  background: #EEF0FA;
-  color: #2A2B61;
+  background: #EAF2F8;
+  color: #03396C;
 }
 
 .al-action-badge.deleted {
-  background: #FEF2F2;
-  color: #DC2626;
+  background: #FCEDED;
+  color: #C62828;
 }
 
 .al-action-badge.disabled {
-  background: #FEF3C7;
-  color: #B45309;
+  background: #FDF0BE;
+  color: #8A6B00;
 }
 
 .al-action-badge.enabled {
-  background: #ECFDF5;
-  color: #059669;
+  background: #E6F5EF;
+  color: #0F7A5A;
 }
 
 .al-action-badge.replaced {
-  background: #FEF3C7;
-  color: #D97706;
+  background: #FDF0BE;
+  color: #8A6B00;
 }
 
 .al-action-badge.scan {
-  background: #E0E7FF;
-  color: #4F46E5;
+  background: #DCE9F2;
+  color: #084A85;
 }
 .al-action-badge.device-created {
-  background: #ECFDF5;
-  color: #059669;
+  background: #E6F5EF;
+  color: #0F7A5A;
 }
 .al-action-badge.device-updated {
-  background: #EFF6FF;
-  color: #2563EB;
+  background: #EAF2F8;
+  color: #1072B3;
 }
 .al-action-badge.device-deleted {
-  background: #FFF7ED;
-  color: #C2410C;
+  background: #FEF9E4;
+  color: #8A6B00;
 }
 
 .al-loading {
   text-align: center;
   padding: 60px 20px;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .al-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid #E2E6EE;
-  border-top-color: #2A2B61;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: 0 auto 16px;
@@ -384,19 +438,19 @@
 }
 
 .al-empty svg {
-  color: #C7CAD9;
+  color: #BDD4E5;
   margin-bottom: 16px;
 }
 
 .al-empty h3 {
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 16px;
   font-weight: 600;
   margin: 0 0 6px;
 }
 
 .al-empty p {
-  color: #9CA3AF;
+  color: #64839C;
   font-size: 13px;
   margin: 0;
 }
@@ -407,9 +461,9 @@
   justify-content: space-between;
   padding: 14px 20px;
   background: #FFFFFF;
-  border-top: 1px solid #E2E6EE;
+  border-top: 1px solid #D3E1EC;
   font-size: 13px;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .al-pagination-info {
@@ -429,27 +483,27 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #1A1D2E;
+  color: #0B2340;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .al-page-btn:hover:not(:disabled) {
-  background: #F8F9FC;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  border-color: #BDD4E5;
 }
 
 .al-page-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: #F8F9FC;
+  background: #F4F8FB;
 }
 
 .al-page-current {
   font-weight: 600;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 /* ── Three-column layout: badge + text share the Details cell ──────────────── */
 .al-details {
@@ -462,7 +516,7 @@
   margin-top: 1px;
 }
 .al-details-text {
-  color: #4b5563;
+  color: #3E5B72;
   font-size: 12.5px;
   line-height: 1.5;
   white-space: normal;
@@ -470,6 +524,6 @@
 }
 .al-timestamp {
   white-space: nowrap;
-  color: #6b7280;
+  color: #5C7B92;
   font-size: 12.5px;
 }

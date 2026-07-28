@@ -1,6 +1,6 @@
 /* ================================================================
    GUARD MONITOR — Admin read-only view of security guard activity
-   Design system: SLC Navy #2A2B61 | Background #F0F2F7
+   Design system: SLC Navy #03396C | Background #EEF4F9
    ================================================================ */
 
 /* ── Page ──────────────────────────────────────────────────────── */
@@ -31,13 +31,13 @@
   gap: 10px;
   font-size: 1.5rem;
   font-weight: 700;
-  color: #111827;
+  color: #0B2340;
   margin: 0 0 4px;
 }
 
 .gm-page-subtitle {
   font-size: 0.85rem;
-  color: #6b7280;
+  color: #5C7B92;
   margin: 0;
 }
 
@@ -52,9 +52,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  color: #059669;
+  background: #E6F5EF;
+  border: 1px solid #A8DCC8;
+  color: #0F7A5A;
   font-size: 12px;
   font-weight: 600;
   padding: 5px 12px;
@@ -65,7 +65,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #10b981;
+  background: #14A374;
   animation: gm-pulse 2s ease-in-out infinite;
 }
 
@@ -76,7 +76,7 @@
 
 .gm-updated-at {
   font-size: 11px;
-  color: #9ca3af;
+  color: #64839C;
 }
 
 .gm-refresh-btn {
@@ -87,16 +87,16 @@
   height: 34px;
   border-radius: 8px;
   background: #fff;
-  border: 1.5px solid #e5e7eb;
-  color: #6b7280;
+  border: 1.5px solid #D3E1EC;
+  color: #5C7B92;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .gm-refresh-btn:hover {
-  background: #f3f4f6;
-  color: #2A2B61;
-  border-color: #c7d2fe;
+  background: #EEF4F9;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 /* ── State placeholders ─────────────────────────────────────────── */
@@ -107,15 +107,15 @@
   justify-content: center;
   gap: 12px;
   padding: 4rem 2rem;
-  color: #9ca3af;
+  color: #64839C;
   font-size: 14px;
 }
 
 .gm-spinner {
   width: 28px;
   height: 28px;
-  border: 3px solid rgba(42, 43, 97, 0.1);
-  border-top-color: #2A2B61;
+  border: 3px solid rgba(3, 57, 108, 0.1);
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: gm-spin 0.7s linear infinite;
 }
@@ -132,7 +132,7 @@
 /* ── Guard card ─────────────────────────────────────────────────── */
 .gm-card {
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #D3E1EC;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
@@ -142,11 +142,11 @@
 }
 
 .gm-card:hover {
-  box-shadow: 0 4px 12px rgba(42, 43, 97, 0.08);
+  box-shadow: 0 4px 12px rgba(3, 57, 108, 0.08);
 }
 
-.gm-card.active { border-left: 4px solid #10b981; }
-.gm-card.idle   { border-left: 4px solid #e5e7eb; }
+.gm-card.active { border-left: 4px solid #14A374; }
+.gm-card.idle   { border-left: 4px solid #D3E1EC; }
 
 /* ── Card header ────────────────────────────────────────────────── */
 .gm-card-head {
@@ -155,8 +155,8 @@
   justify-content: space-between;
   gap: 10px;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fafafa;
+  border-bottom: 1px solid #EEF4F9;
+  background: #F7FAFC;
 }
 
 .gm-guard-info {
@@ -170,7 +170,7 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #2A2B61;
+  background: #03396C;
   color: #fff;
   font-size: 15px;
   font-weight: 700;
@@ -185,13 +185,13 @@
   height: 38px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid #E2E6EE;
+  border: 2px solid #D3E1EC;
   flex-shrink: 0;
 }
 
 .gm-card.idle .gm-guard-avatar {
-  background: #d1d5db;
-  color: #6b7280;
+  background: #BDD4E5;
+  color: #5C7B92;
 }
 
 .gm-guard-meta {
@@ -204,7 +204,7 @@
 .gm-guard-name {
   font-size: 13.5px;
   font-weight: 700;
-  color: #111827;
+  color: #0B2340;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -212,7 +212,7 @@
 
 .gm-guard-code {
   font-size: 11px;
-  color: #9ca3af;
+  color: #64839C;
   font-weight: 500;
 }
 
@@ -237,15 +237,15 @@
 }
 
 .gm-status-pill.active {
-  background: #ecfdf5;
-  color: #059669;
-  border: 1px solid #a7f3d0;
+  background: #E6F5EF;
+  color: #0F7A5A;
+  border: 1px solid #A8DCC8;
 }
 
 .gm-status-pill.idle {
-  background: #f9fafb;
-  color: #9ca3af;
-  border: 1px solid #e5e7eb;
+  background: #F7FAFC;
+  color: #64839C;
+  border: 1px solid #D3E1EC;
 }
 
 .gm-status-dot {
@@ -255,24 +255,24 @@
 }
 
 .gm-status-pill.active .gm-status-dot {
-  background: #10b981;
+  background: #14A374;
   animation: gm-pulse 2s ease-in-out infinite;
 }
 
-.gm-status-pill.idle .gm-status-dot { background: #d1d5db; }
+.gm-status-pill.idle .gm-status-dot { background: #BDD4E5; }
 
 .gm-last-seen {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 10.5px;
-  color: #9ca3af;
+  color: #64839C;
 }
 
 /* ── Stats row ──────────────────────────────────────────────────── */
 .gm-stats {
   display: flex;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #EEF4F9;
 }
 
 .gm-stat {
@@ -281,7 +281,7 @@
   flex-direction: column;
   align-items: center;
   padding: 10px 4px;
-  border-right: 1px solid #f3f4f6;
+  border-right: 1px solid #EEF4F9;
 }
 
 .gm-stat:last-child { border-right: none; }
@@ -289,30 +289,30 @@
 .gm-stat-num {
   font-size: 18px;
   font-weight: 700;
-  color: #111827;
+  color: #0B2340;
   line-height: 1;
 }
 
 .gm-stat-lbl {
   font-size: 9.5px;
   font-weight: 600;
-  color: #9ca3af;
+  color: #64839C;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   margin-top: 3px;
 }
 
-.gm-stat.authorized .gm-stat-num { color: #059669; }
-.gm-stat.denied     .gm-stat-num { color: #dc2626; }
-.gm-stat.visitor    .gm-stat-num { color: #7c3aed; }
-.gm-stat.exited     .gm-stat-num { color: #6b7280; }
+.gm-stat.authorized .gm-stat-num { color: #0F7A5A; }
+.gm-stat.denied     .gm-stat-num { color: #C62828; }
+.gm-stat.visitor    .gm-stat-num { color: #1072B3; }
+.gm-stat.exited     .gm-stat-num { color: #5C7B92; }
 
 /* ── Log section ────────────────────────────────────────────────── */
 .gm-log-head {
   padding: 8px 1.25rem 4px;
   font-size: 10px;
   font-weight: 700;
-  color: #9ca3af;
+  color: #64839C;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -320,7 +320,7 @@
 .gm-log-empty {
   padding: 1rem 1.25rem;
   font-size: 12px;
-  color: #d1d5db;
+  color: #BDD4E5;
   text-align: center;
   margin: 0;
 }
@@ -336,7 +336,7 @@
   align-items: center;
   gap: 8px;
   padding: 7px 1.25rem;
-  border-bottom: 1px solid #f9fafb;
+  border-bottom: 1px solid #F7FAFC;
 }
 
 .gm-log-item:last-child { border-bottom: none; }
@@ -348,10 +348,10 @@
   flex-shrink: 0;
 }
 
-.gm-log-dot.authorized { background: #10b981; }
-.gm-log-dot.denied     { background: #ef4444; }
-.gm-log-dot.visitor    { background: #8b5cf6; }
-.gm-log-dot.exited     { background: #9ca3af; }
+.gm-log-dot.authorized { background: #14A374; }
+.gm-log-dot.denied     { background: #D93B3B; }
+.gm-log-dot.visitor    { background: #2E8CCB; }
+.gm-log-dot.exited     { background: #64839C; }
 
 .gm-log-main {
   flex: 1;
@@ -364,7 +364,7 @@
 .gm-log-plate {
   font-size: 12px;
   font-weight: 700;
-  color: #111827;
+  color: #0B2340;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -372,7 +372,7 @@
 
 .gm-log-owner {
   font-size: 10px;
-  color: #9ca3af;
+  color: #64839C;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -387,14 +387,14 @@
   flex-shrink: 0;
 }
 
-.gm-log-badge.authorized { background: #d1fae5; color: #065f46; }
-.gm-log-badge.denied     { background: #fee2e2; color: #991b1b; }
-.gm-log-badge.visitor    { background: #ede9fe; color: #5b21b6; }
-.gm-log-badge.exited     { background: #f3f4f6; color: #374151; }
+.gm-log-badge.authorized { background: #D6F0E6; color: #0A5C43; }
+.gm-log-badge.denied     { background: #FADEDE; color: #841818; }
+.gm-log-badge.visitor    { background: #DCE9F2; color: #03396C; }
+.gm-log-badge.exited     { background: #EEF4F9; color: #2E4C63; }
 
 .gm-log-time {
   font-size: 10px;
-  color: #9ca3af;
+  color: #64839C;
   white-space: nowrap;
   flex-shrink: 0;
 }

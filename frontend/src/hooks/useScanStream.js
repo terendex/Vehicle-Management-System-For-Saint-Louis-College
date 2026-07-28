@@ -6,10 +6,10 @@ const WS_BASE =
 
 // ── Bounding box colours ───────────────────────────────────────────────────────
 const TRACK_COLORS = {
-  license_plate: "#00ff88",  // green — plate detections
-  vehicle:       "#00ff88",  // green — car/jeep/bus body
-  motorcycle:    "#3b82f6",  // blue  — motorcycle
-  _default:      "#facc15",  // yellow — unknown / future classes
+  license_plate: "#14A374",  // green — plate detections
+  vehicle:       "#14A374",  // green — car/jeep/bus body
+  motorcycle:    "#2E8CCB",  // blue  — motorcycle
+  _default:      "#F6CE11",  // yellow — unknown / future classes
 };
 
 const VEHICLE_TYPE_LABELS = {

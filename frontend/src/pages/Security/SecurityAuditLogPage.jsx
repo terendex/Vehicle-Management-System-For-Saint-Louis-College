@@ -5,7 +5,6 @@ import {
   ClipboardList, CalendarDays, RefreshCw, Filter,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { getAccessLogs } from '../../api/scanning'
 import useAuthStore from '../../stores/authStore'
 import './SecurityAuditLogPage.css'
@@ -93,7 +92,7 @@ export default function SecurityAuditLogPage() {
     : logs
 
   return (
-    <SecurityLayout>
+    <>
       <div className="sal-page">
 
         {/* Header */}
@@ -121,7 +120,7 @@ export default function SecurityAuditLogPage() {
 
         {/* Filter pills */}
         <div className="sal-filters">
-          <Filter size={13} style={{ color: '#9ca3af', flexShrink: 0 }} />
+          <Filter size={13} style={{ color: '#64839C', flexShrink: 0 }} />
           {FILTERS.map(f => (
             <button
               key={f.key}
@@ -149,7 +148,7 @@ export default function SecurityAuditLogPage() {
             </div>
           ) : filtered.length === 0 ? (
             <div className="sal-empty">
-              <ClipboardList size={28} style={{ color: '#d1d5db' }} />
+              <ClipboardList size={28} style={{ color: '#BDD4E5' }} />
               <p>No entries found{statusFilter ? ` for "${FILTERS.find(f=>f.key===statusFilter)?.label}"` : ''} on this date.</p>
             </div>
           ) : (
@@ -192,6 +191,6 @@ export default function SecurityAuditLogPage() {
           )}
         </div>
       </div>
-    </SecurityLayout>
+    </>
   )
 }

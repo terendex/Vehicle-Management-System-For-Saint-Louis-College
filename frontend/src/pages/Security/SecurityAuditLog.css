@@ -1,6 +1,6 @@
 /* ============================================================
    AUDIT LOG STYLES (Admin + Security)
-   Theme: SLC Navy (#2A2B61), BG (#F0F2F7), Card (#FFF)
+   Theme: SLC Navy (#03396C), BG (#EEF4F9), Card (#FFF)
    ============================================================ */
 
 .sal-page {
@@ -21,14 +21,14 @@
 .sal-title {
   font-size: 24px;
   font-weight: 800;
-  color: #2A2B61;
+  color: #03396C;
   margin: 0;
   letter-spacing: -0.3px;
 }
 
 .sal-subtitle {
   font-size: 14px;
-  color: #5A5F72;
+  color: #4A6B85;
   margin: 4px 0 0;
 }
 
@@ -37,11 +37,11 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #EEF0FA;
+  background: #EAF2F8;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #2A2B61;
+  color: #03396C;
 }
 
 .sal-toolbar {
@@ -57,7 +57,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  background: #F0F2F7;
+  background: #EEF4F9;
   border-radius: 8px;
   padding: 3px;
 }
@@ -67,7 +67,7 @@
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -75,8 +75,8 @@
   transition: all 0.15s;
 }
 
-.sal-period-btn:hover { background: #fff; color: #2A2B61; }
-.sal-period-btn.active { background: #fff; color: #2A2B61; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.sal-period-btn:hover { background: #fff; color: #03396C; }
+.sal-period-btn.active { background: #fff; color: #03396C; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 
 .sal-filter-group {
   display: flex;
@@ -89,13 +89,13 @@
   align-items: center;
   gap: 8px;
   background: #FFFFFF;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 10px;
   padding: 0 12px;
 }
 
 .sal-filter-item svg {
-  color: #9CA3AF;
+  color: #64839C;
 }
 
 .sal-date-input {
@@ -104,13 +104,13 @@
   background: transparent;
   font-size: 14px;
   font-family: inherit;
-  color: #1A1D2E;
+  color: #0B2340;
   outline: none;
   min-width: 140px;
 }
 
 .sal-date-input::placeholder {
-  color: #9CA3AF;
+  color: #64839C;
 }
 
 .sal-refresh-btn {
@@ -120,24 +120,24 @@
   width: 42px;
   height: 42px;
   border-radius: 10px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #5A5F72;
+  color: #4A6B85;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .sal-refresh-btn:hover {
-  background: #F8F9FC;
-  color: #2A2B61;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
 }
 
 .sal-table-container {
   background: #FFFFFF;
   border-radius: 14px;
-  border: 1px solid #E2E6EE;
-  box-shadow: 0 1px 4px rgba(42, 43, 97, 0.04);
+  border: 1px solid #D3E1EC;
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
   overflow-x: auto;
   position: relative;
 }
@@ -154,14 +154,14 @@
 }
 
 .sal-table thead {
-  background: #F8F9FC;
-  border-bottom: 2px solid #E2E6EE;
+  background: #F4F8FB;
+  border-bottom: 2px solid #D3E1EC;
 }
 
 .sal-table th {
   text-align: left;
   padding: 12px 16px;
-  color: #5A5F72;
+  color: #4A6B85;
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
@@ -171,8 +171,8 @@
 
 .sal-table td {
   padding: 12px 16px;
-  color: #1A1D2E;
-  border-bottom: 1px solid #F0F2F7;
+  color: #0B2340;
+  border-bottom: 1px solid #EEF4F9;
   vertical-align: middle;
 }
 
@@ -181,7 +181,7 @@
 }
 
 .sal-table tbody tr:hover {
-  background: #FAFBFD;
+  background: #F7FAFC;
 }
 
 .sal-table tbody tr:last-child td {
@@ -205,36 +205,36 @@
 }
 
 .sal-status-badge.authorized {
-  background: #ECFDF5;
-  color: #059669;
+  background: #E6F5EF;
+  color: #0F7A5A;
 }
 
 .sal-status-badge.denied {
-  background: #FEF2F2;
-  color: #DC2626;
+  background: #FCEDED;
+  color: #C62828;
 }
 
 .sal-status-badge.unknown {
-  background: #FEF3C7;
-  color: #B45309;
+  background: #FDF0BE;
+  color: #8A6B00;
 }
 
 .sal-status-badge.other {
-  background: #EEF0FA;
-  color: #2A2B61;
+  background: #EAF2F8;
+  color: #03396C;
 }
 
 .sal-loading {
   text-align: center;
   padding: 60px 20px;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .sal-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid #E2E6EE;
-  border-top-color: #2A2B61;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: 0 auto 16px;
@@ -250,19 +250,19 @@
 }
 
 .sal-empty svg {
-  color: #C7CAD9;
+  color: #BDD4E5;
   margin-bottom: 16px;
 }
 
 .sal-empty h3 {
-  color: #5A5F72;
+  color: #4A6B85;
   font-size: 16px;
   font-weight: 600;
   margin: 0 0 6px;
 }
 
 .sal-empty p {
-  color: #9CA3AF;
+  color: #64839C;
   font-size: 13px;
   margin: 0;
 }
@@ -273,9 +273,9 @@
   justify-content: space-between;
   padding: 14px 20px;
   background: #FFFFFF;
-  border-top: 1px solid #E2E6EE;
+  border-top: 1px solid #D3E1EC;
   font-size: 13px;
-  color: #5A5F72;
+  color: #4A6B85;
 }
 
 .sal-pagination-info {
@@ -295,27 +295,27 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   background: #FFFFFF;
-  color: #1A1D2E;
+  color: #0B2340;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .sal-page-btn:hover:not(:disabled) {
-  background: #F8F9FC;
-  border-color: #B8BAD4;
+  background: #F4F8FB;
+  border-color: #BDD4E5;
 }
 
 .sal-page-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: #F8F9FC;
+  background: #F4F8FB;
 }
 
 .sal-page-current {
   font-weight: 600;
-  color: #1A1D2E;
+  color: #0B2340;
 }
 
 /* ── Action badge (security audit log) ──────────────────────── */
@@ -329,48 +329,48 @@
 }
 
 .sal-action-badge.created {
-  background: #D1FAE5;
-  color: #065F46;
+  background: #D6F0E6;
+  color: #0A5C43;
 }
 
 .sal-action-badge.updated {
-  background: #DBEAFE;
-  color: #1E40AF;
+  background: #DCE9F2;
+  color: #03396C;
 }
 
 .sal-action-badge.deleted {
-  background: #FEE2E2;
-  color: #991B1B;
+  background: #FADEDE;
+  color: #841818;
 }
 
 .sal-action-badge.disabled {
-  background: #FFFBEB;
-  color: #92400E;
+  background: #FEF9E4;
+  color: #7A5C00;
 }
 
 .sal-action-badge.enabled {
-  background: #D1FAE5;
-  color: #065F46;
+  background: #D6F0E6;
+  color: #0A5C43;
 }
 
 .sal-action-badge.replaced {
-  background: #EDE9FE;
-  color: #5B21B6;
+  background: #DCE9F2;
+  color: #03396C;
 }
 
 .sal-action-badge.scan {
-  background: #EEF0FA;
-  color: #2A2B61;
+  background: #EAF2F8;
+  color: #03396C;
 }
 
 /* ── Form select (security audit log) ───────────────────────── */
 .sal-form-select {
   padding: 0 12px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 10px;
   font-size: 14px;
   font-family: inherit;
-  color: #1A1D2E;
+  color: #0B2340;
   background: #FFFFFF;
   height: 42px;
   min-width: 160px;
@@ -385,6 +385,6 @@
 }
 
 .sal-form-select:focus {
-  border-color: #2A2B61;
-  box-shadow: 0 0 0 3px rgba(42, 43, 97, 0.08);
+  border-color: #03396C;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.08);
 }

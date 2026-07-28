@@ -1,0 +1,48 @@
+/* Shared table loading state.
+   Values copied from the existing .al-loading / .um-loading rules so the
+   loader looks identical to the ones already in Audit Log and Users. */
+
+.tbl-loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: #4A6B85;
+}
+
+.tbl-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
+  border-radius: 50%;
+  animation: tbl-spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+.tbl-loading p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Own keyframe name — `spin` is redefined in several page stylesheets and
+   this component has to work on pages that never declare it. */
+@keyframes tbl-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Respect users who have asked for less motion; the ring still reads as busy. */
+@media (prefers-reduced-motion: reduce) {
+  .tbl-spinner { animation-duration: 2.4s; }
+}
+
+.tbl-loading-row > td,
+.tbl-empty-row > td {
+  padding: 0;
+  background: transparent;
+}
+
+.tbl-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: #5C7B92;
+  font-size: 14px;
+}

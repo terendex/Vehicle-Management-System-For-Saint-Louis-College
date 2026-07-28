@@ -4,7 +4,7 @@
   gap: 10px;
   flex-wrap: wrap;
   background: #fff;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 10px;
   padding: 8px 12px;
   margin-bottom: 16px;
@@ -16,7 +16,7 @@
   gap: 6px;
   font-size: 12.5px;
   font-weight: 700;
-  color: #2A2B61;
+  color: #03396C;
   white-space: nowrap;
 }
 
@@ -26,23 +26,23 @@
   gap: 6px;
 }
 
-.report-bar-dates svg { color: #9CA3AF; flex-shrink: 0; }
+.report-bar-dates svg { color: #64839C; flex-shrink: 0; }
 
 .report-bar-date {
   padding: 4px 8px;
-  border: 1.5px solid #E2E6EE;
+  border: 1.5px solid #D3E1EC;
   border-radius: 7px;
   font-size: 12.5px;
   font-family: inherit;
-  color: #1A1D2E;
+  color: #0B2340;
   background: #fff;
   outline: none;
   cursor: pointer;
 }
 
-.report-bar-date:focus { border-color: #2A2B61; }
+.report-bar-date:focus { border-color: #03396C; }
 
-.report-bar-sep { font-size: 12px; color: #9CA3AF; font-weight: 600; }
+.report-bar-sep { font-size: 12px; color: #64839C; font-weight: 600; }
 
 .report-bar-btn {
   display: inline-flex;
@@ -61,17 +61,17 @@
 .report-bar-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .report-bar-btn--pdf {
-  background: #2A2B61;
+  background: #03396C;
   color: #fff;
 }
-.report-bar-btn--pdf:hover:not(:disabled) { background: #1e1f4a; }
+.report-bar-btn--pdf:hover:not(:disabled) { background: #032C55; }
 
 .report-bar-btn--excel {
   background: #fff;
-  color: #2A2B61;
-  border: 1.5px solid #2A2B61;
+  color: #03396C;
+  border: 1.5px solid #03396C;
 }
-.report-bar-btn--excel:hover:not(:disabled) { background: #F0F2FF; }
+.report-bar-btn--excel:hover:not(:disabled) { background: #EEF4F9; }
 
 .report-bar-spin { animation: report-bar-spin 0.8s linear infinite; }
 

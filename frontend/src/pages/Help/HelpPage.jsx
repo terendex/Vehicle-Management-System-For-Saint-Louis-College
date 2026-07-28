@@ -1,9 +1,6 @@
 import { useState, useMemo } from 'react'
 import { Search, X, HelpCircle, Info, ChevronRight } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
-import AdminLayout from '../../components/Layout/AdminLayout'
-import SecurityLayout from '../../components/Layout/SecurityLayout'
-import OwnerLayout from '../../components/Layout/OwnerLayout'
 import { HELP_TOPICS } from './helpContent'
 import './HelpPage.css'
 
@@ -155,7 +152,7 @@ export default function HelpPage() {
     </div>
   )
 
-  if (role === 'admin')    return <AdminLayout>{content}</AdminLayout>
-  if (role === 'security') return <SecurityLayout>{content}</SecurityLayout>
-  return <OwnerLayout>{content}</OwnerLayout>
+  // The layout comes from the role's shell route in App.jsx — /help is
+  // registered inside each one — so this just returns the content.
+  return content
 }

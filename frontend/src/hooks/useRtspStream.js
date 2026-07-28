@@ -8,10 +8,10 @@ const WS_BASE =
 
 // ── Bounding-box colours (must match backend CLASS_NAMES) ────────────────────
 const TRACK_COLORS = {
-  license_plate: "#00ff88",
-  vehicle:       "#00ff88",
-  motorcycle:    "#3b82f6",
-  _default:      "#facc15",
+  license_plate: "#14A374",
+  vehicle:       "#14A374",
+  motorcycle:    "#2E8CCB",
+  _default:      "#F6CE11",
 };
 
 const VEHICLE_TYPE_LABELS = {
@@ -79,7 +79,7 @@ export function useRtspStream(token) {
       if (img && img.complete && img.naturalWidth > 0) {
         ctx.drawImage(img, 0, 0, vw, vh);
       } else {
-        ctx.fillStyle = "#111827";
+        ctx.fillStyle = "#0B2340";
         ctx.fillRect(0, 0, vw, vh);
       }
 

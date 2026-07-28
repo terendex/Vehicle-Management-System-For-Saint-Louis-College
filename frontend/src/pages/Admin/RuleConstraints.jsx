@@ -6,7 +6,6 @@ import {
   CalendarRange, Globe, Plus, CheckCircle, Archive, AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import AdminLayout from '../../components/Layout/AdminLayout'
 import {
   getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
   getRegistrationPeriods, createRegistrationPeriod,
@@ -149,7 +148,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                   value={maxStay}
                   onChange={(e) => setMaxStay(e.target.value)}
                 />
-                <span style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 4, display: 'block' }}>
+                <span style={{ fontSize: 11.5, color: '#64839C', marginTop: 4, display: 'block' }}>
                   Exceeding this on exit auto-issues a time-exceed violation. Leave blank for no limit.
                 </span>
               </div>
@@ -162,7 +161,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                   <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
                   <span className="rc-toggle-track" />
                 </label>
-                <span style={{ fontSize: '13px', color: '#4B5563', fontWeight: 500 }}>
+                <span style={{ fontSize: '13px', color: '#3E5B72', fontWeight: 500 }}>
                   {enabled
                     ? 'Enabled — day & time restrictions apply at the gate'
                     : 'Disabled — no schedule restriction (entry not limited by this rule)'}
@@ -183,7 +182,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
 
 // ─── Mode Toggle Button ───────────────────────────────────────────────────────
 
-function ModeToggle({ active, onToggle, activeLabel, inactiveLabel, activeColor = '#16a34a' }) {
+function ModeToggle({ active, onToggle, activeLabel, inactiveLabel, activeColor = '#12915A' }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
       <button
@@ -193,13 +192,13 @@ function ModeToggle({ active, onToggle, activeLabel, inactiveLabel, activeColor 
           padding: '8px 18px', borderRadius: 8, border: '1.5px solid',
           fontSize: 13, fontWeight: 700, cursor: 'pointer',
           background:  active ? activeColor : '#fff',
-          color:       active ? '#fff'      : '#374151',
-          borderColor: active ? activeColor : '#d1d5db',
+          color:       active ? '#fff'      : '#2E4C63',
+          borderColor: active ? activeColor : '#BDD4E5',
           transition: 'all 0.15s',
         }}
       >
-        <span style={{ width: 32, height: 18, borderRadius: 9, border: '2px solid', display: 'inline-flex', alignItems: 'center', borderColor: active ? '#fff6' : '#9ca3af', background: 'none' }}>
-          <span style={{ width: 14, height: 14, borderRadius: '50%', background: active ? '#fff' : '#9ca3af', marginLeft: active ? 14 : 0, transition: 'all 0.2s', flexShrink: 0 }} />
+        <span style={{ width: 32, height: 18, borderRadius: 9, border: '2px solid', display: 'inline-flex', alignItems: 'center', borderColor: active ? '#fff6' : '#64839C', background: 'none' }}>
+          <span style={{ width: 14, height: 14, borderRadius: '50%', background: active ? '#fff' : '#64839C', marginLeft: active ? 14 : 0, transition: 'all 0.2s', flexShrink: 0 }} />
         </span>
         {active ? activeLabel : inactiveLabel}
       </button>
@@ -360,7 +359,7 @@ export default function RuleConstraints() {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="rc-page">
 
         {/* ── Header ──────────────────────────────────────────── */}
@@ -400,9 +399,9 @@ export default function RuleConstraints() {
                     onToggle={() => setConfirmAction({ type: 'toggleCampusMode' })}
                     activeLabel="Open Campus ON"
                     inactiveLabel="Open Campus OFF"
-                    activeColor="#7c3aed"
+                    activeColor="#1072B3"
                   />
-                  <span style={{ fontSize: 12, color: ss.open_campus_mode ? '#7c3aed' : '#9ca3af', fontWeight: 600 }}>
+                  <span style={{ fontSize: 12, color: ss.open_campus_mode ? '#1072B3' : '#64839C', fontWeight: 600 }}>
                     {ss.open_campus_mode
                       ? 'All vehicles are freely allowed — all rules bypassed.'
                       : 'Normal entry restrictions apply.'}
@@ -430,7 +429,7 @@ export default function RuleConstraints() {
               <div className="rc-period-form">
                 <div className="rc-period-form-fields">
                   <div className="rc-reg-field" style={{ flex: 2 }}>
-                    <label className="rc-field-label">Label <span style={{ color: '#ef4444' }}>*</span></label>
+                    <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
                     <input
                       className={`rc-field-input ${periodErrors.label ? 'rc-input-error' : ''}`}
                       placeholder="e.g. S.Y. 2025–2026 First Semester"
@@ -440,17 +439,18 @@ export default function RuleConstraints() {
                     {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
                   </div>
                   <div className="rc-reg-field">
-                    <label className="rc-field-label">Start date <span style={{ color: '#ef4444' }}>*</span></label>
+                    <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
                     <input
                       type="date"
                       className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
                       value={periodForm.start_date}
+                      min={new Date().toISOString().slice(0, 10)}
                       onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
                     />
                     {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
                   </div>
                   <div className="rc-reg-field">
-                    <label className="rc-field-label">End date <span style={{ color: '#ef4444' }}>*</span></label>
+                    <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
                     <input
                       type="date"
                       className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
@@ -475,7 +475,7 @@ export default function RuleConstraints() {
             {periodsLoading ? (
               <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
             ) : periods.length === 0 ? (
-              <p className="rc-mode-desc" style={{ color: '#9ca3af', fontStyle: 'italic' }}>
+              <p className="rc-mode-desc" style={{ color: '#64839C', fontStyle: 'italic' }}>
                 No registration periods yet. Click "New Period" to create one.
               </p>
             ) : (
@@ -575,7 +575,7 @@ export default function RuleConstraints() {
                               {formatTime12(rule.start_time)} – {formatTime12(rule.end_time)}
                             </span>
                             {rule.max_stay_minutes != null && (
-                              <span className="rc-entry-time" style={{ color: '#B45309' }}>
+                              <span className="rc-entry-time" style={{ color: '#8A6B00' }}>
                                 <Timer size={11} />
                                 Max stay: {rule.max_stay_minutes} min
                               </span>
@@ -654,6 +654,6 @@ export default function RuleConstraints() {
         )
       })()}
 
-    </AdminLayout>
+    </>
   )
 }

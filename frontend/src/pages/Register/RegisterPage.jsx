@@ -1,9 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+
+const LICENSE_IMAGE_MAX_MB    = 5
+const LICENSE_IMAGE_MAX_BYTES = LICENSE_IMAGE_MAX_MB * 1024 * 1024
+const LICENSE_IMAGE_TYPES     = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function formatRegDate(iso) {
   if (!iso) return null
@@ -100,6 +110,11 @@ export default function RegisterPage() {
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
   const [dupChecking, setDupChecking] = useState({})
   const [licenseImage, setLicenseImage] = useState(null)
+  const [licensePreview, setLicensePreview] = useState(null)
+  const [licenseError, setLicenseError] = useState(null)
+  // Set when the registration saved but the photo upload didn't, so the success
+  // screen can tell the applicant to bring the physical license instead.
+  const [licenseUploadFailed, setLicenseUploadFailed] = useState(false)
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -301,6 +316,7 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
+      else if (name === 'email') formatted = formatted.toLowerCase()
       else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
       setFormData((prev) => ({
@@ -318,6 +334,47 @@ export default function RegisterPage() {
       setSubmitError(null)
     }
   }
+
+  /* ── Driver's license photo ── */
+  const handleLicenseImageChange = (e) => {
+    const file = e.target.files?.[0]
+    // Let the user re-pick the same file after removing it
+    e.target.value = ''
+    if (!file) return
+
+    if (!LICENSE_IMAGE_TYPES.includes(file.type)) {
+      setLicenseError('Please choose a JPG, PNG, WEBP or HEIC image.')
+      return
+    }
+    if (file.size > LICENSE_IMAGE_MAX_BYTES) {
+      setLicenseError(`That image is ${formatFileSize(file.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`)
+      return
+    }
+
+    setLicenseError(null)
+    setLicenseImage(file)
+    // HEIC won't render in most browsers — fall back to the filename-only chip.
+    // Built outside the updater so StrictMode's double-invoke can't leak a second URL.
+    const nextPreview = file.type === 'image/heic' || file.type === 'image/heif'
+      ? null
+      : URL.createObjectURL(file)
+    setLicensePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return nextPreview
+    })
+  }
+
+  const clearLicenseImage = () => {
+    setLicenseImage(null)
+    setLicenseError(null)
+    setLicensePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
+  }
+
+  // Release the last object URL when the form unmounts
+  useEffect(() => () => { if (licensePreview) URL.revokeObjectURL(licensePreview) }, [licensePreview])
 
   // Debounced live duplicate check — warns in the field hint before the user submits
   useEffect(() => {
@@ -535,12 +592,13 @@ export default function RegisterPage() {
       const result = await registrationApi.submitOpenRegistration(payload)
 
       if (licenseImage && result?.id) {
-        // Best-effort — a failed license photo upload shouldn't block the (already
-        // submitted) registration itself, so any error here is silently ignored.
+        // Best-effort — a failed photo upload shouldn't block the (already submitted)
+        // registration, but the applicant is told so they can bring the physical license.
         try {
           await registrationApi.uploadLicenseImage(result.id, payload.email, licenseImage)
-        } catch {
-          /* registration already succeeded; the photo can be added later by CDSO if needed */
+        } catch (uploadErr) {
+          setLicenseUploadFailed(true)
+          console.error('License image upload failed:', uploadErr)
         }
       }
 
@@ -672,6 +730,16 @@ export default function RegisterPage() {
                 </p>
               </div>
             </div>
+
+            {licenseUploadFailed && (
+              <div className="success-license-warn">
+                <AlertTriangle size={16} />
+                <span>
+                  Your driver's license photo could not be uploaded, but your application was
+                  submitted. Just bring the physical license when you visit the CDSO Office.
+                </span>
+              </div>
+            )}
 
             {/* Compact next steps */}
             <div className="success-next-steps">
@@ -1157,7 +1225,7 @@ export default function RegisterPage() {
                   {/* SpEd: optional grade level */}
                   {formData.student_level === 'sped' && (
                     <div className="form-group">
-                      <label>Grade Level <span style={{ color: '#7C80A3', fontWeight: 400 }}>(optional)</span></label>
+                      <label>Grade Level <span style={{ color: '#6B8CA6', fontWeight: 400 }}>(optional)</span></label>
                       <select name="student_grade" value={formData.student_grade} onChange={handleInputChange}>
                         <option value="">Not specified</option>
                         <option value="Kinder 1">Kinder 1</option>
@@ -1346,14 +1414,48 @@ export default function RegisterPage() {
               )}
 
               <div className="form-group col-span-2">
-                <label>Driver's License Photo (optional)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setLicenseImage(e.target.files?.[0] || null)}
-                />
-                <span className="field-hint">Upload a clear photo of the driver's license — helps CDSO verify the application faster.</span>
-                {licenseImage && <span className="field-hint">Selected: {licenseImage.name}</span>}
+                <label>Driver's License Photo <span className="label-optional">(optional)</span></label>
+
+                {!licenseImage ? (
+                  <label className="license-upload">
+                    <input
+                      type="file"
+                      accept={LICENSE_IMAGE_TYPES.join(',')}
+                      onChange={handleLicenseImageChange}
+                      className="license-upload-input"
+                    />
+                    <Upload size={18} className="license-upload-icon" />
+                    <span className="license-upload-text">
+                      <strong>Choose a photo</strong>
+                      <span>JPG, PNG, WEBP or HEIC · up to {LICENSE_IMAGE_MAX_MB}MB</span>
+                    </span>
+                  </label>
+                ) : (
+                  <div className="license-preview">
+                    {licensePreview ? (
+                      <img src={licensePreview} alt="Driver's license preview" className="license-preview-img" />
+                    ) : (
+                      <div className="license-preview-img license-preview-noimg">HEIC</div>
+                    )}
+                    <div className="license-preview-meta">
+                      <span className="license-preview-name" title={licenseImage.name}>{licenseImage.name}</span>
+                      <span className="license-preview-size">{formatFileSize(licenseImage.size)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="license-preview-remove"
+                      onClick={clearLicenseImage}
+                      aria-label="Remove driver's license photo"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+
+                <span className="field-hint">
+                  A clear, readable photo of the driver's license helps CDSO verify the application faster.
+                </span>
+                {licenseError && <span className="field-error-msg">{licenseError}</span>}
               </div>
 
               {/* Campus day selector — students only */}

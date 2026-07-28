@@ -23,7 +23,7 @@ export default function NotFoundPage() {
       <main className="not-found-main">
         <div className="not-found-card">
           <div className="card-icon">
-            <AlertCircle size={48} color="#DC2626" />
+            <AlertCircle size={48} color="#C62828" />
           </div>
           <h1 className="not-found-title">404</h1>
           <h2 className="not-found-subtitle">Page Not Found</h2>

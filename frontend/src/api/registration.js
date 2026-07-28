@@ -54,6 +54,13 @@ export const registrationApi = {
     const { data } = await api.get(`/vehicles/registrations/pending/?status=${status}`)
     return data
   },
+  // Admin/CDSO — branded Vehicle Registrations report (format: 'pdf' | 'excel')
+  exportRegistrationsReport: async (format, params = {}) => {
+    const { data } = await api.get(`/vehicles/registrations/report/${format}/`, {
+      params, responseType: 'blob',
+    })
+    return data
+  },
   // orNumber required; campusDaysOverride is an optional string[] the admin freely picks;
   // specialCaseReason is required when campusDaysOverride adds days not in the original request
   // acknowledgeBlock: pass true to accept a plate flagged by a prior 3rd-offense

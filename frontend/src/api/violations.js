@@ -22,6 +22,10 @@ export const createViolation = (data) => {
   return api.post('/violations/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 
+// Admin/CDSO — branded Violations report (format: 'pdf' | 'excel')
+export const exportViolationsReport = (format, params = {}) =>
+  api.get(`/violations/report/${format}/`, { params, responseType: 'blob' }).then(r => r.data)
+
 // CDSO workflow for 3rd-offense violations
 export const issueCDSOReport  = (id)              => api.post(`/violations/${id}/issue-report/`)
 export const clearViolation   = (id, officialReceipt) =>

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,7 +7,7 @@ from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
-from vehicles.models import Vehicle
+from vehicles.models import Vehicle, SupplierPlate
 from violations.models import Violation
 from accounts.models import User, AuditLog
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
@@ -17,6 +17,7 @@ from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer, MLTrainingSampleSerializer
+from time_utils import day_range
 
 
 def get_client_ip(request):
@@ -100,11 +101,12 @@ def _inside_state(plate_number: str):
     'duplicate' — plate just authorized within GRACE_PERIOD_SECONDS; ignore the re-scan.
     'inside'    — plate is in campus but past the grace period; treat re-scan as exit.
     """
-    today = timezone.localdate()
+    day_start, day_end = day_range(timezone.localdate())
     last_entry = AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
-        scanned_at__date=today,
+        scanned_at__gte=day_start,
+        scanned_at__lt=day_end,
         scanned_at__lte=timezone.now(),  # ignore future-dated rows from clock skew
     ).order_by('-scanned_at').first()
 
@@ -145,11 +147,12 @@ def _in_exit_cooldown(plate_number: str) -> bool:
 
 def _already_inside(plate_number: str) -> bool:
     """True if the plate has an authorized entry today with no paired exit yet."""
-    today = timezone.localdate()
+    day_start, day_end = day_range(timezone.localdate())
     last_entry = AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.AUTHORIZED,
-        scanned_at__date=today,
+        scanned_at__gte=day_start,
+        scanned_at__lt=day_end,
         scanned_at__lte=timezone.now(),
     ).order_by('-scanned_at').first()
     if not last_entry:
@@ -159,11 +162,12 @@ def _already_inside(plate_number: str) -> bool:
 
 def _pair_entry_exit(exit_log) -> None:
     """Link exit_log to the most recent unpaired entry for the same plate today."""
-    today = timezone.localdate()
+    day_start, day_end = day_range(timezone.localdate())
     entry = AccessLog.objects.filter(
         plate_number=exit_log.plate_number,
         status=AccessLog.Status.AUTHORIZED,
-        scanned_at__date=today,
+        scanned_at__gte=day_start,
+        scanned_at__lt=day_end,
         exit_log__isnull=True,
     ).order_by('-scanned_at').first()
     if entry:
@@ -247,6 +251,24 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
         'has_violations': False,
         'already_inside': False,
     }
+
+
+def _supplier_rule_denial() -> str | None:
+    """Day/time-window check for supplier entries against the supplier
+    RuleConstraint. Returns a denial message, or None when entry is allowed.
+    Open Campus Mode bypasses the restriction like every other rule."""
+    from vehicles.models import SystemSettings
+    from .entry_logic import _get_active_rule, _is_within_days, _is_within_window
+    rule = _get_active_rule('supplier')
+    if not rule or SystemSettings.get().open_campus_mode:
+        return None
+    if not _is_within_days(rule):
+        day_name = timezone.localdate().strftime('%A')
+        return f'Supplier access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.'
+    if not _is_within_window(rule):
+        return (f'Supplier access restricted. Outside allowed hours '
+                f'({rule.start_time}–{rule.end_time}) per rule: {rule.name}.')
+    return None
 
 
 def _is_standby_fetcher(user) -> bool:
@@ -356,10 +378,12 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     dedup_types = [vtype]
     if vtype == Violation.Type.UNAUTHORIZED_ENTRY:
         dedup_types.append(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
+    _day_start, _day_end = day_range(timezone.localdate())
     already_today = Violation.objects.filter(
         vehicle=vehicle,
         violation_type__in=dedup_types,
-        issued_at__date=timezone.localdate(),
+        issued_at__gte=_day_start,
+        issued_at__lt=_day_end,
     ).exists()
     if already_today:
         return
@@ -409,7 +433,9 @@ class ScanView(APIView):
 
         raw_bytes = file.read()
         plates = read_plate(raw_bytes)
-        ml_sample = record_scan(raw_bytes)
+        # Reuse the detections/OCR just computed — record_scan would otherwise
+        # run the entire pipeline a second time on the same bytes.
+        ml_sample = record_scan(raw_bytes, results=plates)
 
         results = []
 
@@ -903,7 +929,7 @@ class GateListView(APIView):
     def get(self, request):
         from .models import Gate
         qs = Gate.objects.all()
-        is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')
+        is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'
         if not (is_staff and request.query_params.get('all')):
             qs = qs.filter(is_active=True)
         return Response([_gate_dict(g) for g in qs])
@@ -911,7 +937,7 @@ class GateListView(APIView):
     def post(self, request):
         from .models import Gate
         import re as _re
-        if not (request.user.is_authenticated and getattr(request.user, 'role', '') in ('admin', 'cdso')):
+        if not (request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'):
             return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
 
         gate_id = (request.data.get('gate_id') or '').strip().lower()
@@ -937,7 +963,7 @@ class GateDetailView(APIView):
 
     def patch(self, request, pk):
         from .models import Gate
-        if getattr(request.user, 'role', '') not in ('admin', 'cdso'):
+        if getattr(request.user, 'role', '') != 'admin':
             return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             gate = Gate.objects.get(pk=pk)
@@ -972,7 +998,8 @@ class AccessLogListView(APIView):
         date = request.query_params.get('date')
         if date:
             try:
-                qs = qs.filter(scanned_at__date=date)
+                _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
+                qs = qs.filter(scanned_at__gte=_start, scanned_at__lt=_end)
             except Exception:
                 pass  # ignore malformed dates rather than 500
         limit = int(request.query_params.get('limit', 200))
@@ -1224,7 +1251,7 @@ class GuardMonitorView(APIView):
     """Admin-only: per-gate activity, current shifts, and cross-gate discrepancies."""
 
     def get(self, request):
-        if not request.user.is_authenticated or request.user.role not in ('admin', 'cdso'):
+        if not request.user.is_authenticated or request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
 
@@ -1232,6 +1259,7 @@ class GuardMonitorView(APIView):
         from accounts.models import User as UserModel
 
         today  = timezone.localdate()
+        _today_start, _today_end = day_range(today)
         guards = UserModel.objects.filter(role='security').order_by('full_name')
 
         # Current active shifts keyed by gate
@@ -1246,7 +1274,10 @@ class GuardMonitorView(APIView):
 
         result = []
         for guard in guards:
-            today_logs = AccessLog.objects.filter(scanned_by=guard, scanned_at__date=today)
+            today_logs = AccessLog.objects.filter(
+                scanned_by=guard,
+                scanned_at__gte=_today_start, scanned_at__lt=_today_end,
+            )
 
             stats = today_logs.aggregate(
                 total      = Count('id'),
@@ -1267,7 +1298,8 @@ class GuardMonitorView(APIView):
 
             # Shift history for today
             shifts_today = GuardShift.objects.filter(
-                guard=guard, clocked_in_at__date=today,
+                guard=guard,
+                clocked_in_at__gte=_today_start, clocked_in_at__lt=_today_end,
             ).values('id', 'gate', 'clocked_in_at', 'clocked_out_at')
 
             result.append({
@@ -1295,7 +1327,8 @@ class GuardMonitorView(APIView):
         cross_gate = []
         exit_logs = (
             AccessLog.objects
-            .filter(status=AccessLog.Status.EXITED, scanned_at__date=today, paired_entry__isnull=False)
+            .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,
+                    scanned_at__gte=_today_start, scanned_at__lt=_today_end)
             .select_related('paired_entry', 'vehicle__user')
         )
         for ex_log in exit_logs:
@@ -1800,7 +1833,7 @@ class GuardShiftListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if request.user.role not in ('admin', 'cdso'):
+        if request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
 
@@ -1815,6 +1848,10 @@ class GuardShiftListView(APIView):
         if guard:
             qs = qs.filter(guard__id=guard)
         if date:
-            qs = qs.filter(clocked_in_at__date=date)
+            try:
+                _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
+                qs = qs.filter(clocked_in_at__gte=_start, clocked_in_at__lt=_end)
+            except (TypeError, ValueError):
+                pass  # ignore malformed dates rather than 500
 
         return Response(GSSer(qs[:100], many=True).data)

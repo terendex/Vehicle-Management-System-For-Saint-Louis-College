@@ -2,19 +2,19 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #F0F2F7;
+  background: #EEF4F9;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .not-found-header {
   width: 100%;
   background: #FFFFFF;
-  border-bottom: 2.5px solid #2A2B61;
+  border-bottom: 2.5px solid #03396C;
   padding: 0 2rem;
   height: 64px;
   display: flex;
   align-items: center;
-  box-shadow: 0 1px 3px rgba(42, 43, 97, 0.06);
+  box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -38,8 +38,8 @@
   height: 42px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid #2A2B61;
-  box-shadow: 0 2px 8px rgba(42, 43, 97, 0.12);
+  border: 2px solid #03396C;
+  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
 }
 
 .header-text {
@@ -51,7 +51,7 @@
 .header-title {
   font-size: 15px;
   font-weight: 800;
-  color: #2A2B61;
+  color: #03396C;
   letter-spacing: 1.2px;
   text-transform: uppercase;
 }
@@ -59,7 +59,7 @@
 .header-subtitle {
   font-size: 11.5px;
   font-weight: 500;
-  color: #7C80A3;
+  color: #6B8CA6;
   letter-spacing: 0.3px;
 }
 
@@ -75,13 +75,13 @@
   background: #FFFFFF;
   border-radius: 16px;
   box-shadow:
-    0 4px 6px -1px rgba(42, 43, 97, 0.04),
-    0 10px 40px -4px rgba(42, 43, 97, 0.08);
+    0 4px 6px -1px rgba(3, 57, 108, 0.04),
+    0 10px 40px -4px rgba(3, 57, 108, 0.08);
   width: 100%;
   max-width: 460px;
   padding: 48px 32px;
   text-align: center;
-  border: 1px solid #E8EAF2;
+  border: 1px solid #D3E1EC;
   position: relative;
   overflow: hidden;
   animation: cardSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
@@ -94,7 +94,7 @@
   left: 0;
   right: 0;
   height: 3.5px;
-  background: linear-gradient(90deg, #DC2626 0%, #F87171 50%, #DC2626 100%);
+  background: linear-gradient(90deg, #C62828 0%, #E88080 50%, #C62828 100%);
 }
 
 @keyframes cardSlideUp {
@@ -115,15 +115,15 @@
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: #FEF2F2;
-  border: 2px solid #FECACA;
+  background: #FCEDED;
+  border: 2px solid #F3C0C0;
   margin-bottom: 20px;
 }
 
 .not-found-title {
   font-size: 72px;
   font-weight: 800;
-  color: #2A2B61;
+  color: #03396C;
   margin: 0;
   line-height: 1;
   letter-spacing: -2px;
@@ -132,13 +132,13 @@
 .not-found-subtitle {
   font-size: 20px;
   font-weight: 600;
-  color: #1A1D2E;
+  color: #0B2340;
   margin: 8px 0 12px;
 }
 
 .not-found-message {
   font-size: 15px;
-  color: #5A5F72;
+  color: #4A6B85;
   margin-bottom: 28px;
   line-height: 1.5;
 }
@@ -147,7 +147,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #2A2B61;
+  background: #03396C;
   color: #FFFFFF;
   border: none;
   border-radius: 10px;
@@ -156,7 +156,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 1px 3px rgba(42, 43, 97, 0.15);
+  box-shadow: 0 1px 3px rgba(3, 57, 108, 0.15);
   position: relative;
   overflow: hidden;
 }
@@ -165,7 +165,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: #1A1D2E;
+  background: #0B2340;
   transform: scaleY(0);
   transform-origin: bottom;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -177,7 +177,7 @@
 }
 
 .btn-home:hover {
-  box-shadow: 0 4px 16px rgba(42, 43, 97, 0.25);
+  box-shadow: 0 4px 16px rgba(3, 57, 108, 0.25);
 }
 
 .btn-home:active {

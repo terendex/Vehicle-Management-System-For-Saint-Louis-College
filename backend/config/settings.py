@@ -44,6 +44,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Required for GinIndex on VehicleRegistration.campus_days (JSON containment).
+    'django.contrib.postgres',
 
     'rest_framework',
     'rest_framework_simplejwt',
@@ -59,6 +61,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First in the list: revive a stale pooled DB connection before anything
+    # else (sessions, auth) tries to query with it.
+    'config.middleware.IdleConnectionHealthCheckMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -120,6 +125,16 @@ CHANNEL_LAYERS = {
 _db_url = os.getenv('DATABASE_URL')
 if _db_url:
     DATABASES = {'default': dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=True)}
+    # Neon is reached through its pgbouncer endpoint (-pooler), which runs in
+    # transaction pooling mode. Django does not support server-side cursors
+    # there — a named cursor can land on a different backend connection than
+    # the one that declared it. QuerySet.iterator() silently falls back to
+    # client-side fetching once this is set.
+    #
+    # It is also a large speed win over a long-haul link: a server-side cursor
+    # costs DECLARE + repeated FETCH + CLOSE, and every one of those is a
+    # separate round trip to Singapore.
+    DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = True
 else:
     DATABASES = {
         'default': {
