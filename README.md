@@ -13,6 +13,7 @@ An AI-powered smart parking and vehicle verification system using license plate 
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
 - [Running the Project](#running-the-project)
+- [Deployment](#deployment)
 - [API Endpoints](#api-endpoints)
 - [User Roles](#user-roles)
 
@@ -247,9 +248,9 @@ npm install
 
 | Variable | Description | Example |
 |---|---|---|
-| `SECRET_KEY` | Django secret key | `your-secret-key` |
-| `DEBUG` | Debug mode | `True` |
-| `ALLOWED_HOSTS` | Comma-separated allowed hosts | `localhost,127.0.0.1` |
+| `SECRET_KEY` | Django secret key. Required when `DEBUG` is off — the app refuses to start without it | `your-secret-key` |
+| `DEBUG` | Debug mode. Defaults to `True` locally, but **`False` on Railway** so a forgotten variable fails closed instead of exposing stack traces | `True` |
+| `ALLOWED_HOSTS` | Comma-separated allowed hosts. `RAILWAY_PUBLIC_DOMAIN` is appended automatically when present | `localhost,127.0.0.1` |
 | `DATABASE_URL` | Neon PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
 | `DB_NAME` | Local DB fallback (ignored when DATABASE_URL is set) | `plate_db` |
 | `DB_USER` | Local DB fallback | `postgres` |
@@ -274,6 +275,20 @@ npm install
 | `ML_SAMPLE_BATCH_SIZE` | New samples needed to trigger retraining | `50` |
 | `ML_CONFIDENCE_THRESHOLD` | Min confidence to auto-label a sample | `0.6` |
 | `ML_AUTO_RETRAIN_ENABLED` | Enable/disable automatic retraining | `true` |
+
+Deployment-only variables (ignored in local development):
+
+| Variable | Description | Example |
+|---|---|---|
+| `REDIS_URL` | Channels layer + Django cache. Unset falls back to in-memory, which is fine at one replica with no Celery worker | — |
+| `DJANGO_ADMIN_URL` | Prefix for Django admin. Not `admin` — the React app owns that path on a shared origin | `django-admin` |
+| `CSRF_TRUSTED_ORIGINS` | Extra trusted origins; the Railway domain is added automatically | `https://example.com` |
+| `SECURE_SSL_REDIRECT` | Set `false` on the campus PC — the LAN has no TLS and the redirect would loop | `true` |
+| `RUN_MIGRATIONS` | Run migrations at container start. Set `false` on the campus PC so only Railway migrates the shared DB | `true` |
+| `DRF_PAGE_SIZE` | Page size for endpoints that opt in with `?page=` | `50` |
+
+See [`backend/.env.campus.example`](backend/.env.campus.example) for a filled-in
+campus template.
 
 ### `frontend/.env`
 
@@ -399,6 +414,70 @@ Then **restart Daphne** so the new `.env` is loaded.
 | Backend code changes don't take effect | Daphne has **no auto-reload** | Restart Daphne after every `.py` or `.env` change (the frontend *does* hot-reload) |
 | cloudflared logs `Failed to initialize DNS local resolver` | Harmless — that's cloudflared's optional local DNS proxy, unrelated to your tunnel | Ignore it; check for `Registered tunnel connection` instead |
 | Tunnel URL changed again | Quick tunnels are random per run | Re-run `set_tunnel_url.py` + restart Daphne, or create a named tunnel |
+
+---
+
+## Deployment
+
+Everything above describes **local development**. Deployment runs the system in
+two halves, because one of them can do something the other cannot.
+
+| | Cloud half (Railway) | Campus half (on-site PC) |
+|---|---|---|
+| URL | `https://<app>.up.railway.app` | `http://<campus-ip>:8000` |
+| Reachable off-campus | **yes** | no |
+| Live camera scanning | **no** | **yes** |
+| Registration, approvals, violations, reports, QR | yes | yes |
+| Django admin (`/django-admin/`) | **yes** | no — plain HTTP blocks the secure cookie |
+| Hosting cost | Railway usage | none — your hardware |
+
+Both halves run the same code against the **same Neon database** and the **same
+R2 bucket**, so they always show identical data. A scan at the gate is visible
+on the Railway URL immediately.
+
+### Why two halves
+
+The backend — not the browser — opens the RTSP connection: `RtspStreamConsumer`
+receives a `{"type":"start","rtsp_url":…}` message and calls
+`cv2.VideoCapture()` server-side. The cameras live on the campus LAN at
+`192.168.137.x`, and a cloud container has no route to a private address. So
+whichever machine runs Django must be on the camera network.
+
+Everything that is not a camera works fine in the cloud, which is why the public
+half is worth having.
+
+### Setting it up
+
+| Guide | Covers |
+|---|---|
+| **[DEPLOY.md](DEPLOY.md)** | Railway: Railpack build, env vars, region, what to watch in the build log |
+| **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)** | On-site instance: config, `run-campus.ps1`, scheduled maintenance |
+
+Quick start for the campus half, on a PC that can reach the cameras:
+
+```powershell
+copy backend\.env.campus.example backend\.env   # fill in the marked values
+powershell -ExecutionPolicy Bypass -File scripts\run-campus.ps1
+```
+
+The script pings both cameras, builds the frontend, and serves on the LAN.
+
+### Things that differ from local development
+
+- **Django admin is at `/django-admin/`, not `/admin/`.** On a single origin the
+  React app owns `/admin`, `/admin/vehicles`, `/admin/users` — the two collided.
+- **No Celery worker is deployed.** The ML retrain button therefore does
+  nothing, and the two beat-scheduled jobs (`auto_manage_events`,
+  `purge_old_records`) do not run. Schedule
+  `python manage.py run_maintenance` instead — it runs both synchronously with
+  no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
+- **Redis is not required.** With one replica and no worker, nothing pushes to
+  browsers from outside the web process, so the in-memory channel layer is
+  enough. `settings.py` picks up `REDIS_URL` automatically if you ever add one.
+- **`USE_R2=true` is mandatory in the cloud.** Railway's filesystem is
+  ephemeral; with local storage every uploaded photo is destroyed on redeploy.
+- **The campus PC needs a static IP** (or a DHCP reservation), or guards'
+  bookmarks break and `ALLOWED_HOSTS` stops matching.
 
 ---
 
