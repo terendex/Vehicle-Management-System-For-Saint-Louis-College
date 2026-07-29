@@ -99,6 +99,52 @@ gates the deploy on `/healthz`.
 
 ---
 
+## 6. Custom domain — `spvvs.slc-sflu.edu.ph`
+
+The app is usable on its `*.up.railway.app` URL immediately. Moving it to the
+school subdomain `spvvs.slc-sflu.edu.ph` is optional and can be done any time
+after the first deploy. It involves three parties, one action each:
+
+**1. Us — add the domain in Railway (2 min).**
+Service → Settings → Networking → **Custom Domain** → enter `spvvs.slc-sflu.edu.ph`.
+Railway then displays two DNS records — a **CNAME** and a **TXT** — with values
+unique to this service. They do not exist until the domain is added here, so
+this step must come first.
+
+**2. SLC IT — add those records to `slc-sflu.edu.ph` DNS (5 min).**
+This is the blocking step: `slc-sflu.edu.ph` is the school's domain, so only
+whoever administers its DNS can point the subdomain. Send them the two records
+from step 1, e.g.:
+
+> Please add these records to `slc-sflu.edu.ph` so our capstone system can use
+> `spvvs.slc-sflu.edu.ph`:
+> - **CNAME** — `spvvs` → `<target Railway shows>`
+> - **TXT** — `<name/value Railway shows>`
+>
+> They point the subdomain at our hosted app; SSL is automatic. No existing
+> `slc-sflu.edu.ph` record is affected.
+
+**3. Railway — automatic.**
+Once the records resolve (minutes to a few hours), Railway provisions and
+renews the TLS certificate itself. No cost; custom domains work on every plan.
+
+**After it resolves, update these variables** so emails and CSRF use the new
+host — do this *after*, not before, or password-reset and QR links point at a
+domain that does not answer yet:
+
+```
+ALLOWED_HOSTS=localhost,127.0.0.1,spvvs.slc-sflu.edu.ph
+CSRF_TRUSTED_ORIGINS=https://spvvs.slc-sflu.edu.ph
+FRONTEND_URL=https://spvvs.slc-sflu.edu.ph
+BACKEND_URL=https://spvvs.slc-sflu.edu.ph
+```
+
+Both the Railway URL and the custom domain serve simultaneously, so there is no
+downtime during the switch. Rename any shared `*.up.railway.app` link *before*
+handing it out, since every rename breaks previously saved links.
+
+---
+
 ## What changed to make this work
 
 - **Django admin moved off `/admin/`** to `/django-admin/`. The React app owns
