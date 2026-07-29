@@ -241,8 +241,8 @@ function KpiStrip({ items }) {
           <div className="ad-kpi-text">
             <span className="ad-kpi-val">{item.value ?? '—'}</span>
             <span className="ad-kpi-label">{item.label}</span>
+            {item.sub && <span className="ad-kpi-sub">{item.sub}</span>}
           </div>
-          {item.sub && <span className="ad-kpi-sub">{item.sub}</span>}
         </div>
       ))}
     </div>
