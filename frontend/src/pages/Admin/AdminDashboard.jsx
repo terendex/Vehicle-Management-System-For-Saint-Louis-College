@@ -22,6 +22,31 @@ const TOOLTIP_STYLE = {
   boxShadow: '0 4px 16px rgba(3, 57, 108,0.08)',
 }
 
+// ── Chart palette ───────────────────────────────────────────────────────────────
+// Colour-blind-safe by construction: every ordering used below was checked with
+// the dataviz validator (adjacent-pair CVD ΔE ≥ 8, normal-vision ≥ 15). Every chart
+// also renders a labelled legend, so identity never rests on colour alone.
+//
+// STATUS hues carry meaning and are reused consistently across charts —
+// Authorized is always green, Denied always red, Pending always amber.
+const STATUS = {
+  good:     '#0ca30c',   // authorized / accepted
+  warning:  '#fab219',   // pending
+  critical: '#d03b3b',   // denied / rejected
+}
+// CAT hues are identity keys only, assigned per entity in a fixed order (never
+// cycled). `muted` is the reserved neutral for "Other" / disabled slices.
+const CAT = {
+  blue:    '#2a78d6',
+  orange:  '#eb6834',
+  aqua:    '#1baf7a',
+  yellow:  '#eda100',
+  magenta: '#e87ba4',
+  green:   '#008300',
+  violet:  '#4a3aa7',
+  muted:   '#898781',
+}
+
 // ── Donut Chart ───────────────────────────────────────────────────────────────
 
 function DonutChart({ slices, centerValue, centerLabel }) {
@@ -42,7 +67,8 @@ function DonutChart({ slices, centerValue, centerLabel }) {
               outerRadius={85}
               paddingAngle={3}
               dataKey="value"
-              strokeWidth={0}
+              stroke="#fff"
+              strokeWidth={2}
             >
               {slices.map((s, i) => (
                 <Cell key={i} fill={s.color} />
@@ -160,22 +186,22 @@ function DayRegistrationChart({ data }) {
               return row ? `${row.day} — ${row.accepted + row.pending}/${row.capacity} slots used` : label
             }}
           />
-          <Bar dataKey="accepted" stackId="regs" name="Accepted" fill="#0F7A5A" maxBarSize={48} />
-          <Bar dataKey="pending"  stackId="regs" name="Pending"  fill="#E0B00C" radius={[6, 6, 0, 0]} maxBarSize={48} />
-          <ReferenceLine y={capacity} stroke="#C62828" strokeDasharray="4 4" />
+          <Bar dataKey="accepted" stackId="regs" name="Accepted" fill={STATUS.good} maxBarSize={48} />
+          <Bar dataKey="pending"  stackId="regs" name="Pending"  fill={STATUS.warning} radius={[6, 6, 0, 0]} maxBarSize={48} />
+          <ReferenceLine y={capacity} stroke={STATUS.critical} strokeDasharray="4 4" />
         </BarChart>
       </ResponsiveContainer>
       <div className="ad-donut-legend" style={{ marginTop: 8 }}>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#0F7A5A' }} />
+          <span className="ad-donut-legend-dot" style={{ background: STATUS.good }} />
           <span className="ad-donut-legend-label">Accepted</span>
         </div>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#E0B00C' }} />
+          <span className="ad-donut-legend-dot" style={{ background: STATUS.warning }} />
           <span className="ad-donut-legend-label">Pending</span>
         </div>
         <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: '#C62828' }} />
+          <span className="ad-donut-legend-dot" style={{ background: STATUS.critical }} />
           <span className="ad-donut-legend-label">Capacity ({capacity})</span>
         </div>
       </div>
@@ -326,43 +352,48 @@ export default function AdminDashboard() {
 
   // ── Derived chart data ───────────────────────────────────────────────────────
 
-  // Registration outcome breakdown (accepted / pending / denied)
+  // Registration outcome breakdown — status semantics (green/amber/red).
   const vehicleSlices = stats ? [
-    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: '#0F7A5A' },
-    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: '#8A6B00' },
-    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: '#C62828' },
+    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: STATUS.good },
+    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: STATUS.warning },
+    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: STATUS.critical },
   ].filter(s => s.value > 0) : []
 
-  // Registered categories: owner types + suppliers, plus a disabled slice
+  // Registered categories — one distinct hue per type; disabled uses the muted
+  // neutral. Validated order: blue, orange, aqua, yellow, (muted).
   const userSlices = stats ? [
-    { name: 'Students',  value: stats.owners?.student   ?? 0, color: '#1072B3' },
-    { name: 'Employees', value: stats.owners?.employee  ?? 0, color: '#0F7A5A' },
-    { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: '#8A6B00' },
-    { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: '#1072B3' },
-    { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: '#64839C' },
+    { name: 'Students',  value: stats.owners?.student   ?? 0, color: CAT.blue },
+    { name: 'Employees', value: stats.owners?.employee  ?? 0, color: CAT.orange },
+    { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: CAT.aqua },
+    { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: CAT.yellow },
+    { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: CAT.muted },
   ].filter(s => s.value > 0) : []
 
+  // Today's entry outcomes. Authorized/Denied keep their status hues; the rest
+  // take distinct categorical hues. Order is arranged so no two hard-to-separate
+  // hues sit adjacent (validated: green, blue, orange, violet, yellow, red, muted).
   const scanSlices = stats ? (() => {
     const s = stats.scans?.today_by_status ?? {}
     return [
-      { name: 'Authorized',   value: stats.scans?.registered_today ?? 0, color: '#0F7A5A' },
-      { name: 'Denied',       value: s.denied ?? 0,                      color: '#C62828' },
-      { name: 'Wrong Day',    value: s.wrong_day ?? 0,                   color: '#8A6B00' },
-      { name: 'Exited',       value: s.exited ?? 0,                      color: '#1072B3' },
-      { name: 'Visitor',      value: stats.scans?.visitor_today ?? 0,    color: '#0F7A5A' },
-      { name: 'Unregistered', value: s.unknown ?? 0,                     color: '#1072B3' },
-      { name: 'Unreadable',   value: s.unreadable ?? 0,                  color: '#5C7B92' },
+      { name: 'Authorized',   value: stats.scans?.registered_today ?? 0, color: STATUS.good },
+      { name: 'Exited',       value: s.exited ?? 0,                      color: CAT.blue },
+      { name: 'Wrong Day',    value: s.wrong_day ?? 0,                   color: CAT.orange },
+      { name: 'Visitor',      value: stats.scans?.visitor_today ?? 0,    color: CAT.violet },
+      { name: 'Unregistered', value: s.unknown ?? 0,                     color: CAT.yellow },
+      { name: 'Denied',       value: s.denied ?? 0,                      color: STATUS.critical },
+      { name: 'Unreadable',   value: s.unreadable ?? 0,                  color: CAT.muted },
     ].filter(sl => sl.value > 0)
   })() : []
 
   const VEHICLE_TYPE_LABELS = { car: 'Car', motorcycle: 'Motorcycle', ebike: 'E-Bike', van: 'Van', truck: 'Truck', bus: 'Bus' }
+  // Fleet mix — six distinct hues in validated order.
   const vehicleTypeSlices = stats ? [
-    { key: 'car',        color: '#1072B3' },
-    { key: 'motorcycle', color: '#0F7A5A' },
-    { key: 'ebike',      color: '#0F7A5A' },
-    { key: 'van',        color: '#8A6B00' },
-    { key: 'truck',      color: '#1072B3' },
-    { key: 'bus',        color: '#1072B3' },
+    { key: 'car',        color: CAT.blue },
+    { key: 'motorcycle', color: CAT.orange },
+    { key: 'ebike',      color: CAT.aqua },
+    { key: 'van',        color: CAT.yellow },
+    { key: 'truck',      color: CAT.magenta },
+    { key: 'bus',        color: CAT.green },
   ].map(t => ({ name: VEHICLE_TYPE_LABELS[t.key], value: stats.vehicles?.by_type?.[t.key] ?? 0, color: t.color }))
     .filter(s => s.value > 0) : []
 
@@ -371,14 +402,17 @@ export default function AdminDashboard() {
     time_exceed: 'Time Exceed', no_sticker: 'No Sticker',
     expired_registration: 'Expired Registration', unauthorized: 'Unauthorized (Legacy)', other: 'Other',
   }
+  // Violation types — distinct hues; the most severe (unauthorized entry) leads
+  // in red, "other" uses the muted neutral. Order validated so red and orange
+  // are not adjacent (red, yellow, blue, aqua, violet, magenta, muted).
   const violationTypeSlices = stats ? [
-    { key: 'unauthorized_entry',   color: '#C62828' },
-    { key: 'double_parking',       color: '#8A6B00' },
-    { key: 'time_exceed',          color: '#8A6B00' },
-    { key: 'no_sticker',           color: '#1072B3' },
-    { key: 'expired_registration', color: '#1072B3' },
-    { key: 'unauthorized',         color: '#5C7B92' },
-    { key: 'other',                color: '#1072B3' },
+    { key: 'unauthorized_entry',   color: STATUS.critical },
+    { key: 'double_parking',       color: CAT.yellow },
+    { key: 'time_exceed',          color: CAT.blue },
+    { key: 'no_sticker',           color: CAT.aqua },
+    { key: 'expired_registration', color: CAT.violet },
+    { key: 'unauthorized',         color: CAT.magenta },
+    { key: 'other',                color: CAT.muted },
   ].map(t => ({ name: VIOLATION_TYPE_LABELS[t.key], value: stats.violations?.by_type?.[t.key] ?? 0, color: t.color }))
     .filter(s => s.value > 0) : []
 
