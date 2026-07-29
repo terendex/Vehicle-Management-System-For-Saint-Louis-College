@@ -160,7 +160,10 @@ export default function RegisterPage() {
     plate_number: '',
     conduction_number: '',
     vehicle_type: '',
+    // vehicle_color holds the submitted value; vehicle_color_choice tracks the
+    // dropdown selection so "Other" can reveal a free-text field.
     vehicle_color: '',
+    vehicle_color_choice: '',
     body_number: '',
     privacy_consent: false,
   })
@@ -333,6 +336,22 @@ export default function RegisterPage() {
         setDupErrors((prev) => ({ ...prev, [name]: null }))
       setSubmitError(null)
     }
+  }
+
+  /* ── Vehicle colour dropdown ──
+     A preset choice fills vehicle_color directly (uppercased, matching the
+     form's naming convention); "Other" clears it and reveals a free-text field
+     so an uncommon colour can be typed. */
+  const handleColorChoice = (e) => {
+    const choice = e.target.value
+    const value = choice === 'Other' ? '' : choice.toUpperCase()
+    setFormData((prev) => ({ ...prev, vehicle_color_choice: choice, vehicle_color: value }))
+    // A preset is immediately valid; "Other" waits for the text field's own input.
+    setFormErrors((prev) => ({
+      ...prev,
+      vehicle_color: choice === 'Other' ? '' : validateField('vehicle_color', value),
+    }))
+    setSubmitError(null)
   }
 
   /* ── Driver's license photo ── */
@@ -588,6 +607,8 @@ export default function RegisterPage() {
           : [],
       }
       delete payload.who_drives
+      // UI-only helper for the colour dropdown — the backend stores vehicle_color.
+      delete payload.vehicle_color_choice
 
       const result = await registrationApi.submitOpenRegistration(payload)
 
@@ -922,7 +943,40 @@ export default function RegisterPage() {
 
               <div className="form-group">
                 <label>Vehicle Color <span className="required">*</span></label>
-                <input type="text" name="vehicle_color" value={formData.vehicle_color} onChange={handleInputChange} required />
+                <select
+                  name="vehicle_color_choice"
+                  value={formData.vehicle_color_choice}
+                  onChange={handleColorChoice}
+                  required
+                >
+                  <option value="">Select Color</option>
+                  <option value="White">White</option>
+                  <option value="Black">Black</option>
+                  <option value="Silver">Silver</option>
+                  <option value="Gray">Gray</option>
+                  <option value="Red">Red</option>
+                  <option value="Blue">Blue</option>
+                  <option value="Green">Green</option>
+                  <option value="Yellow">Yellow</option>
+                  <option value="Orange">Orange</option>
+                  <option value="Brown">Brown</option>
+                  <option value="Beige">Beige</option>
+                  <option value="Gold">Gold</option>
+                  <option value="Maroon">Maroon</option>
+                  <option value="Other">Other</option>
+                </select>
+                {formData.vehicle_color_choice === 'Other' && (
+                  <input
+                    type="text"
+                    name="vehicle_color"
+                    value={formData.vehicle_color}
+                    onChange={handleInputChange}
+                    required
+                    autoFocus
+                    placeholder="Enter vehicle color"
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </div>
 
               {formData.vehicle_type === 'Tricycle' && (
