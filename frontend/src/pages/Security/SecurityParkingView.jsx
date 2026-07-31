@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
-  Shield, AlertTriangle, X,
+  Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { zoneApi } from '../../api/parking'
@@ -195,41 +195,75 @@ export default function SecurityParkingView() {
     <>
       <div className="pm-page">
 
-        {/* Header */}
-        <div className="pm-header">
-          <div className="pm-header-left">
-            <ParkingCircle size={22} className="pm-header-icon" />
-            <div>
-              <h1 className="pm-title">Parking Overview</h1>
-              <p className="pm-subtitle">
-                Live view of parking zones and CCTV cameras. Auto-refreshes every 8 seconds.
-              </p>
+        {/* Title is screen-reader only, matching the admin page — the sidebar
+            already names the page and the band it occupied is better spent on
+            the numbers a guard actually reads. */}
+        <h1 className="pm-sr-only">Parking Overview</h1>
+
+        {/* Occupancy at a glance — same stat cards as the admin page. These
+            were a run of tiny text inside the toolbar. */}
+        {selZone && (
+          <div className="pm-stats-row">
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon green"><CheckCircle2 size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{sumFr}</p>
+                <p className="pm-stat-lbl">Free</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon red"><Car size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{occ}</p>
+                <p className="pm-stat-lbl">Occupied</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon blue"><ParkingCircle size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{totalCap}</p>
+                <p className="pm-stat-lbl">Capacity</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className={`pm-stat-icon ${isFull ? 'red' : 'purple'}`}>
+                {isFull ? <AlertTriangle size={18} /> : <LayoutGrid size={18} />}
+              </div>
+              <div>
+                <p className="pm-stat-val">{isFull ? 'FULL' : zones.length}</p>
+                <p className="pm-stat-lbl">{isFull ? 'Zone Status' : (zones.length === 1 ? 'Zone' : 'Zones')}</p>
+              </div>
             </div>
           </div>
-          <div className="pm-header-actions">
+        )}
+
+        {/* Zone bar — labelled tabs left, actions right */}
+        <div className="pm-zone-bar">
+          <span className="pm-zone-bar-label">
+            <LayoutGrid size={13} /> Zones
+          </span>
+          <div className="pm-zone-tabs">
+            {zones.map(z => {
+              const C = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
+              return (
+                <button
+                  key={z.id}
+                  className={`pm-zone-tab${z.id === selId ? ' pm-zone-tab--active' : ''}`}
+                  onClick={() => setSelId(z.id)}
+                >
+                  <C size={13} /> {z.name}
+                </button>
+              )
+            })}
+            {!loading && zones.length === 0 && (
+              <span className="pm-zone-empty">No parking zones configured yet.</span>
+            )}
+          </div>
+          <div className="pm-zone-bar-actions">
             <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
             </button>
           </div>
-        </div>
-
-        {/* Zone tabs */}
-        <div className="pm-zone-tabs">
-          {zones.map(z => {
-            const C = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
-            return (
-              <button
-                key={z.id}
-                className={`pm-zone-tab${z.id === selId ? ' pm-zone-tab--active' : ''}`}
-                onClick={() => setSelId(z.id)}
-              >
-                <C size={13} /> {z.name}
-              </button>
-            )
-          })}
-          {!loading && zones.length === 0 && (
-            <span className="pm-zone-empty">No parking zones configured yet.</span>
-          )}
         </div>
 
         {/* Main content */}
@@ -245,18 +279,7 @@ export default function SecurityParkingView() {
               {/* Toolbar — view-only summary */}
               <div className="pm-toolbar">
                 <div className="pm-toolbar-left" style={{ flexWrap: 'wrap', gap: 8 }}>
-                  <div className="pm-summary">
-                    <span className="pm-sum-free">{sumFr} free</span>
-                    <span className="pm-sum-sep">·</span>
-                    <span className="pm-sum-occ">{occ} occupied</span>
-                    <span className="pm-sum-sep">·</span>
-                    <span className="pm-sum-total">{totalCap} capacity</span>
-                  </div>
-                  {isFull && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FADEDE', border: '1px solid #F0B4B4', color: '#9B1C1C', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
-                      <AlertTriangle size={11} /> FULL
-                    </span>
-                  )}
+                  {/* Counts moved up to the stat cards */}
                   {selZone?.capacity_override != null && (
                     <span style={{ fontSize: 11, color: '#7A5C00', background: '#FDF0BE', border: '1px solid #F7E08A', padding: '2px 8px', borderRadius: 20, fontWeight: 600 }}>
                       event capacity override

@@ -83,16 +83,43 @@ class ReferenceItemViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             qs = qs.filter(category=category)
         return qs
 
+class ParkingReadOnlyUnlessAdmin(permissions.BasePermission):
+    """Any signed-in role may read parking data; only admin/CDSO may change it.
+
+    Guards need the live parking map at the gate, so GET stays open to every
+    authenticated role. Everything that *changes* something — creating a zone,
+    editing the layout, deleting, toggling a space, starting or stopping camera
+    detection — is admin only.
+
+    This has to be enforced here, not just in the UI. The guard screen never
+    offered an edit control, but both parking viewsets were plain
+    IsAuthenticated, so a guard's own token could create, edit or DELETE any
+    zone straight against the API. (ParkingSpace.zone is on_delete=SET_NULL,
+    so a deleted zone orphans its spaces rather than removing them — the
+    layout survives as unreachable rows.)
+
+    NOTE: 'admin' is the CDSO role — the separate 'cdso' role was folded into
+    it, matching IsAdminOrCdso elsewhere in this file.
+    """
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return getattr(request.user, 'role', None) == 'admin'
+
+
 class ParkingSpaceViewSet(viewsets.ModelViewSet):
     queryset           = ParkingSpace.objects.all()
     serializer_class   = ParkingSpaceSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [ParkingReadOnlyUnlessAdmin]
 
 
 class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ParkingZone.objects.select_related('camera').prefetch_related('spaces').all()
     serializer_class   = ParkingZoneSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [ParkingReadOnlyUnlessAdmin]
     audit_label        = 'Parking Zone'
 
     def get_serializer_context(self):

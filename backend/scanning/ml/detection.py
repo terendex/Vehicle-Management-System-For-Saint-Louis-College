@@ -549,6 +549,41 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
     return all_dets
 
 
+def detect_vehicles(img: np.ndarray, conf: float = _CONF_VEHICLE) -> list[dict]:
+    """Vehicle boxes only — no plate model, no rotation fallback, no tiling.
+
+    Parking occupancy is decided from where the *car body* sits, so the plate
+    detector contributes nothing here. The parking loop used to call
+    detect_plates() and feed every returned box into the occupancy test, which
+    was wrong twice over: it paid for a plate inference on every frame of every
+    zone, and it let a plate box (a small rectangle near the bumper) decide
+    which space a car was in. A plate centroid can sit in the neighbouring bay
+    while the car is parked correctly.
+
+    Returns the same dicts as detect_plates(), filtered to class_name ==
+    "vehicle", with the normalised "bbox" being the full vehicle body.
+    """
+    model = _get_vehicle_yolo()
+    if model is None:
+        return []
+
+    h, w = img.shape[:2]
+    gpu = is_gpu_available()
+    img_proc = _preprocess_adaptive(img)
+
+    with _INFER_LOCK:
+        res = model.predict(img_proc, conf=conf, verbose=False, max_det=200,
+                            half=gpu, imgsz=1280 if gpu else 960)
+        dets = [d for d in _parse_boxes(res, img, w, h, model)
+                if d["class_name"] != "license_plate"]
+
+    dets = _nms(dets)
+    for d in dets:
+        d.pop("_xyxy", None)
+    dets.sort(key=lambda d: d["score"], reverse=True)
+    return dets
+
+
 def is_gpu_available() -> bool:
     try:
         import torch

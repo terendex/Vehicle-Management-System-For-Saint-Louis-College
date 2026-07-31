@@ -26,6 +26,26 @@ _OPEN_CAP_LOCK = threading.Lock()
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 FREE_THR   = 20  # consecutive frames without vehicle    → mark free
 
+# Sampling density for the space-coverage test (see _space_coverage).
+COVERAGE_GRID = 6
+
+# Fraction of a bay a vehicle must cover before that bay counts as taken.
+# 0.35 tolerates a car parked off-centre or partly hidden by the one in front,
+# while staying above the incidental overlap a neighbouring car's box produces.
+OCCUPY_COVERAGE = 0.35
+
+# A single vehicle covering this much of two or more bays is straddling.
+# Tuned against the case this exists for: a car parked across a line typically
+# reads ~1/3 of one bay and ~2/3 of the other, so a 0.5 threshold missed real
+# straddles entirely. A correctly parked car reads near zero on its neighbour
+# — its box has to genuinely intrude to reach 0.30.
+DOUBLE_PARK_COVERAGE = 0.30
+
+# Consecutive frames a straddle must persist before it is reported. A car is
+# briefly across two bays every time it manoeuvres into one, so without this
+# every normal park would raise a violation.
+DOUBLE_PARK_FRAMES = 60  # ~6s at 10fps
+
 # How long a zone's space layout is reused before re-reading it from the DB.
 # The loop runs at ~10fps; re-fetching the layout every frame meant 20 queries
 # a second per zone, and against Neon (~40ms per round trip) the DB alone
@@ -52,6 +72,51 @@ def _point_in_polygon(x: float, y: float, points: list[list[float]]) -> bool:
                 inside = not inside
         x1, y1 = x2, y2
     return inside
+
+
+def _space_coverage(sp, box: dict, grid: int = COVERAGE_GRID) -> float:
+    """Fraction of the parking space's area that falls inside `box` (0.0–1.0).
+
+    Why not the old centroid test: a centroid answers "is the middle of the
+    detection inside this bay", which cannot express a car straddling two bays.
+    One point is in exactly one polygon, so double parking was undetectable by
+    construction — the reason this function exists.
+
+    Sampling a grid rather than clipping polygons keeps it dependency-free and
+    handles the pen-tool's arbitrary polygons and the box tool's rectangles
+    with the same code. At grid=6 that is 36 point tests per space per vehicle,
+    which is noise next to the YOLO inference that produced the box.
+    """
+    bx1, by1 = box["x"], box["y"]
+    bx2, by2 = bx1 + box["width"], by1 + box["height"]
+
+    # Sample points spread over the space, at cell centres so the edges are not
+    # over-weighted.
+    if sp.points:
+        xs = [p[0] for p in sp.points]
+        ys = [p[1] for p in sp.points]
+        sx1, sx2, sy1, sy2 = min(xs), max(xs), min(ys), max(ys)
+    else:
+        sx1, sx2, sy1, sy2 = sp.x1, sp.x2, sp.y1, sp.y2
+
+    if sx2 <= sx1 or sy2 <= sy1:
+        return 0.0
+
+    inside_space = 0
+    inside_both  = 0
+    for i in range(grid):
+        px = sx1 + (sx2 - sx1) * (i + 0.5) / grid
+        for j in range(grid):
+            py = sy1 + (sy2 - sy1) * (j + 0.5) / grid
+            # For polygons the bounding box is not the space, so points outside
+            # the polygon must not count toward the denominator.
+            if sp.points and not _point_in_polygon(px, py, sp.points):
+                continue
+            inside_space += 1
+            if bx1 <= px <= bx2 and by1 <= py <= by2:
+                inside_both += 1
+
+    return (inside_both / inside_space) if inside_space else 0.0
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -94,6 +159,11 @@ class ParkingCameraThread(threading.Thread):
         self._lock    = threading.Lock()
         self._latest: np.ndarray | None = None
         self._hyst:   dict[int, int]    = {}
+
+        # Straddle streaks keyed by the tuple of bay ids a single vehicle
+        # covers, and the alerts those streaks have raised.
+        self._straddle: dict[tuple[int, ...], int]  = {}
+        self._alerts:   dict[tuple[int, ...], dict] = {}
 
         # Frame sequence number, so viewers can tell whether the cached JPEG
         # still corresponds to the newest frame.
@@ -221,33 +291,33 @@ class ParkingCameraThread(threading.Thread):
         return self._spaces
 
     def _process_frame(self, frame: np.ndarray) -> None:
-        from scanning.ml.detection import detect_plates
+        # Vehicle model only. This used to call detect_plates(), which ran the
+        # plate detector on every frame of every zone and then let plate boxes
+        # decide occupancy — see detect_vehicles() for why that was wrong.
+        from scanning.ml.detection import detect_vehicles
 
-        # try_rotation=False: the rotation fallback only fires when no plate was
-        # found, which for a parking lot is most frames — it would spend six
-        # extra full inferences (each with its own warp + preprocess) per frame
-        # at 10fps hunting for a plate this loop never reads. Occupancy is
-        # decided from vehicle boxes, which the vehicle model returns directly.
-        detections = detect_plates(frame, try_rotation=False)
+        detections = detect_vehicles(frame)
 
         spaces = self._load_spaces()
         if not spaces:
             return
 
-        for sp in spaces:
-            # bbox from detect_plates is already normalised 0-1 {x, y, width, height}
-            hit = False
-            for det in detections:
-                b  = det["bbox"]
-                cx = b["x"] + b["width"]  / 2
-                cy = b["y"] + b["height"] / 2
-                if sp.points:
-                    hit = _point_in_polygon(cx, cy, sp.points)
-                else:
-                    hit = sp.x1 <= cx <= sp.x2 and sp.y1 <= cy <= sp.y2
-                if hit:
-                    break
+        # coverage[space_id][vehicle_index] — computed once, used for both the
+        # occupancy decision and the straddle check.
+        covered_by: dict[int, list[int]] = {}
 
+        for sp in spaces:
+            best = 0.0
+            hits: list[int] = []
+            for vi, det in enumerate(detections):
+                cov = _space_coverage(sp, det["bbox"])
+                if cov > best:
+                    best = cov
+                if cov >= OCCUPY_COVERAGE:
+                    hits.append(vi)
+            covered_by[sp.id] = hits
+
+            hit  = best >= OCCUPY_COVERAGE
             prev = self._hyst.get(sp.id, 0)
 
             if hit:
@@ -260,6 +330,94 @@ class ParkingCameraThread(threading.Thread):
                 self._hyst[sp.id] = nxt
                 if sp.is_occupied and nxt <= -FREE_THR:
                     self._set_occupied(sp, False)
+
+        self._check_double_parking(spaces, detections)
+
+    # ── Double parking ────────────────────────────────────────────────────────
+
+    def _check_double_parking(self, spaces, detections) -> None:
+        """Flag a vehicle whose box substantially covers two or more bays.
+
+        This is the case the old centroid test could not express at all: a
+        centroid falls in exactly one polygon, so a car parked across the line
+        looked like an ordinary single occupancy.
+        """
+        straddling: set[tuple[int, ...]] = set()
+        blocked: set[int] = set()
+
+        for det in detections:
+            covered = [sp for sp in spaces
+                       if _space_coverage(sp, det["bbox"]) >= DOUBLE_PARK_COVERAGE]
+            if len(covered) >= 2:
+                straddling.add(tuple(sorted(sp.id for sp in covered)))
+                blocked.update(sp.id for sp in covered)
+
+        # A straddled bay is unusable even if the car covers less of it than
+        # OCCUPY_COVERAGE — nobody else can park there. Without this the
+        # partly-covered side kept showing as free and the count overstated
+        # capacity.
+        for sp in spaces:
+            if sp.id in blocked and not sp.is_occupied:
+                self._hyst[sp.id] = OCCUPY_THR
+                self._set_occupied(sp, True)
+
+        # Age each active straddle; drop any that stopped happening so a car
+        # manoeuvring through a bay does not accumulate toward the threshold.
+        for key in list(self._straddle):
+            if key not in straddling:
+                del self._straddle[key]
+
+        for key in straddling:
+            n = self._straddle.get(key, 0) + 1
+            self._straddle[key] = n
+            if n == DOUBLE_PARK_FRAMES:      # == so it reports once per episode
+                self._report_double_parking(key)
+
+    def _report_double_parking(self, space_ids: tuple[int, ...]) -> None:
+        """Record a sustained straddle and tell the UI about it.
+
+        No Violation row is created here: violations.Violation requires a
+        Vehicle FK, and a parking camera watching a bay has no plate to
+        identify one with. Raising the alert and letting a guard confirm it
+        keeps a camera artefact from becoming a fine against whoever happens to
+        be parked there.
+        """
+        from django.db import close_old_connections
+        from django.utils import timezone
+
+        codes = []
+        try:
+            close_old_connections()
+            from vehicles.models import ParkingSpace
+            codes = list(
+                ParkingSpace.objects.filter(id__in=space_ids).values_list('space_number', flat=True)
+            )
+        except Exception as exc:
+            log.warning("[ParkingCam] Could not resolve space codes %s: %s", space_ids, exc)
+
+        label = ", ".join(codes) if codes else ", ".join(str(i) for i in space_ids)
+        log.warning("[ParkingCam] Double parking in zone %d across bays: %s",
+                    self.zone_id, label)
+
+        with self._lock:
+            self._alerts[space_ids] = {
+                "zone_id":   self.zone_id,
+                "space_ids": list(space_ids),
+                "spaces":    codes,
+                "detected_at": timezone.now().isoformat(),
+            }
+
+        try:
+            from realtime.broadcast import broadcast_change
+            broadcast_change('parkingspace', 'double_parking',
+                             zone_id=self.zone_id, spaces=codes)
+        except Exception:
+            log.exception("[ParkingCam] double-parking broadcast failed")
+
+    def get_alerts(self) -> list[dict]:
+        """Active double-parking alerts for this zone."""
+        with self._lock:
+            return list(self._alerts.values())
 
     def _set_occupied(self, sp, occupied: bool) -> None:
         """Persist an occupancy transition. Only fires on a state change, so
