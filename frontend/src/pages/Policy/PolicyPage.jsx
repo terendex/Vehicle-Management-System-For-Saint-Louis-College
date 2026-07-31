@@ -22,11 +22,11 @@ export default function PolicyPage() {
             <ArrowLeft size={16} />
             <span>Return</span>
           </button>
-          <div className="policy-header-logo-group">
-            <img src={slcLogo} alt="SLC Logo" className="policy-header-logo" />
-            <div className="policy-header-text">
-              <span className="policy-header-title">SAINT LOUIS COLLEGE</span>
-              <span className="policy-header-subtitle">Smart Parking and Vehicle Verification System</span>
+          <div className="header-logo-group">
+            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <div className="header-text">
+              <span className="header-title">SAINT LOUIS COLLEGE</span>
+              <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
             </div>
           </div>
         </div>

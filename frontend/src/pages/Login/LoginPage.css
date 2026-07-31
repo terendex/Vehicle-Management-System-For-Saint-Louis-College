@@ -22,70 +22,19 @@
 }
 
 /* --- Header --- */
+/* The logo + name lockup inside comes from styles/slc-header.css */
 .login-header {
   width: 100%;
   background: #FFFFFF;
   border-bottom: 2.5px solid #03396C;
-  padding: 0.5rem clamp(0.75rem, 4vw, 2rem);
-  min-height: 64px;
+  padding-left: clamp(0.75rem, 4vw, 2rem);
+  padding-right: clamp(0.75rem, 4vw, 2rem);
   display: flex;
   align-items: center;
   box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
   position: sticky;
   top: 0;
   z-index: 100;
-}
-
-.login-header .header-content {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-}
-
-.login-header .header-logo-group {
-  display: flex;
-  align-items: center;
-  gap: clamp(8px, 2.5vw, 12px);
-  min-width: 0;      /* lets the text block shrink instead of overflowing */
-  width: 100%;
-}
-
-.login-header .header-logo {
-  width: clamp(34px, 9vw, 42px);
-  height: clamp(34px, 9vw, 42px);
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid #03396C;
-  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
-  flex-shrink: 0;
-}
-
-.login-header .header-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  min-width: 0;
-  gap: 1px;
-}
-
-/* Wraps rather than truncating — the school name must always read in full */
-.login-header .header-title {
-  font-size: clamp(12.5px, 3.6vw, 15px);
-  font-weight: 800;
-  color: #03396C;
-  letter-spacing: clamp(0.4px, 0.25vw, 1.2px);
-  text-transform: uppercase;
-  overflow-wrap: anywhere;
-}
-
-.login-header .header-subtitle {
-  font-size: clamp(11.5px, 2.9vw, 12px);
-  font-weight: 500;
-  color: #4A6B85;   /* 5.6:1 on white — the old #6B8CA6 was under 4.5:1 */
-  letter-spacing: 0.2px;
-  overflow-wrap: anywhere;
 }
 
 /* --- Main --- */
@@ -629,15 +578,6 @@
 
 /* --- Very Small Mobile (<= 360px: Galaxy Fold cover, iPhone SE 1) --- */
 @media (max-width: 360px) {
-  .login-header {
-    padding: 0.5rem 0.75rem;
-  }
-
-  /* The subtitle stays — it wraps to a second line rather than being cut */
-  .login-header .header-subtitle {
-    letter-spacing: 0;
-  }
-
   .register-cta-btn {
     padding: 12px 10px;
   }

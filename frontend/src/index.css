@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Single source of truth for the SLC logo + name header lockup */
+@import "./styles/slc-header.css";
 
 @theme {
   --font-sans: "Inter", system-ui, sans-serif;

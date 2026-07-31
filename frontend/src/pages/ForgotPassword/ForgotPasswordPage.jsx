@@ -43,7 +43,7 @@ export default function ForgotPasswordPage() {
             <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
-              <span className="header-subtitle">Vehicle Management System with entry authentication</span>
+              <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
             </div>
           </div>
         </div>

@@ -12,12 +12,13 @@
 }
 
 /* ── Header ── */
+/* The logo + name lockup inside comes from styles/slc-header.css */
 .policy-header {
   width: 100%;
   background: #FFFFFF;
   border-bottom: 2.5px solid #03396C;
-  padding: 0 2rem;
-  height: 64px;
+  padding: 0.5rem clamp(0.75rem, 4vw, 2rem);
+  min-height: 64px;
   display: flex;
   align-items: center;
   box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
@@ -28,11 +29,12 @@
 
 .policy-header-inner {
   width: 100%;
+  min-width: 0;
   max-width: 900px;
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: clamp(10px, 3vw, 20px);
 }
 
 .policy-back-btn {
@@ -59,42 +61,7 @@
   border-color: #BDD4E5;
 }
 
-.policy-header-logo-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.policy-header-logo {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid #03396C;
-  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
-  flex-shrink: 0;
-}
-
-.policy-header-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.policy-header-title {
-  font-size: 14px;
-  font-weight: 800;
-  color: #03396C;
-  letter-spacing: 1.1px;
-  text-transform: uppercase;
-}
-
-.policy-header-subtitle {
-  font-size: 11px;
-  font-weight: 500;
-  color: #6B8CA6;
-  letter-spacing: 0.2px;
-}
+/* The logo + name lockup comes from styles/slc-header.css */
 
 /* ── Hero ── */
 .policy-hero {
@@ -207,7 +174,7 @@
   background: #EAF2F8;
   border: 1px solid #BDD4E5;
   border-radius: 50px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: #03396C;
   text-transform: uppercase;
@@ -568,11 +535,8 @@
    ============================================================ */
 
 @media (max-width: 768px) {
-  .policy-header {
-    padding: 0 1.25rem;
-  }
-
-  .policy-header-subtitle {
+  /* This bar also carries a Return button, so the tagline gives way here */
+  .policy-header .header-subtitle {
     display: none;
   }
 
@@ -608,20 +572,6 @@
 }
 
 @media (max-width: 480px) {
-  .policy-header {
-    padding: 0 1rem;
-    height: 56px;
-  }
-
-  .policy-header-logo {
-    width: 32px;
-    height: 32px;
-  }
-
-  .policy-header-title {
-    font-size: 12px;
-  }
-
   .policy-back-btn span {
     display: none;
   }

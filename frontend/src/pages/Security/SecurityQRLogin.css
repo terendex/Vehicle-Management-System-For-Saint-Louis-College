@@ -7,50 +7,20 @@
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-/* ── Header — matches LoginPage ── */
+/* ── Header ── */
+/* The logo + name lockup inside comes from styles/slc-header.css */
 .sqr-header {
   width: 100%;
   background: #FFFFFF;
   border-bottom: 2.5px solid #03396C;
-  padding: 0 2rem;
-  height: 64px;
+  padding: 0.5rem clamp(0.75rem, 4vw, 2rem);
+  min-height: 64px;
   display: flex;
   align-items: center;
   box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
   position: sticky;
   top: 0;
   z-index: 100;
-}
-
-.sqr-header-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sqr-header-logo {
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-
-.sqr-header-text {
-  display: flex;
-  flex-direction: column;
-}
-
-.sqr-header-title {
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 1.2px;
-  color: #03396C;
-}
-
-.sqr-header-subtitle {
-  font-size: 11px;
-  color: #6B8CA6;
-  font-weight: 500;
 }
 
 /* ── Main / Card ── */
@@ -486,14 +456,14 @@
 /* ── Footer ── */
 .sqr-footer {
   margin-top: 16px;
-  font-size: 11px;
-  color: #64839C;
+  font-size: 12.5px;
+  color: #4A6B85;
   text-align: center;
+  line-height: 1.5;
   max-width: 440px;
 }
 
 @media (max-width: 480px) {
-  .sqr-header { padding: 0 1rem; height: 56px; }
   .sqr-card { padding: 24px 18px; border-radius: 14px; }
   .sqr-main { padding: 1.25rem 0.75rem; }
 }

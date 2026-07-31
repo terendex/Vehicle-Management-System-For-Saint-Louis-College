@@ -213,11 +213,11 @@ export default function SecurityQRLogin() {
     <div className="sqr-page">
       {/* Header — same as login page */}
       <header className="sqr-header">
-        <div className="sqr-header-content">
-          <img src={slcLogo} alt="Saint Louis College Logo" className="sqr-header-logo" />
-          <div className="sqr-header-text">
-            <span className="sqr-header-title">SAINT LOUIS COLLEGE</span>
-            <span className="sqr-header-subtitle">Smart Parking and Vehicle Verification System</span>
+        <div className="header-logo-group">
+          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <div className="header-text">
+            <span className="header-title">SAINT LOUIS COLLEGE</span>
+            <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
           </div>
         </div>
       </header>
