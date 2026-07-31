@@ -35,6 +35,7 @@ backend/scanning/ml/unplated_dataset/
 backend/scanning/ml/vehicle_ds/
 backend/scanning/ml/elevated_ds/
 backend/scanning/ml/combined_ds/
+backend/scanning/ml/all_domains_ds/
 backend/scanning/ml/test_results/
 backend/scanning/ml/dataset/
 backend/unplated_ds/

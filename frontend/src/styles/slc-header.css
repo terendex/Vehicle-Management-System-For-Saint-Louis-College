@@ -71,6 +71,10 @@
   overflow-wrap: anywhere;
 }
 
+/* The system name is part of the brand lockup: it is never hidden and never
+   truncated at any width. If a header runs out of room (a back button or
+   action buttons beside it), the text column shrinks and this wraps onto a
+   second line — do NOT reintroduce `display: none` in a page breakpoint. */
 .header-subtitle {
   font-size: clamp(12px, 2.9vw, 12.5px);
   font-weight: 500;

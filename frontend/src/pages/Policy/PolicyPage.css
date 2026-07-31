@@ -535,11 +535,6 @@
    ============================================================ */
 
 @media (max-width: 768px) {
-  /* This bar also carries a Return button, so the tagline gives way here */
-  .policy-header .header-subtitle {
-    display: none;
-  }
-
   .policy-hero {
     padding: 24px 1.25rem 22px;
   }

@@ -166,12 +166,6 @@
 
 /* --- Mobile --- */
 @media (max-width: 640px) {
-  /* This bar also carries action buttons, so unlike the public headers the
-     tagline gives way here — the school name itself always stays in full. */
-  .owner-header .header-subtitle {
-    display: none;
-  }
-
   .owner-header .header-actions {
     gap: 8px;
   }
