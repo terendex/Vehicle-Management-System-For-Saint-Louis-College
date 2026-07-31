@@ -633,9 +633,9 @@
     padding: 0.5rem 0.75rem;
   }
 
-  /* Header goes one line only — the subtitle has no room left to read */
+  /* The subtitle stays — it wraps to a second line rather than being cut */
   .login-header .header-subtitle {
-    display: none;
+    letter-spacing: 0;
   }
 
   .register-cta-btn {
