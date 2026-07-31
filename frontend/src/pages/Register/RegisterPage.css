@@ -392,6 +392,68 @@
   box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.08);
 }
 
+/* --- Phone field: fixed +63, user types only the local digits --- */
+.phone-field {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 10px;
+  background: #F7FAFC;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.phone-field:focus-within {
+  border-color: #03396C;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 4px rgba(3, 57, 108, 0.06);
+}
+
+.phone-field.input-error {
+  border-color: #C62828;
+  background: #FDF7F7;
+}
+
+.phone-field.input-error:focus-within {
+  box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.08);
+}
+
+.phone-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #03396C;
+  background: #EAF2F8;
+  border-right: 1.5px solid #D3E1EC;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* The wrapper draws the border, so the input itself stays bare */
+.form-group .phone-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #0B2340;
+  letter-spacing: 0.3px;
+}
+
+.form-group .phone-field input:focus {
+  outline: none;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
 /* --- Driver's license photo upload --- */
 .label-optional {
   font-weight: 500;

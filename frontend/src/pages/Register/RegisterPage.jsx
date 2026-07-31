@@ -31,6 +31,34 @@ function formatDriversLicense(raw) {
   return `${clean.slice(0, 3)}-${clean.slice(3, 5)}-${clean.slice(5)}`
 }
 
+/* ── Philippine mobile numbers ──
+   The form stores the full +639XXXXXXXXX the API expects, but the field only
+   ever shows the 10 local digits — the "+63" sits beside the input as fixed
+   chrome so nobody has to guess whether to type 0917…, +63917… or 63917…. */
+const PH_DIAL_CODE = '+63'
+
+// Keeps only the 10 local digits, tolerating 0917…, 63917… and +63 917… pastes.
+function toLocalMobileDigits(raw) {
+  let d = String(raw).replace(/\D/g, '')
+  if (d.startsWith('63')) d = d.slice(2)
+  if (d.startsWith('0')) d = d.slice(1)
+  return d.slice(0, 10)
+}
+
+// '' stays '' so the required check still fires on an untouched field.
+const toStoredMobile = (raw) => {
+  const d = toLocalMobileDigits(raw)
+  return d ? PH_DIAL_CODE + d : ''
+}
+
+const toDisplayMobile = (stored) => toLocalMobileDigits(stored)
+
+// Ages offered in the dropdown. Guardian-driven students can be as young as 3;
+// anyone driving themselves starts at 15. Mirrors the old min/max exactly.
+function ageOptions(min) {
+  return Array.from({ length: 99 - min + 1 }, (_, i) => min + i)
+}
+
 const REGISTRATION_TYPES = [
   {
     id: 'student',
@@ -274,13 +302,13 @@ export default function RegisterPage() {
     },
     contact_number: {
       regex: /^\+639\d{9}$/,
-      message: 'Invalid number. Use +639XXXXXXXXX',
-      hint: 'e.g. +639XXXXXXXXX',
+      message: 'Enter the 10 digits after +63, starting with 9',
+      hint: 'e.g. 9171234567',
     },
     driver_contact: {
       regex: /^\+639\d{9}$/,
-      message: 'Invalid number. Use +639XXXXXXXXX',
-      hint: 'e.g. +639XXXXXXXXX',
+      message: 'Enter the 10 digits after +63, starting with 9',
+      hint: 'e.g. 9171234567',
     },
     drivers_license: {
       // LTO format: 1 office letter + 2-digit district + dash + 2-digit year + dash + 6-digit serial
@@ -319,6 +347,7 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
+      else if (name === 'contact_number' || name === 'driver_contact') formatted = toStoredMobile(value)
       else if (name === 'email') formatted = formatted.toLowerCase()
       else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
@@ -1338,23 +1367,33 @@ export default function RegisterPage() {
               )}
 
               <div className="form-group">
-                <label>Contact Number/s <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="contact_number"
-                  value={formData.contact_number}
-                  onChange={handleInputChange}
-                  required
-                  placeholder={FIELD_PATTERNS.contact_number.hint}
-                  className={formErrors.contact_number ? 'input-error' : ''}
-                />
-                <span className="field-hint">{FIELD_PATTERNS.contact_number.hint}</span>
+                <label>Contact Number <span className="required">*</span></label>
+                <div className={`phone-field${formErrors.contact_number ? ' input-error' : ''}`}>
+                  <span className="phone-prefix">{PH_DIAL_CODE}</span>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel-national"
+                    maxLength={10}
+                    name="contact_number"
+                    value={toDisplayMobile(formData.contact_number)}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="9171234567"
+                  />
+                </div>
+                <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
                 {formErrors.contact_number && <span className="field-error-msg">{formErrors.contact_number}</span>}
               </div>
 
               <div className="form-group">
                 <label>{guardianDriven ? "Student's Age" : 'Age'}</label>
-                <input type="number" name="age" min={guardianDriven ? 3 : 15} max="99" value={formData.age} onChange={handleInputChange} />
+                <select name="age" value={formData.age} onChange={handleInputChange}>
+                  <option value="">Select Age</option>
+                  {ageOptions(guardianDriven ? 3 : 15).map(a => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Who drives — students only. Minors are locked to a guardian/driver. */}
@@ -1438,14 +1477,20 @@ export default function RegisterPage() {
                   </div>
                   <div className="form-group">
                     <label>Driver's Contact Number</label>
-                    <input
-                      type="text"
-                      name="driver_contact"
-                      value={formData.driver_contact}
-                      onChange={handleInputChange}
-                      placeholder={FIELD_PATTERNS.driver_contact.hint}
-                      className={formErrors.driver_contact ? 'input-error' : ''}
-                    />
+                    <div className={`phone-field${formErrors.driver_contact ? ' input-error' : ''}`}>
+                      <span className="phone-prefix">{PH_DIAL_CODE}</span>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="tel-national"
+                        maxLength={10}
+                        name="driver_contact"
+                        value={toDisplayMobile(formData.driver_contact)}
+                        onChange={handleInputChange}
+                        placeholder="9171234567"
+                      />
+                    </div>
+                    <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
                     {formErrors.driver_contact && <span className="field-error-msg">{formErrors.driver_contact}</span>}
                   </div>
                 </>
