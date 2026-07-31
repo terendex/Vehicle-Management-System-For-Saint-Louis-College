@@ -157,3 +157,182 @@ class PublicRegistrationConflictTests(TestCase):
 
     def test_clean_registration_succeeds(self):
         self.assertEqual(self._post().status_code, 201)
+
+
+class AccountExpiryArchiveTests(TestCase):
+    """Owner accounts auto-archive on expiry, and archiving frees the owner's
+    email / ID / plate so they can register again."""
+
+    def setUp(self):
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = True
+        cfg.account_expiry_months = 1
+        cfg.account_expiry_days = 0
+        cfg.save()
+
+    def _make_owner_with_reg(self):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email='owner@example.com', full_name='Owner One',
+            password='Passw0rd!23', role='vehicle_owner',
+            owner_type='student',
+        )
+        reg = make_reg(
+            registrant_type='student', full_name='Owner One',
+            email='owner@example.com', plate_number='OWN 111',
+            student_id='20250001', user=owner,
+            status=VehicleRegistration.Status.ACCEPTED,
+        )
+        return owner, reg
+
+    def test_create_user_sets_expiry(self):
+        owner, _ = self._make_owner_with_reg()
+        self.assertIsNotNone(owner.expires_at)
+        # ~1 month out (28-31 days depending on month length)
+        delta = (owner.expires_at - timezone.localdate()).days
+        self.assertGreaterEqual(delta, 27)
+        self.assertLessEqual(delta, 32)
+
+    def test_admin_account_never_expires(self):
+        from accounts.models import User
+        admin = User.objects.create_user(
+            email='admin2@example.com', full_name='Admin', password='x', role='admin')
+        self.assertIsNone(admin.expires_at)
+
+    def test_archive_and_reregistration(self):
+        from django.core import mail
+        from accounts.models import User, AuditLog
+        from vehicles.tasks import auto_archive_expired_accounts
+        from vehicles.views import _registration_conflict, _email_conflict
+
+        owner, reg = self._make_owner_with_reg()
+        # Force expiry into the past
+        owner.expires_at = timezone.localdate() - timedelta(days=1)
+        owner.save(update_fields=['expires_at'])
+
+        result = auto_archive_expired_accounts()
+        self.assertEqual(result['archived'], 1)
+
+        owner.refresh_from_db()
+        reg.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertFalse(owner.is_active)
+        self.assertIsNotNone(owner.archived_at)
+        self.assertEqual(reg.status, VehicleRegistration.Status.EXPIRED)
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.USER_ARCHIVED, target_user=owner).exists())
+        self.assertGreaterEqual(len(mail.outbox), 1)
+
+        # Identity is now free: no conflict for the same email / plate / ID
+        active = VehicleRegistration.objects.filter(
+            status__in=[VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED])
+        self.assertIsNone(_email_conflict('owner@example.com', active))
+        self.assertIsNone(_registration_conflict(
+            'student', 'OWN 111', 'owner@example.com', '20250001', ''))
+
+        # And a brand-new account can be created with the reused email (the DB
+        # partial-unique excludes the archived row).
+        new_owner = User.objects.create_user(
+            email='owner@example.com', full_name='Owner One Again',
+            password='Passw0rd!23', role='vehicle_owner', owner_type='student')
+        self.assertFalse(new_owner.is_archived)
+        # Auth resolves to the live account, not the archived one
+        self.assertEqual(User.objects.get_by_natural_key('owner@example.com').pk, new_owner.pk)
+
+    def test_idempotent(self):
+        from vehicles.tasks import auto_archive_expired_accounts
+        owner, _ = self._make_owner_with_reg()
+        owner.expires_at = timezone.localdate() - timedelta(days=1)
+        owner.save(update_fields=['expires_at'])
+        self.assertEqual(auto_archive_expired_accounts()['archived'], 1)
+        self.assertEqual(auto_archive_expired_accounts()['archived'], 0)
+
+    def _expire_now(self, owner):
+        owner.expires_at = timezone.localdate() - timedelta(days=1)
+        owner.save(update_fields=['expires_at'])
+
+    def test_plate_freed_via_vehicle_unlink(self):
+        """A non-banned owner's Vehicle plate is released (user unlinked) so the
+        plate-level conflict check no longer blocks re-registration."""
+        from vehicles.models import Vehicle
+        from vehicles.tasks import auto_archive_expired_accounts
+        from vehicles.views import _plate_conflict
+
+        owner, _ = self._make_owner_with_reg()
+        veh = Vehicle.objects.create(plate_number='OWN111', vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        active = VehicleRegistration.objects.filter(status='accepted')
+        # Before archive: the plate is tied to a live account → blocked
+        self.assertIsNotNone(_plate_conflict('OWN 111', active.none()))
+
+        self._expire_now(owner)
+        auto_archive_expired_accounts()
+
+        veh.refresh_from_db()
+        self.assertIsNone(veh.user_id)           # unlinked → plate freed
+        self.assertFalse(veh.is_authorized)
+        # No active registrations and unowned vehicle → plate is clear
+        self.assertIsNone(_plate_conflict('OWN 111',
+            VehicleRegistration.objects.filter(status__in=['pending', 'accepted'])))
+
+    def test_max_violation_owner_is_banned(self):
+        """An owner who reached the max violations is banned on archive, keeps the
+        Vehicle link, and cannot re-register by email / plate / ID."""
+        from vehicles.models import Vehicle
+        from violations.models import Violation
+        from vehicles.tasks import auto_archive_expired_accounts
+        from vehicles.views import _registration_ban
+
+        owner, _ = self._make_owner_with_reg()
+        veh = Vehicle.objects.create(plate_number='OWN111', vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        Violation.objects.create(vehicle=veh, violation_type='unauthorized_entry',
+                                 offense_number=3, status='fee_imposed',
+                                 registration_blocked=True)
+
+        self._expire_now(owner)
+        result = auto_archive_expired_accounts()
+        self.assertEqual(result['banned'], 1)
+
+        owner.refresh_from_db()
+        veh.refresh_from_db()
+        self.assertTrue(owner.registration_banned)
+        self.assertEqual(veh.user_id, owner.pk)  # kept linked (still blocked/traceable)
+
+        # Any of the banned identity's fields is refused
+        self.assertIsNotNone(_registration_ban('OWN 111', 'owner@example.com', '20250001', ''))
+        self.assertIsNotNone(_registration_ban('', 'owner@example.com', '', ''))
+        self.assertIsNotNone(_registration_ban('OWN 111', '', '', ''))
+        # An unrelated applicant is not banned
+        self.assertIsNone(_registration_ban('ZZZ 999', 'clean@example.com', '99999999', ''))
+
+    def test_banned_applicant_blocked_at_submission(self):
+        from vehicles.models import Vehicle, RegistrationPeriod
+        from violations.models import Violation
+        from vehicles.tasks import auto_archive_expired_accounts
+        from rest_framework.test import APIClient
+
+        owner, _ = self._make_owner_with_reg()
+        veh = Vehicle.objects.create(plate_number='OWN111', vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        Violation.objects.create(vehicle=veh, violation_type='unauthorized_entry',
+                                 offense_number=3, status='fee_imposed',
+                                 registration_blocked=True)
+        self._expire_now(owner)
+        auto_archive_expired_accounts()
+
+        # Open a registration window so submission reaches the ban check
+        today = timezone.localdate()
+        RegistrationPeriod.objects.create(
+            label='Test', start_date=today - timedelta(days=1),
+            end_date=today + timedelta(days=30), is_active=True)
+
+        resp = APIClient().post('/api/vehicles/register/open/', {
+            'registrant_type': 'student', 'full_name': 'Owner One',
+            'email': 'owner@example.com', 'plate_number': 'OWN 111',
+            'vehicle_type': 'car', 'student_id': '20250001',
+            'contact_number': '+639171234567', 'address': 'Somewhere',
+        }, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.data.get('registration_banned'))

@@ -150,6 +150,13 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# User.email intentionally isn't globally unique: an archived (expired) owner
+# keeps their email so a new account can reuse it. Uniqueness among *live*
+# accounts is enforced by the partial UniqueConstraint `uniq_active_user_email`,
+# and UserManager.get_by_natural_key resolves auth to the non-archived row — so
+# auth.E003 (USERNAME_FIELD must be unique) is handled and safely silenced.
+SILENCED_SYSTEM_CHECKS = ['auth.E003']
+
 # A Redis channel layer is what makes `broadcast_change` actually reach
 # browsers: the in-memory layer is per-process, so anything sent from the
 # Celery worker (a separate process) was being dropped on the floor, and any

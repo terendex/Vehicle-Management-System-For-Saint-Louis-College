@@ -388,3 +388,66 @@ def send_rejection_email(registration, reason):
         html_message=html_message,
         fail_silently=False,
     )
+
+
+def send_account_archived_email(user, banned=False, next_window=None):
+    """Notify a vehicle owner that their account expired and was archived.
+
+    Registration reopens only during a registration period, so the copy points to
+    the next registration window rather than saying "any time". If `banned` (the
+    owner reached the maximum number of violations), the copy states they are not
+    eligible to register again. `next_window` is an optional RegistrationPeriod.
+    """
+    expired_on = user.expires_at.strftime('%B %d, %Y') if user.expires_at else 'its expiration date'
+
+    if next_window and getattr(next_window, 'start_date', None) and getattr(next_window, 'end_date', None):
+        window_text = (f"the next registration period "
+                       f"({next_window.start_date.strftime('%B %d, %Y')} to "
+                       f"{next_window.end_date.strftime('%B %d, %Y')})")
+    else:
+        window_text = "the next registration period, once it opens"
+
+    if banned:
+        cta_html = (
+            f'<div style="background: #FEF2F2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; border-radius: 4px;">'
+            f'<p style="margin: 0; color: #7F1D1D;">Because your account reached the maximum number of traffic '
+            f'violations, you are not eligible to register a vehicle pass again. Please contact the '
+            f'administration office if you have any questions.</p></div>'
+        )
+        cta_text = ("Because your account reached the maximum number of violations, you are not "
+                    "eligible to register a vehicle pass again. Please contact the administration office.")
+    else:
+        cta_html = (
+            f'<div style="background: #FFF7ED; border-left: 4px solid #B4560F; padding: 15px; margin: 20px 0; border-radius: 4px;">'
+            f'<p style="margin: 0; color: #7C2D12;">You may register again during {window_text}. Your previous '
+            f'email, ID and plate number are free to reuse &mdash; they will not be reported as already taken.</p></div>'
+        )
+        cta_text = (f"You may register again during {window_text}. Your previous email, ID and plate "
+                    f"number are free to reuse.")
+
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
+            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #B4560F; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                <h2 style="color: #B4560F; margin-top: 0;">Your Vehicle Pass Account Has Expired</h2>
+                <p>Dear {user.full_name},</p>
+                <p>Your Saint Louis College vehicle owner account reached its expiration date on
+                   <strong>{expired_on}</strong> and has been archived. Your vehicle pass is no longer active.</p>
+                {cta_html}
+                <p>If you believe this is a mistake, please contact the administration office.</p>
+                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
+                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Vehicle Management System</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    send_mail(
+        subject="SLC Vehicle Pass Account Expired",
+        message=(f"Dear {user.full_name},\n\nYour vehicle owner account expired on {expired_on} "
+                 f"and has been archived.\n\n{cta_text}"),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        html_message=html_message,
+        fail_silently=True,  # a mail failure must not abort the archive batch
+    )

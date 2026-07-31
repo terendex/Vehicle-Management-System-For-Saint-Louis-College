@@ -727,8 +727,9 @@ def _email_conflict(email, qs):
     existing_emails = qs.exclude(email='').values_list('email', flat=True)
     if any((e or '').strip().lower() == email_norm for e in existing_emails):
         return "This email address already has an active registration."
-    # An email tied to an existing account can't start a new pass (1:1 email↔plate)
-    if User.objects.filter(email__iexact=email_norm).exists():
+    # An email tied to an existing *live* account can't start a new pass. Archived
+    # (expired) accounts keep their email but must not block re-registration.
+    if User.objects.filter(email__iexact=email_norm, is_archived=False).exists():
         return "This email address is already tied to an existing account."
     return None
 
@@ -781,6 +782,39 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     if conflict:
         return conflict
     return _id_conflict(registrant_type, student_id, employee_id, qs)
+
+
+def _registration_ban(plate_number, email, student_id, employee_id):
+    """Hard block for people who reached the maximum number of violations and had
+    their account archived on expiry (User.registration_banned). Their identity —
+    email, plate, or ID — may not start a new registration. Matched against the
+    archived owners' now-EXPIRED registrations.
+
+    Returns an error message string, or None if the applicant is not banned.
+    """
+    from accounts.models import User
+
+    plate_norm = _normalize_plate(plate_number)
+    email_norm = (email or '').strip().lower()
+    student_id = (student_id or '').strip()
+    employee_id = (employee_id or '').strip()
+
+    conds = Q()
+    if email_norm:
+        conds |= Q(email__iexact=email_norm)
+    if plate_norm:
+        conds |= Q(plate_number__iexact=plate_norm)
+    if student_id:
+        conds |= Q(student_id__iexact=student_id)
+    if employee_id:
+        conds |= Q(employee_id__iexact=employee_id)
+    if not conds:
+        return None
+
+    if VehicleRegistration.objects.filter(conds, user__registration_banned=True).exists():
+        return ("This applicant reached the maximum number of traffic violations and is no "
+                "longer eligible to register a vehicle pass. Please contact the CDSO office.")
+    return None
 
 
 def _license_db_conflict(drivers_license):
@@ -916,7 +950,7 @@ class AcceptRegistrationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if User.objects.filter(email=registration.email).exists():
+        if User.objects.filter(email=registration.email, is_archived=False).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Create user with a secure temporary password
@@ -1307,6 +1341,7 @@ class RegistrationAvailabilityView(APIView):
             'drivers_license': _license_conflict(drivers_license, qs),
             'student_id':      _id_conflict('student', student_id, '', qs),
             'employee_id':     _id_conflict('employee', '', employee_id, qs),
+            'banned':          _registration_ban(plate_number, email, student_id, employee_id),
         })
 
 
@@ -1324,6 +1359,17 @@ class PublicOpenRegistrationView(APIView):
         registrant_type = request.data.get('registrant_type', '')
         if registrant_type not in ['student', 'employee', 'fetcher']:
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Hard block: applicants who reached the maximum number of violations and
+        # were archived on expiry may never register again.
+        ban = _registration_ban(
+            request.data.get('plate_number', ''),
+            request.data.get('email', ''),
+            request.data.get('student_id', ''),
+            request.data.get('employee_id', ''),
+        )
+        if ban:
+            return Response({"error": ban, "registration_banned": True}, status=status.HTTP_403_FORBIDDEN)
 
         # 1:1 guard — plate, email and student/employee ID must not already have an active registration
         conflict = _registration_conflict(
@@ -1588,6 +1634,9 @@ class SystemSettingsView(APIView):
             "registration_end":   obj.registration_end.isoformat()   if obj.registration_end   else None,
             "vehicle_pass_fee":          float(obj.vehicle_pass_fee),
             "vehicle_pass_fee_employee": float(obj.vehicle_pass_fee_employee),
+            "account_expiry_enabled": obj.account_expiry_enabled,
+            "account_expiry_months":  obj.account_expiry_months,
+            "account_expiry_days":    obj.account_expiry_days,
         }
 
     def get(self, request):
@@ -1608,6 +1657,9 @@ class SystemSettingsView(APIView):
         registration_end     = request.data.get("registration_end",   obj.registration_end)
         vehicle_pass_fee          = request.data.get("vehicle_pass_fee",          obj.vehicle_pass_fee)
         vehicle_pass_fee_employee = request.data.get("vehicle_pass_fee_employee", obj.vehicle_pass_fee_employee)
+        account_expiry_enabled    = request.data.get("account_expiry_enabled", obj.account_expiry_enabled)
+        account_expiry_months     = request.data.get("account_expiry_months",  obj.account_expiry_months)
+        account_expiry_days       = request.data.get("account_expiry_days",    obj.account_expiry_days)
 
         try:
             retention_years = int(retention_years)
@@ -1658,6 +1710,23 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError, InvalidOperation):
             errors["vehicle_pass_fee_employee"] = "Must be a number."
 
+        account_expiry_enabled = bool(account_expiry_enabled)
+        try:
+            account_expiry_months = int(account_expiry_months)
+            if not (0 <= account_expiry_months <= 120):
+                errors["account_expiry_months"] = "Must be between 0 and 120 months."
+        except (TypeError, ValueError):
+            errors["account_expiry_months"] = "Must be an integer."
+        try:
+            account_expiry_days = int(account_expiry_days)
+            if not (0 <= account_expiry_days <= 365):
+                errors["account_expiry_days"] = "Must be between 0 and 365 days."
+        except (TypeError, ValueError):
+            errors["account_expiry_days"] = "Must be an integer."
+        if (account_expiry_enabled and not errors
+                and account_expiry_months == 0 and account_expiry_days == 0):
+            errors["account_expiry_months"] = "Set at least 1 month or day when expiration is enabled."
+
         if errors:
             return Response(errors, status=400)
 
@@ -1670,7 +1739,29 @@ class SystemSettingsView(APIView):
         obj.registration_end   = registration_end
         obj.vehicle_pass_fee          = vehicle_pass_fee
         obj.vehicle_pass_fee_employee = vehicle_pass_fee_employee
+
+        was_expiry_enabled = obj.account_expiry_enabled
+        obj.account_expiry_enabled = account_expiry_enabled
+        obj.account_expiry_months  = account_expiry_months
+        obj.account_expiry_days    = account_expiry_days
         obj.save()
+
+        # Backfill existing owners the first time expiry is turned on, using the
+        # duration the admin just chose. Frozen-at-creation semantics: only owners
+        # that don't already have an expires_at are touched.
+        if account_expiry_enabled and not was_expiry_enabled and (account_expiry_months or account_expiry_days):
+            from datetime import timedelta
+            from dateutil.relativedelta import relativedelta
+            from accounts.models import User as _User
+            owners = list(_User.objects.filter(
+                role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
+            ))
+            for owner in owners:
+                owner.expires_at = (owner.date_joined.date()
+                                    + relativedelta(months=account_expiry_months)
+                                    + timedelta(days=account_expiry_days))
+            if owners:
+                _User.objects.bulk_update(owners, ['expires_at'])
 
         after   = self._serialize(obj)
         changed = [f"{k}: {before[k]} -> {after[k]}" for k in after if before[k] != after[k]]

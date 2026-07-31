@@ -12,10 +12,47 @@ class UserManager(BaseUserManager):
         if not full_name:
             raise ValueError('Full name is required')
         email = self.normalize_email(email)
+
+        # Owner accounts expire a configurable time after creation (System
+        # Settings). Compute the frozen expiry date once, at creation, unless a
+        # caller supplied one explicitly. Admin/security accounts never expire.
+        if (extra_fields.get('role') == User.Role.VEHICLE_OWNER
+                and 'expires_at' not in extra_fields):
+            expiry = self._owner_expiry_date()
+            if expiry is not None:
+                extra_fields['expires_at'] = expiry
+
         user = self.model(email=email, full_name=full_name, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
+
+    @staticmethod
+    def _owner_expiry_date():
+        """Creation-date + configured (months, days), or None if expiry is off.
+
+        Lazy import of SystemSettings avoids an accounts->vehicles import cycle.
+        """
+        try:
+            from vehicles.models import SystemSettings
+        except Exception:
+            return None
+        cfg = SystemSettings.get()
+        if not cfg.account_expiry_enabled:
+            return None
+        if cfg.account_expiry_months <= 0 and cfg.account_expiry_days <= 0:
+            return None
+        from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
+        from django.utils import timezone
+        return (timezone.localdate()
+                + relativedelta(months=cfg.account_expiry_months)
+                + timedelta(days=cfg.account_expiry_days))
+
+    def get_by_natural_key(self, username):
+        # Email is unique only among live accounts (archived rows share it), so
+        # authentication must resolve to the non-archived user.
+        return self.get(**{self.model.USERNAME_FIELD: username, 'is_archived': False})
 
     def create_superuser(self, email, full_name, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
@@ -57,7 +94,10 @@ class User(AbstractUser):
 
     id = models.BigAutoField(primary_key=True, db_column='user_id')
     full_name = models.CharField(max_length=150)
-    email = models.EmailField(unique=True)
+    # Not globally unique: an archived owner keeps their email so history is
+    # preserved, while a new live account may reuse it. Uniqueness among *live*
+    # accounts is enforced by the partial constraint in Meta.
+    email = models.EmailField(db_index=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
     user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
     must_change_password = models.BooleanField(default=False)
@@ -76,6 +116,17 @@ class User(AbstractUser):
     contact     = models.CharField(max_length=50, null=True, blank=True)
     address     = models.TextField(null=True, blank=True)
     photo       = models.ImageField(upload_to='owners/', null=True, blank=True)
+
+    # Owner-account expiration (vehicle_owner only). expires_at is frozen at
+    # creation from System Settings; the daily maintenance job archives the
+    # account once it passes. Archiving sets is_archived + clears is_active.
+    expires_at  = models.DateField(null=True, blank=True, db_index=True)
+    is_archived = models.BooleanField(default=False, db_index=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    # Set when an account is archived AND had reached the maximum violations
+    # (a registration-blocking 3rd-offense). Such a person may not register a
+    # new vehicle pass — their identity is NOT freed on archive.
+    registration_banned = models.BooleanField(default=False, db_index=True)
 
     # Security-guard QR badge secret — a UUID printed on the guard's badge as a QR code.
     # Format in QR: "SLC-GUARD:{user_code}:{guard_qr_secret}"
@@ -102,6 +153,16 @@ class User(AbstractUser):
 
     class Meta:
         db_table = 'tbl_user'
+        constraints = [
+            # Email is unique among live accounts only. An archived owner keeps
+            # their email (history), but it no longer blocks a fresh account —
+            # so an expired owner can register again with the same address.
+            models.UniqueConstraint(
+                fields=['email'],
+                condition=models.Q(is_archived=False),
+                name='uniq_active_user_email',
+            ),
+        ]
 
 
 class AuditLog(models.Model):
@@ -111,6 +172,7 @@ class AuditLog(models.Model):
         USER_DELETED     = 'user_deleted',     'User Deleted'
         USER_DISABLED    = 'user_disabled',    'User Disabled'
         USER_ENABLED     = 'user_enabled',     'User Enabled'
+        USER_ARCHIVED    = 'user_archived',    'Account Auto-Archived (Expired)'
         ADMIN_REPLACED   = 'admin_replaced',   'Admin Replaced'
         SCAN             = 'scan',             'Vehicle Scanned'
         VEHICLE_ENTERED  = 'vehicle_entered',  'Vehicle Entered'

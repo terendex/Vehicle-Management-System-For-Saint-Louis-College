@@ -1068,7 +1068,7 @@ class PasswordResetRequestView(APIView):
         SAFE_MSG = 'If an account with that email exists, a password reset link has been sent.'
 
         try:
-            user = User.objects.get(email__iexact=email, is_active=True)
+            user = User.objects.get(email__iexact=email, is_active=True, is_archived=False)
         except User.DoesNotExist:
             return Response({'message': SAFE_MSG})
 
@@ -1294,7 +1294,7 @@ class GuardCredentialLoginView(APIView):
             return Response({'error': 'Email and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            guard = User.objects.get(email__iexact=email, role='security')
+            guard = User.objects.get(email__iexact=email, role='security', is_archived=False)
         except User.DoesNotExist:
             return Response({'error': 'Incorrect email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 

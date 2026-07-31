@@ -168,6 +168,7 @@ export default function RegisterPage() {
     : (regStatus?.vehicle_pass_fee ?? 300)
   const [formErrors, setFormErrors] = useState({})
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
+  const [banned, setBanned] = useState(null)     // set if the applicant reached max violations and may not register
   const [dupChecking, setDupChecking] = useState({})
   const [licenseImage, setLicenseImage] = useState(null)
   const [licensePreview, setLicensePreview] = useState(null)
@@ -498,6 +499,7 @@ export default function RegisterPage() {
           ...(studentIdValid && { student_id: result.student_id }),
           ...(employeeIdValid && { employee_id: result.employee_id }),
         }))
+        setBanned(result.banned || null)
       } catch {
         // Network hiccup — the backend still enforces this on submit, so fail silently here
       } finally {
@@ -1882,6 +1884,13 @@ export default function RegisterPage() {
 
             </>}
 
+            {banned && (
+              <div className="reg-submit-error">
+                <AlertTriangle size={15} />
+                {banned}
+              </div>
+            )}
+
             {submitError && (
               <div className="reg-submit-error">
                 <AlertTriangle size={15} />
@@ -1893,7 +1902,7 @@ export default function RegisterPage() {
               <button
                 type="submit"
                 className="btn-submit"
-                disabled={submitting || !registrantType || (regStatus && !regStatus.is_open)}
+                disabled={submitting || !registrantType || (regStatus && !regStatus.is_open) || !!banned}
               >
                 {submitting ? 'Submitting...' : 'Submit Registration'}
               </button>

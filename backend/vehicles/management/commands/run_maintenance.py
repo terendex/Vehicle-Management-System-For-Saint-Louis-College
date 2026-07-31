@@ -30,13 +30,18 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from vehicles.tasks import auto_manage_events, purge_old_records
+        from vehicles.tasks import auto_manage_events, auto_archive_expired_accounts, purge_old_records
 
         # Events first: it is the job with visible consequences, and it should
         # still run even if the purge fails.
         result = auto_manage_events()
         self.stdout.write(self.style.SUCCESS(
             f"auto_manage_events: activated {result['activated']}, archived {result['archived']}"
+        ))
+
+        result = auto_archive_expired_accounts()
+        self.stdout.write(self.style.SUCCESS(
+            f"auto_archive_expired_accounts: archived {result.get('archived', 0)} expired owner account(s)"
         ))
 
         if options['skip_purge']:

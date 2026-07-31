@@ -28,4 +28,10 @@ app.conf.beat_schedule = {
         "task":     "vehicles.auto_manage_events",
         "schedule": crontab(hour=0, minute=1),
     },
+    # Archive vehicle-owner accounts whose expiration date has passed.
+    # Runs at 00:05 server time every day.
+    "auto-archive-expired-accounts-daily": {
+        "task":     "vehicles.auto_archive_expired_accounts",
+        "schedule": crontab(hour=0, minute=5),
+    },
 }

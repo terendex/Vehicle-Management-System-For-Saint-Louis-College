@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload, Receipt } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
@@ -7,7 +7,8 @@ import { usersApi } from '../../api/users'
 import './SystemSettings.css'
 
 export default function SystemSettings() {
-  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150 }
+  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
+    account_expiry_enabled: false, account_expiry_months: 12, account_expiry_days: 0 }
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
@@ -51,6 +52,9 @@ export default function SystemSettings() {
           scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
           vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
           vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
+          account_expiry_enabled: data.account_expiry_enabled ?? false,
+          account_expiry_months:  data.account_expiry_months  ?? 12,
+          account_expiry_days:    data.account_expiry_days    ?? 0,
         }
         setForm(normalized)
         setSaved(normalized)
@@ -194,11 +198,13 @@ export default function SystemSettings() {
 
   const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
     || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
+    || form.account_expiry_enabled !== saved.account_expiry_enabled || form.account_expiry_months !== saved.account_expiry_months
+    || form.account_expiry_days !== saved.account_expiry_days
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
 
   const handleChange = (e) => {
-    const { name, value, type } = e.target
-    setForm((prev) => ({ ...prev, [name]: type === 'number' ? Number(value) : value }))
+    const { name, value, type, checked } = e.target
+    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? Number(value) : value }))
   }
 
   const handleSave = async () => {
@@ -335,6 +341,81 @@ export default function SystemSettings() {
                   />
                 </div>
               </div>
+            </div>
+
+            {/* ── Account Expiration ────────────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon ss-icon-red">
+                  <CalendarClock size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Vehicle-Owner Account Expiration</h2>
+                  <p className="ss-card-desc">
+                    When enabled, each new vehicle-owner account expires this long after it is created
+                    and is automatically archived. The owner is emailed and can register again — their
+                    email, ID and plate are freed for reuse.
+                  </p>
+                </div>
+              </div>
+
+              <label className="ss-field" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input
+                  id="account_expiry_enabled"
+                  name="account_expiry_enabled"
+                  type="checkbox"
+                  checked={form.account_expiry_enabled}
+                  onChange={handleChange}
+                  style={{ width: 16, height: 16 }}
+                />
+                <span className="ss-label" style={{ margin: 0 }}>Automatically archive expired owner accounts</span>
+              </label>
+
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', opacity: form.account_expiry_enabled ? 1 : 0.5 }}>
+                <div className="ss-field" style={{ flex: '1 1 140px' }}>
+                  <label className="ss-label" htmlFor="account_expiry_months">Months</label>
+                  <div className="ss-input-row">
+                    <input
+                      id="account_expiry_months"
+                      name="account_expiry_months"
+                      type="number"
+                      min={0}
+                      max={120}
+                      value={form.account_expiry_months}
+                      onChange={handleChange}
+                      disabled={!form.account_expiry_enabled}
+                      className="ss-input"
+                    />
+                    <span className="ss-unit">months</span>
+                  </div>
+                </div>
+                <div className="ss-field" style={{ flex: '1 1 140px' }}>
+                  <label className="ss-label" htmlFor="account_expiry_days">Days</label>
+                  <div className="ss-input-row">
+                    <input
+                      id="account_expiry_days"
+                      name="account_expiry_days"
+                      type="number"
+                      min={0}
+                      max={365}
+                      value={form.account_expiry_days}
+                      onChange={handleChange}
+                      disabled={!form.account_expiry_enabled}
+                      className="ss-input"
+                    />
+                    <span className="ss-unit">days</span>
+                  </div>
+                </div>
+              </div>
+              <p className="ss-hint">Set at least 1 month or day. Turning this on backfills existing owners using their join date.</p>
+
+              {form.account_expiry_enabled && (
+                <div className="ss-info-row">
+                  <ShieldAlert size={13} />
+                  Owner accounts will archive <strong>{form.account_expiry_months} month{form.account_expiry_months !== 1 ? 's' : ''}
+                  {form.account_expiry_days > 0 ? ` and ${form.account_expiry_days} day${form.account_expiry_days !== 1 ? 's' : ''}` : ''}</strong> after creation.
+                </div>
+              )}
             </div>
 
             {/* ── Backup & Restore ──────────────────────────────────────── */}

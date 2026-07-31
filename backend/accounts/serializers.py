@@ -60,7 +60,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         value = value.strip().lower()
         user = self.instance
-        if User.objects.exclude(pk=user.pk).filter(email__iexact=value).exists():
+        if User.objects.exclude(pk=user.pk).filter(email__iexact=value, is_archived=False).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -76,7 +76,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
+        if User.objects.filter(email__iexact=value, is_archived=False).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -189,7 +189,7 @@ class GuardCreateSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
+        if User.objects.filter(email__iexact=value, is_archived=False).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -252,7 +252,7 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
     body_number       = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
 
     def validate_email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
+        if User.objects.filter(email__iexact=value, is_archived=False).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value.lower()
 
@@ -385,7 +385,7 @@ class AdminReplaceSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
+        if User.objects.filter(email__iexact=value, is_archived=False).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value
 
@@ -429,9 +429,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         email = attrs.get(self.username_field, '')
         password = attrs.get('password', '')
 
-        # Check for disabled account or security role before SimpleJWT swallows it
+        # Check for disabled account or security role before SimpleJWT swallows it.
+        # Filter to the live account — an archived row may share this email, and an
+        # unfiltered .get() would raise MultipleObjectsReturned.
         try:
-            user = User.objects.get(**{self.username_field: email})
+            user = User.objects.get(**{self.username_field: email}, is_archived=False)
             if user.check_password(password):
                 if not user.is_active:
                     raise AuthenticationFailed(

@@ -68,6 +68,10 @@ class VehicleRegistration(models.Model):
         PENDING  = 'pending',  'Pending'
         ACCEPTED = 'accepted', 'Accepted'
         REJECTED = 'rejected', 'Rejected'
+        # Set when the owning account auto-archives on expiry. Excluded from the
+        # active (pending/accepted) uniqueness constraints below, so it releases
+        # the plate/email/ID/license for the person to register again.
+        EXPIRED  = 'expired',  'Expired'
 
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
@@ -351,6 +355,23 @@ class SystemSettings(models.Model):
         max_digits=8, decimal_places=2, default=150,
         validators=[MinValueValidator(0)],
         help_text="Vehicle Pass registration fee (₱) for employees.",
+    )
+    # Vehicle-owner account expiration. When enabled, each owner account gets an
+    # expires_at = creation date + (months, days), and the daily maintenance job
+    # archives accounts once that date passes. Admin/security accounts never expire.
+    account_expiry_enabled = models.BooleanField(
+        default=False,
+        help_text="When enabled, vehicle-owner accounts auto-archive after the set duration.",
+    )
+    account_expiry_months  = models.IntegerField(
+        default=12,
+        validators=[MinValueValidator(0), MaxValueValidator(120)],
+        help_text="Months an owner account stays active after creation.",
+    )
+    account_expiry_days    = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(365)],
+        help_text="Extra days (on top of months) before an owner account expires.",
     )
 
     class Meta:
