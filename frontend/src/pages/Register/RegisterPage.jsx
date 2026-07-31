@@ -22,6 +22,15 @@ function formatRegDate(iso) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// Today as a local "YYYY-MM-DD" string. The registration dates come from the
+// backend in this same zero-padded format, so they compare correctly as
+// strings without pulling timezones into a Date subtraction.
+function todayISO() {
+  const n = new Date()
+  const p = x => String(x).padStart(2, '0')
+  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`
+}
+
 // Auto-inserts dashes for the LTO format: X00-00-000000.
 // Strips any existing dashes first so the cursor position doesn't confuse things.
 function formatDriversLicense(raw) {
@@ -720,9 +729,12 @@ export default function RegisterPage() {
                       const range = start && end
                         ? <span className="reg-window-range">{start} – {end}</span>
                         : <span className="reg-window-range reg-window-range--tentative">June 1 <em>(tentative)</em> – October 31 <em>(tentative)</em></span>
-                      return regStatus.is_open
-                        ? <>Window: {range}</>
-                        : <>Registration window: {range}. Submissions are not accepted outside the registration period.</>
+                      if (regStatus.is_open)
+                        return <>Window: {range}</>
+                      // Window already ended — state that instead of showing a stale past range.
+                      if (regStatus.close_date && regStatus.close_date < todayISO())
+                        return <>The registration period ended on <span className="reg-window-range">{end}</span>. Please check back for the next window.</>
+                      return <>Registration window: {range}. Submissions are not accepted outside the registration period.</>
                     })()}
                   </div>
                 </div>
@@ -877,7 +889,6 @@ export default function RegisterPage() {
                     ? "EMPLOYEE'S PERSONAL INFORMATION"
                     : "FETCHER / DROP & GO PERSONAL INFORMATION"}
             </p>
-            <p className="slc-form-note">Please write legibly in CAPITAL LETTERS.</p>
             {registrantType && (
               <span className="registrant-badge">
                 {isStudent ? 'Student — Vehicle Registration'
@@ -901,7 +912,17 @@ export default function RegisterPage() {
                 <div className="reg-window-dates">
                   {regStatus.is_open
                     ? <>Window: <span className="reg-window-range">{formatRegDate(regStatus.open_date)} – {formatRegDate(regStatus.close_date)}</span></>
-                    : <>Next window opens approximately on <span className="reg-window-range">{formatRegDate(regStatus.open_date)}</span>. Submissions are not accepted outside the registration period.</>}
+                    : (() => {
+                        const today = todayISO()
+                        // Closed & still upcoming — the start date is genuinely in the future.
+                        if (regStatus.open_date && regStatus.open_date > today)
+                          return <>Next window opens approximately on <span className="reg-window-range">{formatRegDate(regStatus.open_date)}</span>. Submissions are not accepted outside the registration period.</>
+                        // Closed & already ended — don't advertise a past start date as the "next" window.
+                        if (regStatus.close_date && regStatus.close_date < today)
+                          return <>The registration period ended on <span className="reg-window-range">{formatRegDate(regStatus.close_date)}</span>. Please check back for the next window.</>
+                        // No period scheduled (open_date is null), or an edge with no future date to promise.
+                        return <>Registration is not open at this time. Please check back for the next window.</>
+                      })()}
                 </div>
               </div>
             </div>
