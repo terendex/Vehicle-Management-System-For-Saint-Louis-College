@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
-  AlertTriangle, CheckCircle, Square, PenTool,
+  AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
@@ -474,23 +474,64 @@ export default function ParkingManagement({ embedded = false }) {
           </div>
         </div>
 
-        {/* Zone tabs */}
-        <div className="pm-zone-tabs">
-          {zones.map(z => {
-            const C = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
-            return (
-              <button
-                key={z.id}
-                className={`pm-zone-tab${z.id === selId ? ' pm-zone-tab--active' : ''}`}
-                onClick={() => { setSelId(z.id); setMode('live') }}
-              >
-                <C size={13} /> {z.name}
-              </button>
-            )
-          })}
-          {!loading && zones.length === 0 && (
-            <span className="pm-zone-empty">No zones yet — create one to start.</span>
-          )}
+        {/* Occupancy at a glance — these numbers used to be a run of tiny text
+            buried in the toolbar between the detection controls. */}
+        {selZone && mode === 'live' && (
+          <div className="pm-stats-row">
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon green"><CheckCircle2 size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{sumFr}</p>
+                <p className="pm-stat-lbl">Free</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon red"><Car size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{occ}</p>
+                <p className="pm-stat-lbl">Occupied</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon blue"><ParkingCircle size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{liveSpaces.length}</p>
+                <p className="pm-stat-lbl">Total Spaces</p>
+              </div>
+            </div>
+            <div className="pm-stat-card">
+              <div className="pm-stat-icon purple"><LayoutGrid size={18} /></div>
+              <div>
+                <p className="pm-stat-val">{zones.length}</p>
+                <p className="pm-stat-lbl">{zones.length === 1 ? 'Zone' : 'Zones'}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Zone tabs — labelled, because a lone unlabelled pill reads as a
+            stray button rather than "the zone you are looking at". */}
+        <div className="pm-zone-bar">
+          <span className="pm-zone-bar-label">
+            <LayoutGrid size={13} /> Zones
+          </span>
+          <div className="pm-zone-tabs">
+            {zones.map(z => {
+              const C = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
+              return (
+                <button
+                  key={z.id}
+                  className={`pm-zone-tab${z.id === selId ? ' pm-zone-tab--active' : ''}`}
+                  onClick={() => { setSelId(z.id); setMode('live') }}
+                >
+                  <C size={13} /> {z.name}
+                </button>
+              )
+            })}
+            {!loading && zones.length === 0 && (
+              <span className="pm-zone-empty">No zones yet — create one to start.</span>
+            )}
+          </div>
         </div>
 
         {/* Main content row: parking map + optional camera sidebar */}
@@ -558,15 +599,7 @@ export default function ParkingManagement({ embedded = false }) {
                   </span>
                 )}
 
-                {mode === 'live' && (
-                  <div className="pm-summary">
-                    <span className="pm-sum-free">{sumFr} free</span>
-                    <span className="pm-sum-sep">·</span>
-                    <span className="pm-sum-occ">{occ} occupied</span>
-                    <span className="pm-sum-sep">·</span>
-                    <span className="pm-sum-total">{liveSpaces.length} total</span>
-                  </div>
-                )}
+                {/* Occupancy counts now live in the stats row above. */}
 
                 {mode === 'edit' && (
                   <div className="pm-mode-toggle">
@@ -625,7 +658,14 @@ export default function ParkingManagement({ embedded = false }) {
                     </button>
                   </>
                 )}
-                <button className="pm-btn pm-btn--danger-outline" onClick={handleDeleteZone}>
+                {/* Separated from the working controls: deleting a zone is
+                    irreversible and sat one button away from Start Detection. */}
+                <span className="pm-toolbar-divider" />
+                <button
+                  className="pm-btn pm-btn--danger-outline"
+                  onClick={handleDeleteZone}
+                  title={`Delete the "${selZone.name}" zone and its spaces`}
+                >
                   <Trash2 size={13} /> Delete Zone
                 </button>
               </div>

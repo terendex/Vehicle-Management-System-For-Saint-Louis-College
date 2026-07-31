@@ -31,6 +31,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  /* Guarantees breathing room between the lockup and any trailing control
+     (the Back to Login button) even when the bar has no slack left. */
+  gap: clamp(8px, 3vw, 16px);
 }
 
 .header-logo-group {
@@ -89,9 +92,10 @@
   }
 }
 
-/* Optional back control, sits left of the lockup (see PolicyPage for the
-   same pattern). Label collapses to the arrow alone on narrow phones so the
-   school name and tagline keep their room. */
+/* Optional back control. Defaults beside the lockup; add
+   `.header-back-btn--end` to park it at the far right of the bar.
+   The label collapses to the arrow alone on narrow phones so the school name
+   and tagline keep their room — the lockup is what must never be squeezed. */
 .header-back-btn {
   display: flex;
   align-items: center;
@@ -116,6 +120,16 @@
   background: #EEF4F9;
   color: #03396C;
   border-color: #BDD4E5;
+}
+
+/* Right-hand placement: `margin-left: auto` rather than justify-content on the
+   parent, so the lockup keeps its own alignment and the button takes only the
+   space left over. The minimum gap comes from .header-content's own `gap` —
+   `auto` collapses to zero once the bar is full, which on a narrow phone would
+   otherwise butt the button straight against the tagline. */
+.header-back-btn--end {
+  margin-right: 0;
+  margin-left: auto;
 }
 
 @media (max-width: 560px) {

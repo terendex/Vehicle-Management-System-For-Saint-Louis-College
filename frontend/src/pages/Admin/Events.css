@@ -28,6 +28,22 @@
   margin: 0 0 3px;
 }
 
+/* Reads as a section heading under the Parking page's own title */
+.ev-title--section {
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ev-title--section::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: var(--gold, #F6CE11);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 .ev-subtitle {
   font-size: 0.85rem;
   color: #4A6B85;

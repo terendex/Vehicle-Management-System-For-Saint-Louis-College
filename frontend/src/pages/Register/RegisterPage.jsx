@@ -133,12 +133,6 @@ function SlcHeader({ onBack }) {
   return (
     <header className="register-header">
       <div className="header-content">
-        {onBack && (
-          <button type="button" className="header-back-btn" onClick={onBack}>
-            <ArrowLeft size={16} />
-            <span>Back to Login</span>
-          </button>
-        )}
         <div className="header-logo-group">
           <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
           <div className="header-text">
@@ -146,6 +140,12 @@ function SlcHeader({ onBack }) {
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
           </div>
         </div>
+        {onBack && (
+          <button type="button" className="header-back-btn header-back-btn--end" onClick={onBack}>
+            <ArrowLeft size={16} />
+            <span>Back to Login</span>
+          </button>
+        )}
       </div>
     </header>
   )
