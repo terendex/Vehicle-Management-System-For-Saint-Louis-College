@@ -96,6 +96,18 @@ const CAMPUS_DAYS = [
 // Same info as a student registration except email, contact number and age.
 const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '' }
 
+/* Levels that can never be self-driven — the "who drives" choice is skipped and a
+   parent, guardian, or authorized driver is always registered as the driver.
+   JHS/Elementary because those students are minors; SpEd because those students
+   are accompanied regardless of age. */
+const GUARDIAN_ONLY_LEVELS = ['jhs', 'elementary', 'sped']
+
+const GUARDIAN_ONLY_REASON = {
+  jhs:        'Junior High School students are minors and are not allowed to drive.',
+  elementary: 'Elementary students are minors and are not allowed to drive.',
+  sped:       'Special Education students are always accompanied and do not drive themselves.',
+}
+
 const FETCHER_STUDENT_LEVELS = [
   { id: 'college',    label: 'College' },
   { id: 'shs',        label: 'Senior High School' },
@@ -545,8 +557,7 @@ export default function RegisterPage() {
         setSubmitError('Please select your grade level.')
         return
       }
-      // Minors are locked to guardian-driven; SpEd defaults to it. Either way,
-      // a guardian-driven registration needs the driver's details.
+      // A guardian-driven registration always needs the driver's details.
       if (formData.who_drives === 'guardian') {
         if (!formData.driver_name.trim()) {
           setSubmitError("Please enter the authorized driver's full name.")
@@ -824,8 +835,8 @@ export default function RegisterPage() {
   const isEmployee = registrantType === 'employee'
   const regOpen = regStatus?.is_open ?? true
 
-  // Minors (JHS/Elementary) can never drive themselves; SpEd may or may not.
-  const isMinorLevel = isStudent && ['jhs', 'elementary'].includes(formData.student_level)
+  // JHS/Elementary/SpEd always register a parent, guardian, or authorized driver.
+  const isGuardianOnlyLevel = isStudent && GUARDIAN_ONLY_LEVELS.includes(formData.student_level)
   const guardianDriven = isStudent && formData.who_drives === 'guardian'
 
   // The backend program list stores combined "BSIT - 3" entries; split them into
@@ -1178,11 +1189,9 @@ export default function RegisterPage() {
                             student_program: '',
                             student_year: '',
                             program_year: '',
-                            // Minors can never drive; SpEd defaults to a guardian driver
-                            // but stays selectable; College/SHS default to self-driving.
-                            who_drives: ['jhs', 'elementary'].includes(lvl.id)
-                              ? 'guardian'
-                              : lvl.id === 'sped' ? 'guardian' : 'self',
+                            // Minors and SpEd are locked to a guardian driver;
+                            // College/SHS default to self-driving.
+                            who_drives: GUARDIAN_ONLY_LEVELS.includes(lvl.id) ? 'guardian' : 'self',
                             campus_days: lvl.id === 'sped'
                               ? CAMPUS_DAYS.map(d => d.key)
                               : prev.student_level === 'sped'
@@ -1396,16 +1405,16 @@ export default function RegisterPage() {
                 </select>
               </div>
 
-              {/* Who drives — students only. Minors are locked to a guardian/driver. */}
+              {/* Who drives — students only. JHS/Elementary/SpEd skip the choice. */}
               {isStudent && formData.student_level && (
                 <div className="form-group col-span-2">
                   <label>Who will drive this vehicle? <span className="required">*</span></label>
-                  {isMinorLevel ? (
+                  {isGuardianOnlyLevel ? (
                     <div className="schedule-note driver-minor-note">
                       <Info size={13} />
                       <span>
-                        {formData.student_level === 'jhs' ? 'Junior High School' : 'Elementary'} students are minors
-                        and are not allowed to drive. A <strong>parent, guardian, or authorized driver</strong> must
+                        {GUARDIAN_ONLY_REASON[formData.student_level]} A{' '}
+                        <strong>parent, guardian, or authorized driver</strong> must
                         be registered as this vehicle's driver.
                       </span>
                     </div>
