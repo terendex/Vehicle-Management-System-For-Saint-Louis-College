@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from .gate_frames import set_latest_gate_frame
 from .ml.detection import detect_plates, is_gpu_available
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
@@ -594,8 +595,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
     def _save_to_db(self, track_id: int, plate_number: str, det_conf: float,
                     ocr_conf: float, bbox: dict, snapshot_path: str | None):
         from django.db import close_old_connections
-        from .gate_frames import set_latest_gate_frame
-from .models import PlateRecognitionRecord
+        from .models import PlateRecognitionRecord
         close_old_connections()
         PlateRecognitionRecord.objects.create(
             track_id=track_id,
