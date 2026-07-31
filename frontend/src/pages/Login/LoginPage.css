@@ -13,10 +13,12 @@
 /* --- Page Layout --- */
 .login-page {
   min-height: 100vh;
+  min-height: 100dvh;   /* survives mobile browser chrome collapsing */
   display: flex;
   flex-direction: column;
   background: #EEF4F9;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
 }
 
 /* --- Header --- */
@@ -24,8 +26,8 @@
   width: 100%;
   background: #FFFFFF;
   border-bottom: 2.5px solid #03396C;
-  padding: 0 2rem;
-  height: 64px;
+  padding: 0.5rem clamp(0.75rem, 4vw, 2rem);
+  min-height: 64px;
   display: flex;
   align-items: center;
   box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
@@ -34,47 +36,56 @@
   z-index: 100;
 }
 
-.header-content {
+.login-header .header-content {
   width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-start;
 }
 
-.header-logo-group {
+.login-header .header-logo-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: clamp(8px, 2.5vw, 12px);
+  min-width: 0;      /* lets the text block shrink instead of overflowing */
+  width: 100%;
 }
 
-.header-logo {
-  width: 42px;
-  height: 42px;
+.login-header .header-logo {
+  width: clamp(34px, 9vw, 42px);
+  height: clamp(34px, 9vw, 42px);
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid #03396C;
   box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
+  flex-shrink: 0;
 }
 
-.header-text {
+.login-header .header-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.25;
+  min-width: 0;
+  gap: 1px;
 }
 
-.header-title {
-  font-size: 15px;
+/* Wraps rather than truncating — the school name must always read in full */
+.login-header .header-title {
+  font-size: clamp(12.5px, 3.6vw, 15px);
   font-weight: 800;
   color: #03396C;
-  letter-spacing: 1.2px;
+  letter-spacing: clamp(0.4px, 0.25vw, 1.2px);
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
-.header-subtitle {
-  font-size: 11.5px;
+.login-header .header-subtitle {
+  font-size: clamp(11.5px, 2.9vw, 12px);
   font-weight: 500;
-  color: #6B8CA6;
-  letter-spacing: 0.3px;
+  color: #4A6B85;   /* 5.6:1 on white — the old #6B8CA6 was under 4.5:1 */
+  letter-spacing: 0.2px;
+  overflow-wrap: anywhere;
 }
 
 /* --- Main --- */
@@ -83,7 +94,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1rem;
+  padding: clamp(1rem, 4vw, 2rem) clamp(0.75rem, 3vw, 1rem);
 }
 
 /* --- Card --- */
@@ -95,7 +106,7 @@
     0 10px 40px -4px rgba(3, 57, 108, 0.08);
   width: 100%;
   max-width: 440px;
-  padding: 2.25rem 2rem 2rem;
+  padding: clamp(1.5rem, 5vw, 2.25rem) clamp(1.125rem, 4.5vw, 2rem) clamp(1.25rem, 4vw, 2rem);
   border: 1px solid #D3E1EC;
   position: relative;
   overflow: hidden;
@@ -131,56 +142,64 @@
 /* --- Card Header --- */
 .card-header {
   text-align: center;
-  margin-bottom: 1.75rem;
+  margin-bottom: clamp(1.25rem, 4vw, 1.75rem);
 }
 
 .card-title {
-  font-size: 1.4rem;
+  font-size: clamp(1.25rem, 5.5vw, 1.4rem);
   font-weight: 700;
   color: #03396C;
   margin: 0 0 6px;
   letter-spacing: -0.2px;
+  line-height: 1.25;
 }
 
 .card-subtitle {
-  font-size: 13px;
-  color: #6B8CA6;
+  font-size: clamp(12.5px, 3.4vw, 13.5px);
+  color: #4A6B85;
   margin: 0;
   font-weight: 400;
+  line-height: 1.5;
+  text-wrap: balance;
 }
 
 /* --- Error Alert --- */
+/* align-items: flex-start so the icon stays put when the message wraps */
 .error-alert {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
   background: #FCEDED;
   border: 1px solid #F3C0C0;
   border-radius: 10px;
   color: #C62828;
-  font-size: 13px;
+  font-size: clamp(12.5px, 3.4vw, 13px);
   font-weight: 500;
+  line-height: 1.45;
   margin-bottom: 1.25rem;
   animation: alertShake 0.4s ease;
 }
 
 .success-alert {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
   background: #E6F5EF;
   border: 1px solid #A8DCC8;
   border-radius: 10px;
   color: #0F7A5A;
-  font-size: 13px;
+  font-size: clamp(12.5px, 3.4vw, 13px);
   font-weight: 500;
+  line-height: 1.45;
   margin-bottom: 1.25rem;
 }
 
+.error-alert svg,
 .success-alert svg {
   flex-shrink: 0;
+  margin-top: 1px;
 }
 
 @keyframes alertShake {
@@ -195,7 +214,7 @@
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 1.15rem;
+  gap: clamp(0.9rem, 3vw, 1.15rem);
 }
 
 .form-group {
@@ -205,7 +224,7 @@
 }
 
 .form-label {
-  font-size: 13px;
+  font-size: clamp(13px, 3.4vw, 13.5px);
   font-weight: 600;
   color: #2E4C63;
   letter-spacing: 0.1px;
@@ -277,7 +296,7 @@
 }
 
 .role-label {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   color: #4A6B85;
   text-align: center;
@@ -291,13 +310,15 @@
 }
 
 /* --- Inputs --- */
+/* 16px floor: anything smaller makes iOS Safari zoom the page on focus */
 .form-input {
   width: 100%;
+  min-height: 46px;
   padding: 11px 14px;
   border: 1.5px solid #D3E1EC;
   border-radius: 10px;
   background: #F7FAFC;
-  font-size: 14px;
+  font-size: 16px;
   font-family: inherit;
   color: #0B2340;
   outline: none;
@@ -306,7 +327,7 @@
 }
 
 .form-input::placeholder {
-  color: #64839C;
+  color: #5C7B92;
   font-weight: 400;
 }
 
@@ -325,19 +346,21 @@
 }
 
 .input-wrapper .form-input {
-  padding-right: 44px;
+  padding-right: 48px;
 }
 
 .toggle-password {
   position: absolute;
-  right: 12px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
   color: #64839C;
-  padding: 4px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -351,10 +374,13 @@
 }
 
 /* --- Checkbox Row --- */
+/* Wraps to two lines on very narrow phones instead of overflowing */
 .form-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 2px 0;
 }
 
@@ -363,6 +389,7 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  min-height: 32px;
 }
 
 .checkbox-wrapper {
@@ -405,7 +432,7 @@
 }
 
 .checkbox-text {
-  font-size: 13px;
+  font-size: clamp(13px, 3.4vw, 13.5px);
   font-weight: 500;
   color: #4A6B85;
   transition: color 0.15s ease;
@@ -416,12 +443,14 @@
 }
 
 .forgot-link {
-  font-size: 13px;
+  font-size: clamp(13px, 3.4vw, 13.5px);
   font-weight: 600;
   color: #03396C;
   text-decoration: none;
   transition: all 0.15s ease;
   position: relative;
+  white-space: nowrap;
+  padding: 4px 0;
 }
 
 .forgot-link::after {
@@ -442,12 +471,13 @@
 /* --- Login Button --- */
 .login-button {
   width: 100%;
+  min-height: 48px;
   padding: 12px 20px;
   background: var(--navy);
   color: #FFFFFF;
   border: 2px solid var(--navy);
   border-radius: 10px;
-  font-size: 15px;
+  font-size: clamp(15px, 4vw, 15.5px);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -526,8 +556,8 @@
 /* --- Sign Up --- */
 .signup-prompt {
   text-align: center;
-  font-size: 13.5px;
-  color: #6B8CA6;
+  font-size: clamp(13px, 3.4vw, 13.5px);
+  color: #4A6B85;
   font-weight: 500;
   margin-top: 4px;
 }
@@ -552,11 +582,13 @@
 }
 
 .terms-link {
-  font-size: 12px;
+  font-size: clamp(12.5px, 3.2vw, 13px);
   font-weight: 500;
-  color: var(--muted-2);
+  color: var(--muted);
   text-decoration: none;
   transition: color 0.15s ease;
+  padding: 6px 4px;
+  display: inline-block;
 }
 
 .terms-link:hover {
@@ -571,105 +603,91 @@
 
 /* ============================================================
    RESPONSIVE
+
+   Type and spacing scale fluidly via clamp() above, so these
+   breakpoints only handle changes clamp() can't express:
+   layout switches, and adapting to short/landscape viewports.
    ============================================================ */
-
-/* --- Tablet (iPad / iPad Mini) --- */
-@media (max-width: 768px) {
-  .login-header {
-    padding: 0 1.25rem;
-  }
-
-  .header-subtitle {
-    font-size: 10px;
-    letter-spacing: 0.2px;
-  }
-
-  .login-card {
-    max-width: 420px;
-  }
-}
 
 /* --- Small Mobile --- */
 @media (max-width: 480px) {
-  .login-header {
-    padding: 0 1rem;
-    height: 56px;
-  }
-
-  .header-logo {
-    width: 36px;
-    height: 36px;
-  }
-
-  .header-title {
-    font-size: 13px;
-    letter-spacing: 0.8px;
-  }
-
-  .header-subtitle {
-    font-size: 10px;
-  }
-
-  .login-main {
-    padding: 1.25rem 0.75rem;
-  }
-
   .login-card {
-    padding: 1.75rem 1.25rem 1.5rem;
     border-radius: 14px;
     max-width: 100%;
   }
 
-  .card-title {
-    font-size: 1.2rem;
-  }
-
+  /* Two columns beat three cramped ones once labels stop fitting */
   .role-selector {
-    gap: 6px;
-  }
-
-  .role-option {
-    padding: 10px 4px 8px;
-  }
-
-  .role-label {
-    font-size: 9.5px;
-  }
-
-  .register-cta-btn {
-    font-size: 13px;
-    padding: 11px 14px;
-  }
-}
-
-/* --- Very Small Mobile (< 380px) --- */
-@media (max-width: 380px) {
-  .header-subtitle {
-    display: none;
-  }
-
-  .header-title {
-    font-size: 12px;
-    letter-spacing: 0.5px;
-  }
-
-  .login-main {
-    padding: 1rem 0.625rem;
-  }
-
-  .login-card {
-    padding: 1.5rem 1rem 1.25rem;
-  }
-
-  .form-row {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: repeat(2, 1fr);
     gap: 8px;
   }
 
+  .role-label {
+    font-size: 11.5px;
+  }
+}
+
+/* --- Very Small Mobile (<= 360px: Galaxy Fold cover, iPhone SE 1) --- */
+@media (max-width: 360px) {
+  .login-header {
+    padding: 0.5rem 0.75rem;
+  }
+
+  /* Header goes one line only — the subtitle has no room left to read */
+  .login-header .header-subtitle {
+    display: none;
+  }
+
   .register-cta-btn {
-    font-size: 12px;
-    gap: 6px;
+    padding: 12px 10px;
+  }
+}
+
+/* --- Short / landscape viewports --- */
+/* Stops the card from being taller than the screen with nowhere to scroll */
+@media (max-height: 640px) and (orientation: landscape) {
+  .login-header {
+    position: static;
+    min-height: 52px;
+  }
+
+  .login-main {
+    align-items: flex-start;
+    padding: 1rem;
+  }
+
+  .login-card {
+    animation: none;
+  }
+
+  .card-header {
+    margin-bottom: 1rem;
+  }
+
+  .login-form {
+    gap: 0.85rem;
+  }
+}
+
+/* --- Large screens --- */
+@media (min-width: 1280px) {
+  .login-card {
+    max-width: 470px;
+  }
+}
+
+/* --- Motion preferences --- */
+@media (prefers-reduced-motion: reduce) {
+  .login-card,
+  .error-alert,
+  .modal-overlay,
+  .modal-card,
+  .reg-modal-card {
+    animation: none;
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
   }
 }
 
@@ -685,7 +703,9 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  padding: 1rem;
+  padding: clamp(0.75rem, 3vw, 1rem);
+  overflow-y: auto;         /* tall modals stay reachable on short screens */
+  overscroll-behavior: contain;
   animation: modalFadeIn 0.2s ease;
 }
 
@@ -697,9 +717,10 @@
 .modal-card {
   background: #FFFFFF;
   border-radius: 16px;
-  padding: 36px 28px 28px;
+  padding: clamp(28px, 7vw, 36px) clamp(18px, 5.5vw, 28px) clamp(20px, 5.5vw, 28px);
   max-width: 400px;
   width: 100%;
+  margin: auto;
   text-align: center;
   box-shadow:
     0 20px 25px -5px rgba(0, 0, 0, 0.1),
@@ -735,27 +756,30 @@
 }
 
 .modal-title {
-  font-size: 18px;
+  font-size: clamp(17px, 4.6vw, 18px);
   font-weight: 700;
   color: #0B2340;
   margin: 0 0 6px;
+  line-height: 1.3;
 }
 
 .modal-message {
-  font-size: 13px;
+  font-size: clamp(13px, 3.4vw, 13.5px);
   color: #4A6B85;
   margin: 0 0 20px;
-  line-height: 1.5;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .modal-btn {
   width: 100%;
+  min-height: 46px;
   background: #03396C;
   color: #FFFFFF;
   border: none;
   border-radius: 10px;
   padding: 11px 20px;
-  font-size: 14px;
+  font-size: clamp(14px, 3.8vw, 14.5px);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -776,37 +800,51 @@
 .register-divider {
   display: flex;
   align-items: center;
-  gap: 12px;
-  color: #64839C;
-  font-size: 12px;
+  gap: clamp(8px, 3vw, 12px);
+  color: #4A6B85;
+  font-size: clamp(12px, 3.2vw, 12.5px);
   font-weight: 500;
   margin: 4px 0;
+  text-align: center;
+}
+
+.register-divider span {
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .register-divider::before,
 .register-divider::after {
   content: '';
-  flex: 1;
+  flex: 1 0 12px;
   height: 1px;
   background: #D3E1EC;
 }
 
 .register-cta-btn {
   width: 100%;
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 12px 18px;
+  gap: clamp(6px, 2vw, 8px);
+  padding: 12px clamp(12px, 4vw, 18px);
   background: #F7FAFC;
   border: 1.5px solid #03396C;
   border-radius: 12px;
   color: #03396C;
-  font-size: 14px;
+  font-size: clamp(13.5px, 3.6vw, 14px);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: all 0.2s;
+  text-align: left;
+  line-height: 1.3;
+}
+
+/* Icons hold their size; only the label gives way when space runs out */
+.register-cta-btn > svg {
+  flex-shrink: 0;
 }
 
 .register-cta-btn:hover {
@@ -828,9 +866,10 @@
 .reg-modal-card {
   background: #FFFFFF;
   border-radius: 20px;
-  padding: 28px;
+  padding: clamp(18px, 5.5vw, 28px);
   max-width: 460px;
   width: 100%;
+  margin: auto;
   box-shadow:
     0 20px 50px rgba(0,0,0,0.12),
     0 8px 20px rgba(0,0,0,0.06);
@@ -840,21 +879,23 @@
 .reg-modal-header {
   display: flex;
   align-items: flex-start;
-  gap: 16px;
+  gap: clamp(10px, 3vw, 16px);
   margin-bottom: 18px;
 }
 
 .reg-modal-title {
-  font-size: 18px;
+  font-size: clamp(16.5px, 4.6vw, 18px);
   font-weight: 800;
   color: #0B2340;
   margin: 0 0 4px;
+  line-height: 1.3;
 }
 
 .reg-modal-subtitle {
-  font-size: 13px;
-  color: #6B8CA6;
+  font-size: clamp(12.5px, 3.4vw, 13px);
+  color: #4A6B85;
   margin: 0;
+  line-height: 1.45;
 }
 
 .reg-modal-close {
@@ -862,7 +903,7 @@
   background: none;
   border: 1px solid #D3E1EC;
   border-radius: 8px;
-  padding: 6px;
+  padding: 8px;
   cursor: pointer;
   color: #64839C;
   display: flex;
@@ -878,9 +919,14 @@
   align-items: flex-start;
   border-radius: 10px;
   padding: 10px 14px;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: clamp(12px, 3.2vw, 12.5px);
+  line-height: 1.55;
   margin-bottom: 14px;
+}
+
+.reg-window-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .reg-window-notice.open {
@@ -896,8 +942,8 @@
 }
 
 .reg-status-loading {
-  font-size: 12px;
-  color: #6B8CA6;
+  font-size: clamp(12.5px, 3.2vw, 13px);
+  color: #4A6B85;
   text-align: center;
   padding: 12px 0;
 }
@@ -912,8 +958,8 @@
 .reg-type-item {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  gap: clamp(10px, 3vw, 14px);
+  padding: 14px clamp(12px, 4vw, 16px);
   background: #F7FAFC;
   border: 1.5px solid #D3E1EC;
   border-radius: 12px;
@@ -935,8 +981,8 @@
 }
 
 .reg-type-icon {
-  width: 42px;
-  height: 42px;
+  width: clamp(36px, 10vw, 42px);
+  height: clamp(36px, 10vw, 42px);
   background: #EAF2F8;
   border-radius: 10px;
   display: flex;
@@ -948,20 +994,23 @@
 
 .reg-type-text {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
 .reg-type-label {
-  font-size: 14px;
+  font-size: clamp(13.5px, 3.7vw, 14px);
   font-weight: 700;
   color: #0B2340;
+  line-height: 1.3;
 }
 
 .reg-type-desc {
-  font-size: 12px;
-  color: #6B8CA6;
+  font-size: clamp(12px, 3.2vw, 12.5px);
+  color: #4A6B85;
+  line-height: 1.4;
 }
 
 .reg-type-arrow {
@@ -976,8 +1025,8 @@
 }
 
 .reg-modal-note {
-  font-size: 11px;
-  color: #64839C;
+  font-size: clamp(11.5px, 3vw, 12px);
+  color: #4A6B85;
   text-align: center;
   line-height: 1.6;
   border-top: 1px solid #EAF2F8;
