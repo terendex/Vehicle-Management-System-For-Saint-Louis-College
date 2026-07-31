@@ -468,7 +468,6 @@ export default function UserManagement() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>QR</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -498,22 +497,7 @@ export default function UserManagement() {
                       {u.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </td>
-                  {/* QR — visible for all users */}
-                  <td>
-                    <button
-                      className="um-qr-btn"
-                      disabled={badgeLocked(u)}
-                      title={
-                        badgeLocked(u)
-                          ? 'Locked — guard must log in and change their temporary password first'
-                          : u.role === 'security' ? 'Guard QR Badge' : 'Owner ID QR'
-                      }
-                      onClick={() => openQrModal(u)}
-                    >
-                      {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />}
-                      <span>{u.role === 'security' ? 'Badge' : 'ID'}</span>
-                    </button>
-                  </td>
+                  {/* QR lives in View Profile — no column here */}
                   <td style={{ position: 'relative' }}>
                     <button
                       className="um-action-btn"

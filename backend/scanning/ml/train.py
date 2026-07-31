@@ -375,11 +375,24 @@ def train(
         cache=False,
         optimizer="Adam",        # YOLO26's default MuSGD/Muon uses BF16 cuBLAS which fails on older GPUs
         lr0=lr0,                 # must be Adam-scale (~1e-3); 0.01 diverges the EMA to NaN
+        # ── Adam-safe warmup ──
+        # Ultralytics' stock warmup_bias_lr=0.1 is tuned for SGD. It is applied
+        # to the bias param group for the first `warmup_epochs` (3) and with
+        # Adam that is ~100x too hot: the biases blow up during warmup, the EMA
+        # goes NaN around epoch 3, every later checkpoint save is skipped, and
+        # training eventually dies with a CUDA illegal memory access.
+        # Ultralytics zeroes this itself, but ONLY under optimizer="auto"
+        # (trainer.py: `self.args.warmup_bias_lr = 0.0  # no higher than 0.01
+        # for Adam`) — forcing Adam by name skips that safety, so we set it here.
+        warmup_bias_lr=0.0,
+        momentum=0.9,            # becomes Adam beta1; 0.937 is the SGD-tuned default
         **augment_kwargs,
     )
 
     if freeze and freeze_layers > 0:
         train_kwargs["freeze"] = freeze_layers
+
+    _attach_divergence_guard(model)
 
     results = model.train(**train_kwargs)
 
@@ -389,6 +402,40 @@ def train(
     print(f"   View results in: {results.save_dir}")
     print(f"   Live weights:    {best_ckpt}")
     _print_eval(results)
+
+
+def _attach_divergence_guard(model) -> None:
+    """
+    Stop training the moment the weights go non-finite.
+
+    Without this, a divergence is nearly invisible: Ultralytics only warns
+    "EMA contains NaN/Inf" and skips the checkpoint save, then keeps training
+    for many more epochs on corrupt weights before CUDA finally dies with an
+    illegal memory access — a traceback that points at conv2d and says nothing
+    about the real cause. Failing at the first bad epoch keeps the diagnosis
+    attached to the symptom.
+    """
+    import torch
+
+    def _check(trainer):
+        ema = getattr(getattr(trainer, "ema", None), "ema", None)
+        target, label = (ema, "EMA") if ema is not None else (trainer.model, "model")
+        bad = [n for n, p in target.named_parameters()
+               if p.dtype.is_floating_point and not torch.isfinite(p).all()]
+        if not bad:
+            return
+        # Plain ASCII on purpose: SystemExit text is printed by the interpreter
+        # to stderr, which is cp1252 on a stock Windows console — an emoji here
+        # would raise UnicodeEncodeError and swallow the diagnosis.
+        raise SystemExit(
+            f"\nTraining diverged at epoch {trainer.epoch}: "
+            f"{len(bad)} {label} tensors contain NaN/Inf (first: {bad[0]}).\n"
+            f"   Checkpoints stop updating from here, so best.pt would silently\n"
+            f"   stay at an earlier epoch. Lower --lr0 (currently "
+            f"{trainer.args.lr0}) and re-run; if it persists, retry with amp=False."
+        )
+
+    model.add_callback("on_fit_epoch_end", _check)
 
 
 def _print_eval(results) -> None:

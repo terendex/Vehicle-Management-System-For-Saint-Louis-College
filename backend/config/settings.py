@@ -156,7 +156,25 @@ AUTH_USER_MODEL = 'accounts.User'
 # second web replica would only notify the clients attached to itself.
 # Falls back to in-memory when no Redis is configured, so local dev without a
 # broker keeps working.
+#
+# It is also what links the campus and Railway halves. They already share one
+# database, so data is identical the instant it is written — but a browser
+# sitting on a page is only *told* by the half it is connected to. Point both
+# halves at the SAME Redis (REDIS_URL) and a scan at the gate refreshes an
+# off-campus screen live. The fan-out group is a single constant ("updates",
+# realtime/broadcast.py) with no per-instance scoping, so this needs no code
+# change — only a Redis both halves can reach. `rediss://` (TLS) is supported,
+# which is how a managed provider works without a raw TCP proxy.
 REDIS_URL = os.getenv('REDIS_URL') or os.getenv('CELERY_BROKER_URL', '')
+
+# A loopback Redis cannot be shared between two machines, and pointing the
+# channel layer at one that is not running fails *silently*: broadcast_change
+# swallows the error by design, so live updates simply stop with no message.
+# This is the trap when linking the two halves — CELERY_BROKER_URL commonly
+# still holds a dev-time redis://127.0.0.1, and it is picked up above whenever
+# REDIS_URL is unset or misspelled.
+REDIS_IS_LOOPBACK = any(h in REDIS_URL for h in ('127.0.0.1', 'localhost', '::1'))
+REALTIME_CROSS_HOST = bool(REDIS_URL) and not REDIS_IS_LOOPBACK
 
 if REDIS_URL:
     CHANNEL_LAYERS = {
@@ -180,6 +198,19 @@ else:
     CACHES = {
         'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
     }
+
+# Say plainly which mode is active. Live updates failing is otherwise invisible:
+# nothing errors, screens just quietly stop refreshing until someone reloads.
+if REALTIME_CROSS_HOST:
+    print('[settings] realtime: shared Redis channel layer - live updates reach '
+          'BOTH the campus and Railway halves.')
+elif REDIS_IS_LOOPBACK:
+    print('[settings] realtime: Redis channel layer on a LOOPBACK address - live '
+          'updates reach only browsers connected to THIS host. Set REDIS_URL to a '
+          'Redis both halves can reach to link them.')
+else:
+    print('[settings] realtime: in-memory channel layer (no REDIS_URL) - live '
+          'updates reach only this process. Set REDIS_URL to link the two halves.')
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -298,7 +329,7 @@ else:
     if not DEBUG:
         # Railway containers have an ephemeral filesystem: every redeploy wipes
         # MEDIA_ROOT, taking licence photos and violation evidence with it.
-        print('[settings] WARNING: USE_R2=false in production — uploaded files '
+        print('[settings] WARNING: USE_R2=false in production - uploaded files '
               'will be lost on every redeploy. Set USE_R2=true.')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

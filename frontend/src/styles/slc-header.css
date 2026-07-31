@@ -89,6 +89,46 @@
   }
 }
 
+/* Optional back control, sits left of the lockup (see PolicyPage for the
+   same pattern). Label collapses to the arrow alone on narrow phones so the
+   school name and tagline keep their room. */
+.header-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-right: clamp(8px, 3vw, 16px);
+  min-height: 38px;
+  padding: 6px 12px;
+  background: none;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4A6B85;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.header-back-btn:hover {
+  background: #EEF4F9;
+  color: #03396C;
+  border-color: #BDD4E5;
+}
+
+@media (max-width: 560px) {
+  .header-back-btn {
+    gap: 0;
+    padding: 6px 9px;
+  }
+
+  .header-back-btn span {
+    display: none;
+  }
+}
+
 /* Shared bar metrics. Pages override background/border/position. */
 .login-header,
 .register-header,

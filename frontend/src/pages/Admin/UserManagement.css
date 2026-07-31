@@ -1407,31 +1407,5 @@
   border-color: #C62828;
 }
 
-/* ─── Inline QR button ──────────────────────────────────────────── */
-.um-qr-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border: 1.5px solid #BDD4E5;
-  border-radius: 7px;
-  background: #F7FAFC;
-  color: #3E5B72;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-
-.um-qr-btn:hover:not(:disabled) {
-  background: #EAF2F8;
-  border-color: #03396C;
-  color: #03396C;
-}
-
-.um-qr-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
+/* The inline QR column was removed — QR is reached from View Profile. */
 

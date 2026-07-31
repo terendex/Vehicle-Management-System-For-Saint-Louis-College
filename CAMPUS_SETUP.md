@@ -155,14 +155,48 @@ this by disabling security protections on a machine holding live data. Don't.)
 
 ## Live updates
 
-Each half broadcasts WebSocket updates only to browsers connected to *it*. A
-scan at the gate refreshes every campus screen instantly; a Railway user sees it
-on their next refresh or navigation.
+Data is always shared instantly — there is one database, so a write from either
+half *is* the write. What is optional is whether a browser already sitting on a
+page gets **told**.
 
-Making updates cross between the halves would mean sharing a Redis channel layer,
-which requires exposing Railway's Redis over a paid TCP proxy. Set `REDIS_URL` on
-both halves to the same instance if you ever want it — the code already supports
-it and needs no change.
+**Default (no `REDIS_URL`):** each half notifies only the browsers connected to
+it. A scan at the gate refreshes every campus screen instantly; a Railway user
+sees it on their next refresh or navigation.
+
+**Linked (same `REDIS_URL` on both halves):** a change on either half refreshes
+open screens on *both*. The fan-out group is a single constant with no
+per-instance scoping, so this needs no code change — only a Redis both machines
+can reach:
+
+- a managed Redis with a public TLS endpoint (`rediss://…`) works directly and
+  avoids paying for a raw TCP proxy;
+- Railway's own Redis plugin is internal-only, so sharing that one requires
+  enabling its paid TCP proxy.
+
+Set the identical value on both halves, then **prove it** rather than assuming:
+
+```powershell
+# on the campus machine
+backend\venv\Scripts\python.exe backend\manage.py check_realtime --listen
+
+# on Railway (or the other machine), while the above is waiting
+python manage.py check_realtime --send
+```
+
+A received probe means the halves are linked. A timeout means they are not, no
+matter what the config claims.
+
+> **Why the explicit check.** `broadcast_change` swallows channel-layer errors
+> by design — a failed notification must never break the database write that
+> triggered it. So a wrong or unreachable `REDIS_URL` does not raise anything:
+> screens just quietly stop refreshing. `check_realtime` with no arguments
+> reports which mode is active and round-trips a message locally; the server
+> also prints the mode at startup (`[settings] realtime: …`).
+>
+> The trap: `REDIS_URL` falls back to `CELERY_BROKER_URL`, which commonly still
+> holds a dev-time `redis://127.0.0.1`. A loopback address cannot link two
+> machines, and if nothing is listening there, live updates die silently on that
+> half. Both the startup line and `check_realtime` call this out explicitly.
 
 ---
 

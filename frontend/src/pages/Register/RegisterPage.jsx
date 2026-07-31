@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
@@ -126,19 +126,30 @@ const FETCHER_STUDENT_LEVELS = [
 ]
 
 
-const SLC_HEADER = (
-  <header className="register-header">
-    <div className="header-content">
-      <div className="header-logo-group">
-        <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
-        <div className="header-text">
-          <span className="header-title">SAINT LOUIS COLLEGE</span>
-          <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
+/* Applying for a pass is a dead end otherwise — the only way back to the login
+   page was the browser's back button. `onBack` is optional so the header can
+   still render on states where leaving makes no sense. */
+function SlcHeader({ onBack }) {
+  return (
+    <header className="register-header">
+      <div className="header-content">
+        {onBack && (
+          <button type="button" className="header-back-btn" onClick={onBack}>
+            <ArrowLeft size={16} />
+            <span>Back to Login</span>
+          </button>
+        )}
+        <div className="header-logo-group">
+          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <div className="header-text">
+            <span className="header-title">SAINT LOUIS COLLEGE</span>
+            <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
+          </div>
         </div>
       </div>
-    </div>
-  </header>
-)
+    </header>
+  )
+}
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
@@ -686,11 +697,27 @@ export default function RegisterPage() {
     }
   }
 
+  /* ── Back to login ──
+     Only the fields a person actually types are checked for "dirty"; several
+     others get defaults the moment a registrant type is picked, and warning
+     about those would fire on an empty form. */
+  const TYPED_FIELDS = [
+    'last_name', 'first_name', 'middle_name', 'email', 'contact_number',
+    'plate_number', 'conduction_number', 'student_id', 'employee_id',
+    'drivers_license', 'house_street', 'driver_name', 'driver_contact',
+  ]
+
+  const handleBackToLogin = () => {
+    const started = TYPED_FIELDS.some(f => (formData[f] || '').trim() !== '')
+    if (started && !window.confirm('Leave this application? Anything you have filled in will be lost.')) return
+    navigate('/login')
+  }
+
   /* ─── Loading ─── */
   if (loading) {
     return (
       <div className="register-page">
-        {SLC_HEADER}
+        <SlcHeader />
         <main className="register-main">
           <div className="register-container">
             <div className="loading-spinner"></div>
@@ -704,7 +731,7 @@ export default function RegisterPage() {
   if (!registrantType) {
     return (
       <div className="register-page">
-        {SLC_HEADER}
+        <SlcHeader onBack={handleBackToLogin} />
         <main className="register-main">
           <div className="register-card reg-type-selector-card">
             <div className="reg-type-selector-header">
@@ -776,7 +803,7 @@ export default function RegisterPage() {
   if (submitted) {
     return (
       <div className="register-page">
-        {SLC_HEADER}
+        <SlcHeader />
         <main className="register-main">
           <div className="register-card success-card">
 
@@ -874,7 +901,7 @@ export default function RegisterPage() {
   /* ─── Form ─── */
   return (
     <div className="register-page">
-      {SLC_HEADER}
+      <SlcHeader onBack={handleBackToLogin} />
 
       <main className="register-main">
         <div className="register-card">
