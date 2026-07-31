@@ -444,35 +444,26 @@ export default function ParkingManagement({ embedded = false }) {
     <Wrapper>
       <div className="pm-page">
 
-        {/* Header */}
-        <div className="pm-header">
-          <div className="pm-header-left">
-            <ParkingCircle size={22} className="pm-header-icon" />
-            <div>
-              <h1 className="pm-title">Parking</h1>
-              <p className="pm-subtitle">
-                Draw space boxes in Edit Layout mode. Connect an IP CCTV camera via RTSP to
-                detect vehicles automatically — the backend updates occupancy in real time.
-              </p>
+        {/* The visible page title and blurb are gone — the sidebar already says
+            which page this is, and they cost a whole band of vertical space.
+            The heading stays for screen readers, which have no sidebar context.
+            Standalone (non-embedded) use keeps the visible header. */}
+        {embedded ? (
+          <h1 className="pm-sr-only">Parking Space Management</h1>
+        ) : (
+          <div className="pm-header">
+            <div className="pm-header-left">
+              <ParkingCircle size={22} className="pm-header-icon" />
+              <div>
+                <h1 className="pm-title">Parking</h1>
+                <p className="pm-subtitle">
+                  Draw space boxes in Edit Layout mode. Connect an IP CCTV camera via RTSP to
+                  detect vehicles automatically — the backend updates occupancy in real time.
+                </p>
+              </div>
             </div>
           </div>
-          <div className="pm-header-actions">
-                  <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
-                    <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
-                  </button>
-                  {mode === 'live' && (
-                    <button
-                      className={`pm-btn ${showCamPanel ? 'pm-btn--camera-on' : 'pm-btn--outline'}`}
-                      onClick={() => setShowCamPanel(p => !p)}
-                    >
-                      <Video size={14} /> Cameras {parkingCams.length > 0 && `(${parkingCams.length})`}
-                    </button>
-                  )}
-                  <button className="pm-btn pm-btn--primary" onClick={() => setShowNew(true)}>
-                    <Plus size={14} /> New Zone
-                  </button>
-          </div>
-        </div>
+        )}
 
         {/* Occupancy at a glance — these numbers used to be a run of tiny text
             buried in the toolbar between the detection controls. */}
@@ -509,8 +500,9 @@ export default function ParkingManagement({ embedded = false }) {
           </div>
         )}
 
-        {/* Zone tabs — labelled, because a lone unlabelled pill reads as a
-            stray button rather than "the zone you are looking at". */}
+        {/* Zone bar — labelled tabs on the left, page actions on the right.
+            The actions used to sit in their own header row beside the title;
+            folding them in here removes a row and fills the bar's dead space. */}
         <div className="pm-zone-bar">
           <span className="pm-zone-bar-label">
             <LayoutGrid size={13} /> Zones
@@ -531,6 +523,23 @@ export default function ParkingManagement({ embedded = false }) {
             {!loading && zones.length === 0 && (
               <span className="pm-zone-empty">No zones yet — create one to start.</span>
             )}
+          </div>
+
+          <div className="pm-zone-bar-actions">
+            <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
+              <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
+            </button>
+            {mode === 'live' && (
+              <button
+                className={`pm-btn ${showCamPanel ? 'pm-btn--camera-on' : 'pm-btn--outline'}`}
+                onClick={() => setShowCamPanel(p => !p)}
+              >
+                <Video size={14} /> Cameras {parkingCams.length > 0 && `(${parkingCams.length})`}
+              </button>
+            )}
+            <button className="pm-btn pm-btn--primary" onClick={() => setShowNew(true)}>
+              <Plus size={14} /> New Zone
+            </button>
           </div>
         </div>
 

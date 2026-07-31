@@ -75,6 +75,17 @@
   gap: 3px;
 }
 
+/* Heading on the left, its action on the right — reclaims the empty band that
+   ran down the right of this section. */
+.ev-section-head--row {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ev-section-head--row > div { min-width: 0; }
+
 .ev-section-title {
   font-size: 1.05rem;
   font-weight: 700;
@@ -90,9 +101,13 @@
 
 /* ── Event Mode cards ────────────────────────────────────────────── */
 
+/* auto-FIT, not auto-fill: auto-fill keeps the leftover column tracks alive,
+   so on a wide screen the two override cards stayed pinned at 300px with a
+   large dead area to their right. auto-fit collapses the empty tracks and
+   lets the real cards share the full width. */
 .ev-mode-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 1rem;
 }
 

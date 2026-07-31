@@ -538,22 +538,22 @@ export default function Events({ embedded = false }) {
       <div className="ev-page">
 
         {/* ── Header ─────────────────────────────── */}
-        {/* Embedded under Parking Space Management this is a section, not the
-            page — two <h1>s on one page is wrong for both screen readers and
-            the visual hierarchy. */}
-        <div className="ev-header">
-          <div>
-            {embedded
-              ? <h2 className="ev-title ev-title--section">Events</h2>
-              : <h1 className="ev-title">Events</h1>}
-            <p className="ev-subtitle">
-              Activate event mode, manage parking capacity overrides, and track organizer vehicles.
-            </p>
+        {/* Embedded, this whole block is dropped: the two section headings
+            below ("Event Mode", "Events & Organizers") already say what each
+            part does, and Add Event moves down to the list it acts on. */}
+        {!embedded && (
+          <div className="ev-header">
+            <div>
+              <h1 className="ev-title">Events</h1>
+              <p className="ev-subtitle">
+                Activate event mode, manage parking capacity overrides, and track organizer vehicles.
+              </p>
+            </div>
+            <button className="ev-btn ev-btn-primary" onClick={() => setShowAdd(true)}>
+              <Plus size={15} /> Add Event
+            </button>
           </div>
-          <button className="ev-btn ev-btn-primary" onClick={() => setShowAdd(true)}>
-            <Plus size={15} /> Add Event
-          </button>
-        </div>
+        )}
 
         {pageLoading ? (
           <div className="ev-loading">
@@ -620,11 +620,19 @@ export default function Events({ embedded = false }) {
 
             {/* ── Events List ────────────────────────── */}
             <section className="ev-section">
-              <div className="ev-section-head">
-                <h2 className="ev-section-title">Events & Organizers</h2>
-                <p className="ev-section-desc">
-                  Organizer plates are noted by the system so they can be identified during entry scanning.
-                </p>
+              <div className="ev-section-head ev-section-head--row">
+                <div>
+                  <h2 className="ev-section-title">Events &amp; Organizers</h2>
+                  <p className="ev-section-desc">
+                    Organizer plates are noted by the system so they can be identified during entry scanning.
+                  </p>
+                </div>
+                {/* Sits with the list it adds to, now that the page header is gone */}
+                {embedded && (
+                  <button className="ev-btn ev-btn-primary" onClick={() => setShowAdd(true)}>
+                    <Plus size={15} /> Add Event
+                  </button>
+                )}
               </div>
 
               {(() => {
