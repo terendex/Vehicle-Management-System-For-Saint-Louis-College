@@ -148,6 +148,11 @@ def status_dict() -> dict[int, bool]:
         return {zid: t.is_alive() for zid, t in list(_cameras.items())}
 
 
+def all_threads() -> dict[int, "ParkingCameraThread"]:
+    with _lock:
+        return dict(_cameras)
+
+
 # ── Camera thread ───────────────────────────────────────────────────────────────
 
 class ParkingCameraThread(threading.Thread):
@@ -220,13 +225,13 @@ class ParkingCameraThread(threading.Thread):
     # ── Thread body ───────────────────────────────────────────────────────────
 
     def run(self) -> None:
-        log.info("[ParkingCam] Starting zone %d → %s", self.zone_id, self.rtsp_url)
+        log.info("[ParkingCam] Starting zone %d -> %s", self.zone_id, self.rtsp_url)
         cap = self._open_cap()
 
         while not self._stop.is_set():
             ret, frame = cap.read()
             if not ret:
-                log.warning("[ParkingCam] Read failed — reconnecting zone %d", self.zone_id)
+                log.warning("[ParkingCam] Read failed - reconnecting zone %d", self.zone_id)
                 cap.release()
                 time.sleep(2)
                 cap = self._open_cap()
@@ -331,25 +336,26 @@ class ParkingCameraThread(threading.Thread):
                 if sp.is_occupied and nxt <= -FREE_THR:
                     self._set_occupied(sp, False)
 
-        self._check_double_parking(spaces, detections)
+        self._check_double_parking(spaces, detections, frame)
 
     # ── Double parking ────────────────────────────────────────────────────────
 
-    def _check_double_parking(self, spaces, detections) -> None:
+    def _check_double_parking(self, spaces, detections, frame=None) -> None:
         """Flag a vehicle whose box substantially covers two or more bays.
 
         This is the case the old centroid test could not express at all: a
         centroid falls in exactly one polygon, so a car parked across the line
         looked like an ordinary single occupancy.
         """
-        straddling: set[tuple[int, ...]] = set()
+        straddling: dict[tuple[int, ...], dict] = {}
         blocked: set[int] = set()
 
         for det in detections:
             covered = [sp for sp in spaces
                        if _space_coverage(sp, det["bbox"]) >= DOUBLE_PARK_COVERAGE]
             if len(covered) >= 2:
-                straddling.add(tuple(sorted(sp.id for sp in covered)))
+                key = tuple(sorted(sp.id for sp in covered))
+                straddling[key] = det          # keep the box for plate lookup
                 blocked.update(sp.id for sp in covered)
 
         # A straddled bay is unusable even if the car covers less of it than
@@ -363,24 +369,65 @@ class ParkingCameraThread(threading.Thread):
 
         # Age each active straddle; drop any that stopped happening so a car
         # manoeuvring through a bay does not accumulate toward the threshold.
+        # The alert clears with it, so the banner reflects what is happening now
+        # rather than accumulating stale warnings.
         for key in list(self._straddle):
             if key not in straddling:
                 del self._straddle[key]
+                with self._lock:
+                    self._alerts.pop(key, None)
 
-        for key in straddling:
+        for key, det in straddling.items():
             n = self._straddle.get(key, 0) + 1
             self._straddle[key] = n
             if n == DOUBLE_PARK_FRAMES:      # == so it reports once per episode
-                self._report_double_parking(key)
+                self._report_double_parking(key, det, frame)
 
-    def _report_double_parking(self, space_ids: tuple[int, ...]) -> None:
-        """Record a sustained straddle and tell the UI about it.
+    def _read_plate(self, frame, bbox: dict) -> str:
+        """Best-effort plate read from inside a straddling vehicle's box.
 
-        No Violation row is created here: violations.Violation requires a
-        Vehicle FK, and a parking camera watching a bay has no plate to
-        identify one with. Raising the alert and letting a guard confirm it
-        keeps a camera artefact from becoming a fine against whoever happens to
-        be parked there.
+        Only the offending car's crop is OCR'd, not the whole frame, so a
+        neighbouring vehicle's plate can never be the one that gets fined.
+        Returns '' when nothing legible is found, which is the normal case for
+        an overhead bay camera — the caller must treat that as "unattributed",
+        never as a reason to guess.
+        """
+        if frame is None:
+            return ''
+        try:
+            h, w = frame.shape[:2]
+            x1 = max(0, int(bbox["x"] * w))
+            y1 = max(0, int(bbox["y"] * h))
+            x2 = min(w, int((bbox["x"] + bbox["width"]) * w))
+            y2 = min(h, int((bbox["y"] + bbox["height"]) * h))
+            if x2 - x1 < 40 or y2 - y1 < 40:
+                return ''
+            crop = frame[y1:y2, x1:x2]
+
+            # read_plate() is the same detect+OCR+validate entry point the gate
+            # scanner uses, so a plate read here is held to the same standard.
+            from scanning.ml.reader import read_plate
+
+            ok, buf = cv2.imencode('.jpg', crop)
+            if not ok:
+                return ''
+            for res in read_plate(buf.tobytes()):
+                text = (res.get("plate_text") or '').strip().upper()
+                if text:
+                    return text
+        except Exception as exc:
+            log.warning("[ParkingCam] plate read failed zone %d: %s", self.zone_id, exc)
+        return ''
+
+    def _report_double_parking(self, space_ids: tuple[int, ...], det=None, frame=None) -> None:
+        """Record a sustained straddle, attribute it if the plate is readable.
+
+        A Violation needs a Vehicle FK, so one is only issued when the plate
+        inside the offending car's own box resolves to a registered vehicle.
+        When it does not — the normal case for an overhead camera — the event
+        is still raised as an alert for a guard to act on. It is never pinned
+        on a guess: an unreadable plate must not become a fine against whoever
+        happens to be parked nearby.
         """
         from django.db import close_old_connections
         from django.utils import timezone
@@ -393,24 +440,64 @@ class ParkingCameraThread(threading.Thread):
                 ParkingSpace.objects.filter(id__in=space_ids).values_list('space_number', flat=True)
             )
         except Exception as exc:
-            log.warning("[ParkingCam] Could not resolve space codes %s: %s", space_ids, exc)
+            log.warning("[ParkingCam] Could not resolve space numbers %s: %s", space_ids, exc)
 
         label = ", ".join(codes) if codes else ", ".join(str(i) for i in space_ids)
-        log.warning("[ParkingCam] Double parking in zone %d across bays: %s",
-                    self.zone_id, label)
+
+        plate, vehicle, violation_id = '', None, None
+        if det is not None:
+            plate = self._read_plate(frame, det["bbox"])
+
+        if plate:
+            try:
+                close_old_connections()
+                from vehicles.models import Vehicle
+                vehicle = Vehicle.objects.filter(plate_number=plate).first()
+            except Exception as exc:
+                log.warning("[ParkingCam] vehicle lookup failed for %s: %s", plate, exc)
+
+        if vehicle is not None:
+            try:
+                from violations.models import Violation
+                from scanning.views import _auto_log_violation
+                # Reuses the gate path: one per vehicle per day, offense
+                # numbering, 3rd-offense fee, evidence image and owner email.
+                _auto_log_violation(
+                    vehicle,
+                    f"Double parking detected by camera across bays {label}",
+                    vtype=Violation.Type.DOUBLE_PARKING,
+                    evidence_bytes=self.get_jpeg(),
+                )
+                violation_id = (Violation.objects
+                                .filter(vehicle=vehicle,
+                                        violation_type=Violation.Type.DOUBLE_PARKING)
+                                .order_by('-issued_at')
+                                .values_list('id', flat=True).first())
+                log.warning("[ParkingCam] Double parking zone %d bays %s -> violation for %s",
+                            self.zone_id, label, plate)
+            except Exception:
+                log.exception("[ParkingCam] failed to auto-log double-parking violation")
+        else:
+            log.warning("[ParkingCam] Double parking in zone %d across bays: %s "
+                        "(plate %s - unattributed, needs a guard)",
+                        self.zone_id, label, plate or 'unreadable')
 
         with self._lock:
             self._alerts[space_ids] = {
-                "zone_id":   self.zone_id,
-                "space_ids": list(space_ids),
-                "spaces":    codes,
-                "detected_at": timezone.now().isoformat(),
+                "zone_id":      self.zone_id,
+                "space_ids":    list(space_ids),
+                "spaces":       codes,
+                "plate":        plate,
+                "attributed":   vehicle is not None,
+                "violation_id": violation_id,
+                "detected_at":  timezone.now().isoformat(),
             }
 
         try:
             from realtime.broadcast import broadcast_change
             broadcast_change('parkingspace', 'double_parking',
-                             zone_id=self.zone_id, spaces=codes)
+                             zone_id=self.zone_id, spaces=codes,
+                             plate=plate, attributed=vehicle is not None)
         except Exception:
             log.exception("[ParkingCam] double-parking broadcast failed")
 

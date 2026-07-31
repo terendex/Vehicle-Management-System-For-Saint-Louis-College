@@ -30,3 +30,8 @@ export const exportViolationsReport = (format, params = {}) =>
 export const issueCDSOReport  = (id)              => api.post(`/violations/${id}/issue-report/`)
 export const clearViolation   = (id, officialReceipt) =>
   api.post(`/violations/${id}/clear/`, { official_receipt: officialReceipt })
+
+// Void a violation as a false alarm. Unlike clearing (offence happened, fee
+// settled), this removes it from the offence ladder and renumbers the rest.
+export const liftViolation = (id, reason) =>
+  api.post(`/violations/${id}/lift/`, { reason })

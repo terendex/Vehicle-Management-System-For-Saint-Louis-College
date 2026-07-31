@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework import status as http_status
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.utils import timezone
 from .models import Violation, NEW_STYLE_TYPES, FEE_ESCALATING_TYPES, FEE_THIRD_OFFENSE
 from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
@@ -206,6 +207,69 @@ class ViolationViewSet(viewsets.ModelViewSet):
               f"Type: {violation.get_violation_type_display()} | OR: {or_number} | "
               f"Entry access restored | By: {request.user.full_name}")
         self._notify_resolved(violation)
+        return Response(ViolationSerializer(violation, context={'request': request}).data)
+
+
+    @action(detail=True, methods=['post'], url_path='lift',
+            permission_classes=[IsCDSOOrAdmin])
+    def lift_violation(self, request, pk=None):
+        """Void a violation as a false alarm and renumber what is left.
+
+        Distinct from `clear`: clearing means the offence happened and the fee
+        was settled against an Official Receipt. Lifting means it should never
+        have been issued — an auto-logged camera artefact, a misread plate —
+        so it stops counting and the owner's remaining violations of that type
+        step back down (two warnings, lift one, the survivor becomes warning 1).
+
+        A reason is required: this erases an offence from someone's record and
+        the decision has to be answerable.
+        """
+        violation = self.get_object()
+
+        if violation.status == Violation.Status.LIFTED:
+            return Response({'detail': 'This violation has already been lifted.'},
+                            status=http_status.HTTP_400_BAD_REQUEST)
+        if violation.status == Violation.Status.CLEARED:
+            return Response(
+                {'detail': 'This violation was already settled with an Official Receipt. '
+                           'Lifting it would imply a refund that this action cannot make.'},
+                status=http_status.HTTP_400_BAD_REQUEST)
+
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'detail': 'A reason is required to lift a violation.'},
+                            status=http_status.HTTP_400_BAD_REQUEST)
+
+        vehicle, vtype = violation.vehicle, violation.violation_type
+        prev_offense   = violation.offense_number
+
+        violation.status               = Violation.Status.LIFTED
+        violation.is_resolved          = True
+        violation.lifted_reason        = reason
+        violation.lifted_at            = timezone.now()
+        violation.lifted_by            = request.user
+        violation.fine_amount          = Decimal('0.00')
+        violation.registration_blocked = False
+        violation.save(update_fields=[
+            'status', 'is_resolved', 'lifted_reason', 'lifted_at', 'lifted_by',
+            'fine_amount', 'registration_blocked',
+        ])
+
+        resequenced = Violation.resequence_offenses(vehicle, vtype)
+
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Violation lifted (false alarm) | Plate: {vehicle.plate_number} | "
+              f"Type: {violation.get_violation_type_display()} | "
+              f"Was offense {prev_offense} | Reason: {reason} | "
+              f"{resequenced} remaining renumbered | By: {request.user.full_name}")
+
+        # The owner's list and the admin table both read from this.
+        try:
+            from realtime.broadcast import broadcast_change
+            broadcast_change('violation', 'updated')
+        except Exception:
+            pass
+
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
 

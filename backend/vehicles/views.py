@@ -1,3 +1,4 @@
+import logging
 import secrets
 import string
 import threading
@@ -16,6 +17,8 @@ from rest_framework import status as drf_status
 from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event, ScheduledVisit
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
 from . import parking_camera
+
+logger = logging.getLogger(__name__)
 from accounts.audit import audit, AuditedViewSetMixin
 from time_utils import filter_local_date_range
 from accounts.models import AuditLog
@@ -204,6 +207,23 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     def camera_status(self, request):
         """Returns {zone_id: is_running} for all zones."""
         return Response(parking_camera.status_dict())
+
+    @action(detail=False, methods=['get'], url_path='alerts')
+    def alerts(self, request):
+        """Live double-parking alerts across every running zone.
+
+        GET, so guards can see them too — spotting a car across two bays is
+        exactly their job. They clear themselves when the vehicle moves, so
+        this reflects what is happening now rather than a growing history;
+        anything attributed to a plate is already recorded as a Violation.
+        """
+        out = []
+        for zone_id, thread in list(parking_camera.all_threads().items()):
+            try:
+                out.extend(thread.get_alerts())
+            except Exception:
+                logger.exception("Failed reading alerts for zone %s", zone_id)
+        return Response(out)
 
 
 # ── PTZ helpers (ONVIF ContinuousMove / Stop / GotoHomePosition) ─────────────

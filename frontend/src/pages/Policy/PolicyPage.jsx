@@ -17,11 +17,11 @@ export default function PolicyPage() {
     <div className="policy-page">
       {/* Header */}
       <header className="policy-header">
-        <div className="policy-header-inner">
-          <button className="policy-back-btn" onClick={() => navigate(-1)}>
-            <ArrowLeft size={16} />
-            <span>Return</span>
-          </button>
+        {/* Same shape as the registration header: brand lockup on the left,
+            the single back control on the right. The Return button used to sit
+            in front of the logo, which pushed the lockup off the left edge and
+            made this bar read differently from every other page. */}
+        <div className="policy-header-inner header-content">
           <div className="header-logo-group">
             <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
             <div className="header-text">
@@ -29,6 +29,13 @@ export default function PolicyPage() {
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
             </div>
           </div>
+          <button
+            className="header-back-btn header-back-btn--end"
+            onClick={() => navigate(-1)}
+          >
+            <ArrowLeft size={16} />
+            <span>Return</span>
+          </button>
         </div>
       </header>
 

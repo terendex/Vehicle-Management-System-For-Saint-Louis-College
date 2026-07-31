@@ -166,6 +166,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         # Keep the latest frame — attached as evidence when a scan auto-issues a violation
         self._last_frame_jpeg = image_bytes
+        # Also publish it per-gate so violations raised outside this socket
+        # (the REST scan endpoints, overstay sweeps) can still attach a photo.
+        # Without this they were the only violations landing with no evidence.
+        set_latest_gate_frame(getattr(self, '_gate_id', 'main'), image_bytes)
 
         # FPS accounting
         self._frame_counter += 1
@@ -590,7 +594,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
     def _save_to_db(self, track_id: int, plate_number: str, det_conf: float,
                     ocr_conf: float, bbox: dict, snapshot_path: str | None):
         from django.db import close_old_connections
-        from .models import PlateRecognitionRecord
+        from .gate_frames import set_latest_gate_frame
+from .models import PlateRecognitionRecord
         close_old_connections()
         PlateRecognitionRecord.objects.create(
             track_id=track_id,

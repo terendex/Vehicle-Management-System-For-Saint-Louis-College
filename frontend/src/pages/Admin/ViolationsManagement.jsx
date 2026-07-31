@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import {
   getAllViolations, resolveViolation,
-  issueCDSOReport, clearViolation, exportViolationsReport,
+  issueCDSOReport, clearViolation, liftViolation, exportViolationsReport,
 } from '../../api/violations'
 import ReportExportBar from '../../components/ReportExportBar'
 import TableLoader from '../../components/TableLoader'
@@ -127,8 +127,52 @@ function ORModal({ violation, onClose, onConfirm }) {
   )
 }
 
+// ─── Lift (False Alarm) Modal ─────────────────────────────────────────────────
+// Lifting is not the same as clearing. Clearing says the offence happened and
+// the fee was settled; lifting says it should never have been issued, so it
+// stops counting and the owner's remaining violations of that type step back
+// down a number. The reason is mandatory — this erases an offence from someone's
+// record and the decision has to be answerable later.
+function LiftModal({ violation, onClose, onConfirm, busy }) {
+  const [reason, setReason] = useState('')
+  return (
+    <div className="vm-overlay" onClick={onClose}>
+      <div className="vm-modal" onClick={e => e.stopPropagation()}>
+        <button className="vm-modal-close" onClick={onClose}><X size={16} /></button>
+        <ShieldOff size={32} className="vm-modal-icon vm-modal-icon-warn" />
+        <h2 className="vm-modal-title">Lift Violation</h2>
+        <p className="vm-modal-body">
+          Void this <strong>{violation.violation_type_display || violation.violation_type}</strong> for
+          plate <strong>{violation.plate_number}</strong> as a false alarm.
+          It stops counting toward the offence ladder, and any later violations
+          of the same type are renumbered down.
+        </p>
+        <textarea
+          className="vm-or-input"
+          rows={3}
+          placeholder="Reason — e.g. misread plate, camera artefact, wrong vehicle…"
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          autoFocus
+        />
+        <div className="vm-modal-actions">
+          <button className="vm-modal-btn vm-modal-btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="vm-modal-btn vm-modal-btn-primary"
+            disabled={!reason.trim() || busy}
+            onClick={() => onConfirm(reason.trim())}
+          >
+            {busy ? 'Lifting…' : 'Lift Violation'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ViolationsManagement() {
   const [violations, setViolations]       = useState([])
+  const [liftModal, setLiftModal]         = useState(null)
   const [loading, setLoading]             = useState(true)
   const [filter, setFilter]               = useState('all')
   const [typeFilter, setTypeFilter]       = useState('all')
@@ -226,6 +270,31 @@ export default function ViolationsManagement() {
     }
   }
 
+  const executeLift = async (violation, reason) => {
+    setActionLoading(violation.id)
+    try {
+      await liftViolation(violation.id, reason)
+      // Lifting renumbers the vehicle's other violations of this type server
+      // side, so refetch the list rather than patching the single row — the
+      // rows that changed are not the one that was acted on.
+      const { data } = await getAllViolations()
+      setViolations(data)
+      setLiftModal(null)
+      setResultModal({
+        type: 'success',
+        message: `Violation lifted for ${violation.plate_number}. `
+               + `Remaining violations of this type have been renumbered.`,
+      })
+    } catch (err) {
+      setResultModal({
+        type: 'error',
+        message: err?.response?.data?.detail || 'Failed to lift violation.',
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const executeClear = async (violation, orNumber) => {
     setOrModal(null)
     setActionLoading(violation.id)
@@ -250,6 +319,14 @@ export default function ViolationsManagement() {
   }
 
   function StatusBadge({ v }) {
+    // Checked before `cleared`/`is_resolved`: a lifted violation is also
+    // resolved, and showing it as "Cleared" would claim a fee was settled.
+    if (v.status === 'lifted')
+      return (
+        <span className="vm-status vm-status-lifted" title={v.lifted_reason || undefined}>
+          <ShieldOff size={12} /> Lifted <em>· false alarm</em>
+        </span>
+      )
     if (v.status === 'cleared' || (v.is_resolved && !v.offense_number))
       return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Cleared</span>
     if (v.status === 'fee_imposed') {
@@ -265,12 +342,29 @@ export default function ViolationsManagement() {
 
   function ActionButtons({ v }) {
     const busy = actionLoading === v.id
+
+    // Any violation that is still standing can be lifted as a false alarm.
+    // Not offered once cleared (a fee was settled — lifting would imply a
+    // refund) or already lifted.
+    const LiftBtn = () => (
+      <button
+        className="vm-btn vm-btn-lift"
+        disabled={busy}
+        onClick={() => setLiftModal(v)}
+        title="Void as a false alarm and renumber the remaining offences"
+      >
+        {busy ? <Loader2 size={13} className="vm-spin" /> : <ShieldOff size={13} />} Lift
+      </button>
+    )
+    const canLift = v.status !== 'cleared' && v.status !== 'lifted'
+
     // New-style offense violations
     if (v.offense_number) {
-      if (v.status === 'cleared' || v.is_resolved) return null
+      if (v.status === 'lifted' || v.status === 'cleared') return null
       if (v.status === 'fee_imposed') {
         return (
           <div className="vm-actions">
+            <LiftBtn />
             {!v.cdso_report_issued && (
               <button
                 className="vm-btn vm-btn-report"
@@ -294,14 +388,17 @@ export default function ViolationsManagement() {
           </div>
         )
       }
-      // Warning — no action needed (auto-notified)
-      return null
+      // Warning — auto-notified, so the only call left is whether it should
+      // have been issued at all.
+      return <div className="vm-actions"><LiftBtn /></div>
     }
 
     // Non-offense violations (owner is auto-emailed at creation) — just Resolve
+    if (v.status === 'lifted') return null
     if (v.is_resolved) return null
     return (
       <div className="vm-actions">
+        {canLift && <LiftBtn />}
         <button
           className="vm-btn vm-btn-resolve"
           disabled={busy}
@@ -513,6 +610,15 @@ export default function ViolationsManagement() {
           violation={orModal}
           onClose={() => setOrModal(null)}
           onConfirm={(or) => executeClear(orModal, or)}
+        />
+      )}
+
+      {liftModal && (
+        <LiftModal
+          violation={liftModal}
+          busy={actionLoading === liftModal.id}
+          onClose={() => setLiftModal(null)}
+          onConfirm={(reason) => executeLift(liftModal, reason)}
         />
       )}
 

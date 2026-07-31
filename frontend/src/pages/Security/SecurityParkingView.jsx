@@ -5,6 +5,7 @@ import {
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import { zoneApi } from '../../api/parking'
 import { overrideEntry } from '../../api/scanning'
 import { createViolation } from '../../api/violations'
@@ -199,6 +200,10 @@ export default function SecurityParkingView() {
             already names the page and the band it occupied is better spent on
             the numbers a guard actually reads. */}
         <h1 className="pm-sr-only">Parking Overview</h1>
+
+        {/* Guards see the same live alert as admin — spotting a car
+            across two bays is exactly their job. */}
+        <DoubleParkingAlerts zoneId={selId} />
 
         {/* Occupancy at a glance — same stat cards as the admin page. These
             were a run of tiny text inside the toolbar. */}

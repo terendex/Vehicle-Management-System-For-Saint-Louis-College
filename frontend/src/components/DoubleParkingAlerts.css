@@ -1,0 +1,91 @@
+/* Live double-parking banner — shared by the admin and guard parking screens. */
+
+.dpa-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #FCEDED;
+  border: 1.5px solid #F0B4B4;
+  border-left: 4px solid #C62828;
+  border-radius: 12px;
+  animation: dpa-in 0.25s ease;
+}
+
+@keyframes dpa-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.dpa-icon {
+  color: #C62828;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dpa-body { min-width: 0; flex: 1; }
+
+.dpa-title {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #841818;
+}
+
+.dpa-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dpa-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: #6B2020;
+}
+
+.dpa-bays {
+  font-weight: 700;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: #fff;
+  border: 1px solid #F0B4B4;
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.dpa-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* Already recorded as a Violation against a registered plate. */
+.dpa-tag--issued {
+  background: #FADEDE;
+  border: 1px solid #E39B9B;
+  color: #841818;
+}
+
+/* Camera could not attribute it — a person has to decide. */
+.dpa-tag--manual {
+  background: #FEF9E4;
+  border: 1px solid #F7E08A;
+  color: #7A5C00;
+}
+
+@media (max-width: 520px) {
+  .dpa-item { gap: 6px; }
+  .dpa-tag, .dpa-bays { white-space: normal; }
+}

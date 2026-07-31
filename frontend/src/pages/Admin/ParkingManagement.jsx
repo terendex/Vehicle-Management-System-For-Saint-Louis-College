@@ -6,6 +6,7 @@ import {
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
@@ -464,6 +465,10 @@ export default function ParkingManagement({ embedded = false }) {
             </div>
           </div>
         )}
+
+        {/* Live double-parking banner. Self-clearing — it disappears when the
+            vehicle moves off the line. */}
+        <DoubleParkingAlerts zoneId={selId} />
 
         {/* Occupancy at a glance — these numbers used to be a run of tiny text
             buried in the toolbar between the detection controls. */}

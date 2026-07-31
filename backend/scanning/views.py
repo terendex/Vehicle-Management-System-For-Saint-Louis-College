@@ -358,6 +358,26 @@ def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None
     return 0
 
 
+def _request_image_bytes(request):
+    """Bytes of the frame the guard's device posted with this scan, or None.
+
+    Read non-destructively: the same upload is also saved as the AccessLog
+    snapshot, and consuming the stream without rewinding leaves whichever
+    consumer runs second with an empty file.
+    """
+    f = getattr(request, 'FILES', None) and request.FILES.get('image')
+    if not f:
+        return None
+    try:
+        pos = f.tell()
+        f.seek(0)
+        data = f.read()
+        f.seek(pos)
+        return data or None
+    except Exception:
+        return None
+
+
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
                         evidence_bytes=None):
     """
@@ -402,6 +422,16 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         is_released          = True,  # visible to the owner immediately
         on_duty_guard        = active_guard_for_gate(gate_id),
     )
+    # Last resort: no frame was handed in, so take the newest one the gate
+    # camera has. A violation with no photo is one nobody can contest or
+    # confirm later, which is exactly what the lift flow needs to judge.
+    if not evidence_bytes:
+        try:
+            from .gate_frames import latest_jpeg_for_gate
+            evidence_bytes = latest_jpeg_for_gate(gate_id)
+        except Exception:
+            evidence_bytes = None
+
     # Attach the camera frame as evidence (shown in admin table + owner email)
     if evidence_bytes:
         try:
@@ -684,7 +714,8 @@ class ScanView(APIView):
 
             # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
             if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
-                _auto_log_violation(vehicle, entry['message'], gate_id)
+                _auto_log_violation(vehicle, entry['message'], gate_id,
+                                    evidence_bytes=_request_image_bytes(request))
 
             resp = {
                 'plate_number':    plate,
@@ -842,6 +873,7 @@ def _record_visitor_exit(request, pass_, gate_id):
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
+                evidence_bytes=_request_image_bytes(request),
             )
         except Exception:
             pass
@@ -1717,7 +1749,8 @@ class ManualEntryView(APIView):
 
         # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
         if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
-            _auto_log_violation(vehicle, entry['message'], gate_id)
+            _auto_log_violation(vehicle, entry['message'], gate_id,
+                                    evidence_bytes=_request_image_bytes(request))
 
         return Response({
             'plate_number':    plate_number,

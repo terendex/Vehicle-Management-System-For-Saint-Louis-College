@@ -417,6 +417,9 @@
 .vm-status-pending  { background: #FEF9E4; color: #8A6B00; }
 .vm-status-released { background: #EAF2F8; color: #084A85; }
 .vm-status-resolved { background: #EFF9F5; color: #0F7A5A; }
+/* Voided as a false alarm — deliberately not green like "cleared": nothing
+   was settled, the violation was withdrawn. */
+.vm-status-lifted   { background: #F4F0FA; color: #5B3FA8; }
 
 /* ── Action buttons ────────────────────────────────────────────── */
 
@@ -780,6 +783,7 @@
 .vm-modal-icon-warn    { color: #8A6B00; }
 .vm-modal-icon-success { color: #12915A; }
 .vm-modal-icon-error   { color: #C62828; }
+.vm-modal-icon-warn    { color: #5B3FA8; }
 
 .vm-modal-title {
   font-size: 16px;
@@ -894,6 +898,13 @@
   color: #0F7A5A;
 }
 .vm-btn-clear:hover { background: #D6F0E6; }
+
+.vm-btn-lift {
+  background: #F4F0FA;
+  border-color: #D9CDEF;
+  color: #5B3FA8;
+}
+.vm-btn-lift:hover:not(:disabled) { background: #E9E1F7; }
 
 /* ── Header stats ────────────────────────────────────────────────── */
 .vm-header-stats {

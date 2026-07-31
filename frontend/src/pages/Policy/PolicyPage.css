@@ -27,39 +27,20 @@
   z-index: 100;
 }
 
+/* Full width, like the registration header. The 900px cap that used to be
+   here centred the lockup and left it indented from the page edge, which is
+   what made this bar read as a different header from every other page. The
+   hero, tabs and body below keep their own 900px column. */
 .policy-header-inner {
   width: 100%;
   min-width: 0;
-  max-width: 900px;
-  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: clamp(10px, 3vw, 20px);
 }
 
-.policy-back-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: 1.5px solid #D3E1EC;
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #4A6B85;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  flex-shrink: 0;
-  font-family: inherit;
-}
-
-.policy-back-btn:hover {
-  background: #EEF4F9;
-  color: #03396C;
-  border-color: #BDD4E5;
-}
+/* The Return control now uses the shared .header-back-btn from
+   styles/slc-header.css, so it matches the registration header exactly. */
 
 /* The logo + name lockup comes from styles/slc-header.css */
 
@@ -567,15 +548,6 @@
 }
 
 @media (max-width: 480px) {
-  .policy-back-btn span {
-    display: none;
-  }
-
-  .policy-back-btn {
-    padding: 6px 8px;
-    gap: 0;
-  }
-
   .policy-hero {
     padding: 20px 1rem 18px;
   }

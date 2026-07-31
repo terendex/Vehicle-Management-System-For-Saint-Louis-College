@@ -91,4 +91,10 @@ export const zoneApi = {
     const { data } = await api.get('/vehicles/parking-zones/camera-status/')
     return data  // { zone_id: bool }
   },
+  // Live double-parking alerts. Self-clearing: an entry disappears once the
+  // vehicle moves off the line, so this is current state, not a history.
+  getAlerts: async () => {
+    const { data } = await api.get('/vehicles/parking-zones/alerts/')
+    return Array.isArray(data) ? data : []
+  },
 }

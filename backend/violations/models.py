@@ -29,6 +29,11 @@ class Violation(models.Model):
         WARNING     = 'warning',     'Warning'
         FEE_IMPOSED = 'fee_imposed', 'Fee Imposed'
         CLEARED     = 'cleared',     'Cleared'
+        # Voided as a false alarm. Distinct from CLEARED: cleared means the
+        # offence happened and was settled (OR presented); lifted means it
+        # should never have been issued, so it stops counting toward the
+        # offence ladder and the remaining ones renumber beneath it.
+        LIFTED      = 'lifted',      'Lifted (False Alarm)'
 
     id             = models.BigAutoField(primary_key=True, db_column='violation_id')
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='violations')
@@ -58,6 +63,15 @@ class Violation(models.Model):
     cdso_report_issued   = models.BooleanField(default=False)
     official_receipt     = models.CharField(max_length=100, blank=True)
 
+    # Lift trail — who voided this as a false alarm, when and why. Kept rather
+    # than deleting the row so the decision itself stays auditable.
+    lifted_reason        = models.TextField(blank=True)
+    lifted_at            = models.DateTimeField(null=True, blank=True)
+    lifted_by            = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='lifted_violations',
+    )
+
     class Meta:
         db_table = 'tbl_violation'
         indexes = [
@@ -72,15 +86,72 @@ class Violation(models.Model):
             models.Index(fields=['is_resolved'], name='violation_is_resolved'),
         ]
 
+    # Statuses that stop a violation counting toward the offence ladder.
+    INACTIVE_STATUSES = ('cleared', 'lifted')
+
     @classmethod
     def compute_offense_number(cls, vehicle, violation_type) -> int:
-        """Count active (uncleared) new-style violations of this type to get the next offense number."""
+        """Count active new-style violations of this type to get the next offense number.
+
+        Cleared ones are settled and lifted ones never happened, so neither
+        counts.
+        """
         count = cls.objects.filter(
             vehicle=vehicle,
             violation_type=violation_type,
             offense_number__isnull=False,
-        ).exclude(status=cls.Status.CLEARED).count()
+        ).exclude(status__in=cls.INACTIVE_STATUSES).count()
         return min(count + 1, 3)
+
+    @classmethod
+    def resequence_offenses(cls, vehicle, violation_type) -> int:
+        """Renumber a vehicle's active violations of one type, oldest first.
+
+        `offense_number` is stamped at creation and never revisited, so lifting
+        the 1st of two warnings used to leave the survivor still reading
+        "offense 2" — the count the owner sees, and the ladder that decides the
+        3rd-offense fee, would both stay wrong. This walks what remains and
+        rewrites the number, the fee, and the status to match.
+
+        A violation that was already settled with an Official Receipt is left
+        alone: money changed hands, and renumbering it would either invent a
+        refund or silently re-impose a fee.
+
+        Returns the number of rows changed.
+        """
+        from decimal import Decimal
+
+        active = list(
+            cls.objects.filter(
+                vehicle=vehicle,
+                violation_type=violation_type,
+                offense_number__isnull=False,
+            ).exclude(status__in=cls.INACTIVE_STATUSES).order_by('issued_at', 'id')
+        )
+
+        changed = 0
+        for idx, v in enumerate(active, start=1):
+            n = min(idx, 3)
+            is_fee_event = (n == 3 and violation_type in FEE_ESCALATING_TYPES)
+            new_status = cls.Status.FEE_IMPOSED if is_fee_event else cls.Status.WARNING
+            new_fine   = FEE_THIRD_OFFENSE if is_fee_event else Decimal('0.00')
+
+            fields = []
+            if v.offense_number != n:
+                v.offense_number = n; fields.append('offense_number')
+            if v.status != new_status:
+                v.status = new_status; fields.append('status')
+            if v.fine_amount != new_fine:
+                v.fine_amount = new_fine; fields.append('fine_amount')
+            # Dropping below the 3rd offence releases the registration hold that
+            # only the fee event should ever have set.
+            if v.registration_blocked != is_fee_event:
+                v.registration_blocked = is_fee_event; fields.append('registration_blocked')
+
+            if fields:
+                v.save(update_fields=fields)
+                changed += 1
+        return changed
 
     @classmethod
     def compute_fine(cls, vehicle) -> Decimal:
