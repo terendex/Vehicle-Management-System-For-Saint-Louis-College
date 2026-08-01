@@ -1940,3 +1940,26 @@
 .fetcher-add-student-btn:hover {
   background: #EAF2F8;
 }
+
+/* ── Brand-new-car toggle (plate vs conduction) ───────────────── */
+.reg-newcar-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FAFC;
+  font-size: 13.5px;
+  color: #2E4C63;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.reg-newcar-toggle input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  cursor: pointer;
+}

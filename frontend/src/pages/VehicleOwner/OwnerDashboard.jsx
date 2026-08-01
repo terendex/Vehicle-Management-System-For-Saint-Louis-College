@@ -88,6 +88,34 @@ export default function OwnerDashboard() {
   /* ── qr copy ── */
   const [qrCopied, setQrCopied] = useState(false)
 
+  /* ── plate swap (conduction → real plate, one-time) ── */
+  const [swapOpen, setSwapOpen]           = useState(false)
+  const [swapValue, setSwapValue]         = useState('')
+  const [swapError, setSwapError]         = useState(null)
+  const [swapSubmitting, setSwapSubmitting] = useState(false)
+  const [swapSuccess, setSwapSuccess]     = useState(false)
+
+  const isConductionOnly = !!reg && !!reg.conduction_number && !reg.plate_number
+
+  const handlePlateSwap = async () => {
+    const plate = swapValue.trim().toUpperCase()
+    if (!plate) { setSwapError('Enter your new plate number.'); return }
+    setSwapSubmitting(true)
+    setSwapError(null)
+    try {
+      await usersApi.swapPlate(plate)
+      setSwapOpen(false)
+      setSwapSuccess(true)
+      setSwapValue('')
+      await fetchReg()  // reflect the new plate + hide the option
+    } catch (err) {
+      setSwapError(err.response?.data?.plate_number || err.response?.data?.error
+        || 'Could not update your plate. Please try again.')
+    } finally {
+      setSwapSubmitting(false)
+    }
+  }
+
   useEffect(() => {
     fetchReg()
     fetchViolations()
@@ -198,6 +226,50 @@ export default function OwnerDashboard() {
   return (
     <>
       {/* Force password change modal */}
+      {/* Plate-swap confirm modal */}
+      {swapOpen && (
+        <div className="od-modal-overlay" onClick={() => !swapSubmitting && setSwapOpen(false)}>
+          <div className="od-modal" onClick={e => e.stopPropagation()}>
+            <div className="od-modal-icon"><Car size={26} /></div>
+            <h2 className="od-modal-title">Enter Your Plate Number</h2>
+            <p className="od-modal-subtitle">
+              This replaces your conduction number <strong>{reg?.conduction_number}</strong> with your
+              official plate. It can only be done once, so please double-check it.
+            </p>
+            <input
+              className="od-swap-input"
+              type="text"
+              value={swapValue}
+              onChange={e => setSwapValue(e.target.value.toUpperCase())}
+              placeholder="e.g. ABC 1234"
+              autoFocus
+            />
+            {swapError && <p className="od-swap-error"><AlertTriangle size={13} /> {swapError}</p>}
+            <div className="od-modal-actions">
+              <button className="od-btn-ghost" onClick={() => setSwapOpen(false)} disabled={swapSubmitting}>Cancel</button>
+              <button className="od-btn-primary" onClick={handlePlateSwap} disabled={swapSubmitting}>
+                {swapSubmitting ? 'Saving…' : 'Confirm & Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plate-swap success modal */}
+      {swapSuccess && (
+        <div className="od-modal-overlay" onClick={() => setSwapSuccess(false)}>
+          <div className="od-modal" onClick={e => e.stopPropagation()}>
+            <div className="od-pw-success">
+              <div className="od-pw-success-icon"><ShieldCheck size={36} /></div>
+              <h3>Plate Number Saved!</h3>
+              <p>Your vehicle is now verified with plate <strong>{reg?.plate_number}</strong>.
+                 Your conduction number has been replaced.</p>
+              <button className="od-btn-primary" style={{ marginTop: 14 }} onClick={() => setSwapSuccess(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pwModal && (
         <div className="od-modal-overlay">
           <div className="od-modal">
@@ -374,7 +446,10 @@ export default function OwnerDashboard() {
                 <div className="od-card">
                   <div className="od-card-head"><Car size={16} /> Vehicle Information</div>
                   <div className="od-details-grid">
-                    <div className="od-detail"><span className="od-detail-label">Plate Number</span><span className="od-detail-val od-plate">{reg.plate_number}</span></div>
+                    <div className="od-detail">
+                      <span className="od-detail-label">Plate Number</span>
+                      <span className="od-detail-val od-plate">{reg.plate_number || 'Not assigned yet'}</span>
+                    </div>
                     <div className="od-detail"><span className="od-detail-label">Vehicle Type</span><span className="od-detail-val od-capitalize">{reg.vehicle_type}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Color</span><span className="od-detail-val">{reg.vehicle_color || '—'}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Conduction Number</span><span className="od-detail-val">{reg.conduction_number || '—'}</span></div>
@@ -382,6 +457,17 @@ export default function OwnerDashboard() {
                       <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Body Number</span><span className="od-detail-val">{reg.body_number}</span></div>
                     )}
                   </div>
+
+                  {/* One-time: replace the conduction number with the real plate once received */}
+                  {isConductionOnly && (
+                    <div className="od-plate-swap-cta">
+                      <p>Registered with a conduction number. Received your official plate? Enter it to
+                         verify your vehicle — this replaces your conduction number and can only be done once.</p>
+                      <button type="button" className="od-plate-swap-btn" onClick={() => { setSwapError(null); setSwapOpen(true) }}>
+                        <Car size={14} /> I received my plate number
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -158,3 +158,25 @@ class MyViolationsViewTests(TestCase):
         Violation.objects.create(vehicle=other_vehicle, violation_type='double_parking',
                                  offense_number=1, is_released=True)
         self.assertEqual(len(self._get()), 0)
+
+
+class ViolationIssuePermissionTests(TestCase):
+    """Issuing violations is guard-only; admin (CDSO) manages but does not issue."""
+
+    def setUp(self):
+        self.guard = User.objects.create_user(email='vguard@slc.edu.ph', full_name='Guard',
+                                               password='x', role='security')
+        self.admin = User.objects.create_user(email='vadmin@slc.edu.ph', full_name='Admin',
+                                               password='x', role='admin')
+        _make_vehicle('ISS1234')
+
+    def _post(self, user):
+        c = APIClient(); c.force_authenticate(user)
+        return c.post('/api/violations/', {'plate_number': 'ISS1234',
+                      'violation_type': 'double_parking', 'notes': 'x'}, format='json')
+
+    def test_guard_can_issue(self):
+        self.assertEqual(self._post(self.guard).status_code, 201)
+
+    def test_admin_cannot_issue(self):
+        self.assertEqual(self._post(self.admin).status_code, 403)

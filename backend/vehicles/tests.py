@@ -336,3 +336,133 @@ class AccountExpiryArchiveTests(TestCase):
         }, format='json')
         self.assertEqual(resp.status_code, 403)
         self.assertTrue(resp.data.get('registration_banned'))
+
+
+class ConductionPlateTests(TestCase):
+    """Registration accepts a plate OR a conduction number (never both), and the
+    gate/parking resolver finds a vehicle by either."""
+
+    def setUp(self):
+        from vehicles.models import RegistrationPeriod
+        today = timezone.localdate()
+        RegistrationPeriod.objects.create(
+            label='T', start_date=today - timedelta(days=1),
+            end_date=today + timedelta(days=30), is_active=True)
+
+    def _post(self, **overrides):
+        payload = dict(registrant_type='student', full_name='New Car', email='newcar@x.com',
+                       vehicle_type='car', student_id='30000001', campus_days=['Monday'],
+                       contact_number='+639171234567', address='X')
+        payload.update(overrides)
+        return APIClient().post('/api/vehicles/register/open/', payload, format='json')
+
+    def test_conduction_only_registration_ok(self):
+        r = self._post(conduction_number='CS12345A678')
+        self.assertEqual(r.status_code, 201, r.data)
+        reg = VehicleRegistration.objects.get(email='newcar@x.com')
+        self.assertEqual(reg.conduction_number, 'CS12345A678')
+        self.assertEqual(reg.plate_number, '')
+
+    def test_both_identifiers_rejected(self):
+        self.assertEqual(self._post(plate_number='ABC 1234', conduction_number='CS12345A678').status_code, 400)
+
+    def test_neither_identifier_rejected(self):
+        self.assertEqual(self._post().status_code, 400)
+
+    def test_resolve_by_conduction_or_plate(self):
+        from vehicles.models import Vehicle
+        v = Vehicle.objects.create(conduction_number='CS999X', vehicle_type='car')
+        self.assertEqual(Vehicle.resolve('cs 999 x').pk, v.pk)   # normalized match
+        p = Vehicle.objects.create(plate_number='ABC1234', vehicle_type='car')
+        self.assertEqual(Vehicle.resolve('ABC 1234').pk, p.pk)
+        self.assertIsNone(Vehicle.resolve('NOTHING'))
+
+    def test_two_conduction_only_vehicles_allowed(self):
+        # Blank plate must not collide under the partial unique constraint.
+        from vehicles.models import Vehicle
+        Vehicle.objects.create(conduction_number='C1', vehicle_type='car')
+        Vehicle.objects.create(conduction_number='C2', vehicle_type='car')  # no IntegrityError
+
+
+class PlateSwapTests(TestCase):
+    """Owner replaces a conduction number with the real plate — once, self-service."""
+
+    def _make_conduction_owner(self, email='swap@x.com', conduction='CS111'):
+        from accounts.models import User
+        from vehicles.models import Vehicle
+        owner = User.objects.create_user(email=email, full_name='Swap', password='x',
+                                         role='vehicle_owner', owner_type='student')
+        veh = Vehicle.objects.create(conduction_number=conduction, vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        reg = make_reg(registrant_type='student', full_name='Swap', email=email,
+                       plate_number='', conduction_number=conduction, vehicle=veh, user=owner,
+                       status=VehicleRegistration.Status.ACCEPTED)
+        return owner, veh, reg
+
+    def test_swap_replaces_conduction_and_is_one_time(self):
+        owner, veh, reg = self._make_conduction_owner()
+        c = APIClient(); c.force_authenticate(owner)
+        resp = c.post('/api/accounts/me/plate-swap/', {'plate_number': 'XYZ 5678'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        veh.refresh_from_db(); reg.refresh_from_db()
+        self.assertEqual(veh.plate_number, 'XYZ5678')
+        self.assertEqual(veh.conduction_number, '')
+        self.assertEqual(reg.plate_number, 'XYZ5678')
+        self.assertEqual(reg.conduction_number, '')
+        # Second attempt now that a plate exists → rejected (one-time)
+        resp2 = c.post('/api/accounts/me/plate-swap/', {'plate_number': 'AAA 1111'}, format='json')
+        self.assertEqual(resp2.status_code, 400)
+
+    def test_swap_rejects_duplicate_plate(self):
+        from vehicles.models import Vehicle
+        from accounts.models import User
+        other = User.objects.create_user(email='other@x.com', full_name='Other', password='x',
+                                         role='vehicle_owner', owner_type='student')
+        Vehicle.objects.create(plate_number='XYZ5678', vehicle_type='car', is_authorized=True, user=other)
+        owner, veh, reg = self._make_conduction_owner()
+        c = APIClient(); c.force_authenticate(owner)
+        resp = c.post('/api/accounts/me/plate-swap/', {'plate_number': 'XYZ 5678'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        veh.refresh_from_db()
+        self.assertEqual(veh.conduction_number, 'CS111')  # unchanged
+
+
+class DoubleParkAttributionTests(TestCase):
+    """A guard names the vehicle behind a double-parking alert, issuing the
+    violation; admin cannot, and an unknown identifier is refused."""
+
+    def setUp(self):
+        from accounts.models import User
+        from vehicles.models import Vehicle
+        self.guard = User.objects.create_user(email='dpg@slc.edu.ph', full_name='Guard',
+                                              password='x', role='security')
+        self.admin = User.objects.create_user(email='dpa@slc.edu.ph', full_name='Admin',
+                                              password='x', role='admin')
+        self.vehicle = Vehicle.objects.create(plate_number='DPK1234', vehicle_type='car', is_authorized=True)
+
+    def _post(self, user, **data):
+        c = APIClient(); c.force_authenticate(user)
+        payload = dict(zone_id=1, space_ids=[1, 2], plate_number='DPK 1234')
+        payload.update(data)
+        return c.post('/api/vehicles/parking-zones/attribute-double-park/', payload, format='json')
+
+    def test_guard_attribution_creates_violation(self):
+        from violations.models import Violation
+        resp = self._post(self.guard)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(Violation.objects.filter(
+            vehicle=self.vehicle, violation_type='double_parking').exists())
+
+    def test_admin_cannot_attribute(self):
+        self.assertEqual(self._post(self.admin).status_code, 403)
+
+    def test_unknown_identifier_404(self):
+        self.assertEqual(self._post(self.guard, plate_number='NOPE999').status_code, 404)
+
+    def test_attribution_by_conduction(self):
+        from vehicles.models import Vehicle
+        from violations.models import Violation
+        v = Vehicle.objects.create(conduction_number='CDN777', vehicle_type='car', is_authorized=True)
+        resp = self._post(self.guard, plate_number='CDN 777')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(Violation.objects.filter(vehicle=v, violation_type='double_parking').exists())

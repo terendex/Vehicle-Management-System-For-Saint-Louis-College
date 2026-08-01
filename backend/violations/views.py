@@ -47,10 +47,21 @@ class ViolationViewSet(viewsets.ModelViewSet):
         return {**super().get_serializer_context(), 'request': self.request}
 
     def perform_create(self, serializer):
+        # Issuing a violation is the guard's job — the admin (CDSO) handles events,
+        # parking-box placement, and clearing/lifting violations, but does not
+        # issue them. (CDSO management actions live on separate endpoints.)
+        if self.request.user.role != 'security':
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only security personnel can issue violations.')
+
         plate = self.request.data.get('plate_number', '').strip().upper().replace(' ', '')
         vehicle = serializer.validated_data.get('vehicle')
         if vehicle is None and plate:
-            vehicle = get_object_or_404(Vehicle, plate_number=plate)
+            # A guard may type a plate or a conduction number (brand-new car).
+            vehicle = Vehicle.resolve(plate)
+            if vehicle is None:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'vehicle': 'No vehicle found for that plate or conduction number.'})
         if vehicle is None:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'vehicle': 'Provide a vehicle id or plate_number.'})

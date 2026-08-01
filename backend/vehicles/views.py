@@ -639,6 +639,58 @@ class IsAdminOrCdso(permissions.BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'admin')
 
 
+class IsSecurityRole(permissions.BasePermission):
+    """Guards only — issuing parking violations is their responsibility, not the
+    admin's (admin handles events and placing parking boxes)."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'security')
+
+
+class AttributeDoubleParkingView(APIView):
+    """A guard names the vehicle behind a double-parking alert. Resolves the plate
+    or conduction number, issues a DOUBLE_PARKING violation using the boxed
+    evidence photo captured at detection, and clears the alert so its card
+    disappears."""
+    permission_classes = [IsSecurityRole]
+
+    def post(self, request):
+        zone_id   = request.data.get('zone_id')
+        space_ids = request.data.get('space_ids') or []
+        plate     = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
+        if not zone_id or not space_ids or not plate:
+            return Response({'error': 'zone_id, space_ids and plate_number are required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        vehicle = Vehicle.resolve(plate)
+        if vehicle is None:
+            return Response({'error': 'No vehicle found for that plate or conduction number.'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # Pull the evidence captured when the straddle was detected and clear the alert.
+        thread = parking_camera.get_thread(int(zone_id))
+        evidence = thread.pop_alert(space_ids) if thread is not None else None
+
+        from scanning.views import _auto_log_violation
+        from violations.models import Violation
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
+        _auto_log_violation(
+            vehicle,
+            f"Double parking attributed by guard {request.user.full_name}",
+            gate_id=gate_id,
+            vtype=Violation.Type.DOUBLE_PARKING,
+            evidence_bytes=evidence,
+        )
+
+        try:
+            from realtime.broadcast import broadcast_change
+            broadcast_change('parkingspace', 'double_parking_attributed', zone_id=int(zone_id))
+        except Exception:
+            logger.exception("double-parking attribution broadcast failed")
+
+        return Response({'status': 'attributed',
+                         'plate_number': vehicle.plate_number or vehicle.conduction_number or plate})
+
+
 class PendingRegistrationsListView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -704,6 +756,29 @@ def _vehicle_type_for(registration_vehicle_type):
     )
 
 
+def _upsert_vehicle_for_registration(registration, user):
+    """Create or adopt the Vehicle for an approved registration, keyed on
+    whichever identifier the registration carries — real plate, or conduction
+    number for a brand-new car. Stamps both fields so a later plate-swap can
+    clear the conduction number. update_or_create adopts an existing unowned row
+    (e.g. a plate first seen via a visitor pass)."""
+    plate      = _normalize_plate(registration.plate_number)
+    conduction = _normalize_plate(registration.conduction_number)
+    defaults = {
+        'vehicle_type':  _vehicle_type_for(registration.vehicle_type),
+        'color':         registration.vehicle_color,
+        'is_authorized': True,
+        'user':          user,
+    }
+    if plate:
+        defaults['conduction_number'] = conduction  # normally ''
+        vehicle_obj, _ = Vehicle.objects.update_or_create(plate_number=plate, defaults=defaults)
+    else:
+        defaults['plate_number'] = plate            # ''
+        vehicle_obj, _ = Vehicle.objects.update_or_create(conduction_number=conduction, defaults=defaults)
+    return vehicle_obj
+
+
 def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
@@ -734,6 +809,23 @@ def _email_conflict(email, qs):
     return None
 
 
+def _conduction_conflict(conduction_number, qs):
+    """Conduction sticker equivalent of _plate_conflict: unique among active
+    registrations and not already tied to an owned Vehicle.
+
+    conduction_number is a new field, always normalized (upper, no spaces) on
+    save, so both checks are exact indexed lookups — O(1)-ish, no table scan.
+    """
+    norm = _normalize_plate(conduction_number)
+    if not norm:
+        return None
+    if qs.filter(conduction_number=norm).exists():
+        return "This conduction number already has an active registration."
+    if Vehicle.objects.filter(conduction_number=norm, user__isnull=False).exists():
+        return "This conduction number is already tied to an existing vehicle pass."
+    return None
+
+
 def _license_conflict(drivers_license, qs):
     lic = (drivers_license or '').strip().upper()
     if not lic:
@@ -759,10 +851,11 @@ def _id_conflict(registrant_type, student_id, employee_id, qs):
 
 
 def _registration_conflict(registrant_type, plate_number, email, student_id, employee_id,
-                           drivers_license='', statuses=None, exclude_pk=None):
+                           drivers_license='', statuses=None, exclude_pk=None,
+                           conduction_number=''):
     """
-    Enforce 1:1 rules for registrations: plate number, email, driver's license,
-    and student/employee ID may each belong to at most one active
+    Enforce 1:1 rules for registrations: plate/conduction number, email, driver's
+    license, and student/employee ID may each belong to at most one active
     (pending/accepted) registration.
     Returns an error message string, or None if there is no conflict.
     """
@@ -775,6 +868,9 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     conflict = _plate_conflict(plate_number, qs)
     if conflict:
         return conflict
+    conflict = _conduction_conflict(conduction_number, qs)
+    if conflict:
+        return conflict
     conflict = _email_conflict(email, qs)
     if conflict:
         return conflict
@@ -784,17 +880,18 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     return _id_conflict(registrant_type, student_id, employee_id, qs)
 
 
-def _registration_ban(plate_number, email, student_id, employee_id):
+def _registration_ban(plate_number, email, student_id, employee_id, conduction_number=''):
     """Hard block for people who reached the maximum number of violations and had
     their account archived on expiry (User.registration_banned). Their identity —
-    email, plate, or ID — may not start a new registration. Matched against the
-    archived owners' now-EXPIRED registrations.
+    email, plate, conduction number, or ID — may not start a new registration.
+    Matched against the archived owners' now-EXPIRED registrations.
 
     Returns an error message string, or None if the applicant is not banned.
     """
     from accounts.models import User
 
-    plate_norm = _normalize_plate(plate_number)
+    plate_norm      = _normalize_plate(plate_number)
+    conduction_norm = _normalize_plate(conduction_number)
     email_norm = (email or '').strip().lower()
     student_id = (student_id or '').strip()
     employee_id = (employee_id or '').strip()
@@ -804,6 +901,8 @@ def _registration_ban(plate_number, email, student_id, employee_id):
         conds |= Q(email__iexact=email_norm)
     if plate_norm:
         conds |= Q(plate_number__iexact=plate_norm)
+    if conduction_norm:
+        conds |= Q(conduction_number__iexact=conduction_norm)
     if student_id:
         conds |= Q(student_id__iexact=student_id)
     if employee_id:
@@ -991,18 +1090,9 @@ class AcceptRegistrationView(APIView):
             except Exception:
                 pass
 
-        # Create or update Vehicle linked directly to User
-        # update_or_create handles duplicate plates gracefully (plate_number is unique)
-        plate_normalized = registration.plate_number.strip().upper().replace(' ', '')
-        vehicle_obj, _ = Vehicle.objects.update_or_create(
-            plate_number=plate_normalized,
-            defaults={
-                'vehicle_type': _vehicle_type_for(registration.vehicle_type),
-                'color':        registration.vehicle_color,
-                'is_authorized': True,
-                'user':          user,
-            }
-        )
+        # Create or update Vehicle linked directly to User, keyed on the
+        # registration's plate or conduction number (brand-new car).
+        vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
         # Auto-generate unique system ID
         padded_id = str(registration.pk).zfill(6)
@@ -1209,16 +1299,7 @@ class CdsoDirectRegisterView(APIView):
             address=registration.address,
         )
 
-        plate_normalized = registration.plate_number.strip().upper().replace(' ', '')
-        vehicle_obj, _ = Vehicle.objects.update_or_create(
-            plate_number=plate_normalized,
-            defaults={
-                'vehicle_type':  _vehicle_type_for(registration.vehicle_type),
-                'color':         registration.vehicle_color,
-                'is_authorized': True,
-                'user':          user,
-            }
-        )
+        vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
         padded_id = str(registration.pk).zfill(6)
         if registrant_type == 'student':
@@ -1331,17 +1412,20 @@ class RegistrationAvailabilityView(APIView):
         drivers_license = request.query_params.get('drivers_license', '')
         student_id      = request.query_params.get('student_id', '')
         employee_id     = request.query_params.get('employee_id', '')
+        conduction      = request.query_params.get('conduction_number', '')
 
         statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
         qs = VehicleRegistration.objects.filter(status__in=statuses)
 
         return Response({
-            'plate_number':    _plate_conflict(plate_number, qs),
-            'email':           _email_conflict(email, qs),
-            'drivers_license': _license_conflict(drivers_license, qs),
-            'student_id':      _id_conflict('student', student_id, '', qs),
-            'employee_id':     _id_conflict('employee', '', employee_id, qs),
-            'banned':          _registration_ban(plate_number, email, student_id, employee_id),
+            'plate_number':      _plate_conflict(plate_number, qs),
+            'conduction_number': _conduction_conflict(conduction, qs),
+            'email':             _email_conflict(email, qs),
+            'drivers_license':   _license_conflict(drivers_license, qs),
+            'student_id':        _id_conflict('student', student_id, '', qs),
+            'employee_id':       _id_conflict('employee', '', employee_id, qs),
+            'banned':            _registration_ban(plate_number, email, student_id, employee_id,
+                                                   conduction_number=conduction),
         })
 
 
@@ -1360,6 +1444,19 @@ class PublicOpenRegistrationView(APIView):
         if registrant_type not in ['student', 'employee', 'fetcher']:
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # A brand-new car registers with a conduction number instead of a plate.
+        # Exactly one of the two must be provided — never both, never neither.
+        plate_in      = (request.data.get('plate_number') or '').strip()
+        conduction_in = (request.data.get('conduction_number') or '').strip()
+        if plate_in and conduction_in:
+            return Response(
+                {"error": "Enter either a plate number or a conduction number, not both."},
+                status=status.HTTP_400_BAD_REQUEST)
+        if not plate_in and not conduction_in:
+            return Response(
+                {"error": "A plate number is required (or a conduction number for a brand-new vehicle)."},
+                status=status.HTTP_400_BAD_REQUEST)
+
         # Hard block: applicants who reached the maximum number of violations and
         # were archived on expiry may never register again.
         ban = _registration_ban(
@@ -1367,11 +1464,13 @@ class PublicOpenRegistrationView(APIView):
             request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
+            conduction_number=request.data.get('conduction_number', ''),
         )
         if ban:
             return Response({"error": ban, "registration_banned": True}, status=status.HTTP_403_FORBIDDEN)
 
-        # 1:1 guard — plate, email and student/employee ID must not already have an active registration
+        # 1:1 guard — plate/conduction, email and student/employee ID must not
+        # already have an active registration
         conflict = _registration_conflict(
             registrant_type,
             request.data.get('plate_number', ''),
@@ -1379,6 +1478,7 @@ class PublicOpenRegistrationView(APIView):
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
             drivers_license=request.data.get('drivers_license', ''),
+            conduction_number=request.data.get('conduction_number', ''),
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)

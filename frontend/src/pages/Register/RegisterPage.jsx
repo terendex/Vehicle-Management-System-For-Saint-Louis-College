@@ -169,6 +169,7 @@ export default function RegisterPage() {
   const [formErrors, setFormErrors] = useState({})
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
   const [banned, setBanned] = useState(null)     // set if the applicant reached max violations and may not register
+  const [isNewVehicle, setIsNewVehicle] = useState(false) // brand-new car → conduction number instead of plate
   const [dupChecking, setDupChecking] = useState({})
   const [licenseImage, setLicenseImage] = useState(null)
   const [licensePreview, setLicensePreview] = useState(null)
@@ -460,22 +461,25 @@ export default function RegisterPage() {
   // Debounced live duplicate check — warns in the field hint before the user submits
   useEffect(() => {
     const plate = formData.plate_number?.trim()
+    const conduction = formData.conduction_number?.trim()
     const email = formData.email?.trim()
     const license = formData.drivers_license?.trim()
     const studentId = formData.student_id?.trim()
     const employeeId = formData.employee_id?.trim()
 
-    const plateValid = plate && isValidPlateNumber(plate)
+    const plateValid = !isNewVehicle && plate && isValidPlateNumber(plate)
+    const conductionValid = isNewVehicle && !!conduction && FIELD_PATTERNS.conduction_number.regex.test(conduction)
     const emailValid = !!email && FIELD_PATTERNS.email.regex.test(email)
     const licenseValid = !!license && FIELD_PATTERNS.drivers_license.regex.test(license)
     const studentIdValid = registrantType === 'student' && /^\d{8}$/.test(studentId || '')
     const employeeIdValid = registrantType === 'employee' && /^\d{8}$/.test(employeeId || '')
 
-    if (!plateValid && !emailValid && !licenseValid && !studentIdValid && !employeeIdValid) return
+    if (!plateValid && !conductionValid && !emailValid && !licenseValid && !studentIdValid && !employeeIdValid) return
 
     setDupChecking(prev => ({
       ...prev,
       plate_number: plateValid || prev.plate_number,
+      conduction_number: conductionValid || prev.conduction_number,
       email: emailValid || prev.email,
       drivers_license: licenseValid || prev.drivers_license,
       student_id: studentIdValid || prev.student_id,
@@ -486,6 +490,7 @@ export default function RegisterPage() {
       try {
         const result = await registrationApi.checkAvailability({
           plate_number: plateValid ? plate : '',
+          conduction_number: conductionValid ? conduction : '',
           email: emailValid ? email : '',
           drivers_license: licenseValid ? license : '',
           student_id: studentIdValid ? studentId : '',
@@ -494,6 +499,7 @@ export default function RegisterPage() {
         setDupErrors(prev => ({
           ...prev,
           ...(plateValid && { plate_number: result.plate_number }),
+          ...(conductionValid && { conduction_number: result.conduction_number }),
           ...(emailValid && { email: result.email }),
           ...(licenseValid && { drivers_license: result.drivers_license }),
           ...(studentIdValid && { student_id: result.student_id }),
@@ -506,6 +512,7 @@ export default function RegisterPage() {
         setDupChecking(prev => ({
           ...prev,
           ...(plateValid && { plate_number: false }),
+          ...(conductionValid && { conduction_number: false }),
           ...(emailValid && { email: false }),
           ...(licenseValid && { drivers_license: false }),
           ...(studentIdValid && { student_id: false }),
@@ -514,7 +521,7 @@ export default function RegisterPage() {
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [formData.plate_number, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType])
+  }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType])
 
   const toggleDay = (dayKey) => {
     setFormData(prev => {
@@ -553,7 +560,7 @@ export default function RegisterPage() {
     }
 
     // Block on already-known duplicates from the live check (the backend re-checks regardless)
-    if (dupErrors.plate_number || dupErrors.email || dupErrors.drivers_license || dupErrors.student_id || dupErrors.employee_id) {
+    if (dupErrors.plate_number || dupErrors.conduction_number || dupErrors.email || dupErrors.drivers_license || dupErrors.student_id || dupErrors.employee_id) {
       setSubmitError('Please resolve the duplicate entries highlighted in the form before submitting.')
       return
     }
@@ -648,6 +655,9 @@ export default function RegisterPage() {
       const guardian = registrantType === 'student' && formData.who_drives === 'guardian'
       const payload = {
         ...formData,
+        // Either/or: send only the identifier that applies, never both.
+        plate_number:      isNewVehicle ? '' : formData.plate_number,
+        conduction_number: isNewVehicle ? formData.conduction_number : '',
         full_name,
         address,
         program_year,
@@ -984,37 +994,63 @@ export default function RegisterPage() {
 
             {/* ── Vehicle Identification ── */}
             <h3 className="section-heading">Vehicle Identification</h3>
-            <div className="form-grid">
-              <div className="form-group">
-                <label>Plate Number <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="plate_number"
-                  value={formData.plate_number}
-                  onChange={handleInputChange}
-                  required
-                  placeholder={FIELD_PATTERNS.plate_number.hint}
-                  className={formErrors.plate_number || dupErrors.plate_number ? 'input-error' : ''}
-                />
-                <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>
-                {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
-                {!formErrors.plate_number && dupErrors.plate_number && <span className="field-error-msg">{dupErrors.plate_number}</span>}
-                {!formErrors.plate_number && dupChecking.plate_number && <span className="field-checking-msg">Checking availability…</span>}
-              </div>
 
-              <div className="form-group">
-                <label>Conduction Number <span className="field-note">(for newly purchased vehicles)</span></label>
-                <input
-                  type="text"
-                  name="conduction_number"
-                  value={formData.conduction_number}
-                  onChange={handleInputChange}
-                  placeholder={FIELD_PATTERNS.conduction_number.hint}
-                  className={formErrors.conduction_number ? 'input-error' : ''}
-                />
-                <span className="field-hint">{FIELD_PATTERNS.conduction_number.hint}</span>
-                {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
-              </div>
+            {/* Brand-new cars have no plate yet — they register with a conduction
+                sticker instead. Ask up front so only the relevant field shows. */}
+            <label className="reg-newcar-toggle">
+              <input
+                type="checkbox"
+                checked={isNewVehicle}
+                onChange={(e) => {
+                  const nv = e.target.checked
+                  setIsNewVehicle(nv)
+                  // Clear whichever identifier no longer applies + its errors.
+                  setFormData(prev => ({ ...prev,
+                    plate_number: nv ? '' : prev.plate_number,
+                    conduction_number: nv ? prev.conduction_number : '',
+                  }))
+                  setFormErrors(prev => ({ ...prev, plate_number: '', conduction_number: '' }))
+                  setDupErrors(prev => ({ ...prev, plate_number: null, conduction_number: null }))
+                }}
+              />
+              <span>My vehicle is brand-new and does not have a plate number yet (I have a conduction number).</span>
+            </label>
+
+            <div className="form-grid">
+              {!isNewVehicle ? (
+                <div className="form-group">
+                  <label>Plate Number <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="plate_number"
+                    value={formData.plate_number}
+                    onChange={handleInputChange}
+                    required
+                    placeholder={FIELD_PATTERNS.plate_number.hint}
+                    className={formErrors.plate_number || dupErrors.plate_number ? 'input-error' : ''}
+                  />
+                  <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>
+                  {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
+                  {!formErrors.plate_number && dupErrors.plate_number && <span className="field-error-msg">{dupErrors.plate_number}</span>}
+                  {!formErrors.plate_number && dupChecking.plate_number && <span className="field-checking-msg">Checking availability…</span>}
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label>Conduction Number <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="conduction_number"
+                    value={formData.conduction_number}
+                    onChange={handleInputChange}
+                    required
+                    placeholder={FIELD_PATTERNS.conduction_number.hint}
+                    className={formErrors.conduction_number || dupErrors.conduction_number ? 'input-error' : ''}
+                  />
+                  <span className="field-hint">For newly purchased vehicles without a plate yet. {FIELD_PATTERNS.conduction_number.hint}</span>
+                  {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
+                  {!formErrors.conduction_number && dupErrors.conduction_number && <span className="field-error-msg">{dupErrors.conduction_number}</span>}
+                </div>
+              )}
 
               <div className="form-group">
                 <label>Vehicle Type <span className="required">*</span></label>

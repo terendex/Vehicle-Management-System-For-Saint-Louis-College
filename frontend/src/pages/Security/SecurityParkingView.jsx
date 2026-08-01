@@ -203,7 +203,7 @@ export default function SecurityParkingView() {
 
         {/* Guards see the same live alert as admin — spotting a car
             across two bays is exactly their job. */}
-        <DoubleParkingAlerts zoneId={selId} />
+        <DoubleParkingAlerts zoneId={selId} canAttribute />
 
         {/* Occupancy at a glance — same stat cards as the admin page. These
             were a run of tiny text inside the toolbar. */}

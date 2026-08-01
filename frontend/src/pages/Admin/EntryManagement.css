@@ -599,6 +599,57 @@
   padding: 2px 8px;
 }
 
+/* ── Classification filter + tags ────────────────────────────── */
+.em-class-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 1.25rem 10px;
+  border-bottom: 1px solid #EEF4F9;
+}
+.em-class-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3E5B72;
+  background: #F2F6FA;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.em-class-chip:hover { background: #E6EEF5; }
+.em-class-chip.is-active {
+  border-color: #2E4C63;
+  color: #12324a;
+  background: #E1ECF5;
+}
+.em-class-chip-count {
+  font-size: 10px;
+  background: rgba(46, 76, 99, 0.12);
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+}
+/* Row classification tag */
+.em-class-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cls-student  { background: #E3EEFB; color: #1c4e8a; }
+.cls-employee { background: #FCE7DC; color: #a24518; }
+.cls-fetcher  { background: #D9F2E9; color: #0a6b4d; }
+.cls-supplier { background: #FBEFCF; color: #8a6300; }
+.cls-visitor  { background: #E6E2F5; color: #3d2f83; }
+.cls-unknown  { background: #ECEEF0; color: #5b6570; }
+
 /* ── Modal ───────────────────────────────────────────────────── */
 .em-overlay {
   position: fixed;

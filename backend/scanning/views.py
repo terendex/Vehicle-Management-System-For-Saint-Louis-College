@@ -501,7 +501,7 @@ class ScanView(APIView):
                 })
                 continue
 
-            vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate).first()
+            vehicle = Vehicle.resolve(plate)
 
             if not vehicle:
                 supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
@@ -1141,7 +1141,7 @@ class OverrideEntryView(APIView):
         if not reason:
             return Response({'error': 'reason is required.'}, status=400)
 
-        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+        vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
 
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         AccessLog.objects.create(
@@ -1179,7 +1179,7 @@ class DenyEntryView(APIView):
 
         reason = (request.data.get('reason') or '').strip() or 'Entry denied at gate by guard.'
 
-        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+        vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         AccessLog.objects.create(
             plate_number  = plate_number,
@@ -1228,7 +1228,7 @@ class ExitLogView(APIView):
                 'visitor_pass_required': True,
             }, status=409)
 
-        vehicle = Vehicle.objects.filter(plate_number=plate_number).first()
+        vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
 
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         exit_log = AccessLog.objects.create(
@@ -1462,11 +1462,13 @@ class ManualEntryView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
-        if not is_valid_ph_plate(plate_number):
-            return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
-
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
-        vehicle = Vehicle.objects.select_related('user').filter(plate_number=plate_number).first()
+        # A guard may type a conduction number for a brand-new car, which is not a
+        # valid PH plate — accept it when it resolves to a registered vehicle, but
+        # still reject free-text garbage that matches nothing.
+        vehicle = Vehicle.resolve(plate_number)
+        if not vehicle and not is_valid_ph_plate(plate_number):
+            return Response({'error': 'Invalid plate format. Enter a valid Philippine plate or conduction number.'}, status=400)
 
         if not vehicle:
             supplier_plate = SupplierPlate.objects.select_related('supplier').filter(

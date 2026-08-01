@@ -27,6 +27,7 @@ urlpatterns = [
 
     # Parking availability (authenticated)
     path('parking-availability/', views.ParkingAvailabilityView.as_view(), name='parking-availability'),
+    path('parking-zones/attribute-double-park/', views.AttributeDoubleParkingView.as_view(), name='attribute-double-park'),
 
     # Parking zone MJPEG stream (JWT via ?token= query param)
     path('parking-zones/<int:pk>/stream/', views.parking_stream_view, name='parking-stream'),

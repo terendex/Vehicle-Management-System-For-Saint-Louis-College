@@ -89,3 +89,35 @@
   .dpa-item { gap: 6px; }
   .dpa-tag, .dpa-bays { white-space: normal; }
 }
+
+/* ── Guard inline attribution ─────────────────────────────────── */
+.dpa-attribute {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+.dpa-plate-input {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #E2A94E;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  width: 150px;
+  background: #fff;
+}
+.dpa-plate-input:focus { outline: none; border-color: #B4560F; box-shadow: 0 0 0 2px rgba(180,86,15,0.18); }
+.dpa-attribute-btn {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #B4560F;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dpa-attribute-btn:hover { background: #9a4a0d; }
+.dpa-attribute-btn:disabled { opacity: 0.6; cursor: default; }

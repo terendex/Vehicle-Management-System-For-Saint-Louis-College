@@ -33,7 +33,12 @@ class Vehicle(models.Model):
         BUS        = 'bus',        'Bus'
 
     id            = models.BigAutoField(primary_key=True, db_column='vehicle_id')
-    plate_number  = models.CharField(max_length=20, unique=True, db_index=True)
+    # A vehicle is identified by EITHER a real plate OR a conduction sticker
+    # (brand-new car with no plate yet), never both. Both are blank-not-null so a
+    # conduction-only car can exist; uniqueness among non-blank values is enforced
+    # by the partial constraints below (blank '' is exempt, like plate_number was).
+    plate_number      = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    conduction_number = models.CharField(max_length=50, blank=True, default='', db_index=True)
     vehicle_type  = models.CharField(max_length=20, choices=Type.choices, default=Type.CAR)
     model         = models.CharField(max_length=100, blank=True)
     color         = models.CharField(max_length=50, blank=True)
@@ -44,11 +49,40 @@ class Vehicle(models.Model):
     )
     created_at    = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def identifier(self) -> str:
+        """The vehicle's active identifier for display — plate if it has one,
+        otherwise the conduction number."""
+        return self.plate_number or self.conduction_number
+
+    @classmethod
+    def resolve(cls, identifier: str):
+        """Find a vehicle by a scanned/typed identifier — plate first, then
+        conduction number. Both are normalized (upper, no spaces) the same way.
+        Returns the Vehicle or None."""
+        norm = _normalize_plate(identifier)
+        if not norm:
+            return None
+        return (cls.objects.select_related('user').filter(plate_number=norm).first()
+                or cls.objects.select_related('user').filter(conduction_number=norm).first())
+
     def __str__(self):
-        return self.plate_number
+        return self.identifier or f"Vehicle {self.pk}"
 
     class Meta:
         db_table = 'tbl_vehicle'
+        constraints = [
+            # Uniqueness among real values only; multiple blanks are allowed so a
+            # conduction-only car (blank plate) and vice-versa don't collide.
+            models.UniqueConstraint(
+                fields=['plate_number'], condition=~models.Q(plate_number=''),
+                name='uniq_vehicle_plate_number',
+            ),
+            models.UniqueConstraint(
+                fields=['conduction_number'], condition=~models.Q(conduction_number=''),
+                name='uniq_vehicle_conduction_number',
+            ),
+        ]
 
 
 import uuid
@@ -174,9 +208,11 @@ class VehicleRegistration(models.Model):
         max_length=20, choices=DepartmentType.choices, null=True, blank=True,
     )
 
-    # Vehicle fields
-    plate_number      = models.CharField(max_length=20, db_index=True)
-    conduction_number = models.CharField(max_length=50, blank=True)
+    # Vehicle fields — a registration carries EITHER a plate OR a conduction
+    # number (brand-new car), never both; enforced in the views. plate_number is
+    # blank-able so conduction-only registrations are valid.
+    plate_number      = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    conduction_number = models.CharField(max_length=50, blank=True, default='', db_index=True)
     vehicle_type      = models.CharField(max_length=50)
     vehicle_color     = models.CharField(max_length=50, blank=True)
     body_number       = models.CharField(max_length=50, blank=True)
@@ -202,6 +238,7 @@ class VehicleRegistration(models.Model):
         # Canonicalize so both the application-layer conflict checks and the
         # DB unique constraints below compare like-for-like values.
         self.plate_number = _normalize_plate(self.plate_number)
+        self.conduction_number = _normalize_plate(self.conduction_number)
         self.email = _normalize_email(self.email)
         self.student_id = (self.student_id or '').strip()
         self.employee_id = (self.employee_id or '').strip()
@@ -226,10 +263,18 @@ class VehicleRegistration(models.Model):
         # at the database level. Rejected registrations are exempt so a
         # previously declined plate/email can be re-submitted.
         constraints = [
+            # plate/conduction are mutually exclusive per row and each blank when
+            # unused, so blanks are excluded — only a *provided* value must be
+            # unique among active registrations.
             models.UniqueConstraint(
                 fields=['plate_number'],
-                condition=models.Q(status__in=['pending', 'accepted']),
+                condition=models.Q(status__in=['pending', 'accepted']) & ~models.Q(plate_number=''),
                 name='uniq_active_registration_plate',
+            ),
+            models.UniqueConstraint(
+                fields=['conduction_number'],
+                condition=models.Q(status__in=['pending', 'accepted']) & ~models.Q(conduction_number=''),
+                name='uniq_active_registration_conduction',
             ),
             models.UniqueConstraint(
                 fields=['email'],

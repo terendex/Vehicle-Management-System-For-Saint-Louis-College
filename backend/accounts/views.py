@@ -302,7 +302,12 @@ class DashboardStatsView(APIView):
                 owners=Count('id', filter=Q(role='vehicle_owner')),
                 active=Count('id', filter=Q(is_active=True)),
                 disabled=Count('id', filter=Q(is_active=False)),
-                owners_disabled=Count('id', filter=Q(role='vehicle_owner', is_active=False)),
+                # Archived (auto-expired) owners are also is_active=False; keep the
+                # manually-disabled slice distinct from the archived slice so the
+                # dashboard donut doesn't double-count them.
+                owners_disabled=Count('id', filter=Q(role='vehicle_owner', is_active=False, is_archived=False)),
+                owners_archived=Count('id', filter=Q(role='vehicle_owner', is_archived=True)),
+                owners_banned=Count('id', filter=Q(role='vehicle_owner', registration_banned=True)),
                 own_student=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='student')),
                 own_employee=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='employee')),
                 own_fetcher=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='fetcher')),
@@ -471,6 +476,8 @@ class DashboardStatsView(APIView):
                     'fetcher':  owners_active_by_type.get('fetcher', 0),
                     'visitor':  owners_active_by_type.get('visitor', 0),
                     'disabled': owners_disabled,
+                    'archived': u_agg['owners_archived'],
+                    'banned':   u_agg['owners_banned'],
                     'total':    vehicle_owner_count,
                 },
                 'suppliers': {
@@ -943,6 +950,73 @@ class MyRegistrationView(APIView):
         if not registration:
             return Response({'error': 'No accepted registration found for this account.'}, status=status.HTTP_404_NOT_FOUND)
         return Response(VehicleRegistrationSerializer(registration).data)
+
+
+class MyPlateSwapView(APIView):
+    """One-time, self-service replacement of a conduction number with the real
+    plate, for owners whose brand-new car has since received its plate. Updates
+    both the Vehicle and the accepted registration, and can only happen once —
+    afterwards the account has a plate and no conduction number."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != 'vehicle_owner':
+            return Response({'error': 'Only vehicle owners can update their plate.'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        from django.db import transaction
+        from vehicles.models import VehicleRegistration, _normalize_plate
+        from vehicles.views import _plate_conflict
+        from scanning.ml.validator import is_valid_ph_plate
+
+        new_plate = _normalize_plate(request.data.get('plate_number') or '')
+        if not new_plate:
+            return Response({'plate_number': 'A plate number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not is_valid_ph_plate(new_plate):
+            return Response({'plate_number': 'Enter a valid Philippine plate number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        registration = (
+            VehicleRegistration.objects
+            .filter(Q(user=request.user) | Q(email=request.user.email), status='accepted')
+            .order_by('-reviewed_at')
+            .first()
+        )
+        if not registration:
+            return Response({'error': 'No accepted registration found for this account.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        # Only a conduction-only registration is eligible; once a real plate is set
+        # the option is spent and must not run again.
+        if registration.plate_number or not registration.conduction_number:
+            return Response({'error': 'This account already has a plate number on file.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # The new plate must not belong to anyone else (active registration or owned vehicle).
+        active = (VehicleRegistration.objects
+                  .filter(status__in=['pending', 'accepted']).exclude(pk=registration.pk))
+        conflict = _plate_conflict(new_plate, active)
+        if conflict:
+            return Response({'plate_number': conflict}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_conduction = registration.conduction_number
+        with transaction.atomic():
+            vehicle = registration.vehicle
+            if vehicle is not None:
+                vehicle.plate_number = new_plate
+                vehicle.conduction_number = ''
+                vehicle.save(update_fields=['plate_number', 'conduction_number'])
+            registration.plate_number = new_plate
+            registration.conduction_number = ''
+            registration.save()  # normalizes and persists
+
+        AuditLog.objects.create(
+            actor=request.user,
+            action=AuditLog.Action.USER_UPDATED,
+            target_user=request.user,
+            details=(f"Plate number set by owner | Conduction {old_conduction} -> Plate {new_plate} | "
+                     f"{request.user.email}"),
+        )
+        return Response({'plate_number': new_plate,
+                         'message': 'Your plate number has been saved and verified.'})
 
 
 # ──────────────────────────────────────────────

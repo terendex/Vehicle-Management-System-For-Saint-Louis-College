@@ -20,6 +20,32 @@ class AccessLogSerializer(serializers.ModelSerializer):
     on_duty_guard_name = serializers.CharField(source='on_duty_guard.full_name',  read_only=True, default=None)
     vehicle_owner_name = serializers.CharField(source='vehicle.user.full_name',   read_only=True, default=None)
     vehicle_type_info  = serializers.CharField(source='vehicle.vehicle_type',     read_only=True, default=None)
+    # Entrant classification for Entry Management filtering: the owner's type
+    # (student/employee/fetcher/visitor), 'supplier' for a registered supplier
+    # plate, else 'unknown' (walk-in visitor / unregistered).
+    classification     = serializers.SerializerMethodField()
+
+    def _supplier_plates(self):
+        # DRF reuses this child serializer across the whole list, so cache the
+        # active supplier plates on the instance — one query, not one per row.
+        if not hasattr(self, '_supplier_plate_cache'):
+            from vehicles.models import SupplierPlate
+            self._supplier_plate_cache = {
+                (p or '').strip().upper()
+                for p in SupplierPlate.objects.filter(supplier__is_active=True)
+                                              .values_list('plate_number', flat=True)
+            }
+        return self._supplier_plate_cache
+
+    def get_classification(self, obj):
+        vehicle = getattr(obj, 'vehicle', None)
+        owner = getattr(vehicle, 'user', None) if vehicle else None
+        if owner and owner.owner_type:
+            return owner.owner_type
+        plate = getattr(vehicle, 'plate_number', '') if vehicle else ''
+        if plate and (plate or '').strip().upper() in self._supplier_plates():
+            return 'supplier'
+        return 'unknown'
 
     class Meta:
         model  = AccessLog

@@ -36,6 +36,22 @@ function getMeta(status) {
   return STATUS_META[status] ?? STATUS_META.unknown
 }
 
+// Entrant classification (from AccessLogSerializer.classification) — labels +
+// chip colour class for the Entry Management breakdown/filter.
+const CLASSIFICATION_META = {
+  student:  { label: 'Student',      cls: 'cls-student' },
+  employee: { label: 'Employee',     cls: 'cls-employee' },
+  fetcher:  { label: 'Fetcher',      cls: 'cls-fetcher' },
+  supplier: { label: 'Supplier',     cls: 'cls-supplier' },
+  visitor:  { label: 'Visitor',      cls: 'cls-visitor' },
+  unknown:  { label: 'Unregistered', cls: 'cls-unknown' },
+}
+function getClassMeta(classification) {
+  return CLASSIFICATION_META[classification] ?? CLASSIFICATION_META.unknown
+}
+// Order shown as filter chips; 'all' clears the filter.
+const CLASS_FILTERS = ['all', 'student', 'employee', 'fetcher', 'supplier', 'visitor', 'unknown']
+
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) } catch { return '' }
 }
@@ -288,6 +304,7 @@ export default function EntryManagement() {
   const { user } = useAuthStore()
   const [result, setResult] = useState(null)
   const [logs, setLogs] = useState([])
+  const [classFilter, setClassFilter] = useState('all')
   const [offices, setOffices] = useState([])
   const plateCooldownRef = useRef(new Set())
   const processedRidsRef = useRef(new Set()) // result _rid values already handled
@@ -332,6 +349,7 @@ export default function EntryManagement() {
         id: now + Math.random(),
         plate_number: r.plate_number,
         status: r.status,
+        classification: r.vehicle?.user?.owner_type || (r.status === 'unknown' ? 'unknown' : undefined),
         scanned_at: new Date().toISOString(),
         scanned_by_name: user?.full_name || null,
       }))
@@ -361,6 +379,9 @@ export default function EntryManagement() {
   }, [])
 
   const isLive = rtspCameras.some(c => c.streamConnected)
+  const filteredLogs = classFilter === 'all'
+    ? logs
+    : logs.filter((l) => (l.classification || 'unknown') === classFilter)
 
   return (
     <AdminLayout fillHeight>
@@ -481,18 +502,45 @@ export default function EntryManagement() {
             <div className="em-card">
               <div className="em-card-head">
                 <span className="em-card-label"><ClipboardList size={14} /> Recent Scans</span>
-                <span className="em-logs-count">{logs.length}</span>
+                <span className="em-logs-count">
+                  {classFilter === 'all' ? logs.length : filteredLogs.length}
+                </span>
               </div>
-              {logs.length === 0 ? (
-                <p className="em-log-empty">No scans yet today.</p>
+
+              {/* Classify entries by type — filter the list to one classification */}
+              <div className="em-class-filters">
+                {CLASS_FILTERS.map((key) => {
+                  const count = key === 'all'
+                    ? logs.length
+                    : logs.filter((l) => (l.classification || 'unknown') === key).length
+                  const label = key === 'all' ? 'All' : getClassMeta(key).label
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`em-class-chip${classFilter === key ? ' is-active' : ''}${key !== 'all' ? ` ${getClassMeta(key).cls}` : ''}`}
+                      onClick={() => setClassFilter(key)}
+                    >
+                      {label}<span className="em-class-chip-count">{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {filteredLogs.length === 0 ? (
+                <p className="em-log-empty">
+                  {logs.length === 0 ? 'No scans yet today.' : 'No scans match this classification.'}
+                </p>
               ) : (
                 <div className="em-log-list">
-                  {logs.map((log, i) => {
+                  {filteredLogs.map((log, i) => {
                     const m = getMeta(log.status)
+                    const cm = getClassMeta(log.classification || 'unknown')
                     return (
                       <div key={log.id ?? i} className="em-log-item">
                         <span className={`em-log-dot ${m.logCls}`} />
                         <span className="em-log-plate">{log.plate_number || '—'}</span>
+                        <span className={`em-class-tag ${cm.cls}`}>{cm.label}</span>
                         <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
                         {(log.on_duty_guard_name || log.scanned_by_name) && (
                           <span

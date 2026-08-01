@@ -169,6 +169,10 @@ class ParkingCameraThread(threading.Thread):
         # covers, and the alerts those streaks have raised.
         self._straddle: dict[tuple[int, ...], int]  = {}
         self._alerts:   dict[tuple[int, ...], dict] = {}
+        # Boxed evidence JPEG captured at detection time (car box + straddled
+        # bays drawn), so a guard attributing the plate later gets the scene as
+        # it was, not a frame after the car has moved.
+        self._alert_evidence: dict[tuple[int, ...], bytes] = {}
 
         # Frame sequence number, so viewers can tell whether the cached JPEG
         # still corresponds to the newest frame.
@@ -376,12 +380,51 @@ class ParkingCameraThread(threading.Thread):
                 del self._straddle[key]
                 with self._lock:
                     self._alerts.pop(key, None)
+                    self._alert_evidence.pop(key, None)
 
         for key, det in straddling.items():
             n = self._straddle.get(key, 0) + 1
             self._straddle[key] = n
             if n == DOUBLE_PARK_FRAMES:      # == so it reports once per episode
                 self._report_double_parking(key, det, frame)
+
+    def _render_double_park_evidence(self, frame, det_bbox, spaces) -> "bytes | None":
+        """Draw the offending car's box (red) and the straddled bays (amber) onto
+        a copy of the frame and return JPEG bytes — the evidence photo a guard and
+        the owner see. Falls back to the plain latest JPEG on any error."""
+        try:
+            img = frame.copy()
+            h, w = img.shape[:2]
+            for sp in spaces:
+                pts = getattr(sp, 'points', None)
+                if pts:
+                    poly = np.array([[int(x * w), int(y * h)] for x, y in pts], dtype=np.int32)
+                    cv2.polylines(img, [poly], True, (0, 191, 255), 2)
+                elif sp.x1 is not None:
+                    cv2.rectangle(img, (int(sp.x1 * w), int(sp.y1 * h)),
+                                  (int(sp.x2 * w), int(sp.y2 * h)), (0, 191, 255), 2)
+            if det_bbox:
+                x1, y1 = int(det_bbox["x"] * w), int(det_bbox["y"] * h)
+                x2 = int((det_bbox["x"] + det_bbox["width"]) * w)
+                y2 = int((det_bbox["y"] + det_bbox["height"]) * h)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                cv2.putText(img, "DOUBLE PARKING", (x1, max(20, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            ok, buf = cv2.imencode('.jpg', img)
+            return buf.tobytes() if ok else self.get_jpeg()
+        except Exception:
+            log.exception("[ParkingCam] evidence render failed zone %d", self.zone_id)
+            return self.get_jpeg()
+
+    def pop_alert(self, space_ids) -> "bytes | None":
+        """Remove a double-parking alert (a guard has handled it) and return its
+        captured boxed-evidence JPEG, or the latest frame if none was stored."""
+        key = tuple(sorted(int(s) for s in space_ids))
+        with self._lock:
+            self._alerts.pop(key, None)
+            evidence = self._alert_evidence.pop(key, None)
+        # get_jpeg() takes self._lock, so fall back to it outside the block.
+        return evidence or self.get_jpeg()
 
     def _read_plate(self, frame, bbox: dict) -> str:
         """Best-effort plate read from inside a straddling vehicle's box.
@@ -432,17 +475,28 @@ class ParkingCameraThread(threading.Thread):
         from django.db import close_old_connections
         from django.utils import timezone
 
-        codes = []
+        codes, space_objs = [], []
         try:
             close_old_connections()
             from vehicles.models import ParkingSpace
-            codes = list(
-                ParkingSpace.objects.filter(id__in=space_ids).values_list('space_number', flat=True)
-            )
+            space_objs = list(ParkingSpace.objects.filter(id__in=space_ids))
+            codes = [s.space_number for s in space_objs]
         except Exception as exc:
             log.warning("[ParkingCam] Could not resolve space numbers %s: %s", space_ids, exc)
 
         label = ", ".join(codes) if codes else ", ".join(str(i) for i in space_ids)
+
+        # Render the boxed evidence photo once, at detection, from the frame that
+        # triggered the alert — used for the auto-violation and stashed for a
+        # guard who attributes the plate later (by then the car may have moved).
+        evidence = None
+        if frame is not None:
+            evidence = self._render_double_park_evidence(
+                frame, det["bbox"] if det is not None else None, space_objs)
+        if not evidence:
+            evidence = self.get_jpeg()   # get_jpeg() takes self._lock — call before acquiring it
+        with self._lock:
+            self._alert_evidence[space_ids] = evidence
 
         plate, vehicle, violation_id = '', None, None
         if det is not None:
@@ -452,7 +506,7 @@ class ParkingCameraThread(threading.Thread):
             try:
                 close_old_connections()
                 from vehicles.models import Vehicle
-                vehicle = Vehicle.objects.filter(plate_number=plate).first()
+                vehicle = Vehicle.resolve(plate)  # plate or conduction number
             except Exception as exc:
                 log.warning("[ParkingCam] vehicle lookup failed for %s: %s", plate, exc)
 
@@ -466,7 +520,7 @@ class ParkingCameraThread(threading.Thread):
                     vehicle,
                     f"Double parking detected by camera across bays {label}",
                     vtype=Violation.Type.DOUBLE_PARKING,
-                    evidence_bytes=self.get_jpeg(),
+                    evidence_bytes=evidence or self.get_jpeg(),
                 )
                 violation_id = (Violation.objects
                                 .filter(vehicle=vehicle,

@@ -122,6 +122,12 @@ export const usersApi = {
     return data
   },
 
+  // One-time replacement of a conduction number with the real plate.
+  swapPlate: async (plate_number) => {
+    const { data } = await api.post('/accounts/me/plate-swap/', { plate_number })
+    return data
+  },
+
   /** Change the authenticated user's password. */
   changePassword: async (currentPassword, newPassword, confirmPassword) => {
     const { data } = await api.post('/accounts/change-password/', {

@@ -97,4 +97,13 @@ export const zoneApi = {
     const { data } = await api.get('/vehicles/parking-zones/alerts/')
     return Array.isArray(data) ? data : []
   },
+
+  // Guard names the vehicle behind a double-parking alert → issues the violation
+  // with the captured evidence and clears the alert.
+  attributeDoublePark: async (zoneId, spaceIds, plateNumber) => {
+    const { data } = await api.post('/vehicles/parking-zones/attribute-double-park/', {
+      zone_id: zoneId, space_ids: spaceIds, plate_number: plateNumber,
+    })
+    return data
+  },
 }

@@ -367,6 +367,7 @@ export default function AdminDashboard() {
     { name: 'Fetchers',  value: stats.owners?.fetcher   ?? 0, color: CAT.aqua },
     { name: 'Suppliers', value: stats.suppliers?.active ?? 0, color: CAT.yellow },
     { name: 'Disabled',  value: stats.owners?.disabled  ?? 0, color: CAT.muted },
+    { name: 'Archived',  value: stats.owners?.archived  ?? 0, color: CAT.violet },
   ].filter(s => s.value > 0) : []
 
   // Today's entry outcomes. Authorized/Denied keep their status hues; the rest
@@ -471,7 +472,8 @@ export default function AdminDashboard() {
               <ChartCard
                 icon={Users}
                 title="Registered Categories"
-                subtitle={`${stats?.owners?.total ?? 0} owners · ${stats?.suppliers?.active ?? 0} supplier plates`}
+                subtitle={`${stats?.owners?.total ?? 0} owners · ${stats?.suppliers?.active ?? 0} supplier plates`
+                  + ((stats?.owners?.archived ?? 0) > 0 ? ` · ${stats.owners.archived} archived` : '')}
               >
                 <DonutChart
                   slices={userSlices}
