@@ -68,6 +68,22 @@ function ageOptions(min) {
   return Array.from({ length: 99 - min + 1 }, (_, i) => min + i)
 }
 
+/* Employee departments. `free` marks the ones exempt from the vehicle pass fee
+   outright — Services and Cleaning pay nothing, which is an exemption rather
+   than the 50% employee rate. The backend is the authority (see
+   VehicleRegistration.FEE_EXEMPT_DEPARTMENTS) and sends the same list on the
+   registration-status payload; this is the fallback when that has not loaded. */
+const DEPARTMENT_OPTIONS = [
+  { value: 'teaching',     label: 'Teaching',     free: false },
+  { value: 'non_teaching', label: 'Non-Teaching', free: false },
+  { value: 'services',     label: 'Services',     free: true  },
+  { value: 'cleaning',     label: 'Cleaning',     free: true  },
+]
+
+const FEE_EXEMPT_LABELS = new Set(
+  DEPARTMENT_OPTIONS.filter(d => d.free).map(d => d.label)
+)
+
 const REGISTRATION_TYPES = [
   {
     id: 'student',
@@ -163,9 +179,8 @@ export default function RegisterPage() {
   const [submitError, setSubmitError] = useState(null)
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
-  const vehiclePassFee = registrantType === 'employee'
-    ? (regStatus?.vehicle_pass_fee_employee ?? 150)
-    : (regStatus?.vehicle_pass_fee ?? 300)
+  // vehiclePassFee is derived below, once formData exists — it depends on the
+  // chosen department.
   const [formErrors, setFormErrors] = useState({})
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
   const [banned, setBanned] = useState(null)     // set if the applicant reached max violations and may not register
@@ -229,6 +244,20 @@ export default function RegisterPage() {
     body_number: '',
     privacy_consent: false,
   })
+
+  // What this applicant actually owes. Mirrors VehicleRegistration.pass_fee on
+  // the backend — Services and Cleaning staff are exempt outright, not given
+  // the 50% employee rate, so the figure quoted here is 0 for them.
+  const feeExempt = registrantType === 'employee'
+    && (regStatus?.fee_exempt_departments
+          ? regStatus.fee_exempt_departments.includes(
+              DEPARTMENT_OPTIONS.find(d => d.label === formData.department)?.value)
+          : FEE_EXEMPT_LABELS.has(formData.department))
+  const vehiclePassFee = feeExempt
+    ? 0
+    : registrantType === 'employee'
+      ? (regStatus?.vehicle_pass_fee_employee ?? 150)
+      : (regStatus?.vehicle_pass_fee ?? 300)
 
   // Fetcher-specific: classification + the students being fetched (at least one)
   const [fetcherType, setFetcherType] = useState('')
@@ -859,7 +888,16 @@ export default function RegisterPage() {
               <div className="success-next-list">
                 <div className="success-next-item">
                   <span className="success-next-num">1</span>
-                  <span>Pay <strong>₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong></span>
+                  {/* Telling an exempt applicant to "Pay ₱0.00" would send them
+                      to Accounting for nothing. */}
+                  {feeExempt ? (
+                    <span>
+                      <strong>No fee to pay</strong> — {formData.department} staff are
+                      exempt from the vehicle pass fee. Go straight to the <strong>CDSO Office</strong>.
+                    </span>
+                  ) : (
+                    <span>Pay <strong>₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong></span>
+                  )}
                 </div>
                 <div className="success-next-item">
                   <span className="success-next-num">2</span>
@@ -1454,8 +1492,11 @@ export default function RegisterPage() {
                       required
                     >
                       <option value="">Select Department</option>
-                      <option value="Teaching">Teaching</option>
-                      <option value="Non-Teaching">Non-Teaching</option>
+                      {DEPARTMENT_OPTIONS.map(d => (
+                        <option key={d.value} value={d.label}>
+                          {d.label}{d.free ? ' — no fee' : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </>
@@ -1870,7 +1911,13 @@ export default function RegisterPage() {
                     I understand that the vehicle pass is intended <strong>ONLY TO ALLOW THE ENTRY OF MY VEHICLE IN THE CAMPUS</strong>. The College does not guarantee the availability of parking spaces;
                   </li>
                   <li>The application for a vehicle pass is subject to the approval or disapproval of the Student Affairs Office;</li>
-                  <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
+                  {feeExempt ? (
+                    <li>No Vehicle Pass fee applies — <strong>{formData.department}</strong> staff
+                      are exempt. Present this application at the <strong>CDSO Office</strong>;
+                      no Official Receipt is required.</li>
+                  ) : (
+                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
+                  )}
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
                 <ol className="terms-alpha-list" type="a">

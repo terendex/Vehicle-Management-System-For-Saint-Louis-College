@@ -1,5 +1,9 @@
+from decimal import Decimal
+
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
+from django.db.models import Value
+from django.db.models.functions import Lower, Replace, Upper
 from django.core.validators import MinValueValidator, MaxValueValidator
 
 
@@ -125,6 +129,13 @@ class VehicleRegistration(models.Model):
     class DepartmentType(models.TextChoices):
         TEACHING     = 'teaching',     'Teaching'
         NON_TEACHING = 'non_teaching', 'Non-Teaching'
+        SERVICES     = 'services',     'Services'
+        CLEANING     = 'cleaning',     'Cleaning'
+
+    # Departments whose staff pay nothing for a vehicle pass. Kept next to the
+    # choices so adding a department forces a decision about its fee rather
+    # than silently inheriting the employee rate.
+    FEE_EXEMPT_DEPARTMENTS = frozenset({'services', 'cleaning'})
 
     class StudentLevel(models.TextChoices):
         COLLEGE    = 'college',    'College'
@@ -245,6 +256,26 @@ class VehicleRegistration(models.Model):
         self.drivers_license = (self.drivers_license or '').strip().upper()
         super().save(*args, **kwargs)
 
+    def pass_fee(self, settings_obj=None) -> Decimal:
+        """What this applicant owes for their vehicle pass.
+
+        Single source of truth for the amount. The figure used to be worked out
+        in the React form alone, which meant the price a person was told and the
+        price the system believed were two separate implementations that could
+        drift apart.
+
+        Services and Cleaning staff pay nothing — they are exempt outright, not
+        discounted, so this returns 0 regardless of the configured employee rate.
+        """
+        if settings_obj is None:
+            settings_obj = SystemSettings.get()
+
+        if self.registrant_type == 'employee':
+            if (self.department_type or '') in self.FEE_EXEMPT_DEPARTMENTS:
+                return Decimal('0.00')
+            return settings_obj.vehicle_pass_fee_employee
+        return settings_obj.vehicle_pass_fee
+
     def __str__(self):
         return f"{self.full_name} - {self.plate_number} ({self.status})"
 
@@ -257,6 +288,18 @@ class VehicleRegistration(models.Model):
             # campus_days is JSON; the dashboard asks `campus_days__contains=[day]`
             # once per weekday. Only a GIN index can answer containment.
             GinIndex(fields=['campus_days'], name='vehreg_campus_days_gin'),
+
+            # Duplicate checking compares the *normalised* plate/email, because
+            # rows predating normalisation may carry stray spacing or case. That
+            # comparison used to happen in Python over every active registration
+            # — an O(N) fetch on every submission. These expression indexes let
+            # Postgres answer the same question with an index lookup, so the
+            # check costs the same at 10 rows and 10,000.
+            models.Index(
+                Upper(Replace('plate_number', Value(' '), Value(''))),
+                name='vehreg_plate_norm',
+            ),
+            models.Index(Lower('email'), name='vehreg_email_norm'),
         ]
         # A plate and an email may each belong to at most ONE active
         # (pending/accepted) registration — enforcing a 1:1 email↔plate pairing

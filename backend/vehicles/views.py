@@ -7,7 +7,8 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 import cv2
-from django.db.models import Q
+from django.db.models import Q, Value
+from django.db.models.functions import Lower, Replace, Upper
 from django.http import StreamingHttpResponse, HttpResponse
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
@@ -783,9 +784,17 @@ def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
         return None
-    # Stored plates may vary in spacing/case, so compare normalized values
-    existing_plates = qs.exclude(plate_number='').values_list('plate_number', flat=True)
-    if any(_normalize_plate(p) == plate_norm for p in existing_plates):
+    # Stored plates may vary in spacing/case, so compare normalized values.
+    #
+    # This normalisation runs in SQL, not Python. It used to pull every active
+    # registration's plate over the wire and scan them in a loop — O(N) on
+    # every submission and every keystroke of the availability check, which at
+    # 2,000 rows already cost ~1.1s per call against Neon. The expression index
+    # `vehreg_plate_norm` matches this exact expression, so Postgres answers it
+    # with an index lookup instead.
+    if qs.exclude(plate_number='').annotate(
+        _plate_norm=Upper(Replace('plate_number', Value(' '), Value('')))
+    ).filter(_plate_norm=plate_norm).exists():
         return "This plate number already has an active registration."
     # Unowned Vehicle rows are adopted by update_or_create at accept time,
     # so only plates already tied to an account are conflicts
@@ -798,9 +807,12 @@ def _email_conflict(email, qs):
     email_norm = (email or '').strip().lower()
     if not email_norm:
         return None
-    # Stored emails are normalized on save, but compare defensively anyway
-    existing_emails = qs.exclude(email='').values_list('email', flat=True)
-    if any((e or '').strip().lower() == email_norm for e in existing_emails):
+    # Stored emails are normalized on save, but compare defensively anyway.
+    # Done in SQL against the `vehreg_email_norm` expression index — the old
+    # Python loop fetched every active registration's email per call.
+    if qs.exclude(email='').annotate(
+        _email_norm=Lower('email')
+    ).filter(_email_norm=email_norm).exists():
         return "This email address already has an active registration."
     # An email tied to an existing *live* account can't start a new pass. Archived
     # (expired) accounts keep their email but must not block re-registration.
@@ -830,21 +842,27 @@ def _license_conflict(drivers_license, qs):
     lic = (drivers_license or '').strip().upper()
     if not lic:
         return None
-    existing = qs.exclude(drivers_license='').values_list('drivers_license', flat=True)
-    if any((d or '').strip().upper() == lic for d in existing):
+    # save() already stores this stripped and upper-cased, so an exact match is
+    # the same test the Python loop was doing — but as an indexed lookup rather
+    # than a fetch of every active registration's licence number.
+    if qs.exclude(drivers_license='').filter(drivers_license=lic).exists():
         return "This driver's license already has an active registration."
     return None
 
 
 def _id_conflict(registrant_type, student_id, employee_id, qs):
+    # Exact, not __iexact: these are stripped on save and are numeric, so
+    # case-folding buys nothing — but it wraps the column in UPPER(), which
+    # stops Postgres using uniq_active_registration_student_id / _employee_id
+    # and turns each check into a scan of every active registration.
     student_id = (student_id or '').strip()
     if registrant_type == 'student' and student_id:
-        if qs.filter(registrant_type='student', student_id__iexact=student_id).exists():
+        if qs.filter(registrant_type='student', student_id=student_id).exists():
             return "This student ID already has an active registration."
 
     employee_id = (employee_id or '').strip()
     if registrant_type == 'employee' and employee_id:
-        if qs.filter(registrant_type='employee', employee_id__iexact=employee_id).exists():
+        if qs.filter(registrant_type='employee', employee_id=employee_id).exists():
             return "This employee ID already has an active registration."
 
     return None
@@ -1352,6 +1370,14 @@ def _registration_window():
     fees = {
         "vehicle_pass_fee":          float(settings_obj.vehicle_pass_fee),
         "vehicle_pass_fee_employee": float(settings_obj.vehicle_pass_fee_employee),
+        # Departments that pay nothing. Sent rather than hardcoded in the form so
+        # the price shown to an applicant comes from the same place the backend
+        # charges from — adding a department here updates both at once.
+        "fee_exempt_departments": sorted(VehicleRegistration.FEE_EXEMPT_DEPARTMENTS),
+        "department_options": [
+            {"value": value, "label": label}
+            for value, label in VehicleRegistration.DepartmentType.choices
+        ],
     }
     period = RegistrationPeriod.get_active()
     if period:
@@ -1485,19 +1511,23 @@ class PublicOpenRegistrationView(APIView):
 
         data = dict(request.data)
 
-        # The form sends department as a human-readable string ("Teaching" / "Non-Teaching").
-        # Map it to department_type and clear the FK field so the serializer doesn't choke.
+        # The form sends department as a human-readable label ("Teaching",
+        # "Non-Teaching", "Services", "Cleaning"). Map it to department_type and
+        # clear the FK field so the serializer doesn't choke.
+        #
+        # Driven off DepartmentType rather than an if/elif chain: the chain
+        # silently fell through to department=None for any label it did not
+        # know, so a new department would have been accepted and stored blank.
         dept_raw = data.pop('department', None)
         if isinstance(dept_raw, list):
             dept_raw = dept_raw[0] if dept_raw else None
-        if dept_raw == 'Teaching':
-            data['department_type'] = 'teaching'
-            data['department'] = None
-        elif dept_raw == 'Non-Teaching':
-            data['department_type'] = 'non_teaching'
-            data['department'] = None
-        else:
-            data['department'] = None
+
+        dept_label_to_value = {
+            label: value for value, label in VehicleRegistration.DepartmentType.choices
+        }
+        data['department'] = None
+        if dept_raw in dept_label_to_value:
+            data['department_type'] = dept_label_to_value[dept_raw]
 
         # Strip fields that are not model columns (e.g. form-only UI fields)
         for extra in ('last_name', 'first_name', 'middle_name',
