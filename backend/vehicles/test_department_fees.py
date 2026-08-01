@@ -1,4 +1,4 @@
-"""Services and Cleaning staff pay nothing for a vehicle pass.
+"""Cleaning and Services staff pay nothing for a vehicle pass.
 
 That is an exemption, not the 50% employee rate — so it must hold even if the
 configured employee fee changes. The amount lives on the model rather than in
@@ -36,12 +36,8 @@ class DepartmentFeeTests(TestCase):
         s.save()
         self.settings = s
 
-    def test_services_staff_pay_nothing(self):
-        r = make_reg(department_type=DT.SERVICES)
-        self.assertEqual(r.pass_fee(self.settings), Decimal('0.00'))
-
-    def test_cleaning_staff_pay_nothing(self):
-        r = make_reg(department_type=DT.CLEANING)
+    def test_cleaning_and_services_staff_pay_nothing(self):
+        r = make_reg(department_type=DT.CLEANING_SERVICES)
         self.assertEqual(r.pass_fee(self.settings), Decimal('0.00'))
 
     def test_teaching_staff_pay_the_employee_rate(self):
@@ -60,17 +56,20 @@ class DepartmentFeeTests(TestCase):
         """Exempt means zero, not "half of whatever is configured"."""
         self.settings.vehicle_pass_fee_employee = Decimal('999.00')
         self.settings.save()
-        self.assertEqual(make_reg(department_type=DT.SERVICES).pass_fee(self.settings),
-                         Decimal('0.00'))
-        self.assertEqual(make_reg(department_type=DT.CLEANING).pass_fee(self.settings),
+        self.assertEqual(make_reg(department_type=DT.CLEANING_SERVICES).pass_fee(self.settings),
                          Decimal('0.00'))
         self.assertEqual(make_reg(department_type=DT.TEACHING).pass_fee(self.settings),
                          Decimal('999.00'))
 
     def test_a_student_in_a_free_department_still_pays(self):
         """Exemption is tied to being employee staff, not to the label alone."""
-        r = make_reg(registrant_type='student', department_type=DT.SERVICES)
+        r = make_reg(registrant_type='student', department_type=DT.CLEANING_SERVICES)
         self.assertEqual(r.pass_fee(self.settings), Decimal('300.00'))
+
+
+def slug(label):
+    """Email-safe token from a department label ("Cleaning and Services" has spaces)."""
+    return ''.join(ch for ch in label.lower() if ch.isalnum())
 
 
 class DepartmentSubmissionTests(APITestCase):
@@ -91,7 +90,7 @@ class DepartmentSubmissionTests(APITestCase):
         # /register/ is the CDSO walk-in one and needs a token.
         return self.client.post('/api/vehicles/register/open/', {
             'full_name': 'DELA CRUZ, JUAN',
-            'email': f'dept-{label.lower().replace("-", "")}@slc.edu.ph',
+            'email': f'dept-{slug(label)}@slc.edu.ph',
             'contact_number': '+639171234567',
             'plate_number': f'DP{abs(hash(label)) % 9000 + 1000}',
             'vehicle_type': 'car',
@@ -108,12 +107,12 @@ class DepartmentSubmissionTests(APITestCase):
                 r = self._submit(label)
                 self.assertIn(r.status_code, (200, 201),
                               msg=f"{label} rejected: {getattr(r, 'data', None)}")
-                reg = VehicleRegistration.objects.get(email__startswith=f'dept-{label.lower().replace("-", "")}')
+                reg = VehicleRegistration.objects.get(email=f'dept-{slug(label)}@slc.edu.ph')
                 self.assertEqual(reg.department_type, value)
 
     def test_status_endpoint_publishes_the_exempt_list(self):
         r = self.client.get('/api/vehicles/register/status/')
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(sorted(r.data['fee_exempt_departments']), ['cleaning', 'services'])
+        self.assertEqual(sorted(r.data['fee_exempt_departments']), ['cleaning_services'])
         labels = [d['label'] for d in r.data['department_options']]
-        self.assertEqual(labels, ['Teaching', 'Non-Teaching', 'Services', 'Cleaning'])
+        self.assertEqual(labels, ['Teaching', 'Non-Teaching', 'Cleaning and Services'])

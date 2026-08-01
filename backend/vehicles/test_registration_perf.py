@@ -107,7 +107,7 @@ class RegistrationComplexityTests(APITestCase):
                 'vehicle_type': 'car',
                 'registrant_type': 'employee',
                 'employee_id': f'{31000000 + i}',
-                'department': 'Services',
+                'department': 'Cleaning and Services',
                 'address': 'San Fernando, La Union',
                 'privacy_consent': True,
             }, format='json')

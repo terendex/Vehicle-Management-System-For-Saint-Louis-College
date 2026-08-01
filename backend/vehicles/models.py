@@ -127,15 +127,20 @@ class VehicleRegistration(models.Model):
         DIRECT = 'direct', 'CDSO Walk-in'
 
     class DepartmentType(models.TextChoices):
-        TEACHING     = 'teaching',     'Teaching'
-        NON_TEACHING = 'non_teaching', 'Non-Teaching'
-        SERVICES     = 'services',     'Services'
-        CLEANING     = 'cleaning',     'Cleaning'
+        TEACHING          = 'teaching',          'Teaching'
+        NON_TEACHING      = 'non_teaching',      'Non-Teaching'
+        # One department, not two — Cleaning and Services is a single unit.
+        CLEANING_SERVICES = 'cleaning_services', 'Cleaning and Services'
 
     # Departments whose staff pay nothing for a vehicle pass. Kept next to the
     # choices so adding a department forces a decision about its fee rather
     # than silently inheriting the employee rate.
-    FEE_EXEMPT_DEPARTMENTS = frozenset({'services', 'cleaning'})
+    #
+    # The exemption is deliberately NOT advertised in the registration form's
+    # department picker: seeing "free" next to an option invites people who are
+    # not in that department to select it, which is a false registration the
+    # CDSO then has to unpick. Applicants are told after submitting.
+    FEE_EXEMPT_DEPARTMENTS = frozenset({'cleaning_services'})
 
     class StudentLevel(models.TextChoices):
         COLLEGE    = 'college',    'College'

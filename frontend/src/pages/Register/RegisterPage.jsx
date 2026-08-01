@@ -68,16 +68,20 @@ function ageOptions(min) {
   return Array.from({ length: 99 - min + 1 }, (_, i) => min + i)
 }
 
-/* Employee departments. `free` marks the ones exempt from the vehicle pass fee
-   outright — Services and Cleaning pay nothing, which is an exemption rather
-   than the 50% employee rate. The backend is the authority (see
+/* Employee departments. `free` marks the one exempt from the vehicle pass fee
+   outright — Cleaning and Services pay nothing, an exemption rather than the
+   50% employee rate. The backend is the authority (see
    VehicleRegistration.FEE_EXEMPT_DEPARTMENTS) and sends the same list on the
-   registration-status payload; this is the fallback when that has not loaded. */
+   registration-status payload; this is the fallback when that has not loaded.
+
+   `free` deliberately does NOT surface in the picker. Labelling an option
+   "free" invites people outside that department to choose it, and the CDSO
+   ends up unpicking false registrations. The exemption is shown after the
+   application is submitted instead. */
 const DEPARTMENT_OPTIONS = [
-  { value: 'teaching',     label: 'Teaching',     free: false },
-  { value: 'non_teaching', label: 'Non-Teaching', free: false },
-  { value: 'services',     label: 'Services',     free: true  },
-  { value: 'cleaning',     label: 'Cleaning',     free: true  },
+  { value: 'teaching',          label: 'Teaching',              free: false },
+  { value: 'non_teaching',      label: 'Non-Teaching',          free: false },
+  { value: 'cleaning_services', label: 'Cleaning and Services', free: true  },
 ]
 
 const FEE_EXEMPT_LABELS = new Set(
@@ -1492,10 +1496,9 @@ export default function RegisterPage() {
                       required
                     >
                       <option value="">Select Department</option>
+                      {/* No fee hint here on purpose — see DEPARTMENT_OPTIONS */}
                       {DEPARTMENT_OPTIONS.map(d => (
-                        <option key={d.value} value={d.label}>
-                          {d.label}{d.free ? ' — no fee' : ''}
-                        </option>
+                        <option key={d.value} value={d.label}>{d.label}</option>
                       ))}
                     </select>
                   </div>
@@ -1911,10 +1914,16 @@ export default function RegisterPage() {
                     I understand that the vehicle pass is intended <strong>ONLY TO ALLOW THE ENTRY OF MY VEHICLE IN THE CAMPUS</strong>. The College does not guarantee the availability of parking spaces;
                   </li>
                   <li>The application for a vehicle pass is subject to the approval or disapproval of the Student Affairs Office;</li>
+                  {/* The exemption is not stated here. Naming it on the form
+                      lets anyone discover it by trying each department, which
+                      is the false-registration problem this wording avoids.
+                      Worded so it is still true for exempt staff — their
+                      assessed fee is simply zero — and they are told plainly
+                      on the confirmation screen after submitting. */}
                   {feeExempt ? (
-                    <li>No Vehicle Pass fee applies — <strong>{formData.department}</strong> staff
-                      are exempt. Present this application at the <strong>CDSO Office</strong>;
-                      no Official Receipt is required.</li>
+                    <li>To settle the Vehicle Pass fee assessed for your department at the
+                      <strong> Accounting Office</strong>, where one applies, and present the
+                      Official Receipt (OR) at the <strong>CDSO Office</strong>.</li>
                   ) : (
                     <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
                   )}
