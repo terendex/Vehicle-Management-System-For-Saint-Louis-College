@@ -442,6 +442,24 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         n = self._next_cam_number()
         return Response({'cam_number': n, 'name': f'Cam {n}'})
 
+    @action(detail=False, methods=['post'], url_path='detect-rtsp')
+    def detect_rtsp(self, request):
+        """Ask the camera which stream path it answers on.
+
+        Replaces the vendor picker in the add-camera form: which firmware a unit
+        runs is not something the person mounting it should have to know, and
+        the camera can be asked directly.
+        """
+        from . import rtsp_probe
+
+        result = rtsp_probe.detect(
+            ip=request.data.get('ip', ''),
+            device_id=request.data.get('device_id', ''),
+            password=request.data.get('password', ''),
+        )
+        return Response(result, status=(status.HTTP_200_OK if result['ok']
+                                        else status.HTTP_400_BAD_REQUEST))
+
     @action(detail=True, methods=['post'], url_path='ping')
     def ping(self, request, pk=None):
         import socket

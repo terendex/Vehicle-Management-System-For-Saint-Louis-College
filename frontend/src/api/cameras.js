@@ -17,6 +17,12 @@ export const camerasApi = {
     const { data } = await api.patch(`/vehicles/cameras/${id}/`, payload)
     return data
   },
+  // Ask the backend to probe the camera and report its working stream URL,
+  // instead of making the admin identify the vendor.
+  detectRtsp: async ({ ip, device_id, password }) => {
+    const { data } = await api.post('/vehicles/cameras/detect-rtsp/', { ip, device_id, password })
+    return data   // { ok, rtsp_url, format, attempts }
+  },
   remove: async (id) => {
     await api.delete(`/vehicles/cameras/${id}/`)
   },

@@ -877,3 +877,26 @@
 }
 .dm-ptz-zoom-btn:hover  { background: rgba(92, 169, 220, 0.22); color: #8FC4E8; border-color: rgba(92, 169, 220, 0.4); }
 .dm-ptz-zoom-btn:active { background: rgba(92, 169, 220, 0.38); }
+
+/* ── RTSP auto-detection ──────────────────────────────────────────
+   Shown only when probing the camera failed and the admin has to
+   supply the URL by hand. */
+.dm-detect-error {
+  color: #C62828;
+  margin-top: 6px;
+}
+
+.dm-detect-retry {
+  margin-top: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #03396C;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dm-detect-retry:hover { color: #0B5C9C; }
