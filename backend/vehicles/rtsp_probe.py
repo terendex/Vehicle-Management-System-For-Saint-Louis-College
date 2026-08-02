@@ -378,12 +378,13 @@ def _status_of(head: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _read_response(sock) -> str:
-    """Read one whole RTSP response, body included.
+def _read_response(sock) -> tuple[str, str]:
+    """Read one whole RTSP response. Returns (headers, body).
 
-    The body has to be consumed even though nothing reads it: leaving an SDP
-    payload in the socket buffer would desynchronise the next request on a
-    reused connection, and every reply after it would be garbage.
+    The body has to be consumed whether or not the caller wants it: leaving an
+    SDP payload in the socket buffer would desynchronise the next request on a
+    reused connection, and every reply after it would be garbage. It is
+    returned rather than discarded because the SDP names the track to SETUP.
     """
     buf = b''
     while b'\r\n\r\n' not in buf:
@@ -401,8 +402,9 @@ def _read_response(sock) -> str:
             chunk = sock.recv(min(4096, remaining))
             if not chunk:
                 break
+            rest += chunk
             remaining -= len(chunk)
-    return head_s
+    return head_s, rest.decode('utf-8', 'replace')
 
 
 class _RtspSession:
@@ -434,39 +436,52 @@ class _RtspSession:
                 pass
             self.sock = None
 
-    def _send(self, target: str, auth: str = '') -> str:
+    def _send(self, target: str, auth: str = '', method: str = 'DESCRIBE',
+              extra: tuple = ()) -> tuple[str, str]:
         self.cseq += 1
-        lines = [f'DESCRIBE {target} RTSP/1.0',
+        lines = [f'{method} {target} RTSP/1.0',
                  f'CSeq: {self.cseq}',
-                 'Accept: application/sdp',
                  'User-Agent: SLC-VMS']
+        if method == 'DESCRIBE':
+            lines.append('Accept: application/sdp')
+        lines.extend(extra)
         if auth:
             lines.append(f'Authorization: {auth}')
         sock = self._connect()
         sock.sendall(('\r\n'.join(lines) + '\r\n\r\n').encode())
         return _read_response(sock)
 
-    def describe(self, target: str, user: str, pw: str) -> int | None:
+    def request(self, method: str, target: str, user: str, pw: str,
+                extra: tuple = ()) -> tuple[int | None, str, str]:
+        """One request, answering a digest challenge.
+
+        Returns (status, headers, body). Headers come back because SETUP's
+        reply carries the Session id that TEARDOWN needs.
+        """
         for attempt in (1, 2):
             try:
-                head = self._send(target)
+                head, body = self._send(target, method=method, extra=extra)
                 code = _status_of(head)
                 if code == 401 and (user or pw):
                     m = re.search(r'WWW-Authenticate:\s*(.+)', head, re.I)
                     if m:
-                        auth = _auth_header('DESCRIBE', target, user, pw,
+                        auth = _auth_header(method, target, user, pw,
                                             m.group(1).strip())
-                        code = _status_of(self._send(target, auth))
-                return code
+                        head, body = self._send(target, auth, method, extra)
+                        code = _status_of(head)
+                return code, head, body
             except Exception as exc:
                 # The camera closes an idle or completed connection routinely;
                 # one silent reconnect keeps the sweep going. A second failure
                 # means it has genuinely stopped talking.
                 self.close()
                 if attempt == 2:
-                    log.debug('[rtsp-probe] DESCRIBE %s failed: %s', target, exc)
-                    return None
-        return None
+                    log.debug('[rtsp-probe] %s %s failed: %s', method, target, exc)
+                    return None, '', ''
+        return None, '', ''
+
+    def describe(self, target: str, user: str, pw: str) -> int | None:
+        return self.request('DESCRIBE', target, user, pw)[0]
 
 
 def _describe(url: str, timeout: float = DESCRIBE_TIMEOUT_SECONDS,
@@ -502,6 +517,86 @@ def _describe(url: str, timeout: float = DESCRIBE_TIMEOUT_SECONDS,
     finally:
         if own:
             session.close()
+
+
+_CONTROL_RE = re.compile(r'^a=control:(.+)$', re.M)
+
+# Client ports offered in the SETUP probe. Nothing is ever received on them —
+# the session is torn down immediately — but a syntactically real transport
+# line is what makes the camera answer honestly.
+_PROBE_CLIENT_PORTS = '41000-41001'
+
+
+def _track_target(url: str, sdp: str) -> str:
+    """The URL to SETUP, taken from the SDP's own control attribute.
+
+    Guessing `<url>/track1` covers many cameras and quietly misses the ones
+    that name their track differently (`trackID=0`, an absolute URL, …). The
+    camera already said which it uses; this believes it.
+    """
+    for control in (c.strip() for c in _CONTROL_RE.findall(sdp or '')):
+        if not control or control == '*':
+            continue                        # session-level aggregate, not a track
+        if control.startswith('rtsp://'):
+            return control
+        return f"{url.rstrip('/')}/{control.lstrip('/')}"
+    return f"{url.rstrip('/')}/track1"
+
+
+def _streams(url: str, timeout: float = DESCRIBE_TIMEOUT_SECONDS) -> bool:
+    """True when the camera will actually *serve* this path, not merely describe it.
+
+    This is the cheap half of what a decode proves. A camera that answers 200
+    to every DESCRIBE still refuses SETUP on a path it does not really have —
+    measured on the unit this was written for: `/cam/realmonitor` describes 200
+    and sets up 400, while its own `/onvif1` sets up 200. So one extra
+    round-trip sorts the real path from the guesses, at about 300 ms a
+    candidate instead of the ~1.3 s an ffmpeg spawn costs.
+
+    A fresh connection per candidate, deliberately: this firmware poisons its
+    control channel after a rejected SETUP and answers 400 to everything
+    afterwards, so a reused session would report the first failure forever.
+    That costs no more connections than decoding each candidate already did.
+
+    The session is torn down as soon as it is granted — these cameras allow
+    very few, and leaking one is what makes them stop answering.
+    """
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    if not host:
+        return False
+    user = unquote(parsed.username or '')
+    pw   = unquote(parsed.password or '')
+
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+    target = f'rtsp://{host}:{parsed.port or RTSP_PORT}{path}'
+
+    session = _RtspSession(host, parsed.port or RTSP_PORT, timeout)
+    try:
+        code, _, sdp = session.request('DESCRIBE', target, user, pw)
+        if code != 200:
+            return False
+
+        setup_code, head, _ = session.request(
+            'SETUP', _track_target(target, sdp), user, pw,
+            (f'Transport: RTP/AVP;unicast;client_port={_PROBE_CLIENT_PORTS}',))
+        if setup_code != 200:
+            return False
+
+        # Hand the session straight back. Holding it would cost the stream the
+        # slot it is about to need.
+        m = re.search(r'Session:\s*([^;\r\n]+)', head, re.I)
+        if m:
+            session.request('TEARDOWN', target, user, pw,
+                            (f'Session: {m.group(1).strip()}',))
+        return True
+    except Exception as exc:
+        log.debug('[rtsp-probe] SETUP probe %s failed: %s', _redact(url), exc)
+        return False
+    finally:
+        session.close()
 
 
 # Transports to try, in order. TCP first because it survives packet loss, but
@@ -729,10 +824,18 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
             time.sleep(PROBE_PACING_SECONDS)
 
         if not status_meaningful:
-            # Fall back to trying the likeliest URLs for real. Restricting them
-            # to the credential that authenticated keeps this within the handful
-            # of connections such a camera tends to allow.
-            log.info('[rtsp-probe] %s accepts any path — verifying by decode', ip)
+            # Ask each candidate whether the camera will actually serve it, and
+            # decode only the one that says yes.
+            #
+            # This used to decode every candidate in turn. Decoding is the only
+            # honest proof, but it is also by far the most expensive step — an
+            # ffmpeg spawn and a stream negotiation, over a second each — and
+            # spending it on candidates the camera would refuse outright is
+            # what made detection take half a minute and still time out before
+            # reaching this camera's real path. SETUP answers the same question
+            # for the price of one round-trip, so the decode is paid once, on
+            # the winner, instead of once per guess.
+            log.info('[rtsp-probe] %s accepts any path — sorting by SETUP', ip)
             shortlist = [c for c in cands
                          if any(c['url'].startswith(f'rtsp://{p}{ip}')
                                 for p in good_prefixes)][:BLIND_DECODE_LIMIT]
@@ -740,10 +843,15 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
             for cand in shortlist:
                 if time.monotonic() >= deadline:
                     break
+                time.sleep(PROBE_PACING_SECONDS)
+                if not _streams(cand['url']):
+                    attempts.append(f"{_redact(cand['url'])} -> will not stream")
+                    continue
+
                 time.sleep(SLOT_RELEASE_SECONDS)
                 ok = _opens(cand['url'], timeout_s=VERIFY_TIMEOUT_SECONDS)
                 attempts.append(f"{_redact(cand['url'])} -> "
-                                f"{'decoded' if ok else 'no video'}")
+                                f"{'decoded' if ok else 'streams but no video'}")
                 if ok:
                     log.info('[rtsp-probe] %s matched %s by decode', ip, cand['format'])
                     return {'ok': True, 'rtsp_url': cand['url'],

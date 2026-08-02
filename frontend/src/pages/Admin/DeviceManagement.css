@@ -443,9 +443,27 @@
 
 .dm-feed-canvas {
   width: 100%;
+  /* height:auto keeps the canvas at its own aspect ratio. Without it the
+     element takes its pixel height from the height attribute, so a tall frame
+     — a dual-lens camera's 1920x2160, say — rendered metres deep in the card. */
+  height: auto;
   display: block;
   min-height: 200px;
   object-fit: contain;
+}
+
+/* Which half of a dual-lens frame this viewport is showing. */
+.dm-feed-lens {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #0F2A47;
+  border: 1px solid #1D4A73;
+  color: #9FC6E3;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dm-feed-overlay {

@@ -11,6 +11,9 @@ const TRACK_COLORS = {
 const VEHICLE_TYPE_LABELS = { motorcycle: 'Motorcycle' }
 const LERP = 0.25
 
+// Canvas key for "draw the entire frame", as opposed to a numbered slice of it.
+const FULL_FRAME = 'full'
+
 // Auto-reconnect backoff after an unexpected disconnect. A flat 3 s retry
 // hammered a camera that was simply down — every attempt costs the backend an
 // RTSP open (up to 10 s each) and popped another toast, so an unreachable
@@ -32,6 +35,11 @@ export function CameraProvider({ children }) {
   const [results, setResults] = useState([])
   const [flash,   setFlash]   = useState(false)
 
+  // camId → how many views are packed into one frame (1 for an ordinary
+  // camera, 2 for a dual-lens unit). State, not a ref, because pages render a
+  // viewport per view and have to re-render when the answer changes.
+  const [paneCounts, setPaneCounts] = useState({})
+
   // Mutable refs — never cause re-renders, survive page navigation
   const wsMap     = useRef({})
   const canvasMap = useRef({})
@@ -39,6 +47,7 @@ export function CameraProvider({ children }) {
   const trackMap  = useRef({})
   const smoothMap = useRef({})
   const rafMap    = useRef({})
+  const paneCountMap = useRef({}) // id → pane count, mirrors paneCounts inside the RAF loop
   const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
   const gateMap   = useRef({}) // id → gate_id the camera covers (used to tag scan logs)
   const retryMap  = useRef({}) // id → consecutive failed attempts (drives backoff)
@@ -52,9 +61,24 @@ export function CameraProvider({ children }) {
   const connectRef = useRef(null)
 
   // ── Canvas registration (pages call this on mount/unmount) ───────────────
-  const registerCanvas = useCallback((camId, el) => {
-    if (el) canvasMap.current[camId] = el
-    else    delete canvasMap.current[camId]
+  // A camera may need more than one canvas. A dual-lens unit sends both of its
+  // views stacked inside a single frame — one RTSP stream, one JPEG, two
+  // pictures — so the split is a matter of which slice each canvas draws, not
+  // of opening a second connection.
+  //
+  // Omitting `pane` means "the whole frame", and that is what every caller
+  // that has not opted in gets. Defaulting it to 0 instead would have quietly
+  // cropped every other page in the app to the top half of a dual-lens feed,
+  // hiding the second view on screens that only ever register one canvas.
+  const registerCanvas = useCallback((camId, el, pane) => {
+    const key = pane == null ? FULL_FRAME : String(pane)
+    const panes = canvasMap.current[camId] ?? (canvasMap.current[camId] = {})
+    if (el) {
+      panes[key] = el
+    } else {
+      delete panes[key]
+      if (Object.keys(panes).length === 0) delete canvasMap.current[camId]
+    }
   }, [])
 
   // ── 60-fps render loop (keeps running even when canvas is unregistered) ──
@@ -64,46 +88,85 @@ export function CameraProvider({ children }) {
     if (!smoothMap.current[camId]) smoothMap.current[camId] = new Map()
 
     const draw = () => {
-      const canvas = canvasMap.current[camId]
+      const panes = canvasMap.current[camId]
       // No canvas registered (page navigated away) — keep looping, draw when back
-      if (!canvas) { rafMap.current[camId] = requestAnimationFrame(draw); return }
-
-      const img = frameMap.current[camId]
-      const vw  = img?.naturalWidth  || canvas.clientWidth  || 1280
-      const vh  = img?.naturalHeight || canvas.clientHeight || 720
-      if (canvas.width !== vw)  canvas.width  = vw
-      if (canvas.height !== vh) canvas.height = vh
-
-      const ctx = canvas.getContext('2d')
-      ctx.clearRect(0, 0, vw, vh)
-
-      if (img && img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, 0, 0, vw, vh)
-      } else {
-        ctx.fillStyle = '#04121F'
-        ctx.fillRect(0, 0, vw, vh)
+      if (!panes || Object.keys(panes).length === 0) {
+        rafMap.current[camId] = requestAnimationFrame(draw); return
       }
+
+      const img   = frameMap.current[camId]
+      const ready = Boolean(img && img.complete && img.naturalWidth > 0)
+
+      // How many pictures are inside this one frame. A dual-lens unit stacks
+      // its two views vertically, which makes the frame taller than it is wide
+      // — 1920x2160 for the camera this was written for. No ordinary camera
+      // sends a portrait frame, so the shape is the tell.
+      const count = ready && img.naturalHeight > img.naturalWidth ? 2 : 1
+      if (ready && paneCountMap.current[camId] !== count) {
+        paneCountMap.current[camId] = count
+        setPaneCounts(prev => ({ ...prev, [camId]: count }))
+      }
+
+      const fw = img?.naturalWidth  || 1280           // full frame, both views
+      const fh = img?.naturalHeight || 720
+      // Floored: a canvas height attribute is an integer, and letting the
+      // browser truncate it instead would drift the second view's offset.
+      const sh = Math.floor(fh / count)                // one view's height
 
       const targets = trackMap.current[camId]  || new Map()
       const smooth  = smoothMap.current[camId] || new Map()
 
       for (const tid of smooth.keys()) if (!targets.has(tid)) smooth.delete(tid)
 
-      if (targets.size > 0) {
+      // Smoothing is advanced once per frame, in full-frame pixels, before any
+      // pane is drawn. Doing it inside the pane loop would step the same track
+      // twice per frame on a split camera and make the boxes race ahead.
+      for (const [tid, track] of targets) {
+        const tx1 = track.bbox[0] * fw, ty1 = track.bbox[1] * fh
+        const tx2 = track.bbox[2] * fw, ty2 = track.bbox[3] * fh
+        if (!smooth.has(tid)) smooth.set(tid, { x1: tx1, y1: ty1, x2: tx2, y2: ty2 })
+        const s = smooth.get(tid)
+        s.x1 += (tx1 - s.x1) * LERP; s.y1 += (ty1 - s.y1) * LERP
+        s.x2 += (tx2 - s.x2) * LERP; s.y2 += (ty2 - s.y2) * LERP
+      }
+
+      for (const [key, canvas] of Object.entries(panes)) {
+        // A viewport that asked for the whole frame gets it, stacked views and
+        // all — only the ones that named a pane are cropped to it.
+        const whole = key === FULL_FRAME
+        const pane  = whole ? 0 : Math.min(Number(key), count - 1)
+        const ch    = whole ? fh : sh                  // this canvas's height
+        const sy    = whole ? 0  : pane * sh           // top of this view
+
+        if (canvas.width !== fw) canvas.width  = fw
+        if (canvas.height !== ch) canvas.height = ch
+
+        const ctx = canvas.getContext('2d')
+        ctx.clearRect(0, 0, fw, ch)
+
+        if (ready) {
+          ctx.drawImage(img, 0, sy, fw, ch, 0, 0, fw, ch)
+        } else {
+          ctx.fillStyle = '#04121F'
+          ctx.fillRect(0, 0, fw, ch)
+        }
+
+        if (targets.size === 0) continue
+
         ctx.font = "12px 'Courier New', monospace"
         ctx.textBaseline = 'top'
         ctx.textAlign    = 'left'
 
         for (const [tid, track] of targets) {
-          const tx1 = track.bbox[0] * vw, ty1 = track.bbox[1] * vh
-          const tx2 = track.bbox[2] * vw, ty2 = track.bbox[3] * vh
-
-          if (!smooth.has(tid)) smooth.set(tid, { x1: tx1, y1: ty1, x2: tx2, y2: ty2 })
           const s = smooth.get(tid)
-          s.x1 += (tx1 - s.x1) * LERP; s.y1 += (ty1 - s.y1) * LERP
-          s.x2 += (tx2 - s.x2) * LERP; s.y2 += (ty2 - s.y2) * LERP
+          if (!s) continue
 
-          const px = s.x1, py = s.y1, pw = s.x2 - s.x1, ph = s.y2 - s.y1
+          // Track coordinates are relative to the whole frame; shift them into
+          // this view and skip anything belonging to the other one.
+          const py = s.y1 - sy, ph = s.y2 - s.y1
+          if (py + ph <= 0 || py >= ch) continue
+
+          const px = s.x1, pw = s.x2 - s.x1
           const color = trackColor(track)
 
           ctx.strokeStyle = color
@@ -134,11 +197,19 @@ export function CameraProvider({ children }) {
       cancelAnimationFrame(rafMap.current[camId])
       delete rafMap.current[camId]
     }
-    const canvas = canvasMap.current[camId]
-    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+    for (const canvas of Object.values(canvasMap.current[camId] ?? {})) {
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+    }
     delete frameMap.current[camId]
     delete trackMap.current[camId]
     delete smoothMap.current[camId]
+    delete paneCountMap.current[camId]
+    setPaneCounts(prev => {
+      if (!(camId in prev)) return prev
+      const next = { ...prev }
+      delete next[camId]
+      return next
+    })
   }, [])
 
   // ── Reconnect with backoff ────────────────────────────────────────────────
@@ -387,9 +458,11 @@ export function CameraProvider({ children }) {
     detectMap.current  = {}
     gateMap.current    = {}
     urlToIdMap.current = {}
+    paneCountMap.current = {}
     setCameras([])
     setResults([])
     setFlash(false)
+    setPaneCounts({})
   }, [])
 
   // Cleanup only on true app unmount (browser tab close / hard logout)
@@ -409,6 +482,7 @@ export function CameraProvider({ children }) {
       results,
       flash,
       registerCanvas,
+      paneCounts,
     }}>
       {children}
     </CameraContext.Provider>

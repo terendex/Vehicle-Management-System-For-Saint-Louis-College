@@ -413,7 +413,13 @@ export default function DeviceManagement() {
     removeCamera:   disconnectCamera,
     disconnectAll,
     registerCanvas,
+    paneCounts,
   } = useCameraContext()
+
+  // Viewports on screen, which is not the number of cameras: a dual-lens unit
+  // contributes two. The grid drops to one column only for a genuinely single
+  // tile, so a split camera still gets its two views side by side.
+  const feedTileCount = streamCams.reduce((n, sc) => n + (paneCounts[sc.id] ?? 1), 0)
 
   // Match a DB camera to its stream instance by name
   const getStreamCam    = (dbCam) => streamCams.find(c => c.name === dbCam.name)
@@ -644,38 +650,48 @@ export default function DeviceManagement() {
               <p className="dm-feeds-empty-sub">Click Connect on a camera above to view its live RTSP feed here.</p>
             </div>
           ) : (
-            <div className={`dm-feeds-grid${streamCams.length === 1 ? ' dm-feeds-grid-single' : ''}`}>
-              {streamCams.map(sc => {
+            <div className={`dm-feeds-grid${feedTileCount === 1 ? ' dm-feeds-grid-single' : ''}`}>
+              {streamCams.flatMap(sc => {
                 const dbCam = cameras.find(c => c.name === sc.name)
                 const dotCls = sc.streamConnected ? 'live' : sc.wsActive ? 'connecting' : 'offline'
-                return (
-                  <div key={sc.id} className="dm-feed-card">
+                // A dual-lens camera sends both views inside one frame, so it
+                // gets one viewport per view. The controls below act on the
+                // device, not the view, so they stay on the first tile only —
+                // two Disconnect buttons for one camera would just be a trap.
+                const lenses = paneCounts[sc.id] ?? 1
+                return Array.from({ length: lenses }, (_, pane) => (
+                  <div key={`${sc.id}:${pane}`} className="dm-feed-card">
                     <div className="dm-feed-header">
                       <span className="dm-feed-name">
                         <span className={`dm-feed-dot ${dotCls}`} />
                         {sc.name}
+                        {lenses > 1 && <span className="dm-feed-lens">Lens {pane + 1}</span>}
                       </span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {dbCam && <AssignmentBadge value={dbCam.assignment} gateId={dbCam?.gate_id} />}
-                        <button
-                          className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
-                          onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
-                          title="PTZ Controls"
-                        >
-                          <Move size={13} />
-                        </button>
-                        <button
-                          className="dm-feed-disconnect"
-                          onClick={() => disconnectCamera(sc.id)}
-                          title="Disconnect"
-                        >
-                          <WifiOff size={13} />
-                        </button>
+                        {pane === 0 && (
+                          <>
+                            <button
+                              className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
+                              onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
+                              title="PTZ Controls"
+                            >
+                              <Move size={13} />
+                            </button>
+                            <button
+                              className="dm-feed-disconnect"
+                              onClick={() => disconnectCamera(sc.id)}
+                              title="Disconnect"
+                            >
+                              <WifiOff size={13} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="dm-feed-viewport">
                       <canvas
-                        ref={el => registerCanvas(sc.id, el)}
+                        ref={el => registerCanvas(sc.id, el, pane)}
                         className="dm-feed-canvas"
                       />
                       {!sc.streamConnected && (
@@ -693,7 +709,7 @@ export default function DeviceManagement() {
                           )}
                         </div>
                       )}
-                      {ptzActive[sc.id] && (
+                      {pane === 0 && ptzActive[sc.id] && (
                         <div className="dm-ptz-overlay">
                           <div className="dm-ptz-panel">
                             <span className="dm-ptz-label">PTZ</span>
@@ -739,7 +755,7 @@ export default function DeviceManagement() {
                       )}
                     </div>
                   </div>
-                )
+                ))
               })}
             </div>
           )}

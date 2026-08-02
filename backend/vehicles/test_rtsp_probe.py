@@ -458,9 +458,45 @@ class AcceptsAnythingFirmwareTests(TestCase):
     """
     REAL = 'rtsp://admin:pw@10.0.0.5/cam/realmonitor?channel=1&subtype=0'
 
+    def setUp(self):
+        # Detection now asks SETUP whether a candidate will really stream
+        # before paying for a decode. These tests are about what happens after
+        # that gate, so it stands open by default and each one drives the
+        # outcome through `_opens`, as they did when decoding was the only
+        # check. Without this the gate would reach for the network.
+        # `test_the_gate_spends_only_one_decode` closes it on purpose.
+        patcher = patch.object(rtsp_probe, '_streams', return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _always_200(self, url, *a, **k):
         # Only `admin` authenticates, exactly like the camera in question.
         return 200 if url.startswith('rtsp://admin:pw@') else 400
+
+    def test_the_gate_spends_only_one_decode(self):
+        """The point of the SETUP gate: decode the winner, not every guess.
+
+        Fourteen wrong paths used to cost fourteen ffmpeg spawns before this
+        camera's real one came up, which is what pushed detection past its
+        budget. SETUP answers the same question for a round-trip, so `_opens`
+        should be reached exactly once.
+        """
+        opened = []
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_streams',
+                          side_effect=lambda u, *a, **k: u == self.REAL), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: opened.append(u) or True):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], self.REAL)
+        self.assertEqual(opened, [self.REAL],
+                         f'decoded more than the winner: {opened}')
 
     def test_the_real_url_is_found_by_decoding_when_status_means_nothing(self):
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
