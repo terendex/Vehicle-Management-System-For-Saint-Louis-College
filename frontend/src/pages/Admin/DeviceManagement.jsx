@@ -26,6 +26,20 @@ const DAHUA_RE = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/cam\/realmonitor\?channel=\d+&s
 const HIK_RE   = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/Streaming\/Channels\/\d+/
 const KNOWN_PATH_RE = /\/(stream1|live|h264|11)$/
 
+// Channel number encoded in a saved stream URL, so the edit modal opens on the
+// right one. Dahua puts it in a query string, Hikvision folds it into the
+// channel number (201 = channel 2), others use /chNN/ or a trailing digit.
+function channelOf(rtspUrl) {
+  if (!rtspUrl) return 1
+  const dahua = /[?&]channel=(\d+)/.exec(rtspUrl)
+  if (dahua) return Number(dahua[1])
+  const hik = /\/Streaming\/Channels\/(\d)0\d/.exec(rtspUrl)
+  if (hik) return Number(hik[1])
+  const ch = /\/ch(\d+)\//.exec(rtspUrl)
+  if (ch) return Number(ch[1])
+  return 1
+}
+
 function detectFormat(rtspUrl) {
   const auto = { id: 'auto' }
   if (!rtspUrl) return auto
@@ -85,6 +99,9 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   // IMOU/Dahua units refuse RTSP without it. Optional, so a genuinely open
   // camera can still be added without inventing a credential.
   const [password,   setPassword]   = useState(camera?.password   ?? '')
+  // One IP can host several cameras (an NVR, or a multi-lens unit); the channel
+  // number is what tells them apart inside the RTSP path.
+  const [channel,    setChannel]    = useState(String(channelOf(camera?.rtsp_url) || 1))
   const [showPw,     setShowPw]     = useState(false)
   // The vendor picker is gone — the backend probes the camera and finds the
   // stream path itself. These only come into play when that fails, or when a
@@ -109,13 +126,15 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       .catch(() => {})
   }, [])
 
-  // Live duplicate check — warns as soon as the IP/Device ID matches an existing camera
-  const ipDupe = cameras.find(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
-  const deviceIdDupe = cameras.find(c => c.id !== camera?.id && deviceId.trim() && c.device_id === deviceId.trim())
+  // Another camera on the same IP is normal for an NVR, so this is a note, not
+  // a block. Only a duplicate *stream* is rejected, and the backend does that.
+  const sameDevice = cameras.filter(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
+  const ipDupe = null
+  const deviceIdDupe = null
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!ip.trim() || !deviceId.trim()) {
+    if (!ip.trim() || !deviceId.trim() || !password.trim()) {
       toast.error('Please fill in all fields.')
       return
     }
@@ -131,18 +150,9 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       toast.error('Please select a gate for this entry camera.')
       return
     }
-    // Instant duplicate check against the loaded list (backend re-validates)
-    const others = cameras.filter(c => !isEdit || c.id !== camera.id)
-    const ipDup  = others.find(c => (c.ip || '').trim() === ip.trim())
-    if (ipDup) {
-      toast.error(`${ipDup.name} already uses this IP address.`)
-      return
-    }
-    const idDup = others.find(c => (c.device_id || '').trim() === deviceId.trim())
-    if (idDup) {
-      toast.error(`${idDup.name} already uses this Device ID.`)
-      return
-    }
+    // No IP/Device-ID duplicate check: several cameras legitimately share one
+    // device. The backend rejects a duplicate stream URL, which is the real
+    // identity of a camera.
     setSaving(true)
     try {
       // Ask the camera which stream path it answers on, rather than asking the
@@ -156,6 +166,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
         try {
           const found = await camerasApi.detectRtsp({
             ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(),
+            channel: Number(channel) || 1,
           })
           rtspUrl = found.rtsp_url
           setDetectedFormat(found.format)
@@ -234,14 +245,35 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
             </div>
 
             <div className="form-group">
-              <label className="form-label">Password</label>
+              <label className="form-label">Channel</label>
+              <input
+                className="form-input"
+                type="number"
+                min="1"
+                max="32"
+                value={channel}
+                onChange={(e) => setChannel(e.target.value)}
+              />
+              <p className="dm-gate-hint">
+                1 for a normal camera. Use 2, 3… for extra cameras on the same
+                device (an NVR or multi-lens unit).
+                {sameDevice.length > 0 && (
+                  <> This IP already has {sameDevice.length} camera
+                  {sameDevice.length > 1 ? 's' : ''}: {sameDevice.map(c => c.name).join(', ')}.</>
+                )}
+              </p>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password <span className="required">*</span></label>
               <div className="dm-input-group">
                 <input
                   className="form-input"
                   type={showPw ? 'text' : 'password'}
-                  placeholder="Camera password (leave blank if none)"
+                  placeholder="Camera password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  required
                 />
                 <button type="button" className="dm-pw-addon" onClick={() => setShowPw(p => !p)}>
                   {showPw ? <EyeOff size={15} /> : <Eye size={15} />}

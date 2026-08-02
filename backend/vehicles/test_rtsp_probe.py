@@ -177,8 +177,8 @@ class DetectEndpointTests(APITestCase):
         every credential-less path."""
         seen = {}
 
-        def fake_detect(ip, device_id, password=''):
-            seen.update(ip=ip, device_id=device_id, password=password)
+        def fake_detect(ip, device_id, password='', channel=1):
+            seen.update(ip=ip, device_id=device_id, password=password, channel=channel)
             return {'ok': True, 'rtsp_url': 'rtsp://x', 'format': 'dahua', 'attempts': []}
 
         self.client.force_authenticate(self.admin)

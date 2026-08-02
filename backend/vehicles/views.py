@@ -497,10 +497,16 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         """
         from . import rtsp_probe
 
+        try:
+            channel = int(request.data.get('channel') or 1)
+        except (TypeError, ValueError):
+            channel = 1
+
         result = rtsp_probe.detect(
             ip=request.data.get('ip', ''),
             device_id=request.data.get('device_id', ''),
             password=request.data.get('password', ''),
+            channel=channel,
         )
         return Response(result, status=(status.HTTP_200_OK if result['ok']
                                         else status.HTTP_400_BAD_REQUEST))

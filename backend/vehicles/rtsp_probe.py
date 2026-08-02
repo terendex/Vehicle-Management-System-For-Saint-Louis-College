@@ -34,29 +34,49 @@ TOTAL_BUDGET_SECONDS = 25
 CONNECT_TIMEOUT_SECONDS = 3
 
 
-PATHS = [
-    ('generic',   '/stream1'),
-    ('dahua',     '/cam/realmonitor?channel=1&subtype=0'),
-    # Sub-stream. Several IMOU units only serve the main stream to one client
-    # at a time, so subtype=1 succeeds where subtype=0 is refused as busy.
-    ('dahua',     '/cam/realmonitor?channel=1&subtype=1'),
-    ('hikvision', '/Streaming/Channels/101'),
-    ('hikvision', '/Streaming/Channels/102'),        # sub-stream
-    # Seen on ONVIF-generic and several budget units.
-    ('generic',   '/live'),
-    ('generic',   '/live/ch0'),
-    ('generic',   '/h264'),
-    ('generic',   '/h264_stream'),
-    ('generic',   '/11'),
-    ('generic',   '/12'),
-    ('generic',   '/onvif1'),
-    ('generic',   '/video1'),
-    ('generic',   '/ch01/0'),
-    ('generic',   '/'),                              # some serve the default track
-]
+def paths_for(channel: int = 1) -> list[tuple[str, str]]:
+    """Stream paths to try for one channel of a device.
+
+    A single IP can host several cameras — an NVR, or a multi-lens unit — and
+    they are distinguished only by the channel number inside the path. Channel 1
+    is an ordinary standalone camera; 2+ are the extra views behind the same
+    address.
+    """
+    ch = max(1, int(channel or 1))
+
+    paths = [
+        ('dahua',     f'/cam/realmonitor?channel={ch}&subtype=0'),
+        # Sub-stream. Several IMOU units only serve the main stream to one
+        # client at a time, so subtype=1 succeeds where subtype=0 is refused
+        # as busy.
+        ('dahua',     f'/cam/realmonitor?channel={ch}&subtype=1'),
+        # Hikvision encodes channel and stream as one number: 101, 201, 301…
+        ('hikvision', f'/Streaming/Channels/{ch}01'),
+        ('hikvision', f'/Streaming/Channels/{ch}02'),   # sub-stream
+        ('generic',   f'/live/ch{ch - 1}'),
+        ('generic',   f'/ch{ch:02d}/0'),
+        ('generic',   f'/onvif{ch}'),
+        ('generic',   f'/video{ch}'),
+        ('generic',   f'/{ch}1'),
+        ('generic',   f'/{ch}2'),
+    ]
+
+    if ch == 1:
+        # Single-camera shortcuts, meaningless for channel 2+ because they
+        # carry no channel number and would just return channel 1 again.
+        paths = [
+            ('generic',   '/stream1'),
+            *paths,
+            ('generic',   '/live'),
+            ('generic',   '/h264'),
+            ('generic',   '/h264_stream'),
+            ('generic',   '/'),          # some serve the default track
+        ]
+    return paths
 
 
-def candidate_urls(ip: str, device_id: str, password: str = '') -> list[dict]:
+def candidate_urls(ip: str, device_id: str, password: str = '',
+                   channel: int = 1) -> list[dict]:
     """Candidate RTSP URLs for this camera, most likely first.
 
     With a password, the credentialed forms come first — an IMOU/Dahua unit
@@ -81,7 +101,7 @@ def candidate_urls(ip: str, device_id: str, password: str = '') -> list[dict]:
 
     out = []
     for prefix in prefixes:
-        for fmt, path in PATHS:
+        for fmt, path in paths_for(channel):
             out.append({'format': fmt, 'url': f"rtsp://{prefix}{ip}{path}"})
     return out
 
@@ -141,7 +161,7 @@ def _redact(url: str) -> str:
     return f"{scheme}://{user}:***@{host}"
 
 
-def detect(ip: str, device_id: str, password: str = '') -> dict:
+def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dict:
     """Find the working RTSP URL for this camera.
 
     Returns {'ok': True, 'rtsp_url', 'format', 'attempts'} on success, or
@@ -158,13 +178,13 @@ def detect(ip: str, device_id: str, password: str = '') -> dict:
             'ok': False,
             'error': (f'Nothing is answering on {ip}:{RTSP_PORT}. Check the camera is '
                       f'powered on and that this machine is on the same network.'),
-            'suggestion': suggestion_for(ip, device_id, password),
+            'suggestion': suggestion_for(ip, device_id, password, channel),
             'attempts': [],
         }
 
     attempts = []
     deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
-    for cand in candidate_urls(ip, device_id, password):
+    for cand in candidate_urls(ip, device_id, password, channel):
         if time.monotonic() >= deadline:
             log.info('[rtsp-probe] %s gave up after %d attempts (budget reached)',
                      ip, len(attempts))
@@ -189,12 +209,13 @@ def detect(ip: str, device_id: str, password: str = '') -> dict:
                   'The device ID or password may be wrong, or this model uses a path '
                   'we do not know yet. The URL below is a best guess - correct it '
                   'if needed and save.'),
-        'suggestion': suggestion_for(ip, device_id, password),
+        'suggestion': suggestion_for(ip, device_id, password, channel),
         'attempts': attempts,
     }
 
 
-def suggestion_for(ip: str, device_id: str, password: str = '') -> str:
+def suggestion_for(ip: str, device_id: str, password: str = '',
+                   channel: int = 1) -> str:
     """Best-guess RTSP URL, used to prefill the manual field when probing fails.
 
     Dahua/IMOU shape with the device ID as the username: those units are the
@@ -205,4 +226,5 @@ def suggestion_for(ip: str, device_id: str, password: str = '') -> str:
     ip = (ip or '').strip()
     dev = quote((device_id or '').strip(), safe='') or 'admin'
     pw = quote((password or '').strip(), safe='') or 'PASSWORD'
-    return f"rtsp://{dev}:{pw}@{ip}/cam/realmonitor?channel=1&subtype=0"
+    ch = max(1, int(channel or 1))
+    return f"rtsp://{dev}:{pw}@{ip}/cam/realmonitor?channel={ch}&subtype=0"

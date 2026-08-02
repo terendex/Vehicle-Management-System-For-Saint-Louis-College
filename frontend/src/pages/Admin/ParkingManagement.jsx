@@ -534,7 +534,10 @@ export default function ParkingManagement({ embedded = false }) {
             <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
             </button>
-            {mode === 'live' && (
+            {/* The panel this toggles lives inside the selected zone, so with no
+                zone the button did nothing at all — it advertised a camera count
+                and then swallowed the click. */}
+            {mode === 'live' && selZone && (
               <button
                 className={`pm-btn ${showCamPanel ? 'pm-btn--camera-on' : 'pm-btn--outline'}`}
                 onClick={() => setShowCamPanel(p => !p)}
