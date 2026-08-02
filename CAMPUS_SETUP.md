@@ -27,42 +27,46 @@ The campus half runs on hardware you already own, so it adds no hosting cost.
 **1. Pick the machine.** Any campus PC that can reach the cameras. If it has the
 RTX 3060, detection runs on the GPU and is markedly faster.
 
-**2. Clone and install** (skip if the repo is already there):
+**2. Clone and start.** There is no separate install or configure step — the
+script does both:
 
 ```powershell
 git clone https://github.com/terendex/Vehicle-Management-System-For-Saint-Louis-College.git
 cd Vehicle-Management-System-For-Saint-Louis-College
-python -m venv backend\venv
-backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+powershell -ExecutionPolicy Bypass -File scripts\run-campus.ps1
 ```
 
-**3. Configure.** Copy the template and fill in the marked values:
-
-```powershell
-copy backend\.env.campus.example backend\.env
-notepad backend\.env
-```
-
-Three of them matter most:
+On first run it creates `backend\venv`, installs the requirements, writes
+`backend\.env` from the campus template, and prompts once for the values it
+cannot derive. Copy each from Railway:
 
 - `SECRET_KEY` — must be **byte-identical** to Railway's. JWTs are signed with
   it, so a mismatch means a token issued by one half is rejected by the other.
 - `DATABASE_URL` — the same Neon string. This is what makes the two halves one
   system rather than two.
-- `ALLOWED_HOSTS` / `FRONTEND_URL` / `BACKEND_URL` — this machine's LAN IP. Give
-  it a static IP or a DHCP reservation, or guards will chase a moving address.
+- the five `R2_*` values — the same bucket, so evidence photos uploaded by one
+  half are served by the other.
 
-**4. Start it:**
+`-Reconfigure` re-asks those questions later.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run-campus.ps1
-```
+**You are not asked for the addresses.** `ALLOWED_HOSTS`, `FRONTEND_URL`,
+`BACKEND_URL` and `CSRF_TRUSTED_ORIGINS` are derived from this machine's LAN
+address on every run and passed through the environment, which python-dotenv
+lets win over `.env`. A new DHCP lease therefore needs no edit — though a static
+IP or a DHCP reservation is still worth having so guards are not chasing a
+moving address in their browser history.
 
-The script pings both cameras first and warns if either is unreachable, builds
-the React bundle, collects static files, and serves on `0.0.0.0:8000`. It prints
-the LAN URL for guards. Use `-SkipFrontend` on later runs to skip the rebuild.
+`RUN_MIGRATIONS=false` and `SECURE_SSL_REDIRECT=false` are forced the same way,
+so this half can never migrate the shared schema and never redirect a plain-HTTP
+LAN request into a loop.
 
-**5. Allow the port through the firewall** (once, as Administrator):
+The script then pings every camera registered in the database and warns about
+any that are unreachable, builds the React bundle **only if the sources changed**
+since the last build, collects static files, and serves on `0.0.0.0:8000`. It
+prints the LAN URL for guards. `-SkipFrontend` skips the build check entirely;
+`-Rebuild` forces one.
+
+**3. Allow the port through the firewall** (once, as Administrator):
 
 ```powershell
 New-NetFirewallRule -DisplayName "SLC VMS" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
@@ -202,12 +206,18 @@ matter what the config claims.
 
 ## Troubleshooting
 
-**"NO ROUTE" warning at startup** — the machine is not on the camera network, or
-the cameras are off. Live scanning will not work until `ping 192.168.137.83`
-succeeds.
+**"NO ROUTE" warning at startup** — the machine is not on the camera network,
+or the cameras are off. The warning names the camera and its address, read from
+the database, so `ping <that address>` is the next step. Everything except live
+camera scanning still works meanwhile.
 
-**Guards get "Bad Request (400)"** — the address they typed is not in
-`ALLOWED_HOSTS`. Add the exact IP or hostname and restart.
+**"could not read the camera list"** — the database is unreachable from here.
+Check `DATABASE_URL`; the same failure would stop the app itself from starting.
+
+**Guards get "Bad Request (400)"** — they typed an address the server does not
+answer to. The script puts this machine's detected LAN address in
+`ALLOWED_HOSTS` automatically, so this usually means they used an old address
+after the IP changed: use the one the script prints at startup.
 
 **Guards cannot reach the machine at all** — firewall rule missing (step 5), or
 the machine's IP changed. Check with `ipconfig`.

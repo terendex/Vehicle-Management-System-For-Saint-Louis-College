@@ -453,14 +453,24 @@ half is worth having.
 | **[DEPLOY.md](DEPLOY.md)** | Railway: Railpack build, env vars, region, what to watch in the build log |
 | **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)** | On-site instance: config, `run-campus.ps1`, scheduled maintenance |
 
-Quick start for the campus half, on a PC that can reach the cameras:
+Quick start for the campus half, on a PC that can reach the cameras — clone the
+repo, then:
 
 ```powershell
-copy backend\.env.campus.example backend\.env   # fill in the marked values
 powershell -ExecutionPolicy Bypass -File scripts\run-campus.ps1
 ```
 
-The script pings both cameras, builds the frontend, and serves on the LAN.
+That is the whole setup. On first run the script creates the virtualenv,
+installs dependencies, writes `backend\.env` from the campus template, and asks
+once for the values it cannot work out — `SECRET_KEY`, `DATABASE_URL` and the R2
+keys, all copied from Railway. Re-run it any time; use `-Reconfigure` to change
+those answers.
+
+Everything else it derives on every run: this machine's LAN address (so a new
+DHCP lease never means editing a file), `RUN_MIGRATIONS=false` so the campus
+half can never migrate the shared schema, and a reachability ping against the
+cameras actually registered in the database. The React bundle is rebuilt only
+when the sources changed, and `npm ci` runs only when the lockfile moved.
 
 ### Things that differ from local development
 
