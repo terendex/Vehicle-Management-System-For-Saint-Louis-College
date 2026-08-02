@@ -13,6 +13,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from .gate_frames import set_latest_gate_frame
 from .ml.detection import detect_plates, is_gpu_available
+from vehicles.lens_layout import detect_across_lenses
 from .ml.database import save_record as db_save_record
 from .ml.proximity_tracker import ProximityTracker
 from .ml.reader import _ocr_crop
@@ -1623,7 +1624,15 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         plate_tracks = [t for t in self._tracker.tracks.values()
                         if t.class_name == "license_plate"]
         all_plates_locked = bool(plate_tracks) and all(t.ocr_done for t in plate_tracks)
-        detections = detect_plates(img, try_rotation=not all_plates_locked)
+        # Per lens on a multi-lens camera — a plate occupies a few dozen pixels
+        # and halving its scene's height to stack a second view under it is
+        # exactly the kind of framing OCR loses. Detections come back in
+        # full-frame coordinates, so the tracker and the browser overlay below
+        # are unaffected. Only this RTSP path splits; ScanLiveConsumer's frames
+        # come from a phone or webcam, where "taller than wide" means someone
+        # is holding the thing upright, not that there are two pictures in it.
+        detections = detect_across_lenses(img, detect_plates,
+                                          try_rotation=not all_plates_locked)
 
         out = []
         for i, det in enumerate(detections):

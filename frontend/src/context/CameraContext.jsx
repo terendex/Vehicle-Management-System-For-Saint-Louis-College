@@ -14,6 +14,28 @@ const LERP = 0.25
 // Canvas key for "draw the entire frame", as opposed to a numbered slice of it.
 const FULL_FRAME = 'full'
 
+// How many pictures are packed into one frame. A dual-lens camera stacks two
+// views vertically rather than opening a second stream.
+//
+// This must stay identical to lens_count() in backend/vehicles/lens_layout.py:
+// the backend splits detection the same way and returns boxes in full-frame
+// coordinates, so if the two disagree the overlays stop matching the picture.
+//
+//   1920x2160 -> two 1920x1080 views       (1.78)  split
+//    864x976  -> two  864x488  views       (1.77)  split
+//    960x1280 -> ambiguous, so left whole  (1.50)  leave alone
+//   1080x1920 -> a portrait-mounted camera (1.13)  leave alone
+//
+// Deliberately biased against splitting: not splitting a stacked camera looks
+// exactly like the old behaviour, while splitting an upright one silently
+// hides half its picture.
+const MIN_HALF_ASPECT = 1.6
+
+function lensCount(w, h) {
+  if (!w || !h || h <= w) return 1
+  return w / (h / 2) >= MIN_HALF_ASPECT ? 2 : 1
+}
+
 // Auto-reconnect backoff after an unexpected disconnect. A flat 3 s retry
 // hammered a camera that was simply down — every attempt costs the backend an
 // RTSP open (up to 10 s each) and popped another toast, so an unreachable
@@ -97,11 +119,8 @@ export function CameraProvider({ children }) {
       const img   = frameMap.current[camId]
       const ready = Boolean(img && img.complete && img.naturalWidth > 0)
 
-      // How many pictures are inside this one frame. A dual-lens unit stacks
-      // its two views vertically, which makes the frame taller than it is wide
-      // — 1920x2160 for the camera this was written for. No ordinary camera
-      // sends a portrait frame, so the shape is the tell.
-      const count = ready && img.naturalHeight > img.naturalWidth ? 2 : 1
+      // How many pictures are inside this one frame — see lensCount above.
+      const count = ready ? lensCount(img.naturalWidth, img.naturalHeight) : 1
       if (ready && paneCountMap.current[camId] !== count) {
         paneCountMap.current[camId] = count
         setPaneCounts(prev => ({ ...prev, [camId]: count }))

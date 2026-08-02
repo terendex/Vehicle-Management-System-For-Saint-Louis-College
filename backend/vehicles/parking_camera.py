@@ -298,8 +298,15 @@ class ParkingCameraThread(threading.Thread):
         # plate detector on every frame of every zone and then let plate boxes
         # decide occupancy — see detect_vehicles() for why that was wrong.
         from scanning.ml.detection import detect_vehicles
+        from vehicles.lens_layout import detect_across_lenses
 
-        detections = detect_vehicles(frame)
+        # Per lens, not per frame. A dual-lens camera stacks two views into one
+        # picture, and running the detector across the join asked the model to
+        # read a scene no camera ever produced. The boxes come back in
+        # full-frame coordinates, so the space geometry below — placed against
+        # the whole frame — needs no adjustment. Single-lens cameras are passed
+        # straight through and pay nothing.
+        detections = detect_across_lenses(frame, detect_vehicles)
 
         spaces = self._load_spaces()
         if not spaces:
