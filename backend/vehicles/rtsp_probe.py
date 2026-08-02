@@ -38,27 +38,20 @@ PATHS = [
 ]
 
 
-def candidate_urls(ip: str, device_id: str, password: str = '') -> list[dict]:
+def candidate_urls(ip: str, device_id: str) -> list[dict]:
     """Candidate RTSP URLs for this camera, most likely first.
 
-    `device_id` is whatever is printed on the unit. Several vendors ignore it
-    for RTSP and authenticate as "admin" regardless, so both are tried.
-
-    A password is optional. With none, the credential-less form is tried first
-    — that is what an open camera actually answers on, and prefixing empty
-    credentials makes some firmware reject the request outright.
+    These cameras carry no password, so the credential-less form is tried first
+    — that is what an open camera answers on, and prefixing empty credentials
+    makes some firmware reject the request outright. A username with an empty
+    password follows, for units that insist on one; `device_id` is whatever is
+    printed on the unit, and several vendors ignore it and expect "admin".
     """
     ip = (ip or '').strip()
     dev = quote((device_id or '').strip(), safe='')
-    pw = quote((password or '').strip(), safe='')
 
-    # Credential prefixes to try, in order. '' means no credentials at all.
-    if pw:
-        prefixes = [f"{u}:{pw}@" for u in dict.fromkeys([dev, 'admin']) if u]
-    else:
-        prefixes = ['']
-        # Some units still want a username with an empty password.
-        prefixes += [f"{u}:@" for u in dict.fromkeys([dev, 'admin']) if u]
+    prefixes = ['']
+    prefixes += [f"{u}:@" for u in dict.fromkeys([dev, 'admin']) if u]
 
     out = []
     for prefix in prefixes:
@@ -122,7 +115,7 @@ def _redact(url: str) -> str:
     return f"{scheme}://{user}:***@{host}"
 
 
-def detect(ip: str, device_id: str, password: str) -> dict:
+def detect(ip: str, device_id: str) -> dict:
     """Find the working RTSP URL for this camera.
 
     Returns {'ok': True, 'rtsp_url', 'format', 'attempts'} on success, or
@@ -143,7 +136,7 @@ def detect(ip: str, device_id: str, password: str) -> dict:
         }
 
     attempts = []
-    for cand in candidate_urls(ip, device_id, password):
+    for cand in candidate_urls(ip, device_id):
         if _opens(cand['url']):
             log.info('[rtsp-probe] %s matched %s', ip, cand['format'])
             return {
@@ -154,12 +147,11 @@ def detect(ip: str, device_id: str, password: str) -> dict:
             }
         attempts.append(_redact(cand['url']))
 
-    hint = ('The device ID may be wrong, or this camera needs a password'
-            if not (password or '').strip()
-            else 'The device ID or password may be wrong')
     return {
         'ok': False,
-        'error': (f'The camera answered but none of the known stream paths worked. '
-                  f'{hint}, or this model needs a custom URL.'),
+        'error': ('The camera answered but none of the known stream paths worked. '
+                  'The device ID may be wrong, this camera may require a password '
+                  '(put it in a custom URL), or this model uses a path we do not '
+                  'know yet.'),
         'attempts': attempts,
     }

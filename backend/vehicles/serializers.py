@@ -158,7 +158,7 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 class CameraSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Camera
-        fields = ['id', 'cam_number', 'name', 'ip', 'device_id', 'password',
+        fields = ['id', 'cam_number', 'name', 'ip', 'device_id',
                   'rtsp_url', 'assignment', 'gate_id', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cam_number', 'name', 'created_at', 'updated_at']
 

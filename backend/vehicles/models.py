@@ -660,9 +660,11 @@ class Camera(models.Model):
     name       = models.CharField(max_length=50)
     ip         = models.CharField(max_length=100)
     device_id  = models.CharField(max_length=100)
-    # Optional: plenty of cameras stream on an open LAN with no RTSP auth at
-    # all, and demanding a password made those impossible to add.
-    password   = models.CharField(max_length=100, blank=True, default='')
+    # No password field. The cameras on this network stream and accept PTZ
+    # without RTSP/HTTP auth, so storing a credential per camera was asking for
+    # a secret nobody had — and keeping plaintext camera passwords in the
+    # database for no functional gain. A camera that does need credentials can
+    # carry them inside its rtsp_url instead.
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
     # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows

@@ -82,10 +82,6 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
-  // Not asked for: most cameras on this LAN stream without RTSP auth. An
-  // existing camera's saved password is carried through unchanged so editing
-  // one does not silently strip its credentials.
-  const password = camera?.password ?? ''
   // The vendor picker is gone — the backend probes the camera and finds the
   // stream path itself. These only come into play when that fails, or when a
   // camera was already saved with a URL no template produces.
@@ -155,7 +151,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
         setDetecting(true)
         try {
           const found = await camerasApi.detectRtsp({
-            ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(),
+            ip: ip.trim(), device_id: deviceId.trim(),
           })
           rtspUrl = found.rtsp_url
           setDetectedFormat(found.format)
@@ -172,7 +168,6 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       const payload = {
         ip: ip.trim(),
         device_id: deviceId.trim(),
-        password: password.trim(),
         rtsp_url: rtspUrl,
         assignment,
         gate_id: assignment === 'entry' ? gateId : null,
