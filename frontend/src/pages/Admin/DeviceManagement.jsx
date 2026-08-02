@@ -92,6 +92,10 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   // the probe cannot identify can still be registered — without ever asking
   // the admin to hand-write an RTSP URL.
   const [fallbackUrl,    setFallbackUrl]    = useState('')
+  // Every URL the backend tried and what the camera answered. Hidden by
+  // default, but a camera that plainly works and still will not detect is
+  // undiagnosable without it.
+  const [detectAttempts, setDetectAttempts] = useState([])
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
   const [saving,     setSaving]     = useState(false)
@@ -153,6 +157,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
           // Keep the camera's existing URL when editing; otherwise fall back to
           // the backend's best guess so the next press can still save.
           setFallbackUrl(data?.suggestion || camera?.rtsp_url || '')
+          setDetectAttempts(Array.isArray(data?.attempts) ? data.attempts : [])
           toast.error('Could not detect the stream.')
           return
         } finally {
@@ -267,10 +272,21 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                   Correct the details above and retry, or register it anyway with
                   the most likely stream address — you can edit it later.
                 </p>
+                {detectAttempts.length > 0 && (
+                  <details className="dm-detect-attempts">
+                    <summary>What was tried ({detectAttempts.length})</summary>
+                    <ul>
+                      {detectAttempts.map((a, i) => <li key={i}>{a}</li>)}
+                    </ul>
+                    <p className="dm-detect-legend">
+                      401 = login refused · 404 = no such stream path · 200 = accepted
+                    </p>
+                  </details>
+                )}
                 <button
                   type="button"
                   className="dm-detect-retry"
-                  onClick={() => { setDetectError(''); setFallbackUrl(''); }}
+                  onClick={() => { setDetectError(''); setFallbackUrl(''); setDetectAttempts([]) }}
                 >
                   Try auto-detect again
                 </button>

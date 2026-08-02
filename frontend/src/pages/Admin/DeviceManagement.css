@@ -900,3 +900,40 @@
   font-family: inherit;
 }
 .dm-detect-retry:hover { color: #0B5C9C; }
+
+/* Collapsed by default: it is diagnostic detail, not part of the normal flow. */
+.dm-detect-attempts {
+  margin-top: 10px;
+  border: 1px solid #E3ECF3;
+  border-radius: 8px;
+  background: #F9FBFD;
+}
+.dm-detect-attempts summary {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4A6B85;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.dm-detect-attempts summary:hover { color: #03396C; }
+.dm-detect-attempts ul {
+  margin: 0;
+  padding: 4px 10px 6px 10px;
+  max-height: 190px;
+  overflow: auto;
+  list-style: none;
+}
+.dm-detect-attempts li {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #2E4C63;
+  word-break: break-all;
+}
+.dm-detect-legend {
+  margin: 0;
+  padding: 0 10px 8px;
+  font-size: 10.5px;
+  color: #7C99B0;
+}

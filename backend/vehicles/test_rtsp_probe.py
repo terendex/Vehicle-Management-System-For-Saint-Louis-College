@@ -93,34 +93,82 @@ class DetectTests(TestCase):
         self.assertFalse(r['ok'])
 
     def test_open_camera_matches_on_the_first_attempt(self):
+        match = 'rtsp://10.0.0.5/stream1'
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == match else 404), \
              patch.object(rtsp_probe, '_opens',
-                          side_effect=lambda u, *a, **k: u == 'rtsp://10.0.0.5/stream1'):
+                          side_effect=lambda u, *a, **k: u == match):
             r = rtsp_probe.detect('10.0.0.5', 'dev')
         self.assertTrue(r['ok'])
-        self.assertEqual(r['rtsp_url'], 'rtsp://10.0.0.5/stream1')
+        self.assertEqual(r['rtsp_url'], match)
         self.assertEqual(r['format'], 'generic')
-        self.assertEqual(len(r['attempts']), 1)
 
-    def test_first_working_candidate_wins_and_probing_stops(self):
-        calls = []
+    def test_only_candidates_the_camera_accepted_are_opened(self):
+        """The expensive step runs on the shortlist, not the whole list: opening
+        every candidate with OpenCV is what used to exhaust the time budget."""
+        opened = []
 
         def fake_opens(url, *a, **k):
-            calls.append(url)
-            return '/cam/realmonitor' in url      # a Dahua unit
+            opened.append(url)
+            return True
 
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if '/cam/realmonitor' in u else 404), \
              patch.object(rtsp_probe, '_opens', side_effect=fake_opens):
             r = rtsp_probe.detect('10.0.0.5', 'dev')
 
         self.assertTrue(r['ok'])
         self.assertEqual(r['format'], 'dahua')
-        self.assertEqual(calls[-1], r['rtsp_url'])   # stopped at the hit
+        self.assertEqual(len(opened), 1, f'opened more than the first match: {opened}')
+        self.assertTrue(all('/cam/realmonitor' in u for u in opened))
+
+    def test_a_url_the_camera_accepts_but_cannot_be_decoded_is_not_returned(self):
+        """Some firmware answers 200 to anything; acceptance is not video."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe', return_value=200), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertFalse(r['ok'])
+        self.assertIn('decoded', r['error'])
+
+    def test_admin_credentials_are_reached(self):
+        """The bug that made an NVR undetectable: candidates were grouped by
+        credential, so every `admin` URL sat behind ten device-ID ones and the
+        time budget ran out first. An NVR wants `admin` for RTSP."""
+        match = 'rtsp://admin:pw@10.0.0.5/cam/realmonitor?channel=1&subtype=0'
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == match else 401), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == match):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], match)
+
+    def test_rejected_credentials_are_named_as_the_cause(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe', return_value=401), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'wrong')
+        self.assertFalse(r['ok'])
+        self.assertIn('username and password', r['error'])
+
+    def test_attempts_record_the_status_each_candidate_returned(self):
+        """An admin whose camera will not connect needs to see what happened,
+        not a bare 'detection failed'."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe', return_value=404):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertTrue(all('-> 404' in a for a in r['attempts']))
+        self.assertTrue(all('pw' not in a for a in r['attempts']), 'password leaked')
 
     def test_camera_up_but_no_path_works_still_lets_you_save(self):
         """The blocker this fixes: with an empty URL box and no known path, the
         camera could not be added at all."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_describe', return_value=404), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
         self.assertFalse(r['ok'])
@@ -139,10 +187,12 @@ class DetectTests(TestCase):
         """Every candidate timing out must not leave the admin waiting minutes."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'TOTAL_BUDGET_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', return_value=404) as desc, \
              patch.object(rtsp_probe, '_opens', return_value=False) as opens:
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
         self.assertFalse(r['ok'])
-        opens.assert_not_called()          # budget already spent
+        desc.assert_not_called()           # budget already spent
+        opens.assert_not_called()
 
 
 class DetectEndpointTests(APITestCase):
@@ -157,8 +207,11 @@ class DetectEndpointTests(APITestCase):
 
     def test_success_returns_the_url_and_format(self):
         self.client.force_authenticate(self.admin)
+        ends = lambda u, *a, **k: u.endswith('/stream1')          # noqa: E731
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
-             patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u.endswith('/stream1')):
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if ends(u) else 404), \
+             patch.object(rtsp_probe, '_opens', side_effect=ends):
             r = self.client.post(ENDPOINT, {'ip': '10.0.0.5', 'device_id': 'dev'}, format='json')
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.data['ok'])

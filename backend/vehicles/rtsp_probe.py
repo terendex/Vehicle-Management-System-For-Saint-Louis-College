@@ -9,24 +9,32 @@ Ordering matters — the list is cheapest-and-most-likely first, and probing
 stops at the first success, so the common case costs one attempt rather than
 four.
 """
+import hashlib
 import logging
+import re
 import socket
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 log = logging.getLogger(__name__)
 
 RTSP_PORT = 554
 
-# Seconds to wait for a single candidate before moving on. A camera that has
-# already answered on port 554 responds to a good path quickly; the wait only
-# matters for paths it will refuse.
+# Seconds to wait for a single candidate before moving on. Only spent on the
+# one URL that reached the decode check — the search itself uses DESCRIBE.
 PROBE_TIMEOUT_SECONDS = 4
 
-# Hard ceiling on the whole probe. The candidate list is long enough that
-# walking all of it at the per-candidate timeout would take minutes, and an
-# admin will assume the page has hung. Stop at the budget and hand back the
-# suggested URL instead — they can still save the camera.
+# An RTSP DESCRIBE is a single request/response on a socket already proven open,
+# so it answers in milliseconds on a LAN.
+DESCRIBE_TIMEOUT_SECONDS = 2.5
+
+# Hard ceiling on the whole probe, so a page never appears to hang.
+#
+# This budget used to be spent opening each candidate with OpenCV at 4 s a go,
+# which covered 6 of the 30 candidates for a multi-channel device — and the
+# `admin` username that NVRs actually want for RTSP sat at candidate 10, so it
+# was never reached at all. DESCRIBE walks the whole list in a couple of
+# seconds; only a candidate the camera has already accepted costs a decode.
 TOTAL_BUDGET_SECONDS = 25
 
 # Reachability check before any candidate is tried: an unplugged camera would
@@ -53,10 +61,21 @@ def paths_for(channel: int = 1) -> list[tuple[str, str]]:
         # Hikvision encodes channel and stream as one number: 101, 201, 301…
         ('hikvision', f'/Streaming/Channels/{ch}01'),
         ('hikvision', f'/Streaming/Channels/{ch}02'),   # sub-stream
+        ('hikvision', f'/h264/ch{ch}/main/av_stream'),  # older firmware
+        ('hikvision', f'/h264/ch{ch}/sub/av_stream'),
+        # Uniview and the many NVRs that copy it
+        ('uniview',   f'/unicast/c{ch}/s0/live'),
+        ('uniview',   f'/unicast/c{ch}/s1/live'),
+        ('uniview',   f'/media/video{ch}'),
+        # TVT / Provision-ISR and relabels
+        ('tvt',       f'/profile{ch}/media.smp'),
         ('generic',   f'/live/ch{ch - 1}'),
+        ('generic',   f'/live/ch{ch}'),
         ('generic',   f'/ch{ch:02d}/0'),
+        ('generic',   f'/ch{ch:02d}/1'),
         ('generic',   f'/onvif{ch}'),
         ('generic',   f'/video{ch}'),
+        ('generic',   f'/stream{ch}'),
         ('generic',   f'/{ch}1'),
         ('generic',   f'/{ch}2'),
     ]
@@ -72,7 +91,15 @@ def paths_for(channel: int = 1) -> list[tuple[str, str]]:
             ('generic',   '/h264_stream'),
             ('generic',   '/'),          # some serve the default track
         ]
-    return paths
+
+    # /stream1 arrives from both the shortcut list and /stream{ch} at channel 1;
+    # probing the same path twice is pure waste.
+    seen, unique = set(), []
+    for fmt, path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append((fmt, path))
+    return unique
 
 
 def candidate_urls(ip: str, device_id: str, password: str = '',
@@ -99,9 +126,13 @@ def candidate_urls(ip: str, device_id: str, password: str = '',
         prefixes = ['']
         prefixes += [f"{u}:@" for u in users]  # username with an empty password
 
+    # Path-major, not credential-major. Grouping by credential put every
+    # `admin` candidate behind all ten device-ID ones, and the probe's time
+    # budget ran out long before it got there — which is exactly how an NVR
+    # that wants `admin` ended up undetectable.
     out = []
-    for prefix in prefixes:
-        for fmt, path in paths_for(channel):
+    for fmt, path in paths_for(channel):
+        for prefix in prefixes:
             out.append({'format': fmt, 'url': f"rtsp://{prefix}{ip}{path}"})
     return out
 
@@ -114,6 +145,80 @@ def is_reachable(ip: str, port: int = RTSP_PORT,
             return True
     except Exception:
         return False
+
+
+def _auth_header(method: str, target: str, user: str, pw: str, challenge: str) -> str:
+    """Answer a WWW-Authenticate challenge. Digest where offered, else Basic."""
+    if challenge.lower().lstrip().startswith('digest'):
+        fields = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', challenge))
+        realm  = fields.get('realm', '')
+        nonce  = fields.get('nonce', '')
+        md5    = lambda s: hashlib.md5(s.encode()).hexdigest()   # noqa: E731
+        ha1    = md5(f'{user}:{realm}:{pw}')
+        ha2    = md5(f'{method}:{target}')
+        resp   = md5(f'{ha1}:{nonce}:{ha2}')
+        return (f'Digest username="{user}", realm="{realm}", nonce="{nonce}", '
+                f'uri="{target}", response="{resp}"')
+    import base64
+    token = base64.b64encode(f'{user}:{pw}'.encode()).decode()
+    return f'Basic {token}'
+
+
+def _describe(url: str, timeout: float = DESCRIBE_TIMEOUT_SECONDS) -> int | None:
+    """Send an RTSP DESCRIBE and return the status code the camera replies with.
+
+    This is the search step. Opening a candidate with OpenCV costs seconds
+    because FFmpeg waits for a decodable frame; DESCRIBE is one request on the
+    port we already know is open, and it distinguishes the two failures that
+    matter — 401 (credentials refused) from 404 (no such path or channel).
+
+    Returns None when the socket itself failed.
+    """
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    if not host:
+        return None
+    port = parsed.port or RTSP_PORT
+    user = unquote(parsed.username or '')
+    pw   = unquote(parsed.password or '')
+
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+    target = f'rtsp://{host}:{port}{path}'
+
+    def _request(cseq: int, auth: str = '') -> str:
+        lines = [f'DESCRIBE {target} RTSP/1.0',
+                 f'CSeq: {cseq}',
+                 'Accept: application/sdp',
+                 'User-Agent: SLC-VMS']
+        if auth:
+            lines.append(f'Authorization: {auth}')
+        return '\r\n'.join(lines) + '\r\n\r\n'
+
+    def _status(head: str) -> int | None:
+        m = re.match(r'RTSP/\d\.\d\s+(\d+)', head)
+        return int(m.group(1)) if m else None
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(_request(1).encode())
+            head = sock.recv(4096).decode('utf-8', 'replace')
+            code = _status(head)
+
+            # Answer the challenge on the same connection when we have creds.
+            if code == 401 and (user or pw):
+                m = re.search(r'WWW-Authenticate:\s*(.+)', head, re.I)
+                if m:
+                    auth = _auth_header('DESCRIBE', target, user, pw, m.group(1).strip())
+                    sock.sendall(_request(2, auth).encode())
+                    head = sock.recv(4096).decode('utf-8', 'replace')
+                    code = _status(head)
+            return code
+    except Exception as exc:
+        log.debug('[rtsp-probe] DESCRIBE %s failed: %s', _redact(url), exc)
+        return None
 
 
 def _opens(url: str, timeout_s: int = PROBE_TIMEOUT_SECONDS) -> bool:
@@ -182,12 +287,27 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
             'attempts': [],
         }
 
-    attempts = []
-    deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
+    attempts  = []
+    accepted  = []          # candidates the camera answered 200 to
+    codes     = []          # every status seen, for the diagnosis below
+    deadline  = time.monotonic() + TOTAL_BUDGET_SECONDS
+
+    # Phase 1 — ask every candidate. Cheap enough to walk the whole list.
     for cand in candidate_urls(ip, device_id, password, channel):
         if time.monotonic() >= deadline:
             log.info('[rtsp-probe] %s gave up after %d attempts (budget reached)',
                      ip, len(attempts))
+            break
+        code = _describe(cand['url'])
+        codes.append(code)
+        attempts.append(f"{_redact(cand['url'])} -> {code if code else 'no reply'}")
+        if code == 200:
+            accepted.append(cand)
+
+    # Phase 2 — confirm one of them actually decodes. A few firmwares answer 200
+    # to anything, so acceptance alone is not proof there is video behind it.
+    for cand in accepted:
+        if time.monotonic() >= deadline:
             break
         if _opens(cand['url']):
             log.info('[rtsp-probe] %s matched %s', ip, cand['format'])
@@ -195,24 +315,33 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
                 'ok': True,
                 'rtsp_url': cand['url'],
                 'format': cand['format'],
-                'attempts': attempts + [_redact(cand['url'])],
+                'attempts': attempts,
             }
-        attempts.append(_redact(cand['url']))
 
-    # The camera is there but speaks a path we do not know. Hand back the most
-    # likely URL so the camera can still be registered: an admin who cannot add
-    # it at all is worse off than one holding a good guess.
-    if (channel or 1) > 1:
-        # Asking for channel 2+ on a single-lens camera fails exactly like a bad
-        # password does, and that is the likelier mistake of the two.
-        reason = (f'The camera answered, but it has no channel {channel} — or this '
-                  f'model numbers its channels differently. A single-lens camera '
-                  f'only has channel 1; use 2 or higher only for an NVR or a '
-                  f'multi-lens unit. Check the password too.')
+    # Nothing decoded. Say which wall we hit — "detection failed" sends an admin
+    # to re-check a password that was never the problem.
+    if accepted:
+        reason = ('The camera accepted the stream address but no video could be '
+                  'decoded from it. It may be streaming a format this server '
+                  'cannot read, or another client may be holding the only '
+                  'available connection. Registering it anyway is usually safe.')
+    elif 401 in codes or 403 in codes:
+        reason = ('The camera rejected the username and password. On an NVR the '
+                  'RTSP login is usually "admin" plus the NVR password, which is '
+                  'not always the same as the device ID or the app password.')
+    elif (channel or 1) > 1 and (404 in codes or 400 in codes):
+        reason = (f'The camera answered, but it has no channel {channel} — or it '
+                  f'numbers its channels differently. A single-lens camera only '
+                  f'has channel 1; use 2 or higher only for an NVR or a '
+                  f'multi-lens unit.')
+    elif 404 in codes or 400 in codes:
+        reason = ('The camera answered but does not recognise any stream path we '
+                  'know. Check its manual or app for the RTSP URL it publishes.')
     else:
-        reason = ('The camera answered but none of the known stream paths worked. '
-                  'The device ID or password may be wrong, or this model uses a '
-                  'path we do not know yet.')
+        reason = ('The camera is reachable but did not answer any stream request. '
+                  'RTSP may be disabled on the device, or it may serve it on a '
+                  'port other than 554.')
+
     return {
         'ok': False,
         'error': reason,
