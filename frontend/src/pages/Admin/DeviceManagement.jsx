@@ -13,19 +13,6 @@ import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Vendors expose RTSP on different paths, and some (Dahua/IMOU especially)
-// authenticate as "admin" regardless of the device ID printed on the unit. The
-// backend now discovers the working URL by probing the camera — see
-// vehicles/rtsp_probe.py — so the form no longer asks which vendor it is.
-//
-// These patterns remain only to recognise an already-saved URL: one that no
-// template would have produced means the camera was configured by hand, and
-// the edit modal must keep showing that URL rather than silently re-detecting
-// over it.
-const DAHUA_RE = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/cam\/realmonitor\?channel=\d+&subtype=(\d+)/
-const HIK_RE   = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/Streaming\/Channels\/\d+/
-const KNOWN_PATH_RE = /\/(stream1|live|h264|11)$/
-
 // Channel number encoded in a saved stream URL, so the edit modal opens on the
 // right one. Dahua puts it in a query string, Hikvision folds it into the
 // channel number (201 = channel 2), others use /chNN/ or a trailing digit.
@@ -38,13 +25,6 @@ function channelOf(rtspUrl) {
   const ch = /\/ch(\d+)\//.exec(rtspUrl)
   if (ch) return Number(ch[1])
   return 1
-}
-
-function detectFormat(rtspUrl) {
-  const auto = { id: 'auto' }
-  if (!rtspUrl) return auto
-  if (DAHUA_RE.test(rtspUrl) || HIK_RE.test(rtspUrl) || KNOWN_PATH_RE.test(rtspUrl)) return auto
-  return { id: 'custom' }
 }
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
@@ -92,7 +72,6 @@ function apiErrorMessage(err, fallback) {
 
 function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved }) {
   const isEdit = mode === 'edit'
-  const initialFormat = detectFormat(camera?.rtsp_url)
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
@@ -106,11 +85,13 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   // The vendor picker is gone — the backend probes the camera and finds the
   // stream path itself. These only come into play when that fails, or when a
   // camera was already saved with a URL no template produces.
-  const [useCustomUrl,   setUseCustomUrl]   = useState(initialFormat.id === 'custom')
-  const [customUrl,      setCustomUrl]      = useState(initialFormat.id === 'custom' ? (camera?.rtsp_url ?? '') : '')
   const [detecting,      setDetecting]      = useState(false)
   const [detectError,    setDetectError]    = useState('')
   const [detectedFormat, setDetectedFormat] = useState('')
+  // Set when probing fails. The next submit saves with this URL, so a camera
+  // the probe cannot identify can still be registered — without ever asking
+  // the admin to hand-write an RTSP URL.
+  const [fallbackUrl,    setFallbackUrl]    = useState('')
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
   const [saving,     setSaving]     = useState(false)
@@ -142,10 +123,6 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       toast.error('Enter a valid IP address (e.g. 192.168.137.86).')
       return
     }
-    if (useCustomUrl && !customUrl.trim()) {
-      toast.error("Enter the camera's RTSP URL.")
-      return
-    }
     if (assignment === 'entry' && !gateId) {
       toast.error('Please select a gate for this entry camera.')
       return
@@ -155,12 +132,12 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
     // identity of a camera.
     setSaving(true)
     try {
-      // Ask the camera which stream path it answers on, rather than asking the
-      // admin which firmware it runs. Only when detection fails does the custom
-      // URL field appear — and then we use whatever they typed.
+      // Ask the camera which stream path it answers on. The admin is never
+      // asked for an RTSP URL: if probing fails, the first submit reports it
+      // and the second saves with the best-guess URL.
       let rtspUrl
-      if (useCustomUrl) {
-        rtspUrl = customUrl.trim()
+      if (fallbackUrl) {
+        rtspUrl = fallbackUrl          // second press: save despite the failure
       } else {
         setDetecting(true)
         try {
@@ -171,15 +148,12 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
           rtspUrl = found.rtsp_url
           setDetectedFormat(found.format)
         } catch (err) {
-          // Reveal the manual escape hatch instead of dead-ending them.
           const data = err?.response?.data
-          setUseCustomUrl(true)
           setDetectError(data?.error || 'Could not detect the camera stream.')
-          // Prefilled with the backend's best guess so the form can still be
-          // submitted — an admin who cannot add the camera at all is worse off
-          // than one holding a URL they can correct.
-          if (data?.suggestion && !customUrl.trim()) setCustomUrl(data.suggestion)
-          toast.error('Could not detect the stream — check the URL below and save.')
+          // Keep the camera's existing URL when editing; otherwise fall back to
+          // the backend's best guess so the next press can still save.
+          setFallbackUrl(data?.suggestion || camera?.rtsp_url || '')
+          toast.error('Could not detect the stream.')
           return
         } finally {
           setDetecting(false)
@@ -230,14 +204,14 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
             <div className="dm-field-row">
               <div className="form-group">
                 <label className="form-label">Camera IP <span className="required">*</span></label>
-                <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => setIp(e.target.value)} required />
+                <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => { setIp(e.target.value); setDetectError(''); setFallbackUrl('') }} required />
                 {ipDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{ipDupe.name}".</p>
                 )}
               </div>
               <div className="form-group">
                 <label className="form-label">Device ID <span className="required">*</span></label>
-                <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} required />
+                <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => { setDeviceId(e.target.value); setDetectError(''); setFallbackUrl('') }} required />
                 {deviceIdDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
                 )}
@@ -252,7 +226,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 min="1"
                 max="32"
                 value={channel}
-                onChange={(e) => setChannel(e.target.value)}
+                onChange={(e) => { setChannel(e.target.value); setDetectError(''); setFallbackUrl('') }}
               />
               <p className="dm-gate-hint">
                 1 for a normal camera. Use 2, 3… for extra cameras on the same
@@ -272,7 +246,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                   type={showPw ? 'text' : 'password'}
                   placeholder="Camera password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setDetectError(''); setFallbackUrl('') }}
                   required
                 />
                 <button type="button" className="dm-pw-addon" onClick={() => setShowPw(p => !p)}>
@@ -285,20 +259,17 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 the person mounting it should have to know, so the backend probes
                 the device and finds the working stream path itself. The manual
                 field appears only if that fails. */}
-            {useCustomUrl ? (
-              <div className="form-group" style={{ marginTop: '20px' }}>
-                <label className="form-label">RTSP URL <span className="required">*</span></label>
-                <input
-                  className="form-input"
-                  placeholder="rtsp://user:pass@192.168.1.x/..."
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                />
-                {detectError && <p className="dm-gate-hint dm-detect-error">{detectError}</p>}
+            {detectError ? (
+              <div style={{ marginTop: '20px' }}>
+                <p className="dm-gate-hint dm-detect-error">{detectError}</p>
+                <p className="dm-gate-hint">
+                  Press <strong>{isEdit ? 'Save Changes' : 'Add Device'}</strong> again to
+                  register it anyway, or correct the details above and retry.
+                </p>
                 <button
                   type="button"
                   className="dm-detect-retry"
-                  onClick={() => { setUseCustomUrl(false); setDetectError(''); }}
+                  onClick={() => { setDetectError(''); setFallbackUrl(''); }}
                 >
                   Try auto-detect again
                 </button>

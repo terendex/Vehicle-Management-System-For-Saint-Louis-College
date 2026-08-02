@@ -2,6 +2,7 @@ import logging
 import base64
 import time
 import threading
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 import asyncio
@@ -1109,34 +1110,58 @@ class _StreamWorker:
 
     def __init__(self, rtsp_url: str):
         self.rtsp_url   = rtsp_url
+        # The subscriber dict IS the reference count. A separate counter drifted
+        # out of step with it — an unsubscribe for an sid that had already been
+        # replaced decremented the count for a subscriber that was still there.
         self._subs: dict[str, tuple['asyncio.Queue', 'asyncio.AbstractEventLoop']] = {}
         self._lock      = threading.Lock()
-        self._ref_count = 0
         self._thread: threading.Thread | None = None
+        # One Event per thread generation, never reused: clearing a shared Event
+        # let a new subscriber re-arm a thread that an outgoing one was stopping.
         self._stop      = threading.Event()
 
+    def is_running(self) -> bool:
+        t = self._thread
+        return t is not None and t.is_alive()
+
     def subscribe(self, sid: str, loop: 'asyncio.AbstractEventLoop') -> 'asyncio.Queue':
+        """Register a consumer and guarantee a capture thread is running for it.
+
+        Call through _acquire_worker, which holds the pool lock across
+        get-or-create + subscribe.
+        """
         q: asyncio.Queue = asyncio.Queue(maxsize=3)
         with self._lock:
             self._subs[sid] = (q, loop)
-            self._ref_count += 1
-            if self._ref_count == 1:
-                self._stop.clear()
-                self._thread = threading.Thread(target=self._run, daemon=True,
-                                                name=f'rtsp-worker-{sid[:6]}')
+            # Start a thread whenever there is not a live one — not merely for
+            # the first subscriber. A worker whose thread had already exited
+            # (retries exhausted, or a stop that raced with this subscribe) was
+            # still sitting in the pool, and everyone who joined it afterwards
+            # waited on a queue nothing would ever push to: a black feed, no
+            # error, forever.
+            if not self.is_running():
+                self._stop = threading.Event()
+                self._thread = threading.Thread(
+                    target=self._run, args=(self._stop,), daemon=True,
+                    name=f'rtsp-worker-{sid[:6]}')
                 self._thread.start()
         return q
 
     def unsubscribe(self, sid: str):
-        with self._lock:
-            self._subs.pop(sid, None)
-            self._ref_count -= 1
-            last = self._ref_count == 0
-        if last:
-            self._stop.set()
-            with _STREAM_POOL_LOCK:
-                if _STREAM_POOL.get(self.rtsp_url) is self:
-                    del _STREAM_POOL[self.rtsp_url]
+        # Pool lock first, matching _acquire_worker's order, so a subscribe
+        # cannot slip in between "last subscriber left" and the worker leaving
+        # the pool. It used to: the newcomer's thread was started, then killed
+        # by this stop, and its worker evicted — the feed died on its own a
+        # moment after opening.
+        with _STREAM_POOL_LOCK:
+            with self._lock:
+                self._subs.pop(sid, None)
+                if self._subs:
+                    return
+                self._stop.set()
+                self._thread = None
+            if _STREAM_POOL.get(self.rtsp_url) is self:
+                del _STREAM_POOL[self.rtsp_url]
 
     def _push(self, msg: dict):
         with self._lock:
@@ -1152,10 +1177,13 @@ class _StreamWorker:
                     except Exception: pass
             loop.call_soon_threadsafe(_put)
 
-    def _run(self):
+    def _run(self, stop: threading.Event):
+        # `stop` is this generation's Event, passed in rather than read off self:
+        # a later subscribe swaps self._stop for a fresh one, and an older thread
+        # reading self._stop would then never see its own stop signal.
         import cv2, base64 as _b64, time as _t
         retry = 0
-        while not self._stop.is_set() and retry <= self.MAX_RETRIES:
+        while not stop.is_set() and retry <= self.MAX_RETRIES:
             self._push({'type': 'status', 'connected': False,
                         'message': f'Connecting… (attempt {retry+1}/{self.MAX_RETRIES+1})'})
 
@@ -1213,7 +1241,7 @@ class _StreamWorker:
                 continue
 
             try:
-                while not self._stop.is_set() and not cap_released.is_set():
+                while not stop.is_set() and not cap_released.is_set():
                     t0 = _t.monotonic()
                     frm = latest['data']
                     if not latest['ok'] or frm is None:
@@ -1234,6 +1262,18 @@ class _StreamWorker:
             self._push({'type': 'error',
                         'message': 'Cannot connect to RTSP stream. '
                                    'Check the URL and ensure the backend has network access to the camera.'})
+
+        # A worker whose capture thread has given up must not stay in the pool.
+        # It used to, whenever a subscriber was still attached, and the next
+        # viewer adopted the corpse: subscribe() saw a non-empty _subs, started
+        # nothing, and handed back a queue with no producer.
+        # `self._stop is stop` keeps an older generation's exit from evicting a
+        # newer, live one.
+        with _STREAM_POOL_LOCK:
+            with self._lock:
+                mine = self._stop is stop
+            if mine and _STREAM_POOL.get(self.rtsp_url) is self:
+                del _STREAM_POOL[self.rtsp_url]
         logger.info('[StreamWorker] Stopped for %s', self.rtsp_url)
 
 
@@ -1241,11 +1281,20 @@ _STREAM_POOL: dict[str, _StreamWorker] = {}
 _STREAM_POOL_LOCK = threading.Lock()
 
 
-def _get_worker(rtsp_url: str) -> _StreamWorker:
+def _acquire_worker(rtsp_url: str, sid: str, loop: 'asyncio.AbstractEventLoop'):
+    """Get-or-create the worker for this URL and subscribe to it in one step.
+
+    Looking the worker up and then subscribing to it had to become atomic:
+    between the two, the last remaining subscriber could drop, which stopped the
+    capture thread and pulled the worker out of the pool. The newcomer was left
+    holding a worker nobody was feeding and nobody would ever restart.
+    """
     with _STREAM_POOL_LOCK:
-        if rtsp_url not in _STREAM_POOL:
-            _STREAM_POOL[rtsp_url] = _StreamWorker(rtsp_url)
-        return _STREAM_POOL[rtsp_url]
+        worker = _STREAM_POOL.get(rtsp_url)
+        if worker is None:
+            worker = _STREAM_POOL[rtsp_url] = _StreamWorker(rtsp_url)
+        q = worker.subscribe(sid, loop)
+    return worker, q
 
 
 class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
@@ -1314,7 +1363,9 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         # 'start' message) overrides this below.
         self._gate_id               = _resolve_gate('', self._user)
         self._loop                  = asyncio.get_running_loop()
-        self._worker_sid            = str(id(self))
+        # uuid, not id(self): CPython reuses object addresses, so two consumers
+        # could hold the same subscriber key and unsubscribe each other.
+        self._worker_sid            = uuid.uuid4().hex
 
         await self.accept()
         logger.info("[RTSP] Connected: user=%s scan=%s", self._user, self._scan_enabled)
@@ -1386,8 +1437,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     async def _consume_stream(self, rtsp_url: str):
         """Subscribe to the shared _StreamWorker for this URL and process frames."""
         import base64 as _b64
-        worker = _get_worker(rtsp_url)
-        q = worker.subscribe(self._worker_sid, self._loop)
+        worker, q = _acquire_worker(rtsp_url, self._worker_sid, self._loop)
         # Track whether we've told the frontend the stream is connected.
         # A late-joining subscriber won't receive the worker's initial status
         # broadcast, so we synthesise it on the first frame we see.
@@ -1397,6 +1447,17 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=45.0)
                 except asyncio.TimeoutError:
+                    # Nothing at all for 45 s. If the capture thread is gone,
+                    # waiting longer cannot help — report it instead of holding
+                    # a black canvas open in silence, which is how a dead worker
+                    # used to present itself.
+                    if not worker.is_running():
+                        await self.send_json({
+                            "type": "error",
+                            "message": "The camera stream stopped and could not be restarted.",
+                        })
+                        await self.close()
+                        return
                     logger.warning("[RTSP] No frames for 45 s — still waiting")
                     continue
 

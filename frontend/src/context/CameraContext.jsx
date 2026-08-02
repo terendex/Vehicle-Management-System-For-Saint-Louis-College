@@ -11,8 +11,12 @@ const TRACK_COLORS = {
 const VEHICLE_TYPE_LABELS = { motorcycle: 'Motorcycle' }
 const LERP = 0.25
 
-// How long to wait before auto-reconnecting after an unexpected disconnect
-const RECONNECT_DELAY_MS = 3000
+// Auto-reconnect backoff after an unexpected disconnect. A flat 3 s retry
+// hammered a camera that was simply down — every attempt costs the backend an
+// RTSP open (up to 10 s each) and popped another toast, so an unreachable
+// camera degraded the ones that were working.
+const RECONNECT_BASE_MS = 2000
+const RECONNECT_MAX_MS  = 30000
 
 function trackColor(t) {
   return TRACK_COLORS[t.vehicle_type] ?? TRACK_COLORS[t.class_name] ?? TRACK_COLORS._default
@@ -37,6 +41,8 @@ export function CameraProvider({ children }) {
   const rafMap    = useRef({})
   const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
   const gateMap   = useRef({}) // id → gate_id the camera covers (used to tag scan logs)
+  const retryMap  = useRef({}) // id → consecutive failed attempts (drives backoff)
+  const timerMap  = useRef({}) // id → pending reconnect timeout
 
   // url → camId: tracks all known cameras by URL, used for dedup + reconnection
   // Using a Map instead of a Set so we can look up existing camId by URL
@@ -135,10 +141,40 @@ export function CameraProvider({ children }) {
     delete smoothMap.current[camId]
   }, [])
 
+  // ── Reconnect with backoff ────────────────────────────────────────────────
+  // One place decides when to retry, so the 'error' path and the 'close' path
+  // can no longer schedule two overlapping reconnects for the same camera —
+  // which opened two sockets and left one of them orphaned.
+  const scheduleReconnect = useCallback((camId, rtspUrl) => {
+    if (timerMap.current[camId]) return
+    const attempt = (retryMap.current[camId] ?? 0) + 1
+    retryMap.current[camId] = attempt
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
+
+    // Announce an outage once, not on every attempt.
+    if (attempt === 1) toast.error('Camera feed lost — reconnecting…')
+
+    setCameras(p => p.map(c => c.id === camId
+      ? { ...c, statusMsg: `Reconnecting in ${Math.round(delay / 1000)}s…` } : c))
+
+    timerMap.current[camId] = setTimeout(() => {
+      delete timerMap.current[camId]
+      if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
+        connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
+      }
+    }, delay)
+  }, [])
+
   // ── Open WebSocket for a camera ───────────────────────────────────────────
   const _connect = useCallback((camId, rtspUrl, detect = false) => {
     const token = localStorage.getItem('access_token') || ''
     if (!token) return
+
+    // A pending retry is superseded by this attempt
+    if (timerMap.current[camId]) {
+      clearTimeout(timerMap.current[camId])
+      delete timerMap.current[camId]
+    }
 
     // Cancel any lingering WS before opening a new one for the same cam
     const stale = wsMap.current[camId]
@@ -169,12 +205,14 @@ export function CameraProvider({ children }) {
           return
         }
         if (msg.type === 'status') {
+          // Frames are flowing again — start the backoff over so the next
+          // outage retries promptly instead of inheriting a 30 s delay.
+          if (msg.connected) retryMap.current[camId] = 0
           setCameras(p => p.map(c => c.id === camId
             ? { ...c, streamConnected: !!msg.connected, statusMsg: msg.message || '' } : c))
           return
         }
         if (msg.type === 'error') {
-          toast.error(`Camera error: ${msg.message}`)
           const wsErr = wsMap.current[camId]
           if (wsErr) {
             try { wsErr.onclose = null; wsErr.close() } catch {}
@@ -182,13 +220,8 @@ export function CameraProvider({ children }) {
           }
           stopRenderLoop(camId)
           setCameras(p => p.map(c => c.id === camId
-            ? { ...c, wsActive: false, streamConnected: false, statusMsg: 'Failed — retrying…' } : c))
-          // Auto-reconnect after delay if camera is still tracked
-          setTimeout(() => {
-            if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
-              connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
-            }
-          }, RECONNECT_DELAY_MS)
+            ? { ...c, wsActive: false, streamConnected: false, statusMsg: msg.message || 'Stream failed.' } : c))
+          if (urlToIdMap.current[rtspUrl] === camId) scheduleReconnect(camId, rtspUrl)
           return
         }
         if (msg.type === 'tracks' && msg.tracks) {
@@ -220,31 +253,34 @@ export function CameraProvider({ children }) {
       } catch { /* ignore parse errors */ }
     }
 
-    ws.onerror = () => toast.error('Camera WebSocket connection error')
+    // onerror always arrives paired with onclose; toasting here as well meant
+    // two notifications per drop, every drop. scheduleReconnect announces it.
+    ws.onerror = () => {}
 
     ws.onclose = () => {
       // Only fires for UNEXPECTED closes — disconnectCamera sets ws.onclose = null
       // before calling ws.close(), so intentional disconnects won't reach here.
       delete wsMap.current[camId]
       setCameras(p => p.map(c => c.id === camId
-        ? { ...c, wsActive: false, streamConnected: false, statusMsg: 'Reconnecting…' } : c))
+        ? { ...c, wsActive: false, streamConnected: false } : c))
 
       // Auto-reconnect if camera is still tracked (not removed by the user)
-      if (urlToIdMap.current[rtspUrl] === camId) {
-        setTimeout(() => {
-          if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
-            connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
-          }
-        }, RECONNECT_DELAY_MS)
-      }
+      if (urlToIdMap.current[rtspUrl] === camId) scheduleReconnect(camId, rtspUrl)
     }
-  }, [startRenderLoop, stopRenderLoop])
+  }, [startRenderLoop, stopRenderLoop, scheduleReconnect])
 
   // Keep ref in sync so ws.onclose callbacks always call the latest _connect
   connectRef.current = _connect
 
   // ── Close WebSocket for one camera (user-initiated) ──────────────────────
   const disconnectCamera = useCallback((camId) => {
+    // Kill any pending retry first, or the camera reappears seconds after the
+    // user closed it.
+    if (timerMap.current[camId]) {
+      clearTimeout(timerMap.current[camId])
+      delete timerMap.current[camId]
+    }
+    retryMap.current[camId] = 0
     const ws = wsMap.current[camId]
     if (ws) {
       // Nullify onclose BEFORE close() so the auto-reconnect handler doesn't fire
@@ -340,6 +376,9 @@ export function CameraProvider({ children }) {
       }
     })
     Object.keys(rafMap.current).forEach(id => cancelAnimationFrame(rafMap.current[id]))
+    Object.values(timerMap.current).forEach(t => clearTimeout(t))
+    timerMap.current   = {}
+    retryMap.current   = {}
     wsMap.current      = {}
     rafMap.current     = {}
     frameMap.current   = {}
@@ -357,6 +396,7 @@ export function CameraProvider({ children }) {
   useEffect(() => () => {
     Object.values(wsMap.current).forEach(ws => { try { ws?.close() } catch {} })
     Object.values(rafMap.current).forEach(h => cancelAnimationFrame(h))
+    Object.values(timerMap.current).forEach(t => clearTimeout(t))
   }, [])
 
   return (
