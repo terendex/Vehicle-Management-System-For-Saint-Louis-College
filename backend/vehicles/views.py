@@ -379,15 +379,15 @@ def _ptz_home(base_url, username, password, token, **route):
 def camera_http_credentials(cam):
     """(username, password) to use for this camera's HTTP/ONVIF calls.
 
-    Cameras carry no stored password — the field was removed because these
-    units stream and pan without auth. A camera that *does* need credentials
-    carries them inside its rtsp_url (the documented escape hatch), so read
-    them back from there rather than reintroducing a password column.
-
-    Falls back to the device ID with an empty password, which is what an open
-    camera accepts and what a credential-less unit ignores.
+    Order: the camera's own password if it has one, then any credentials
+    embedded in its rtsp_url (a hand-written URL may carry a different account),
+    then the device ID with an empty password for genuinely open units.
     """
     from urllib.parse import unquote
+
+    stored = (getattr(cam, 'password', '') or '').strip()
+    if stored:
+        return (getattr(cam, 'device_id', '') or ''), stored
 
     url = (getattr(cam, 'rtsp_url', '') or '')
     if '://' in url and '@' in url:
@@ -500,6 +500,7 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         result = rtsp_probe.detect(
             ip=request.data.get('ip', ''),
             device_id=request.data.get('device_id', ''),
+            password=request.data.get('password', ''),
         )
         return Response(result, status=(status.HTTP_200_OK if result['ok']
                                         else status.HTTP_400_BAD_REQUEST))

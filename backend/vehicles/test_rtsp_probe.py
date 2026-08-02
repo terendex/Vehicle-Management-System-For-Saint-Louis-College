@@ -1,7 +1,7 @@
 """RTSP auto-detection: ask the camera, don't ask the admin.
 
-These cameras carry no credentials at all — there is no password field on the
-model — so detection works from IP + device ID alone.
+A password is optional: IMOU/Dahua units refuse RTSP without one, a genuinely
+open camera needs none, and detection has to cope with both.
 
 The network is mocked throughout: these pin the decision logic (ordering,
 stopping at the first hit, what happens when nothing answers), not whether a
@@ -20,7 +20,21 @@ ENDPOINT = '/api/vehicles/cameras/detect-rtsp/'
 
 
 class CandidateTests(TestCase):
-    def test_credential_less_url_is_tried_first(self):
+    def test_credentialed_url_is_tried_first_when_a_password_is_given(self):
+        """An IMOU/Dahua unit refuses everything else, and it is the common case."""
+        cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')
+        self.assertEqual(cands[0]['url'], 'rtsp://dev:pw@10.0.0.5/stream1')
+
+    def test_open_camera_form_is_still_tried_when_a_password_is_given(self):
+        urls = [c['url'] for c in rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')]
+        self.assertIn('rtsp://10.0.0.5/stream1', urls)
+
+    def test_password_is_url_encoded(self):
+        url = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'p@ss/word')[0]['url']
+        self.assertIn('p%40ss%2Fword', url)
+        self.assertEqual(url.count('@'), 1)
+
+    def test_credential_less_url_is_tried_first_without_a_password(self):
         """An open camera answers on rtsp://ip/path — empty credentials in
         front of it make some firmware reject the request outright."""
         cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev')
@@ -103,13 +117,32 @@ class DetectTests(TestCase):
         self.assertEqual(r['format'], 'dahua')
         self.assertEqual(calls[-1], r['rtsp_url'])   # stopped at the hit
 
-    def test_camera_up_but_no_path_works_explains_itself(self):
+    def test_camera_up_but_no_path_works_still_lets_you_save(self):
+        """The blocker this fixes: with an empty URL box and no known path, the
+        camera could not be added at all."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, '_opens', return_value=False):
-            r = rtsp_probe.detect('10.0.0.5', 'dev')
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
         self.assertFalse(r['ok'])
-        self.assertIn('custom URL', r['error'])       # points at the way out
-        self.assertGreater(len(r['attempts']), 3)     # shows what it tried
+        self.assertGreater(len(r['attempts']), 3)          # shows what it tried
+        self.assertTrue(r['suggestion'].startswith('rtsp://dev:pw@10.0.0.5'))
+
+    def test_unreachable_camera_also_gets_a_suggestion(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertIn('rtsp://dev:pw@10.0.0.5', r['suggestion'])
+
+    def test_suggestion_uses_a_placeholder_when_no_password_was_given(self):
+        self.assertIn('PASSWORD', rtsp_probe.suggestion_for('10.0.0.5', 'dev'))
+
+    def test_probe_stops_at_the_time_budget(self):
+        """Every candidate timing out must not leave the admin waiting minutes."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'TOTAL_BUDGET_SECONDS', 0), \
+             patch.object(rtsp_probe, '_opens', return_value=False) as opens:
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertFalse(r['ok'])
+        opens.assert_not_called()          # budget already spent
 
 
 class DetectEndpointTests(APITestCase):
@@ -139,21 +172,30 @@ class DetectEndpointTests(APITestCase):
         self.assertFalse(r.data['ok'])
         self.assertTrue(r.data['error'])
 
-    def test_a_password_is_neither_required_nor_stored(self):
-        """The model has no password column — posting one must not blow up,
-        and it must not come back on the camera payload."""
+    def test_the_password_reaches_the_probe(self):
+        """It is the whole point of having the field — an IMOU unit refuses
+        every credential-less path."""
+        seen = {}
+
+        def fake_detect(ip, device_id, password=''):
+            seen.update(ip=ip, device_id=device_id, password=password)
+            return {'ok': True, 'rtsp_url': 'rtsp://x', 'format': 'dahua', 'attempts': []}
+
         self.client.force_authenticate(self.admin)
-        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
-             patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u.endswith('/stream1')):
+        with patch.object(rtsp_probe, 'detect', side_effect=fake_detect):
             r = self.client.post(ENDPOINT,
-                                 {'ip': '10.0.0.5', 'device_id': 'dev', 'password': 'ignored'},
+                                 {'ip': '10.0.0.5', 'device_id': 'dev', 'password': 's3cret'},
                                  format='json')
         self.assertEqual(r.status_code, 200)
+        self.assertEqual(seen['password'], 's3cret')
 
+    def test_a_camera_can_still_be_saved_without_a_password(self):
+        """Optional, not required — an open camera must not need a made-up one."""
+        self.client.force_authenticate(self.admin)
         created = self.client.post('/api/vehicles/cameras/', {
             'ip': '10.0.0.7', 'device_id': 'dev7',
             'rtsp_url': 'rtsp://10.0.0.7/stream1',
             'assignment': 'parking',
         }, format='json')
         self.assertIn(created.status_code, (200, 201), msg=str(created.data))
-        self.assertNotIn('password', created.data)
+        self.assertEqual(created.data.get('password', ''), '')

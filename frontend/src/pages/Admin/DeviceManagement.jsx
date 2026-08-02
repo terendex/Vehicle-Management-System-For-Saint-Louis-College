@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
-  Camera, Plus, Pencil, Trash2, X,
+  Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
   ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
@@ -82,6 +82,10 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
+  // IMOU/Dahua units refuse RTSP without it. Optional, so a genuinely open
+  // camera can still be added without inventing a credential.
+  const [password,   setPassword]   = useState(camera?.password   ?? '')
+  const [showPw,     setShowPw]     = useState(false)
   // The vendor picker is gone — the backend probes the camera and finds the
   // stream path itself. These only come into play when that fails, or when a
   // camera was already saved with a URL no template produces.
@@ -151,15 +155,20 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
         setDetecting(true)
         try {
           const found = await camerasApi.detectRtsp({
-            ip: ip.trim(), device_id: deviceId.trim(),
+            ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(),
           })
           rtspUrl = found.rtsp_url
           setDetectedFormat(found.format)
         } catch (err) {
           // Reveal the manual escape hatch instead of dead-ending them.
+          const data = err?.response?.data
           setUseCustomUrl(true)
-          setDetectError(err?.response?.data?.error || 'Could not detect the camera stream.')
-          toast.error('Could not reach the camera — enter the RTSP URL manually.')
+          setDetectError(data?.error || 'Could not detect the camera stream.')
+          // Prefilled with the backend's best guess so the form can still be
+          // submitted — an admin who cannot add the camera at all is worse off
+          // than one holding a URL they can correct.
+          if (data?.suggestion && !customUrl.trim()) setCustomUrl(data.suggestion)
+          toast.error('Could not detect the stream — check the URL below and save.')
           return
         } finally {
           setDetecting(false)
@@ -168,6 +177,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       const payload = {
         ip: ip.trim(),
         device_id: deviceId.trim(),
+        password: password.trim(),
         rtsp_url: rtspUrl,
         assignment,
         gate_id: assignment === 'entry' ? gateId : null,
@@ -220,6 +230,22 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 {deviceIdDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
                 )}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <div className="dm-input-group">
+                <input
+                  className="form-input"
+                  type={showPw ? 'text' : 'password'}
+                  placeholder="Camera password (leave blank if none)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button type="button" className="dm-pw-addon" onClick={() => setShowPw(p => !p)}>
+                  {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
               </div>
             </div>
 

@@ -11,16 +11,23 @@ four.
 """
 import logging
 import socket
+import time
 from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
 RTSP_PORT = 554
 
-# Seconds to wait for a single candidate before moving on. Long enough for a
-# camera on a busy LAN to answer, short enough that four dead candidates do not
-# leave the admin staring at a spinner.
-PROBE_TIMEOUT_SECONDS = 6
+# Seconds to wait for a single candidate before moving on. A camera that has
+# already answered on port 554 responds to a good path quickly; the wait only
+# matters for paths it will refuse.
+PROBE_TIMEOUT_SECONDS = 4
+
+# Hard ceiling on the whole probe. The candidate list is long enough that
+# walking all of it at the per-candidate timeout would take minutes, and an
+# admin will assume the page has hung. Stop at the budget and hand back the
+# suggested URL instead — they can still save the camera.
+TOTAL_BUDGET_SECONDS = 25
 
 # Reachability check before any candidate is tried: an unplugged camera would
 # otherwise burn the full timeout once per candidate for no information.
@@ -30,28 +37,47 @@ CONNECT_TIMEOUT_SECONDS = 3
 PATHS = [
     ('generic',   '/stream1'),
     ('dahua',     '/cam/realmonitor?channel=1&subtype=0'),
+    # Sub-stream. Several IMOU units only serve the main stream to one client
+    # at a time, so subtype=1 succeeds where subtype=0 is refused as busy.
+    ('dahua',     '/cam/realmonitor?channel=1&subtype=1'),
     ('hikvision', '/Streaming/Channels/101'),
+    ('hikvision', '/Streaming/Channels/102'),        # sub-stream
     # Seen on ONVIF-generic and several budget units.
     ('generic',   '/live'),
+    ('generic',   '/live/ch0'),
     ('generic',   '/h264'),
+    ('generic',   '/h264_stream'),
     ('generic',   '/11'),
+    ('generic',   '/12'),
+    ('generic',   '/onvif1'),
+    ('generic',   '/video1'),
+    ('generic',   '/ch01/0'),
+    ('generic',   '/'),                              # some serve the default track
 ]
 
 
-def candidate_urls(ip: str, device_id: str) -> list[dict]:
+def candidate_urls(ip: str, device_id: str, password: str = '') -> list[dict]:
     """Candidate RTSP URLs for this camera, most likely first.
 
-    These cameras carry no password, so the credential-less form is tried first
-    — that is what an open camera answers on, and prefixing empty credentials
-    makes some firmware reject the request outright. A username with an empty
-    password follows, for units that insist on one; `device_id` is whatever is
-    printed on the unit, and several vendors ignore it and expect "admin".
+    With a password, the credentialed forms come first — an IMOU/Dahua unit
+    refuses everything else, and it is the common case here. `device_id` is
+    whatever is printed on the unit; several vendors ignore it for RTSP and
+    expect "admin", so both usernames are tried.
+
+    The credential-less form is kept as a tail so a genuinely open camera still
+    resolves, and is tried first when no password was given at all.
     """
     ip = (ip or '').strip()
     dev = quote((device_id or '').strip(), safe='')
+    pw = quote((password or '').strip(), safe='')
+    users = [u for u in dict.fromkeys([dev, 'admin']) if u]
 
-    prefixes = ['']
-    prefixes += [f"{u}:@" for u in dict.fromkeys([dev, 'admin']) if u]
+    if pw:
+        prefixes = [f"{u}:{pw}@" for u in users]
+        prefixes += ['']                       # open camera, password ignored
+    else:
+        prefixes = ['']
+        prefixes += [f"{u}:@" for u in users]  # username with an empty password
 
     out = []
     for prefix in prefixes:
@@ -115,7 +141,7 @@ def _redact(url: str) -> str:
     return f"{scheme}://{user}:***@{host}"
 
 
-def detect(ip: str, device_id: str) -> dict:
+def detect(ip: str, device_id: str, password: str = '') -> dict:
     """Find the working RTSP URL for this camera.
 
     Returns {'ok': True, 'rtsp_url', 'format', 'attempts'} on success, or
@@ -132,11 +158,17 @@ def detect(ip: str, device_id: str) -> dict:
             'ok': False,
             'error': (f'Nothing is answering on {ip}:{RTSP_PORT}. Check the camera is '
                       f'powered on and that this machine is on the same network.'),
+            'suggestion': suggestion_for(ip, device_id, password),
             'attempts': [],
         }
 
     attempts = []
-    for cand in candidate_urls(ip, device_id):
+    deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
+    for cand in candidate_urls(ip, device_id, password):
+        if time.monotonic() >= deadline:
+            log.info('[rtsp-probe] %s gave up after %d attempts (budget reached)',
+                     ip, len(attempts))
+            break
         if _opens(cand['url']):
             log.info('[rtsp-probe] %s matched %s', ip, cand['format'])
             return {
@@ -147,11 +179,30 @@ def detect(ip: str, device_id: str) -> dict:
             }
         attempts.append(_redact(cand['url']))
 
+    # The camera is there but speaks a path we do not know. Hand back the most
+    # likely URL as a starting point rather than an empty box: an admin who
+    # cannot add the camera at all is worse off than one holding a good guess
+    # they can correct.
     return {
         'ok': False,
         'error': ('The camera answered but none of the known stream paths worked. '
-                  'The device ID may be wrong, this camera may require a password '
-                  '(put it in a custom URL), or this model uses a path we do not '
-                  'know yet.'),
+                  'The device ID or password may be wrong, or this model uses a path '
+                  'we do not know yet. The URL below is a best guess - correct it '
+                  'if needed and save.'),
+        'suggestion': suggestion_for(ip, device_id, password),
         'attempts': attempts,
     }
+
+
+def suggestion_for(ip: str, device_id: str, password: str = '') -> str:
+    """Best-guess RTSP URL, used to prefill the manual field when probing fails.
+
+    Dahua/IMOU shape with the device ID as the username: those units are the
+    common case here and their path is the one an admin is least likely to know
+    off-hand. The real password is filled in when there is one, so the field
+    arrives ready to save rather than needing a placeholder swapped out.
+    """
+    ip = (ip or '').strip()
+    dev = quote((device_id or '').strip(), safe='') or 'admin'
+    pw = quote((password or '').strip(), safe='') or 'PASSWORD'
+    return f"rtsp://{dev}:{pw}@{ip}/cam/realmonitor?channel=1&subtype=0"
