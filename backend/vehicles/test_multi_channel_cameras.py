@@ -120,6 +120,7 @@ class MultiChannelRegistrationTests(APITestCase):
         password does, and it is the likelier mistake — the message has to say so
         or the admin re-types a password that was never wrong."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=404), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect(IP, 'dev', 'pw', channel=2)
@@ -128,6 +129,7 @@ class MultiChannelRegistrationTests(APITestCase):
 
     def test_a_failure_on_channel_one_does_not_mention_channels(self):
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=404), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect(IP, 'dev', 'pw', channel=1)
@@ -137,6 +139,7 @@ class MultiChannelRegistrationTests(APITestCase):
         """A 401 on channel 2 is a password problem, not a channel problem —
         blaming the channel would send the admin down the wrong path."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=401), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect(IP, 'dev', 'pw', channel=2)

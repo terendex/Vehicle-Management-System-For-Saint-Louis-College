@@ -95,6 +95,7 @@ class DetectTests(TestCase):
     def test_open_camera_matches_on_the_first_attempt(self):
         match = 'rtsp://10.0.0.5/stream1'
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe',
                           side_effect=lambda u, *a, **k: 200 if u == match else 404), \
              patch.object(rtsp_probe, '_opens',
@@ -114,6 +115,7 @@ class DetectTests(TestCase):
             return True
 
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe',
                           side_effect=lambda u, *a, **k: 200 if '/cam/realmonitor' in u else 404), \
              patch.object(rtsp_probe, '_opens', side_effect=fake_opens):
@@ -127,6 +129,7 @@ class DetectTests(TestCase):
     def test_a_url_the_camera_accepts_but_cannot_be_decoded_is_not_returned(self):
         """Some firmware answers 200 to anything; acceptance is not video."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=200), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
@@ -139,6 +142,7 @@ class DetectTests(TestCase):
         time budget ran out first. An NVR wants `admin` for RTSP."""
         match = 'rtsp://admin:pw@10.0.0.5/cam/realmonitor?channel=1&subtype=0'
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe',
                           side_effect=lambda u, *a, **k: 200 if u == match else 401), \
              patch.object(rtsp_probe, '_opens',
@@ -149,6 +153,7 @@ class DetectTests(TestCase):
 
     def test_rejected_credentials_are_named_as_the_cause(self):
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=401), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'wrong')
@@ -159,6 +164,7 @@ class DetectTests(TestCase):
         """An admin whose camera will not connect needs to see what happened,
         not a bare 'detection failed'."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=404):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
         self.assertTrue(all('-> 404' in a for a in r['attempts']))
@@ -168,6 +174,7 @@ class DetectTests(TestCase):
         """The blocker this fixes: with an empty URL box and no known path, the
         camera could not be added at all."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe', return_value=404), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
@@ -186,6 +193,7 @@ class DetectTests(TestCase):
     def test_probe_stops_at_the_time_budget(self):
         """Every candidate timing out must not leave the admin waiting minutes."""
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, 'TOTAL_BUDGET_SECONDS', 0), \
              patch.object(rtsp_probe, '_describe', return_value=404) as desc, \
              patch.object(rtsp_probe, '_opens', return_value=False) as opens:
@@ -193,6 +201,351 @@ class DetectTests(TestCase):
         self.assertFalse(r['ok'])
         desc.assert_not_called()           # budget already spent
         opens.assert_not_called()
+
+
+class OnvifFirstTests(TestCase):
+    """A device that publishes its own stream URL should not be guessed at."""
+
+    def test_onvif_answers_when_the_common_paths_do_not(self):
+        """ONVIF runs after a short fast path, not before it: the round trips it
+        costs left a connection-limited camera with nothing spare for the RTSP
+        URL that actually worked."""
+        uri = 'rtsp://192.168.1.9:554/unicast/c1/s1/live'
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=uri), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == uri), \
+             patch.object(rtsp_probe, '_describe', return_value=404) as describe:
+            r = rtsp_probe.detect('192.168.1.9', 'dev', 'pw')
+        self.assertTrue(r['ok'])
+        self.assertEqual(r['format'], 'onvif')
+        # Only the fast path ran before ONVIF was consulted.
+        self.assertEqual(describe.call_count, rtsp_probe.FAST_PATH_CANDIDATES)
+
+    def test_a_common_path_is_found_without_touching_onvif(self):
+        match = 'rtsp://admin:pw@10.0.0.5/stream1'
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'onvif_stream_uri') as onvif, \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == match else 400), \
+             patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u == match):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertTrue(r['ok'])
+        onvif.assert_not_called()
+
+    def test_onvif_is_skipped_once_the_camera_has_gone_quiet(self):
+        """Piling HTTP requests onto a device that stopped answering RTSP only
+        pushes it further under."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'RECOVERY_PAUSE_SECONDS', 0), \
+             patch.object(rtsp_probe, 'onvif_stream_uri') as onvif, \
+             patch.object(rtsp_probe, '_describe', return_value=None), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        onvif.assert_not_called()
+
+    def test_path_guessing_still_runs_when_onvif_is_silent(self):
+        match = 'rtsp://admin:pw@10.0.0.5/live/ch1'
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == match else 404), \
+             patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u == match):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], match)
+
+    def test_an_onvif_url_that_will_not_decode_does_not_win(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value='rtsp://x/y'), \
+             patch.object(rtsp_probe, '_describe', return_value=404), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertFalse(r['ok'])
+
+    def test_a_broken_onvif_service_cannot_break_detection(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', side_effect=RuntimeError('boom')), \
+             patch.object(rtsp_probe, '_describe', return_value=404), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertFalse(r['ok'])          # reported, not raised
+
+    def test_credentials_are_injected_into_the_uri_the_device_returns(self):
+        out = rtsp_probe._with_credentials('rtsp://10.0.0.5/live', 'admin', 'p@ss')
+        self.assertEqual(out, 'rtsp://admin:p%40ss@10.0.0.5/live')
+
+    def test_credentials_already_present_are_left_alone(self):
+        url = 'rtsp://admin:pw@10.0.0.5/live'
+        self.assertEqual(rtsp_probe._with_credentials(url, 'other', 'x'), url)
+
+
+class TransportFallbackTests(TestCase):
+    """"Nonmatching transport in server reply" — forcing TCP hid working cameras."""
+
+    def test_udp_is_tried_when_tcp_cannot_open(self):
+        seen = []
+
+        def fake_once(url, transport, timeout_s):
+            seen.append(transport)
+            return transport == 'udp'
+
+        with patch.object(rtsp_probe, '_opens_once', side_effect=fake_once):
+            self.assertTrue(rtsp_probe._opens('rtsp://10.0.0.5/live'))
+        self.assertEqual(seen, ['tcp', 'udp'])
+
+    def test_tcp_wins_when_it_works_and_udp_is_not_tried(self):
+        seen = []
+
+        def fake_once(url, transport, timeout_s):
+            seen.append(transport)
+            return True
+
+        with patch.object(rtsp_probe, '_opens_once', side_effect=fake_once):
+            self.assertTrue(rtsp_probe._opens('rtsp://10.0.0.5/live'))
+        self.assertEqual(seen, ['tcp'])
+
+    def test_a_hung_open_does_not_outlive_its_wall_clock(self):
+        """One camera sat inside FFmpeg for 30 s despite a 4 s option, which on
+        its own exhausted the whole probe budget."""
+        import time as _t
+
+        def hangs(url, transport, timeout_s):
+            _t.sleep(30)
+            return True
+
+        started = _t.monotonic()
+        with patch.object(rtsp_probe, '_opens_once', side_effect=hangs):
+            ok = rtsp_probe._opens('rtsp://10.0.0.5/live', timeout_s=1)
+        self.assertFalse(ok)
+        self.assertLess(_t.monotonic() - started, 12, 'wall clock not enforced')
+
+
+class ConnectionLimitedCameraTests(TestCase):
+    """A camera that accepts only a handful of connections before going quiet.
+
+    This is a real device: it answered candidate 2 with 200 and had stopped
+    replying by candidate 4. Collecting every acceptance and verifying at the
+    end meant returning to a URL it would no longer serve, so a camera that had
+    already said yes was reported as undetectable.
+    """
+    MATCH = 'rtsp://admin:pw@10.0.0.5/stream1'
+
+    def _camera(self, budget=3):
+        """DESCRIBE answers `budget` times, then falls silent forever."""
+        state = {'left': budget}
+
+        def describe(url, *a, **k):
+            if state['left'] <= 0:
+                return None
+            state['left'] -= 1
+            return 200 if url == self.MATCH else 400
+
+        return describe, state
+
+    def test_the_accepted_url_is_verified_before_the_camera_gives_out(self):
+        describe, state = self._camera(budget=3)
+        opened = []
+
+        def opens(url, *a, **k):
+            # The camera would refuse this too if it had already gone quiet.
+            opened.append(url)
+            return state['left'] > 0 and url == self.MATCH
+
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=describe), \
+             patch.object(rtsp_probe, '_opens', side_effect=opens):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], self.MATCH)
+
+    def test_a_url_that_authenticated_becomes_the_suggestion(self):
+        """"Add Anyway" saves the suggestion, so it must be the URL the camera
+        accepted — not a vendor-shaped guess it had already refused."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == self.MATCH else 400), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertFalse(r['ok'])
+        self.assertEqual(r['suggestion'], self.MATCH)
+
+    def test_the_probe_connection_is_released_before_the_stream_is_opened(self):
+        """Holding the probe socket open is the difference between the stream
+        connecting and the camera refusing it."""
+        events = []
+
+        def describe(url, *a, **k):
+            events.append(('describe', url))
+            if k.get('session') is not None:
+                k['session'].close = lambda: events.append(('closed', url))
+            return 200 if url == self.MATCH else 400
+
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=describe), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: events.append(('open', u)) or True):
+            rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+
+        kinds = [e[0] for e in events]
+        self.assertIn('closed', kinds, f'probe socket never released: {events}')
+        self.assertLess(kinds.index('closed'), kinds.index('open'))
+
+    def test_detection_stops_at_the_first_working_url(self):
+        """Every extra candidate is another connection the camera may not have
+        to spare, so the sweep must not continue past a confirmed hit."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe',
+                          side_effect=lambda u, *a, **k: 200 if u == self.MATCH else 400) as desc, \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == self.MATCH):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+
+        self.assertTrue(r['ok'])
+        # /stream1 with `admin` is the second candidate; nothing after it should
+        # have been touched.
+        self.assertEqual(desc.call_count, 2)
+        self.assertEqual(len(r['attempts']), 2)
+
+    def test_a_quiet_camera_gets_one_pause_before_being_written_off(self):
+        RECOVERY = 0.01          # distinct from the zeroed pacing sleeps
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'RECOVERY_PAUSE_SECONDS', RECOVERY), \
+             patch.object(rtsp_probe, '_describe', return_value=None), \
+             patch.object(rtsp_probe, '_opens', return_value=False), \
+             patch.object(rtsp_probe.time, 'sleep') as slept:
+            rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        pauses = [c.args[0] for c in slept.call_args_list]
+        self.assertEqual(pauses.count(RECOVERY), 1, f'expected one pause, got {pauses}')
+
+
+class AcceptsAnythingFirmwareTests(TestCase):
+    """Firmware that answers 200 to every path it is asked about.
+
+    A real camera did this: with the right credential, /, /h264, /11 and
+    /stream1 all came back 200. The search then "found" a generic guess,
+    spent its one verification on it, and never reached the camera's own
+    documented URL — while reporting the camera as undetectable.
+    """
+    REAL = 'rtsp://admin:pw@10.0.0.5/cam/realmonitor?channel=1&subtype=0'
+
+    def _always_200(self, url, *a, **k):
+        # Only `admin` authenticates, exactly like the camera in question.
+        return 200 if url.startswith('rtsp://admin:pw@') else 400
+
+    def test_the_real_url_is_found_by_decoding_when_status_means_nothing(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == self.REAL):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], self.REAL)
+
+    def test_only_the_credential_that_authenticated_is_decoded(self):
+        """Decoding is the expensive step and these cameras allow few
+        connections — spending them on a rejected username wastes the run."""
+        opened = []
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: opened.append(u) or False):
+            rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertTrue(opened)
+        self.assertTrue(all(u.startswith('rtsp://admin:pw@') for u in opened),
+                        f'decoded a rejected credential: {opened}')
+
+    def test_the_number_of_blind_decodes_is_capped(self):
+        opened = []
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: opened.append(u) or False):
+            rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertLessEqual(len(opened), rtsp_probe.BLIND_DECODE_LIMIT)
+
+    def test_the_vendor_path_is_decoded_before_the_generic_shortcut(self):
+        """/stream1 is a guess; /cam/realmonitor is what the unit documents."""
+        opened = []
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: opened.append(u) or False):
+            rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertIn('/cam/realmonitor', opened[0])
+
+    def test_the_failure_suggestion_is_the_most_likely_url(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertFalse(r['ok'])
+        self.assertEqual(r['suggestion'], self.REAL)
+        self.assertIn('accepts any stream address', r['error'])
+
+    def test_a_well_behaved_camera_still_uses_its_status_codes(self):
+        """The control probe must not change how an honest camera is handled."""
+        match = 'rtsp://admin:pw@10.0.0.5/stream1'
+
+        def describe(url, *a, **k):
+            if rtsp_probe.BOGUS_PATH in url:
+                return 404              # honest: no such path
+            return 200 if url == match else 404
+
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=describe), \
+             patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u == match):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], match)
+
+
+class PacingTests(TestCase):
+    def test_probing_stops_once_the_device_goes_quiet(self):
+        """A camera that stops accepting connections must not be hammered for
+        another fifty candidates — and the report must say what happened."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', return_value=None) as describe, \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
+        self.assertEqual(describe.call_count, rtsp_probe.DEAD_STREAK_LIMIT)
+        self.assertIn('stopped answering', r['error'])
 
 
 class DetectEndpointTests(APITestCase):
@@ -209,6 +562,7 @@ class DetectEndpointTests(APITestCase):
         self.client.force_authenticate(self.admin)
         ends = lambda u, *a, **k: u.endswith('/stream1')          # noqa: E731
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_describe',
                           side_effect=lambda u, *a, **k: 200 if ends(u) else 404), \
              patch.object(rtsp_probe, '_opens', side_effect=ends):

@@ -147,6 +147,38 @@ class DescribeTests(SimpleTestCase):
         creds = f"admin:{quote('p@ss/word', safe='')}@"
         self.assertEqual(rtsp_probe._describe(self._url(srv, creds)), 200)
 
+    def test_many_describes_share_one_connection(self):
+        """A camera that allows only a couple of connections cannot spare one
+        per candidate — the sweep must not spend its whole allowance asking."""
+        srv = _FakeRtspServer(scheme='digest')
+        self.addCleanup(srv.stop)
+        session = rtsp_probe._RtspSession('127.0.0.1', srv.port, 3)
+        self.addCleanup(session.close)
+        codes = [rtsp_probe._describe(self._url(srv), session=session)
+                 for _ in range(5)]
+        self.assertEqual(codes, [200] * 5)
+
+    def test_a_reused_connection_stays_in_step_after_a_response_with_a_body(self):
+        """The SDP body has to be drained, or the next reply is read as garbage."""
+        srv = _FakeRtspServer(scheme='none')      # 200 + SDP body, no auth
+        self.addCleanup(srv.stop)
+        session = rtsp_probe._RtspSession('127.0.0.1', srv.port, 3)
+        self.addCleanup(session.close)
+        first  = rtsp_probe._describe(self._url(srv, creds=''), session=session)
+        second = rtsp_probe._describe(self._url(srv, creds='', path='/nope'),
+                                      session=session)
+        self.assertEqual(first, 200)
+        self.assertEqual(second, 404)             # not a misread continuation
+
+    def test_a_session_reconnects_when_the_camera_drops_it(self):
+        srv = _FakeRtspServer(scheme='digest')
+        self.addCleanup(srv.stop)
+        session = rtsp_probe._RtspSession('127.0.0.1', srv.port, 3)
+        self.addCleanup(session.close)
+        self.assertEqual(rtsp_probe._describe(self._url(srv), session=session), 200)
+        session.sock.close()                      # camera hangs up mid-sweep
+        self.assertEqual(rtsp_probe._describe(self._url(srv), session=session), 200)
+
     def test_a_dead_port_returns_none_rather_than_raising(self):
         s = socket.socket(); s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]; s.close()
         self.assertIsNone(rtsp_probe._describe(f'rtsp://127.0.0.1:{port}/x', timeout=0.5))
@@ -164,6 +196,7 @@ class DetectAgainstAServerTests(SimpleTestCase):
         self.addCleanup(srv.stop)
         from unittest.mock import patch
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_opens', return_value=True):
             r = rtsp_probe.detect(f'127.0.0.1:{srv.port}', 'some-device-id',
                                   'pw', channel=2)
@@ -178,6 +211,7 @@ class DetectAgainstAServerTests(SimpleTestCase):
         self.addCleanup(srv.stop)
         from unittest.mock import patch
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect(f'127.0.0.1:{srv.port}', 'dev', 'wrong', channel=1)
         self.assertFalse(r['ok'])

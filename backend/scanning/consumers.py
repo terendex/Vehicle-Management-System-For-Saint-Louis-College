@@ -1587,28 +1587,45 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     @staticmethod
     def _open_cap(rtsp_url: str):
-        """Open OpenCV VideoCapture with robust FFmpeg RTSP options."""
+        """Open OpenCV VideoCapture with robust FFmpeg RTSP options.
+
+        Tries TCP then UDP. TCP is preferred — it survives packet loss and
+        traverses switches predictably — but it cannot be the only option:
+        cameras that answer a TCP SETUP with a UDP transport make FFmpeg fail
+        with "Nonmatching transport in server reply", and forcing TCP left
+        those devices with a permanently black feed.
+        """
         import cv2
         import os
-        # _OPEN_CAP_LOCK ensures only one VideoCapture is being constructed at a
-        # time.  os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] is read by FFmpeg
-        # at VideoCapture() construction; concurrent writes + reads on Windows
-        # (where putenv() is not thread-safe) can strip options for one camera
-        # when two cameras connect simultaneously.
-        with _OPEN_CAP_LOCK:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                "rtsp_transport;tcp"
-                "|buffer_size;2097152"
-                "|stimeout;10000000"
-                "|threads;1"
-                "|err_detect;ignore_err"
-                "|fflags;discardcorrupt"
-            )
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)              # hint: minimal decoded frame buffer
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)   # 10 s open timeout
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)    # 5 s read timeout
-        return cap
+
+        for transport in ('tcp', 'udp'):
+            # _OPEN_CAP_LOCK ensures only one VideoCapture is being constructed
+            # at a time.  os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] is read by
+            # FFmpeg at VideoCapture() construction; concurrent writes + reads
+            # on Windows (where putenv() is not thread-safe) can strip options
+            # for one camera when two cameras connect simultaneously.
+            with _OPEN_CAP_LOCK:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                    f"rtsp_transport;{transport}"
+                    "|buffer_size;2097152"
+                    "|stimeout;10000000"
+                    "|threads;1"
+                    "|err_detect;ignore_err"
+                    "|fflags;discardcorrupt"
+                )
+                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)            # minimal frame buffer
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            if cap.isOpened():
+                if transport != 'tcp':
+                    logger.info('[StreamWorker] %s opened over %s', rtsp_url, transport)
+                return cap
+            try:
+                cap.release()
+            except Exception:
+                pass
+        return cap      # last attempt, closed — caller reports the failure
 
     @staticmethod
     def _encode_frame(frame) -> "bytes | None":

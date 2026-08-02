@@ -24,9 +24,37 @@ class Command(BaseCommand):
         parser.add_argument('--channel', type=int, default=1)
         parser.add_argument('--all-channels', action='store_true',
                             help='Try channels 1-8 and report which ones answer.')
+        parser.add_argument('--try-url', default='',
+                            help='Skip the search and test one RTSP URL directly, '
+                                 'reporting TCP and UDP separately.')
 
     def handle(self, *args, **o):
         ip = o['ip']
+
+        # Separates "we cannot find the stream" from "we found it and cannot
+        # decode it" — two very different problems with one symptom.
+        if o['try_url']:
+            url = o['try_url']
+            self.stdout.write(f'Testing {rtsp_probe._redact(url)}\n')
+            worked = []
+            for transport in rtsp_probe.RTSP_TRANSPORTS:
+                self.stdout.write(f'  {transport}: ', ending='')
+                ok = rtsp_probe._opens_once(
+                    url, transport, rtsp_probe.VERIFY_TIMEOUT_SECONDS)
+                self.stdout.write(self.style.SUCCESS('decoded a frame') if ok
+                                  else self.style.WARNING('no frame'))
+                if ok:
+                    worked.append(transport)
+            if worked:
+                self.stdout.write(self.style.SUCCESS(
+                    f"\n  This URL works over {'/'.join(worked)}. "
+                    f'Register it in Device Management.'))
+            else:
+                self.stdout.write(self.style.WARNING(
+                    '\n  Neither transport produced a frame. Close any app or '
+                    'browser tab watching this camera and try once more — many '
+                    'units serve only one stream at a time.'))
+            return
         self.stdout.write(f'Port {rtsp_probe.RTSP_PORT} on {ip}: ', ending='')
         if not rtsp_probe.is_reachable(ip):
             self.stdout.write(self.style.ERROR('no answer'))
@@ -37,11 +65,36 @@ class Command(BaseCommand):
             return
         self.stdout.write(self.style.SUCCESS('open'))
 
+        # Reported separately because it is the decisive test: a device whose
+        # app mentions ONVIF/NVR/CMS support should answer this, and if it does
+        # there is no guessing left to do.
+        self.stdout.write('ONVIF GetStreamUri: ', ending='')
+        try:
+            uri = rtsp_probe.onvif_stream_uri(
+                ip, ['admin', o['device_id']], o['password'],
+                channel=max(1, o['channel']))
+        except Exception as exc:
+            uri = None
+            self.stdout.write(self.style.WARNING(f'failed ({exc})'))
+        else:
+            self.stdout.write(self.style.SUCCESS(rtsp_probe._redact(uri))
+                              if uri else self.style.WARNING('no answer'))
+
         channels = range(1, 9) if o['all_channels'] else [max(1, o['channel'])]
         found = []
 
         for ch in channels:
             self.stdout.write(f'\n=== Channel {ch} ===')
+
+            # Sweeping on regardless is how a device that fell over halfway
+            # produced six identical "channel does not exist" reports.
+            if ch > 1 and not rtsp_probe.is_reachable(ip):
+                self.stdout.write(self.style.WARNING(
+                    '  The device stopped answering on port 554 — it limits how '
+                    'many connections it accepts. Stopping here; wait a few '
+                    'seconds before probing again.'))
+                break
+
             res = rtsp_probe.detect(ip, o['device_id'], o['password'], channel=ch)
 
             for line in res.get('attempts', []):
