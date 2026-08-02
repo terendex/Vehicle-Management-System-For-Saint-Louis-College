@@ -221,9 +221,19 @@ Say 'Collecting static files...'
 # Deliberately no `migrate` — RUN_MIGRATIONS=false above, and Railway owns the
 # schema for the shared database.
 
+# The two audiences need different entry points, and handing a guard the plain
+# origin sends them to the account login instead of the gate terminal.
 Write-Host ''
 Say "Serving on $origin" 'Green'
-Say 'Guards should use that address. Ctrl+C to stop.' 'Green'
+Write-Host ''
+Write-Host '  Admin / CDSO / vehicle owners' -ForegroundColor White
+Write-Host "    $origin/login" -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  Guards at the gate' -ForegroundColor White
+Write-Host "    $origin/security/guard-login" -ForegroundColor Cyan
+Write-Host "    $origin/security/guard-login/main    (pre-selects the gate)" -ForegroundColor DarkGray
+Write-Host ''
+Say 'Ctrl+C to stop.' 'Green'
 Write-Host ''
 
 & $python -m daphne -b 0.0.0.0 -p $Port config.asgi:application
