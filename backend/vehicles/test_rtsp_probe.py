@@ -284,7 +284,20 @@ class OnvifFirstTests(TestCase):
 
 
 class TransportFallbackTests(TestCase):
-    """"Nonmatching transport in server reply" — forcing TCP hid working cameras."""
+    """"Nonmatching transport in server reply" — forcing TCP hid working cameras.
+
+    These cover the OpenCV half of `_opens`, which now runs only when no system
+    ffmpeg is installed — where a camera OpenCV cannot decode has nowhere else
+    to go, so the tcp/udp fallback is the last thing standing. The ffmpeg branch
+    is disabled here so that half is what actually gets exercised; it has its
+    own tests in test_ffmpeg_capture.py.
+    """
+
+    def setUp(self):
+        from vehicles import ffmpeg_capture
+        patcher = patch.object(ffmpeg_capture, 'is_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_udp_is_tried_when_tcp_cannot_open(self):
         seen = []
@@ -476,6 +489,24 @@ class AcceptsAnythingFirmwareTests(TestCase):
         self.assertTrue(opened)
         self.assertTrue(all(u.startswith('rtsp://admin:pw@') for u in opened),
                         f'decoded a rejected credential: {opened}')
+
+    def test_a_path_far_down_the_list_is_still_reached(self):
+        """The camera that motivated all this only streams on `/onvif1`, which
+        sits fifteenth in `paths_for`. While the blind-decode cap was 4 the
+        sweep stopped at the Dahua and Hikvision guesses every time and
+        reported a working camera as undetectable.
+        """
+        real = 'rtsp://admin:pw@10.0.0.5/onvif1'
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == real):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], real)
 
     def test_the_number_of_blind_decodes_is_capped(self):
         opened = []

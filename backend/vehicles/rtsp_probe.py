@@ -36,7 +36,7 @@ DESCRIBE_TIMEOUT_SECONDS = 2.5
 # `admin` username that NVRs actually want for RTSP sat at candidate 10, so it
 # was never reached at all. DESCRIBE walks the whole list in a couple of
 # seconds; only a candidate the camera has already accepted costs a decode.
-TOTAL_BUDGET_SECONDS = 45
+TOTAL_BUDGET_SECONDS = 60
 
 # Reachability check before any candidate is tried: an unplugged camera would
 # otherwise burn the full timeout once per candidate for no information.
@@ -70,9 +70,19 @@ SLOT_RELEASE_SECONDS = 0.6
 BOGUS_PATH = '/slc-probe-no-such-path'
 
 # How many URLs to open for real when the status codes turn out to be
-# meaningless. Each costs the camera a connection and several seconds, and the
-# devices that behave this way are the ones least able to spare either.
-BLIND_DECODE_LIMIT = 4
+# meaningless.
+#
+# This was 4, sized for when every attempt went through OpenCV and cost seconds
+# whether it worked or not. With the system ffmpeg a wrong path is refused at
+# SETUP in about half a second — only the *right* one takes any real time — so
+# the cap is now wide enough to reach the whole path list for one credential.
+#
+# It has to be. The camera that motivated this answers 200 to every path but
+# only streams on its own, `/onvif1`, which sits fifteenth in `paths_for`. A cap
+# of 4 stopped at the Dahua and Hikvision guesses every time and reported a
+# perfectly good camera as undetectable. TOTAL_BUDGET_SECONDS still bounds the
+# whole sweep, so a device that hangs rather than refusing cannot exploit this.
+BLIND_DECODE_LIMIT = 24
 
 # A candidate that has already authenticated deserves longer than a blind one:
 # the live stream worker waits 10 s to open, so a 4 s probe could reject a URL
@@ -531,17 +541,44 @@ def _opens_once(url: str, transport: str, timeout_s: int) -> bool:
                 pass
 
 
+def _ffmpeg_opens(url: str, timeout_s: int) -> bool:
+    """Verify with the system FFmpeg. See vehicles/ffmpeg_capture.py."""
+    from vehicles import ffmpeg_capture
+
+    cap = ffmpeg_capture.FFmpegCapture(url, open_timeout=timeout_s,
+                                       read_timeout=timeout_s)
+    try:
+        if cap.isOpened():
+            log.info('[rtsp-probe] %s decoded by system ffmpeg', _redact(url))
+            return True
+        return False
+    finally:
+        cap.release()
+
+
 def _opens(url: str, timeout_s: int = PROBE_TIMEOUT_SECONDS) -> bool:
     """True when this URL yields an actual frame.
 
     A VideoCapture that merely `isOpened()` is not proof: FFmpeg reports open
     for URLs it will never decode. Reading a frame is the only honest test.
 
+    When a system FFmpeg exists it is the *only* verifier used. It decodes a
+    strict superset of what OpenCV's bundled 4.4 can manage, so a URL it
+    rejects is not going to be rescued by OpenCV — and trying anyway costs two
+    six-second stalls out of a budget that has fifty candidates to get through.
+    Whatever this accepts, the live feed can open too: `open_capture` falls
+    back to the same backend.
+
     Each attempt runs on its own thread with a hard wall-clock limit. The
     FFmpeg timeout options are advisory — one real camera sat in an open() for
     30 s despite a 4 s setting, which on its own exhausted the probe's entire
     budget and left every remaining candidate untried.
     """
+    from vehicles import ffmpeg_capture
+
+    if ffmpeg_capture.is_available():
+        return _ffmpeg_opens(url, timeout_s)
+
     # A daemon thread, not a ThreadPoolExecutor: the executor's context manager
     # shuts down with wait=True on exit, which blocks on the very worker the
     # timeout was meant to escape.

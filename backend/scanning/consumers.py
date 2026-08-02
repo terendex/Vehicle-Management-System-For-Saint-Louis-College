@@ -35,12 +35,6 @@ def _resolve_gate(raw, user) -> str:
         return gid
     return getattr(user, 'gate_assignment', None) or 'main'
 
-# Serialise VideoCapture construction so concurrent camera connections don't
-# race on os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"].  On Windows, putenv()
-# is not guaranteed thread-safe, and one camera's options can clobber another's
-# just before cv2.VideoCapture() reads them.
-_OPEN_CAP_LOCK = threading.Lock()
-
 FRAME_RATE_LIMIT_MS = 100
 _DEFAULT_DEDUP_SECONDS = 5  # fallback used if DB is unavailable at connect time
 CAMERA_ENTRY_COOLDOWN_SECONDS = 60  # breathing space: camera won't exit a vehicle within this window after entry
@@ -1587,45 +1581,25 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     @staticmethod
     def _open_cap(rtsp_url: str):
-        """Open OpenCV VideoCapture with robust FFmpeg RTSP options.
+        """Open the stream with whichever backend can decode this camera.
 
-        Tries TCP then UDP. TCP is preferred — it survives packet loss and
-        traverses switches predictably — but it cannot be the only option:
-        cameras that answer a TCP SETUP with a UDP transport make FFmpeg fail
-        with "Nonmatching transport in server reply", and forcing TCP left
-        those devices with a permanently black feed.
+        This used to try OpenCV over TCP then UDP and hand back whatever the
+        last attempt produced. That covers most cameras and no more: OpenCV
+        bundles a frozen FFmpeg 4.4, and a camera it cannot decode has no
+        second chance. `open_capture` keeps OpenCV as the fast path and falls
+        back to the system FFmpeg, which is where support for anything newer
+        than 2021 lives. See vehicles/ffmpeg_capture.py.
+
+        The env-var race that _OPEN_CAP_LOCK guarded is now handled inside
+        that module, by a lock shared with the parking worker. The two modules
+        previously held *separate* locks over the same process-wide
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"], so a scan camera and a
+        parking camera opening at the same instant were never serialised
+        against each other at all.
         """
-        import cv2
-        import os
+        from vehicles.ffmpeg_capture import open_capture
 
-        for transport in ('tcp', 'udp'):
-            # _OPEN_CAP_LOCK ensures only one VideoCapture is being constructed
-            # at a time.  os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] is read by
-            # FFmpeg at VideoCapture() construction; concurrent writes + reads
-            # on Windows (where putenv() is not thread-safe) can strip options
-            # for one camera when two cameras connect simultaneously.
-            with _OPEN_CAP_LOCK:
-                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                    f"rtsp_transport;{transport}"
-                    "|buffer_size;2097152"
-                    "|stimeout;10000000"
-                    "|threads;1"
-                    "|err_detect;ignore_err"
-                    "|fflags;discardcorrupt"
-                )
-                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)            # minimal frame buffer
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            if cap.isOpened():
-                if transport != 'tcp':
-                    logger.info('[StreamWorker] %s opened over %s', rtsp_url, transport)
-                return cap
-            try:
-                cap.release()
-            except Exception:
-                pass
-        return cap      # last attempt, closed — caller reports the failure
+        return open_capture(rtsp_url)
 
     @staticmethod
     def _encode_frame(frame) -> "bytes | None":

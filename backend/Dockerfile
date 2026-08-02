@@ -2,10 +2,14 @@ FROM python:3.12-slim
 
 # libgl1 + libglib2.0-0 required by OpenCV
 # libgomp1 required by PyTorch / YOLO operations
+# ffmpeg is the RTSP fallback: opencv-python bundles a frozen FFmpeg 4.4 that
+# cannot decode a good number of cameras (see vehicles/ffmpeg_capture.py), and
+# without a system ffmpeg those cameras have no working backend at all.
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

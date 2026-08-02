@@ -21,8 +21,6 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-_OPEN_CAP_LOCK = threading.Lock()
-
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 FREE_THR   = 20  # consecutive frames without vehicle    → mark free
 
@@ -255,23 +253,19 @@ class ParkingCameraThread(threading.Thread):
         cap.release()
         log.info("[ParkingCam] Stopped zone %d", self.zone_id)
 
-    def _open_cap(self) -> cv2.VideoCapture:
-        import os
-        with _OPEN_CAP_LOCK:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                "rtsp_transport;tcp"
-                "|buffer_size;2097152"
-                "|stimeout;5000000"
-                "|timeout;5000000"
-                "|threads;1"
-                "|err_detect;ignore_err"
-                "|fflags;discardcorrupt"
-            )
-            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-        return cap
+    def _open_cap(self):
+        """Open the zone camera with whichever backend can decode it.
+
+        This pinned `rtsp_transport;tcp`, which is the one transport a fair
+        number of cameras refuse outright — they answer a TCP SETUP with a UDP
+        transport and FFmpeg gives up with "Nonmatching transport in server
+        reply", leaving the zone permanently black. `open_capture` lets FFmpeg
+        negotiate instead, and falls back to the system FFmpeg when OpenCV's
+        bundled 4.4 cannot decode the stream at all.
+        """
+        from vehicles.ffmpeg_capture import open_capture
+
+        return open_capture(self.rtsp_url)
 
     def _load_spaces(self):
         """The zone's placed spaces, re-read from the DB at most every TTL.
