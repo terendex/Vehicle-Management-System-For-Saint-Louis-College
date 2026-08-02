@@ -1,6 +1,0 @@
-path: C:\Users\axel jonas tangalin\Documents\Test Project\Vehicle-Management-System-For-Saint-Louis-College\backend\scanning\ml\dataset
-train: images/train
-val: images/val
-nc: 1
-names:
-  0: license_plate
