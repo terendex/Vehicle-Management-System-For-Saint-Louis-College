@@ -200,15 +200,22 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
         attempts.append(_redact(cand['url']))
 
     # The camera is there but speaks a path we do not know. Hand back the most
-    # likely URL as a starting point rather than an empty box: an admin who
-    # cannot add the camera at all is worse off than one holding a good guess
-    # they can correct.
+    # likely URL so the camera can still be registered: an admin who cannot add
+    # it at all is worse off than one holding a good guess.
+    if (channel or 1) > 1:
+        # Asking for channel 2+ on a single-lens camera fails exactly like a bad
+        # password does, and that is the likelier mistake of the two.
+        reason = (f'The camera answered, but it has no channel {channel} — or this '
+                  f'model numbers its channels differently. A single-lens camera '
+                  f'only has channel 1; use 2 or higher only for an NVR or a '
+                  f'multi-lens unit. Check the password too.')
+    else:
+        reason = ('The camera answered but none of the known stream paths worked. '
+                  'The device ID or password may be wrong, or this model uses a '
+                  'path we do not know yet.')
     return {
         'ok': False,
-        'error': ('The camera answered but none of the known stream paths worked. '
-                  'The device ID or password may be wrong, or this model uses a path '
-                  'we do not know yet. The URL below is a best guess - correct it '
-                  'if needed and save.'),
+        'error': reason,
         'suggestion': suggestion_for(ip, device_id, password, channel),
         'attempts': attempts,
     }

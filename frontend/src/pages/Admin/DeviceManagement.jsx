@@ -257,14 +257,15 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
             {/* No vendor picker. Which firmware a camera runs is not something
                 the person mounting it should have to know, so the backend probes
-                the device and finds the working stream path itself. The manual
-                field appears only if that fails. */}
+                the device and finds the working stream path itself. When that
+                fails the submit button becomes "Add Anyway" — telling someone to
+                press the same button a second time reads as "it did not work". */}
             {detectError ? (
               <div style={{ marginTop: '20px' }}>
                 <p className="dm-gate-hint dm-detect-error">{detectError}</p>
                 <p className="dm-gate-hint">
-                  Press <strong>{isEdit ? 'Save Changes' : 'Add Device'}</strong> again to
-                  register it anyway, or correct the details above and retry.
+                  Correct the details above and retry, or register it anyway with
+                  the most likely stream address — you can edit it later.
                 </p>
                 <button
                   type="button"
@@ -325,7 +326,11 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
           <div className="modal-footer">
             <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={saving || !!ipDupe || !!deviceIdDupe}>
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Device'}
+              {saving
+                ? (detecting ? 'Detecting…' : 'Saving…')
+                : fallbackUrl
+                  ? (isEdit ? 'Save Anyway' : 'Add Anyway')
+                  : (isEdit ? 'Save Changes' : 'Add Device')}
             </button>
           </div>
         </form>

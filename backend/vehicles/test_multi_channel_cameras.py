@@ -115,6 +115,22 @@ class MultiChannelRegistrationTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(seen['channel'], 3)
 
+    def test_a_failure_on_channel_two_blames_the_channel_first(self):
+        """Asking a single-lens camera for channel 2 fails exactly like a wrong
+        password does, and it is the likelier mistake — the message has to say so
+        or the admin re-types a password that was never wrong."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect(IP, 'dev', 'pw', channel=2)
+        self.assertFalse(r['ok'])
+        self.assertIn('channel 2', r['error'])
+
+    def test_a_failure_on_channel_one_does_not_mention_channels(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect(IP, 'dev', 'pw', channel=1)
+        self.assertNotIn('channel', r['error'])
+
     def test_detect_endpoint_survives_a_junk_channel(self):
         seen = {}
 
