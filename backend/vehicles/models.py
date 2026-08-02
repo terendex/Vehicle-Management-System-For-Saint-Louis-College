@@ -660,7 +660,9 @@ class Camera(models.Model):
     name       = models.CharField(max_length=50)
     ip         = models.CharField(max_length=100)
     device_id  = models.CharField(max_length=100)
-    password   = models.CharField(max_length=100)
+    # Optional: plenty of cameras stream on an open LAN with no RTSP auth at
+    # all, and demanding a password made those impossible to add.
+    password   = models.CharField(max_length=100, blank=True, default='')
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
     # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows

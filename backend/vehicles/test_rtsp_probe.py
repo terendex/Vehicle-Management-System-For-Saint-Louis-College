@@ -41,6 +41,26 @@ class CandidateTests(TestCase):
         self.assertIn('p%40ss%2Fword', url)
         self.assertEqual(url.count('@'), 1)   # only the credential separator
 
+    # ── cameras with no RTSP password ───────────────────────────────────────
+    def test_no_password_tries_the_credential_less_url_first(self):
+        """An open camera answers on rtsp://ip/path — empty credentials in
+        front of it make some firmware reject the request outright."""
+        cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev', '')
+        self.assertEqual(cands[0]['url'], 'rtsp://10.0.0.5/stream1')
+        self.assertNotIn('@', cands[0]['url'])
+
+    def test_no_password_still_tries_a_username_with_an_empty_one(self):
+        urls = [c['url'] for c in rtsp_probe.candidate_urls('10.0.0.5', 'dev', '')]
+        self.assertTrue(any(u.startswith('rtsp://dev:@') for u in urls))
+        self.assertTrue(any(u.startswith('rtsp://admin:@') for u in urls))
+
+    def test_no_password_covers_every_vendor_path(self):
+        formats = {c['format'] for c in rtsp_probe.candidate_urls('10.0.0.5', 'dev', '')}
+        self.assertTrue({'generic', 'dahua', 'hikvision'} <= formats)
+
+    def test_password_argument_is_optional(self):
+        self.assertTrue(rtsp_probe.candidate_urls('10.0.0.5', 'dev'))
+
     def test_password_is_redacted_in_logs(self):
         red = rtsp_probe._redact('rtsp://admin:hunter2@10.0.0.5/stream1')
         self.assertNotIn('hunter2', red)
@@ -92,6 +112,21 @@ class DetectTests(TestCase):
         self.assertFalse(r['ok'])
         self.assertIn('password', r['error'].lower())
         self.assertGreater(len(r['attempts']), 3)     # shows what it tried
+
+    def test_open_camera_with_no_password_is_detected(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: u == 'rtsp://10.0.0.5/stream1'):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', '')
+        self.assertTrue(r['ok'])
+        self.assertEqual(r['rtsp_url'], 'rtsp://10.0.0.5/stream1')
+
+    def test_failure_without_a_password_suggests_one_may_be_needed(self):
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', 'dev', '')
+        self.assertFalse(r['ok'])
+        self.assertIn('needs a password', r['error'])
 
     def test_returned_attempts_never_contain_the_password(self):
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \

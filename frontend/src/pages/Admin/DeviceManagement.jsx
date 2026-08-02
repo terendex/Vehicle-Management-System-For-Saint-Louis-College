@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
-  Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
+  Camera, Plus, Pencil, Trash2, X,
   ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
@@ -82,7 +82,10 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
-  const [password,   setPassword]   = useState(camera?.password   ?? '')
+  // Not asked for: most cameras on this LAN stream without RTSP auth. An
+  // existing camera's saved password is carried through unchanged so editing
+  // one does not silently strip its credentials.
+  const password = camera?.password ?? ''
   // The vendor picker is gone — the backend probes the camera and finds the
   // stream path itself. These only come into play when that fails, or when a
   // camera was already saved with a URL no template produces.
@@ -93,7 +96,6 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   const [detectedFormat, setDetectedFormat] = useState('')
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
-  const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
   const [gateOptions, setGateOptions] = useState(GATE_OPTIONS)
 
@@ -113,7 +115,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!ip.trim() || !deviceId.trim() || !password.trim()) {
+    if (!ip.trim() || !deviceId.trim()) {
       toast.error('Please fill in all fields.')
       return
     }
@@ -223,23 +225,6 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 {deviceIdDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
                 )}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Password <span className="required">*</span></label>
-              <div className="dm-input-group">
-                <input
-                  className="form-input"
-                  type={showPw ? 'text' : 'password'}
-                  placeholder="Camera password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-                <button type="button" className="dm-pw-addon" onClick={() => setShowPw(p => !p)}>
-                  {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
               </div>
             </div>
 

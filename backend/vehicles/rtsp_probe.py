@@ -27,30 +27,43 @@ PROBE_TIMEOUT_SECONDS = 6
 CONNECT_TIMEOUT_SECONDS = 3
 
 
-def candidate_urls(ip: str, device_id: str, password: str) -> list[dict]:
+PATHS = [
+    ('generic',   '/stream1'),
+    ('dahua',     '/cam/realmonitor?channel=1&subtype=0'),
+    ('hikvision', '/Streaming/Channels/101'),
+    # Seen on ONVIF-generic and several budget units.
+    ('generic',   '/live'),
+    ('generic',   '/h264'),
+    ('generic',   '/11'),
+]
+
+
+def candidate_urls(ip: str, device_id: str, password: str = '') -> list[dict]:
     """Candidate RTSP URLs for this camera, most likely first.
 
     `device_id` is whatever is printed on the unit. Several vendors ignore it
     for RTSP and authenticate as "admin" regardless, so both are tried.
+
+    A password is optional. With none, the credential-less form is tried first
+    — that is what an open camera actually answers on, and prefixing empty
+    credentials makes some firmware reject the request outright.
     """
     ip = (ip or '').strip()
     dev = quote((device_id or '').strip(), safe='')
     pw = quote((password or '').strip(), safe='')
 
-    def url(user, path):
-        return f"rtsp://{user}:{pw}@{ip}{path}"
-
-    users = [u for u in dict.fromkeys([dev, 'admin']) if u]   # dedupe, keep order
+    # Credential prefixes to try, in order. '' means no credentials at all.
+    if pw:
+        prefixes = [f"{u}:{pw}@" for u in dict.fromkeys([dev, 'admin']) if u]
+    else:
+        prefixes = ['']
+        # Some units still want a username with an empty password.
+        prefixes += [f"{u}:@" for u in dict.fromkeys([dev, 'admin']) if u]
 
     out = []
-    for user in users:
-        out.append({'format': 'generic',   'url': url(user, '/stream1')})
-        out.append({'format': 'dahua',     'url': url(user, '/cam/realmonitor?channel=1&subtype=0')})
-        out.append({'format': 'hikvision', 'url': url(user, '/Streaming/Channels/101')})
-        # Seen on ONVIF-generic and several budget units.
-        out.append({'format': 'generic',   'url': url(user, '/live')})
-        out.append({'format': 'generic',   'url': url(user, '/h264')})
-        out.append({'format': 'generic',   'url': url(user, '/11')})
+    for prefix in prefixes:
+        for fmt, path in PATHS:
+            out.append({'format': fmt, 'url': f"rtsp://{prefix}{ip}{path}"})
     return out
 
 
@@ -141,10 +154,12 @@ def detect(ip: str, device_id: str, password: str) -> dict:
             }
         attempts.append(_redact(cand['url']))
 
+    hint = ('The device ID may be wrong, or this camera needs a password'
+            if not (password or '').strip()
+            else 'The device ID or password may be wrong')
     return {
         'ok': False,
-        'error': ('The camera answered but none of the known stream paths worked. '
-                  'The device ID or password may be wrong, or this model needs a '
-                  'custom URL.'),
+        'error': (f'The camera answered but none of the known stream paths worked. '
+                  f'{hint}, or this model needs a custom URL.'),
         'attempts': attempts,
     }
