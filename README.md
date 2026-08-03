@@ -481,6 +481,8 @@ when the sources changed, and `npm ci` runs only when the lockfile moved.
   `purge_old_records`) do not run. Schedule
   `python manage.py run_maintenance` instead — it runs both synchronously with
   no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
+  The third job, `auto_archive_expired_accounts`, needs no scheduling: the server
+  runs it daily on its own thread (`vehicles/scheduler.py`).
 - **Redis is not required.** With one replica and no worker, nothing pushes to
   browsers from outside the web process, so the in-memory channel layer is
   enough. `settings.py` picks up `REDIS_URL` automatically if you ever add one.

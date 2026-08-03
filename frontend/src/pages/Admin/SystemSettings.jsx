@@ -1,18 +1,50 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
+import { invalidateGates } from '../../hooks/useGates'
 import { usersApi } from '../../api/users'
 import './SystemSettings.css'
 
+// Expiration has no on/off switch: the period itself decides. 0 months and
+// 0 days means accounts never expire, anything above that turns it on. The API
+// still carries the boolean, so it is derived on the way out and collapsed back
+// to 0/0 on the way in.
+const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
+  account_expiry_months: 0, account_expiry_days: 0 }
+
+const isExpiryOn = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
+
+function normalizeSettings(data) {
+  const on = data.account_expiry_enabled ?? false
+  return {
+    retention_years:    data.retention_years    ?? 5,
+    scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
+    vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
+    vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
+    // A stored period is meaningless while the flag is off — show it as off
+    // rather than displaying a window that is not actually in force.
+    account_expiry_months: on ? (data.account_expiry_months ?? 0) : 0,
+    account_expiry_days:   on ? (data.account_expiry_days   ?? 0) : 0,
+  }
+}
+
+/** e.g. '12 months', '30 days', '1 month and 15 days' */
+function expiryPeriodText(f) {
+  const parts = []
+  if (f.account_expiry_months > 0) parts.push(`${f.account_expiry_months} month${f.account_expiry_months !== 1 ? 's' : ''}`)
+  if (f.account_expiry_days   > 0) parts.push(`${f.account_expiry_days} day${f.account_expiry_days !== 1 ? 's' : ''}`)
+  return parts.join(' and ')
+}
+
 export default function SystemSettings() {
-  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
-    account_expiry_enabled: false, account_expiry_months: 12, account_expiry_days: 0 }
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
+  const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
+  const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
 
   // Notices state
   const [notices, setNotices]               = useState([])
@@ -47,15 +79,7 @@ export default function SystemSettings() {
   useEffect(() => {
     getSystemSettings()
       .then(({ data }) => {
-        const normalized = {
-          retention_years:    data.retention_years    ?? 5,
-          scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
-          vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
-          vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
-          account_expiry_enabled: data.account_expiry_enabled ?? false,
-          account_expiry_months:  data.account_expiry_months  ?? 12,
-          account_expiry_days:    data.account_expiry_days    ?? 0,
-        }
+        const normalized = normalizeSettings(data)
         setForm(normalized)
         setSaved(normalized)
       })
@@ -86,6 +110,7 @@ export default function SystemSettings() {
       const { data } = await createGate({ gate_id: `gate${num}`, label: gateForm.label.trim() })
       setGates((prev) => [...prev, data].sort((a, b) => a.gate_id.localeCompare(b.gate_id, undefined, { numeric: true })))
       setGateForm({ number: '', label: '' })
+      invalidateGates()   // Operations Center, camera assignment, gate labels
       toast.success(`${data.label} created. It is now available on the guard gate-login page.`)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create gate.')
@@ -99,6 +124,7 @@ export default function SystemSettings() {
     try {
       const { data } = await updateGate(gate.id, { is_active: !gate.is_active })
       setGates((prev) => prev.map((g) => (g.id === data.id ? data : g)))
+      invalidateGates()
       toast.success(`${data.label} ${data.is_active ? 'activated' : 'deactivated'}.`)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update gate.')
@@ -198,22 +224,36 @@ export default function SystemSettings() {
 
   const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
     || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
-    || form.account_expiry_enabled !== saved.account_expiry_enabled || form.account_expiry_months !== saved.account_expiry_months
+    || form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
+  // Switching expiry on backfills every existing owner from their join date, so
+  // the confirmation spells that out rather than saving silently.
+  const expiryTurningOn = isExpiryOn(form) && !isExpiryOn(saved)
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
-    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? Number(value) : value }))
+    // No field on this form accepts a negative, and typing one into the expiry
+    // boxes reads as "never expires" while the save fails on the server.
+    // Clearing a box gives '' → 0, which is the honest "off".
+    const num = (v) => Math.max(0, Number(v) || 0)
+    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? num(value) : value }))
   }
 
   const handleSave = async () => {
+    setConfirmSave(false)
     setSaving(true)
     try {
-      const { data } = await updateSystemSettings(form)
-      setForm(data)
-      setSaved(data)
-      toast.success('System settings saved.')
+      // The API keeps an explicit flag; the UI derives it from the period.
+      const { data } = await updateSystemSettings({ ...form, account_expiry_enabled: isExpiryOn(form) })
+      const normalized = normalizeSettings(data)
+      setForm(normalized)
+      setSaved(normalized)
+      setSaveSummary({
+        expiryPeriod:   expiryPeriodText(normalized),
+        expiryEnabled:  expiryTurningOn,
+        expiryDisabled: !isExpiryOn(normalized) && isExpiryOn(saved),
+      })
     } catch (err) {
       const msg = err.response?.data
         ? Object.values(err.response.data).join(' ')
@@ -257,8 +297,9 @@ export default function SystemSettings() {
                 <div>
                   <h2 className="ss-card-title">Data Retention Policy</h2>
                   <p className="ss-card-desc">
-                    Access logs and violation records older than the threshold are automatically
-                    deleted at 2:00 AM every day.
+                    Gate access logs and violation records older than the threshold are deleted by
+                    the nightly maintenance job. Accounts are never deleted by this — expired
+                    owners are archived, which is set under Account Expiration.
                   </p>
                 </div>
               </div>
@@ -285,7 +326,7 @@ export default function SystemSettings() {
 
               <div className="ss-info-row">
                 <ShieldAlert size={13} />
-                Records older than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> will be permanently deleted and cannot be recovered.
+                Access logs and violations older than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> will be permanently deleted and cannot be recovered.
               </div>
             </div>
 
@@ -299,7 +340,8 @@ export default function SystemSettings() {
                   <h2 className="ss-card-title">Vehicle Pass Fee</h2>
                   <p className="ss-card-desc">
                     Amount registrants are asked to pay at the Accounting Office. Shown on the
-                    public registration form.
+                    public registration form and in the Vehicle Pass Terms. Registration only —
+                    violation fees are set separately.
                   </p>
                 </div>
               </div>
@@ -352,26 +394,14 @@ export default function SystemSettings() {
                 <div>
                   <h2 className="ss-card-title">Vehicle-Owner Account Expiration</h2>
                   <p className="ss-card-desc">
-                    When enabled, each new vehicle-owner account expires this long after it is created
-                    and is automatically archived. The owner is emailed and can register again — their
+                    Each vehicle-owner account expires this long after it is created and is then
+                    archived automatically. The owner is emailed and can register again — their
                     email, ID and plate are freed for reuse.
                   </p>
                 </div>
               </div>
 
-              <label className="ss-field" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input
-                  id="account_expiry_enabled"
-                  name="account_expiry_enabled"
-                  type="checkbox"
-                  checked={form.account_expiry_enabled}
-                  onChange={handleChange}
-                  style={{ width: 16, height: 16 }}
-                />
-                <span className="ss-label" style={{ margin: 0 }}>Automatically archive expired owner accounts</span>
-              </label>
-
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', opacity: form.account_expiry_enabled ? 1 : 0.5 }}>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div className="ss-field" style={{ flex: '1 1 140px' }}>
                   <label className="ss-label" htmlFor="account_expiry_months">Months</label>
                   <div className="ss-input-row">
@@ -383,7 +413,6 @@ export default function SystemSettings() {
                       max={120}
                       value={form.account_expiry_months}
                       onChange={handleChange}
-                      disabled={!form.account_expiry_enabled}
                       className="ss-input"
                     />
                     <span className="ss-unit">months</span>
@@ -400,22 +429,23 @@ export default function SystemSettings() {
                       max={365}
                       value={form.account_expiry_days}
                       onChange={handleChange}
-                      disabled={!form.account_expiry_enabled}
                       className="ss-input"
                     />
                     <span className="ss-unit">days</span>
                   </div>
                 </div>
               </div>
-              <p className="ss-hint">Set at least 1 month or day. Turning this on backfills existing owners using their join date.</p>
+              <p className="ss-hint">
+                Set both to 0 to let owner accounts run indefinitely. Setting a period backfills
+                existing owners using their join date.
+              </p>
 
-              {form.account_expiry_enabled && (
-                <div className="ss-info-row">
-                  <ShieldAlert size={13} />
-                  Owner accounts will archive <strong>{form.account_expiry_months} month{form.account_expiry_months !== 1 ? 's' : ''}
-                  {form.account_expiry_days > 0 ? ` and ${form.account_expiry_days} day${form.account_expiry_days !== 1 ? 's' : ''}` : ''}</strong> after creation.
-                </div>
-              )}
+              <div className="ss-info-row">
+                <ShieldAlert size={13} />
+                {isExpiryOn(form)
+                  ? <>Owner accounts archive <strong>{expiryPeriodText(form)}</strong> after creation.</>
+                  : <>Owner accounts never expire.</>}
+              </div>
             </div>
 
             {/* ── Backup & Restore ──────────────────────────────────────── */}
@@ -707,7 +737,7 @@ export default function SystemSettings() {
             <span className="ss-unsaved-label">Unsaved changes</span>
             <button
               className="ss-save-btn"
-              onClick={handleSave}
+              onClick={() => setConfirmSave(true)}
               disabled={saving || !isDirty}
             >
               {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
@@ -717,6 +747,75 @@ export default function SystemSettings() {
         )}
 
       </div>
+
+      {/* ── Confirm Save Modal ─── */}
+      {confirmSave && (
+        <div className="ss-overlay" onClick={() => setConfirmSave(false)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setConfirmSave(false)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Save System Settings?</h2>
+            <p className="ss-modal-body">
+              These settings apply system-wide and take effect immediately.
+            </p>
+
+            <ul className="ss-confirm-list">
+              {form.retention_years !== saved.retention_years && (
+                <li>Records are kept for <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong>. Anything older is deleted on the next daily purge.</li>
+              )}
+              {isDedupDirty && (
+                <li>Repeat scans of the same plate are ignored for <strong>{form.scan_dedup_seconds} second{form.scan_dedup_seconds !== 1 ? 's' : ''}</strong>.</li>
+              )}
+              {form.vehicle_pass_fee !== saved.vehicle_pass_fee && (
+                <li>Student vehicle-pass fee becomes <strong>₱{form.vehicle_pass_fee}</strong>.</li>
+              )}
+              {form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee && (
+                <li>Employee vehicle-pass fee becomes <strong>₱{form.vehicle_pass_fee_employee}</strong>.</li>
+              )}
+              {expiryTurningOn && (
+                <li>
+                  Owner accounts will expire <strong>{expiryPeriodText(form)}</strong> after creation.
+                  Existing owners are backfilled from their join date, so any already past that
+                  window will be archived and emailed on the next daily run.
+                </li>
+              )}
+              {!expiryTurningOn && isExpiryOn(form) && (form.account_expiry_months !== saved.account_expiry_months || form.account_expiry_days !== saved.account_expiry_days) && (
+                <li>Owner-account expiry period changes to <strong>{expiryPeriodText(form)}</strong> for newly created accounts.</li>
+              )}
+              {!isExpiryOn(form) && isExpiryOn(saved) && (
+                <li>Owner accounts will <strong>no longer expire</strong>. Accounts already archived stay archived.</li>
+              )}
+            </ul>
+
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setConfirmSave(false)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-primary" onClick={handleSave}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Save Success Modal ─── */}
+      {saveSummary && (
+        <div className="ss-overlay" onClick={() => setSaveSummary(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setSaveSummary(null)}><X size={16} /></button>
+            <CheckCircle2 size={32} className="ss-modal-icon-ok" />
+            <h2 className="ss-modal-title">Settings Saved</h2>
+            <p className="ss-modal-body">
+              Your changes are live.
+              {saveSummary.expiryEnabled
+                ? ` Owner accounts now expire ${saveSummary.expiryPeriod} after creation, and expired ones are archived automatically.`
+                : saveSummary.expiryDisabled
+                  ? ' Owner accounts no longer expire.'
+                  : ''}
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-primary" onClick={() => setSaveSummary(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Backup / Restore progress overlay ─── */}
       {(downloading || restoring) && (

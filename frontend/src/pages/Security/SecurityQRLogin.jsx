@@ -5,17 +5,9 @@ import { toast } from 'sonner'
 import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
-import { getGates } from '../../api/scanning'
+import { useGates } from '../../hooks/useGates'
 import slcLogo from '../../assets/slclogo.jpg'
 import './SecurityQRLogin.css'
-
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
-
-// Fallback list shown until the dynamic gate list loads (or if it fails)
-const DEFAULT_GATES = [
-  { gate_id: 'gate1', label: 'Gate 1 — Main Entrance' },
-  { gate_id: 'gate4', label: 'Gate 4 — Side Entrance' },
-]
 
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
@@ -47,20 +39,7 @@ export default function SecurityQRLogin() {
   // badge is usable (first credentials login + password change completed).
   const [qrAvailable, setQrAvailable]   = useState(false)
   // Dynamic gate list (admin can add gates in System Settings)
-  const [gates, setGates]               = useState(DEFAULT_GATES)
-
-  useEffect(() => {
-    getGates()
-      .then(({ data }) => { if (Array.isArray(data) && data.length > 0) setGates(data) })
-      .catch(() => {})
-  }, [])
-
-  // Short display name, e.g. 'Gate 2' from 'Gate 2 — North Entrance'
-  const gateName = (id) => {
-    const g = gates.find(x => x.gate_id === id)
-    if (g) return g.label.split('—')[0].trim()
-    return GATE_LABELS[id] || id
-  }
+  const { gates, gateLabel: gateName } = useGates()
 
   const inputRef  = useRef(null)
   const videoRef  = useRef(null)

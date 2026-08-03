@@ -598,3 +598,27 @@
   color: #fff;
 }
 .ss-modal-btn-danger:hover { background: #9B1C1C; }
+.ss-modal-btn-primary {
+  background: #2E4C63;
+  color: #fff;
+}
+.ss-modal-btn-primary:hover { background: #1F3648; }
+
+.ss-modal-icon-ok { color: #14A374; margin-bottom: 4px; }
+
+/* What this save actually changes — one line per touched setting, so the
+   admin confirms the consequence rather than the click. */
+.ss-confirm-list {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  text-align: left;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #2E4C63;
+}
+.ss-confirm-list:empty { display: none; }
+.ss-confirm-list strong { color: #16334A; }

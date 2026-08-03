@@ -466,3 +466,142 @@ class DoubleParkAttributionTests(TestCase):
         resp = self._post(self.guard, plate_number='CDN 777')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertTrue(Violation.objects.filter(vehicle=v, violation_type='double_parking').exists())
+
+
+class DailySchedulerTests(TestCase):
+    """The in-process scheduler archives expired owners once a day, on its own."""
+
+    def setUp(self):
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = True
+        cfg.account_expiry_months = 1
+        cfg.account_expiry_days = 0
+        cfg.save()
+
+    def _expired_owner(self, email='sched-owner@example.com'):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email=email, full_name='Sched Owner', password='Passw0rd!23',
+            role='vehicle_owner', owner_type='student',
+        )
+        owner.expires_at = timezone.localdate() - timedelta(days=1)
+        owner.save(update_fields=['expires_at'])
+        return owner
+
+    def test_run_due_jobs_archives_expired_owner(self):
+        from vehicles.scheduler import run_due_jobs
+        owner = self._expired_owner()
+
+        run_due_jobs()
+
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertFalse(owner.is_active)
+
+    def test_ledger_row_records_the_run(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self._expired_owner()
+        run_due_jobs()
+
+        row = DailyJobRun.objects.get(job='auto_archive_expired_accounts',
+                                      run_date=timezone.localdate())
+        self.assertIsNotNone(row.finished_at)
+        self.assertIn('archived', row.result)
+
+    def test_second_pass_same_day_is_skipped(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self._expired_owner()
+        first = run_due_jobs()
+        self.assertIn('auto_archive_expired_accounts', first)
+
+        # A second owner expires after the day's run was already claimed.
+        late = self._expired_owner('late-owner@example.com')
+        second = run_due_jobs()
+
+        self.assertEqual(second, {})                      # nothing ran
+        self.assertEqual(DailyJobRun.objects.count(), 1)  # no duplicate row
+        late.refresh_from_db()
+        self.assertFalse(late.is_archived)                # picked up tomorrow
+
+    def test_new_day_runs_again(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self._expired_owner()
+        run_due_jobs()
+
+        # Simulate yesterday's run so today's pass is due again.
+        DailyJobRun.objects.update(run_date=timezone.localdate() - timedelta(days=1))
+        late = self._expired_owner('tomorrow-owner@example.com')
+
+        run_due_jobs()
+
+        late.refresh_from_db()
+        self.assertTrue(late.is_archived)
+        self.assertEqual(DailyJobRun.objects.count(), 2)
+
+    def test_force_reruns_despite_ledger(self):
+        from vehicles.scheduler import run_due_jobs
+        self._expired_owner()
+        run_due_jobs()
+
+        late = self._expired_owner('forced-owner@example.com')
+        out = run_due_jobs(force=True)
+
+        self.assertIn('auto_archive_expired_accounts', out)
+        late.refresh_from_db()
+        self.assertTrue(late.is_archived)
+
+    def test_job_failure_is_reported_not_raised(self):
+        from unittest.mock import patch
+        from vehicles.scheduler import run_due_jobs
+
+        with patch('vehicles.tasks.auto_archive_expired_accounts', side_effect=RuntimeError('boom')):
+            out = run_due_jobs()
+
+        self.assertIn('failed: boom', out['auto_archive_expired_accounts'])
+
+    def test_failed_job_releases_its_claim_and_retries(self):
+        from unittest.mock import patch
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        owner = self._expired_owner()
+        with patch('vehicles.tasks.auto_archive_expired_accounts', side_effect=RuntimeError('boom')):
+            run_due_jobs()
+
+        # Claim released, so the day is not written off as done.
+        self.assertEqual(DailyJobRun.objects.count(), 0)
+
+        run_due_jobs()   # next hourly pass
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertEqual(DailyJobRun.objects.count(), 1)
+
+    def test_disabled_expiry_archives_nobody(self):
+        from vehicles.models import SystemSettings
+        from vehicles.scheduler import run_due_jobs
+
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = False
+        cfg.save()
+        owner = self._expired_owner()
+
+        run_due_jobs()
+
+        owner.refresh_from_db()
+        self.assertFalse(owner.is_archived)
+
+    def test_start_does_not_launch_thread_outside_server(self):
+        import threading
+        from vehicles import scheduler
+
+        before = {t.name for t in threading.enumerate()}
+        scheduler.start()   # test runner argv, not a server
+        after = {t.name for t in threading.enumerate()}
+        self.assertNotIn('daily-scheduler', after - before)

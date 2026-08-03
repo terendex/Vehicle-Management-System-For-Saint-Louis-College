@@ -11,12 +11,11 @@ import { toast } from 'sonner'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
+import { useGates } from '../../hooks/useGates'
 import TableLoader from '../../components/TableLoader'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
-const GATES = ['gate1', 'gate4']
 
 const STATUS_META = {
   authorized: { label: 'Authorized', cls: 'authorized', Icon: CheckCircle  },
@@ -76,13 +75,13 @@ function Pager({ page, totalPages, total, onPage }) {
 }
 
 // ─── Gate Panel ───────────────────────────────────────────────────────────────
-function GatePanel({ gate, shift, logs }) {
+function GatePanel({ label, shift, logs }) {
   return (
     <div className="oc-gate-panel">
       <div className="oc-gate-head">
         <div className="oc-gate-title">
           <Shield size={15} />
-          <span>{GATE_LABELS[gate]}</span>
+          <span>{label}</span>
         </div>
         {shift ? (
           <div className="oc-guard-pill active">
@@ -125,7 +124,7 @@ function GatePanel({ gate, shift, logs }) {
 }
 
 // ─── Guard Table ──────────────────────────────────────────────────────────────
-function GuardTable({ guards }) {
+function GuardTable({ guards, gateLabel }) {
   return (
     <div className="oc-guard-table-wrap">
       <table className="oc-guard-table">
@@ -154,7 +153,7 @@ function GuardTable({ guards }) {
                   </div>
                 </td>
                 <td className="oc-gt-code">{g.user_code || '—'}</td>
-                <td className="oc-gt-gate">{GATE_LABELS[g.gate_assignment] ?? g.gate_assignment ?? '—'}</td>
+                <td className="oc-gt-gate">{gateLabel(g.gate_assignment) || '—'}</td>
                 <td>
                   <span className={`oc-duty-pill ${g.is_active ? 'active' : 'idle'}`}>
                     <span className="oc-duty-dot" />
@@ -176,26 +175,32 @@ function GuardTable({ guards }) {
 }
 
 // ─── Camera Monitor ───────────────────────────────────────────────────────────
-// Scopes a camera can be filtered by. Gates come first because that is what an
-// operator watches most; parking is one bucket regardless of how many zones
-// share the lot.
-const CAM_SCOPES = [
-  { key: 'all',     label: 'All Cameras', match: () => true },
-  { key: 'gate1',   label: 'Gate 1',      match: c => c.assignment === 'entry' && c.gate_id === 'gate1' },
-  { key: 'gate4',   label: 'Gate 4',      match: c => c.assignment === 'entry' && c.gate_id === 'gate4' },
-  { key: 'parking', label: 'Parking',     match: c => c.assignment === 'parking' },
-]
-
-function camScopeLabel(cam) {
-  if (cam.assignment === 'parking') return 'Parking'
-  return GATE_LABELS[cam.gate_id] ?? cam.gate_id ?? 'Unassigned'
+// Scopes a camera can be filtered by. One tab per gate — built from the live
+// gate list, so a gate added in System Settings gets its own filter — then
+// parking, which is one bucket regardless of how many zones share the lot.
+function buildCamScopes(gates, gateLabel) {
+  return [
+    { key: 'all', label: 'All Cameras', match: () => true },
+    ...gates.map(g => ({
+      key:   g.gate_id,
+      label: gateLabel(g.gate_id),
+      match: c => c.assignment === 'entry' && c.gate_id === g.gate_id,
+    })),
+    { key: 'parking', label: 'Parking', match: c => c.assignment === 'parking' },
+  ]
 }
 
 function CameraMonitor() {
   const { cameras: liveCameras, addCamera, disconnectCamera, registerCanvas } = useCameraContext()
+  const { gates, gateLabel } = useGates()
   const [devices,   setDevices]   = useState([])   // registered cameras (from the API)
   const [scope,     setScope]     = useState('all')
   const [selectedId, setSelectedId] = useState(null) // Camera.id from the API
+
+  const camScopeLabel = (cam) => {
+    if (cam.assignment === 'parking') return 'Parking'
+    return gateLabel(cam.gate_id) || 'Unassigned'
+  }
 
   // Only feeds this panel opened may be closed by it. A camera another page is
   // already streaming — a guard terminal running detection, say — must survive
@@ -211,8 +216,9 @@ function CameraMonitor() {
       .catch(() => {})
   }, [])
 
-  const scopes  = CAM_SCOPES.filter(s => s.key === 'all' || devices.some(s.match))
-  const visible = devices.filter(CAM_SCOPES.find(s => s.key === scope)?.match ?? (() => true))
+  const camScopes = buildCamScopes(gates, gateLabel)
+  const scopes    = camScopes.filter(s => s.key === 'all' || devices.some(s.match))
+  const visible   = devices.filter(camScopes.find(s => s.key === scope)?.match ?? (() => true))
 
   // Keep the selection inside the current filter.
   const selected = visible.find(c => c.id === selectedId) ?? visible[0] ?? null
@@ -340,8 +346,9 @@ function CameraMonitor() {
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function OperationsCenter() {
+  const { gates, gateIds, gateLabel } = useGates()
   const [currentShifts, setCurrentShifts] = useState({})
-  const [logsByGate,    setLogsByGate]    = useState({ gate1: [], gate4: [] })
+  const [logsByGate,    setLogsByGate]    = useState({})
   const [crossFlags,    setCrossFlags]    = useState([])
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
@@ -351,16 +358,21 @@ export default function OperationsCenter() {
   const [shiftPage,     setShiftPage]     = useState(1)
   const [flagPage,      setFlagPage]      = useState(1)
 
+  // gateIds is a fresh array each render; key the callback on its contents so
+  // load() is only rebuilt when the gate list actually changes.
+  const gateKey = gateIds.join(',')
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [shiftsRes, monitorRes, gate1Res, gate4Res, historyRes, passesRes] = await Promise.allSettled([
+      // One log request per gate, so gates added in System Settings get a feed
+      // without touching this file.
+      const [shiftsRes, monitorRes, historyRes, passesRes, ...logResults] = await Promise.allSettled([
         getCurrentShifts(),
         getGuardMonitor(),
-        getAccessLogs({ gate_id: 'gate1', limit: 12 }),
-        getAccessLogs({ gate_id: 'gate4', limit: 12 }),
         getShifts({ limit: 100 }),
         getVisitorPasses(),
+        ...gateIds.map(id => getAccessLogs({ gate_id: id, limit: 12 })),
       ])
 
       if (shiftsRes.status === 'fulfilled')
@@ -372,10 +384,10 @@ export default function OperationsCenter() {
         setGuards(d?.guards ?? [])
       }
 
-      setLogsByGate({
-        gate1: gate1Res.status === 'fulfilled' ? (gate1Res.value.data?.results ?? gate1Res.value.data ?? []) : [],
-        gate4: gate4Res.status === 'fulfilled' ? (gate4Res.value.data?.results ?? gate4Res.value.data ?? []) : [],
-      })
+      setLogsByGate(Object.fromEntries(gateIds.map((id, i) => {
+        const res = logResults[i]
+        return [id, res?.status === 'fulfilled' ? (res.value.data?.results ?? res.value.data ?? []) : []]
+      })))
 
       if (historyRes.status === 'fulfilled')
         setShiftHistory(historyRes.value.data?.results ?? historyRes.value.data ?? [])
@@ -392,7 +404,7 @@ export default function OperationsCenter() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [gateKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useLiveUpdates(load)
@@ -402,7 +414,7 @@ export default function OperationsCenter() {
   }, [load])
 
   const activeGuards   = Object.values(currentShifts).filter(Boolean).length
-  const totalEntries   = (logsByGate.gate1?.length ?? 0) + (logsByGate.gate4?.length ?? 0)
+  const totalEntries   = Object.values(logsByGate).reduce((n, l) => n + (l?.length ?? 0), 0)
 
   // Newest first (LIFO) + client-side pagination, same as the violations table
   const sortedShifts    = [...shiftHistory].sort((a, b) => new Date(b.clocked_in_at) - new Date(a.clocked_in_at))
@@ -473,12 +485,12 @@ export default function OperationsCenter() {
           <CameraMonitor />
 
           <div className="oc-gates-col">
-            {GATES.map(gate => (
+            {gates.map(g => (
               <GatePanel
-                key={gate}
-                gate={gate}
-                shift={currentShifts[gate] ?? null}
-                logs={logsByGate[gate] ?? []}
+                key={g.gate_id}
+                label={gateLabel(g.gate_id)}
+                shift={currentShifts[g.gate_id] ?? null}
+                logs={logsByGate[g.gate_id] ?? []}
               />
             ))}
           </div>
@@ -505,7 +517,7 @@ export default function OperationsCenter() {
                 {guards.filter(g => g.is_active).length} on duty
               </span>
             </div>
-            <GuardTable guards={guards.filter(g => g.is_active)} />
+            <GuardTable guards={guards.filter(g => g.is_active)} gateLabel={gateLabel} />
           </div>
         )}
 
@@ -582,7 +594,7 @@ export default function OperationsCenter() {
                       <div>
                         <span className="oc-log-plate">{f.plate_number}</span>
                         <span className="oc-flag-route">
-                          Entered {GATE_LABELS[f.entry_gate] ?? f.entry_gate} → Exited {GATE_LABELS[f.exit_gate] ?? f.exit_gate}
+                          Entered {gateLabel(f.entry_gate)} → Exited {gateLabel(f.exit_gate)}
                         </span>
                         <div className="oc-flag-times">{fmt(f.entered_at)} · {fmt(f.exited_at)}</div>
                       </div>
@@ -614,7 +626,7 @@ export default function OperationsCenter() {
                           {s.is_active && <span className="oc-shift-active">On Duty</span>}
                         </div>
                         <div className="oc-shift-meta">
-                          <span className="oc-shift-gate">{GATE_LABELS[s.gate] ?? s.gate}</span>
+                          <span className="oc-shift-gate">{gateLabel(s.gate)}</span>
                           <span>In: {fmt(s.clocked_in_at)}</span>
                           {s.clocked_out_at
                             ? <span>Out: {fmt(s.clocked_out_at)}</span>

@@ -26,10 +26,9 @@ import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
 import { usersApi } from '../../api/users'
 import { authApi } from '../../api/auth'
+import { useGates } from '../../hooks/useGates'
 import './AdminLayout.css'
 import './SecurityLayout.css'
-
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 function useCurrentShift(gate) {
   const [shift, setShift] = useState(null)
@@ -479,7 +478,8 @@ export default function SecurityLayout({ children, fillHeight = false }) {
   const navigate = useNavigate()
   const location = useLocation()
   const gate      = user?.gate_assignment
-  const gateLabel = GATE_LABELS[gate] || gate || 'Gate'
+  const { gateLabel: labelFor } = useGates()
+  const gateLabel = labelFor(gate) || 'Gate'
   const shift     = useCurrentShift(gate)
 
   const [showChangeShift,  setShowChangeShift]  = useState(false)

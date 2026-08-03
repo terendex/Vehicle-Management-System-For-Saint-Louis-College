@@ -189,6 +189,10 @@ hosting cost.
   the events list stops rolling over. Fix them for free with
   `python manage.py run_maintenance` on a schedule — see
   **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No broker, no worker, no cost.
+  `auto_archive_expired_accounts` is the exception: the server runs it itself on
+  a daily in-process thread, so owner-account expiry works with no scheduling.
+  Set `DISABLE_DAILY_SCHEDULER=1` here if you would rather the campus machine
+  own it — its clock is Manila time, and these jobs are date-keyed.
 
 **Keep this service at a single replica.** The YOLO/Paddle models are loaded per
 process and the parking-camera threads hold per-process state, so scaling out

@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
+import { useGates } from '../../hooks/useGates'
 import { toUpperName, normalizeEmail } from '../../utils/textFormat'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
@@ -21,6 +22,7 @@ const EMPTY_ADMIN = { full_name: '', email: '' }
 /* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
   const { logout } = useAuthStore()
+  const { gateLabel: gateLabelFor, gateFullLabel } = useGates()
 
   /* ── users state ── */
   const [users, setUsers]             = useState([])
@@ -56,10 +58,9 @@ export default function UserManagement() {
   const [qrLoading, setQrLoading] = useState(false)
   const qrCanvasRef = useRef(null)  // hidden high-res canvas used to embed the QR into the PDF
 
-  const gateLabel = (u) =>
-    u?.gate_assignment === 'gate1' ? 'Gate 1'
-    : u?.gate_assignment === 'gate4' ? 'Gate 4'
-    : 'Gate selected at login'
+  // A guard's gate comes from their last login, so an account that has never
+  // signed in has none yet.
+  const gateLabel = (u) => gateLabelFor(u?.gate_assignment) || 'Gate selected at login'
 
   /* ── Guard badge → PDF download ── */
   const downloadBadgePdf = () => {
@@ -823,9 +824,7 @@ export default function UserManagement() {
                       <div className="um-profile-item">
                         <span className="um-profile-label">Last Gate Login</span>
                         <span className="um-profile-value">
-                          {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
-                            : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
-                            : selectedUser.gate_assignment || 'Not yet logged in'}
+                          {gateFullLabel(selectedUser.gate_assignment) || 'Not yet logged in'}
                         </span>
                       </div>
                     </>
@@ -975,7 +974,7 @@ export default function UserManagement() {
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: '#5C7B92' }}>
                   {qrUser.user_code}
                   {qrUser.role === 'security' && (
-                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
+                    <> · {gateLabel(qrUser)}</>
                   )}
                   {qrUser.role !== 'security' && <> · Vehicle Owner</>}
                 </p>

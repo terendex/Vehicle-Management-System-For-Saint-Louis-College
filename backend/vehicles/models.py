@@ -477,6 +477,37 @@ class SystemSettings(models.Model):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
 
+
+class DailyJobRun(models.Model):
+    """One row per (job, day) — the ledger the in-process scheduler runs against.
+
+    The unique constraint is the lock: a process claims a day's run by inserting
+    the row, and whoever loses the race gets IntegrityError and skips. That makes
+    the scheduler safe to start in every server process, and it means a restart
+    loop cannot re-run a job that already ran today.
+
+    It doubles as the catch-up record. The scheduler asks "did this run today?",
+    not "is it 00:05 now?", so a campus machine that was switched off overnight
+    runs the job when it next boots instead of skipping the day.
+    """
+    id         = models.BigAutoField(primary_key=True, db_column='daily_job_run_id')
+    job        = models.CharField(max_length=64)
+    run_date   = models.DateField()
+    started_at = models.DateTimeField(auto_now_add=True)
+    # Null while in flight; a row that stays null is a job that crashed midway.
+    finished_at = models.DateTimeField(null=True, blank=True)
+    result      = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        db_table = 'tbl_daily_job_run'
+        ordering = ['-run_date', 'job']
+        constraints = [
+            models.UniqueConstraint(fields=['job', 'run_date'], name='uniq_daily_job_per_day'),
+        ]
+
+    def __str__(self):
+        return f"{self.job} @ {self.run_date}"
+
     def __str__(self):
         return "System Settings"
 

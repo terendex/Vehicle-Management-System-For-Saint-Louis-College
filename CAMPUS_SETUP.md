@@ -74,30 +74,64 @@ New-NetFirewallRule -DisplayName "SLC VMS" -Direction Inbound -LocalPort 8000 -P
 
 ---
 
-## Daily maintenance (schedule this — it is not automatic)
+## Daily maintenance
 
-Two jobs are defined as Celery tasks on a beat schedule in `config/celery.py`,
+Three jobs are defined as Celery tasks on a beat schedule in `config/celery.py`,
 so they only run when a Celery worker *and* a beat scheduler are running.
 Neither is deployed, because both would be extra always-on containers:
 
+- **`auto_archive_expired_accounts`** — archives owner accounts past their
+  expiry date. **Runs by itself; no setup needed** (see below). No-op unless an
+  expiry period is set in System Settings.
 - **`auto_manage_events`** — activates events dated today, archives past ones.
-  Without it the events list silently stops rolling over.
+  Without it the events list silently stops rolling over. *Needs the scheduled
+  task below.*
 - **`purge_old_records`** — deletes AccessLog/Violation rows past the retention
-  window set in System Settings.
+  window set in System Settings. Note this deletes *records*, never accounts.
+  *Needs the scheduled task below.*
 
-`python manage.py run_maintenance` runs both synchronously, with no broker and
-no worker. Schedule it here rather than in the cloud: both jobs key off
-`date.today()`, which reads the OS clock, and this machine runs on Manila time.
-A UTC container would roll events over about eight hours early.
+### Account archiving runs itself
 
-Register it once, as Administrator, from the repository root:
+The server runs the archiving job in-process: a daemon thread started with the
+ASGI app checks hourly whether the job has already run today, and runs it if not
+(`backend/vehicles/scheduler.py`). This exists because the System Settings card
+promises owner accounts are archived automatically, and that promise should not
+depend on someone remembering to register a Windows task.
+
+Because it asks *"has this run today?"* rather than *"is it 00:05 now?"*, a
+machine that was switched off overnight catches up on its next boot. A
+`tbl_daily_job_run` row per (job, day) is the lock, so restarts cannot double-run
+it and starting the server twice is harmless.
+
+Set `DISABLE_DAILY_SCHEDULER=1` to turn the thread off — do that on any second
+machine, and on the cloud instance if the campus box is the one you trust for
+Manila-time dates.
+
+The purge is deliberately **not** on this thread: it deletes records, and that is
+not something to start doing silently on a schedule nobody registered.
+
+### Events rollover and purge still need scheduling
+
+`python manage.py run_maintenance` runs all three synchronously, with no broker
+and no worker, ignoring the daily ledger. Schedule it here rather than in the
+cloud: the jobs key off `date.today()`, which reads the OS clock, and this
+machine runs on Manila time. A UTC container would roll events over about eight
+hours early.
+
+Register it once, from the repository root:
 
 ```powershell
-$py   = "$PWD\backend\venv\Scripts\python.exe"
-$args = "manage.py run_maintenance"
 schtasks /Create /TN "SLC VMS Daily Maintenance" /SC DAILY /ST 00:05 `
-  /TR "cmd /c cd /d `"$PWD\backend`" && `"$py`" $args" /RL HIGHEST /F
+  /TR "`"$PWD\scripts\run-maintenance.cmd`"" /F
 ```
+
+`scripts\run-maintenance.cmd` is the wrapper the task runs. It resolves the repo
+from its own location — so moving the checkout does not break the task — and
+appends output to `backend\maintenance.log`, which is the only record you get of
+a job that runs with no console attached.
+
+Elevation is not required: the job only talks to the database. Adding `/RL
+HIGHEST` needs an Administrator prompt and buys nothing here.
 
 Verify and test it:
 
