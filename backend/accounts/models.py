@@ -163,6 +163,71 @@ class User(AbstractUser):
                 name='uniq_active_user_email',
             ),
         ]
+        indexes = [
+            # The retention purge asks, every single day, "which archived
+            # accounts passed the window?". Partial on is_archived so the index
+            # holds only archived rows — the minority, and the only ones the
+            # purge can ever delete — which keeps the daily scan proportional to
+            # the accounts actually due rather than to every user on the system.
+            models.Index(
+                fields=['archived_at'],
+                condition=models.Q(is_archived=True),
+                name='user_archived_at',
+            ),
+            # The archive job's daily "who expired?" — expires_at alone is
+            # indexed, but every run also filters the two flags, and this lets
+            # the whole predicate be answered from the index.
+            models.Index(
+                fields=['expires_at'],
+                condition=models.Q(is_archived=False, is_active=True),
+                name='user_expiry_due',
+            ),
+        ]
+
+
+def delete_users_with_owned_records(users):
+    """Delete every user in the `users` queryset, with the records they own.
+
+    Vehicle and VehicleRegistration point at User with SET_NULL, so a plain
+    `.delete()` would orphan them — a plateless registration row and an unowned
+    vehicle that still matches at the gate. Both callers (an admin deleting from
+    User Management, and the retention purge) need the same sweep, and a
+    destructive invariant duplicated in two places is one that drifts, so it
+    lives here.
+
+    AuditLog.actor / target_user are deliberately SET_NULL: the history of what
+    happened stays readable after the account itself is gone.
+
+    Takes a queryset, not a list, and passes it straight through as a subquery —
+    so the statement count is fixed no matter how many accounts match, and no id
+    list is ever materialised into an IN clause that Postgres would choke on.
+
+    Returns (vehicles, registrations, accounts) deleted.
+    """
+    from vehicles.models import Vehicle, VehicleRegistration   # avoids an import cycle
+
+    # Registrations first: they reference Vehicle with SET_NULL, so clearing
+    # them first avoids a pointless UPDATE-to-null on rows about to be deleted.
+    _, reg_counts  = VehicleRegistration.objects.filter(user__in=users).delete()
+    _, veh_counts  = Vehicle.objects.filter(user__in=users).delete()
+    _, user_counts = users.delete()
+
+    return (
+        veh_counts.get('vehicles.Vehicle', 0),
+        reg_counts.get('vehicles.VehicleRegistration', 0),
+        user_counts.get('accounts.User', 0),
+    )
+
+
+def delete_user_with_owned_records(user):
+    """Single-user form of :func:`delete_users_with_owned_records`.
+
+    Returns (vehicles_deleted, registrations_deleted).
+    """
+    vehicles, regs, _ = delete_users_with_owned_records(
+        User.objects.filter(pk=user.pk)
+    )
+    return vehicles, regs
 
 
 class AuditLog(models.Model):

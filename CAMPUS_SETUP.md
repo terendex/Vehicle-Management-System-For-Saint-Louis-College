@@ -81,36 +81,38 @@ so they only run when a Celery worker *and* a beat scheduler are running.
 Neither is deployed, because both would be extra always-on containers:
 
 - **`auto_archive_expired_accounts`** — archives owner accounts past their
-  expiry date. **Runs by itself; no setup needed** (see below). No-op unless an
-  expiry period is set in System Settings.
+  expiry date. **Runs by itself; no setup needed** (see below).
+- **`purge_old_records`** — applies the retention window from System Settings:
+  deletes AccessLog rows, Violation rows, and **archived accounts** older than
+  it. **Runs by itself; no setup needed** (see below). Only archived accounts
+  are ever deleted — a live account is never touched, and audit history survives.
 - **`auto_manage_events`** — activates events dated today, archives past ones.
-  Without it the events list silently stops rolling over. *Needs the scheduled
-  task below.*
-- **`purge_old_records`** — deletes AccessLog/Violation rows past the retention
-  window set in System Settings. Note this deletes *records*, never accounts.
-  *Needs the scheduled task below.*
+  Without it the events list silently stops rolling over. *This is the one that
+  still needs the scheduled task below.*
 
-### Account archiving runs itself
+### Archiving and retention run themselves
 
-The server runs the archiving job in-process: a daemon thread started with the
-ASGI app checks hourly whether the job has already run today, and runs it if not
-(`backend/vehicles/scheduler.py`). This exists because the System Settings card
-promises owner accounts are archived automatically, and that promise should not
+The server runs both jobs in-process: a daemon thread started with the ASGI app
+checks hourly whether each has already run today, and runs it if not
+(`backend/vehicles/scheduler.py`). This exists because the System Settings cards
+promise expiry and retention happen automatically, and those promises should not
 depend on someone remembering to register a Windows task.
 
-Because it asks *"has this run today?"* rather than *"is it 00:05 now?"*, a
-machine that was switched off overnight catches up on its next boot. A
+They run archive-first, purge-second on the same pass. Archiving stamps
+`archived_at` and the purge measures the retention window from it, so an account
+archived today gets its full window before anything deletes it.
+
+Because the thread asks *"has this run today?"* rather than *"is it 00:05 now?"*,
+a machine that was switched off overnight catches up on its next boot. A
 `tbl_daily_job_run` row per (job, day) is the lock, so restarts cannot double-run
-it and starting the server twice is harmless.
+a job and starting the server twice is harmless.
 
 Set `DISABLE_DAILY_SCHEDULER=1` to turn the thread off — do that on any second
 machine, and on the cloud instance if the campus box is the one you trust for
-Manila-time dates.
+Manila-time dates. **Note this also stops the retention purge**, which is the
+only thing that ever deletes archived accounts.
 
-The purge is deliberately **not** on this thread: it deletes records, and that is
-not something to start doing silently on a schedule nobody registered.
-
-### Events rollover and purge still need scheduling
+### Events rollover still needs scheduling
 
 `python manage.py run_maintenance` runs all three synchronously, with no broker
 and no worker, ignoring the daily ledger. Schedule it here rather than in the

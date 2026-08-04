@@ -1913,7 +1913,10 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError, InvalidOperation):
             errors["vehicle_pass_fee_employee"] = "Must be a number."
 
-        account_expiry_enabled = bool(account_expiry_enabled)
+        # Expiration is not optional — the period is the only control. Whatever
+        # the client sends for the flag is ignored, so no request can turn owner
+        # accounts into accounts that live forever.
+        account_expiry_enabled = True
         try:
             account_expiry_months = int(account_expiry_months)
             if not (0 <= account_expiry_months <= 120):
@@ -1926,9 +1929,10 @@ class SystemSettingsView(APIView):
                 errors["account_expiry_days"] = "Must be between 0 and 365 days."
         except (TypeError, ValueError):
             errors["account_expiry_days"] = "Must be an integer."
-        if (account_expiry_enabled and not errors
-                and account_expiry_months == 0 and account_expiry_days == 0):
-            errors["account_expiry_months"] = "Set at least 1 month or day when expiration is enabled."
+        if not errors and account_expiry_months == 0 and account_expiry_days == 0:
+            errors["account_expiry_months"] = (
+                "Account expiration cannot be switched off. Set at least 1 month or 1 day."
+            )
 
         if errors:
             return Response(errors, status=400)
@@ -1943,28 +1947,34 @@ class SystemSettingsView(APIView):
         obj.vehicle_pass_fee          = vehicle_pass_fee
         obj.vehicle_pass_fee_employee = vehicle_pass_fee_employee
 
-        was_expiry_enabled = obj.account_expiry_enabled
         obj.account_expiry_enabled = account_expiry_enabled
         obj.account_expiry_months  = account_expiry_months
         obj.account_expiry_days    = account_expiry_days
         obj.save()
 
-        # Backfill existing owners the first time expiry is turned on, using the
-        # duration the admin just chose. Frozen-at-creation semantics: only owners
-        # that don't already have an expires_at are touched.
-        if account_expiry_enabled and not was_expiry_enabled and (account_expiry_months or account_expiry_days):
-            from datetime import timedelta
-            from dateutil.relativedelta import relativedelta
-            from accounts.models import User as _User
-            owners = list(_User.objects.filter(
-                role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
-            ))
-            for owner in owners:
-                owner.expires_at = (owner.date_joined.date()
-                                    + relativedelta(months=account_expiry_months)
-                                    + timedelta(days=account_expiry_days))
-            if owners:
-                _User.objects.bulk_update(owners, ['expires_at'])
+        # Give an expiry date to any owner still missing one, using the duration
+        # the admin just chose and counting from their join date. Owners that
+        # already have a date keep it — frozen-at-creation semantics, so changing
+        # the period never moves the goalposts on an existing account.
+        #
+        # Runs on every save, not just the first: an owner with no expires_at is
+        # an account that would live forever, which is the state expiration is
+        # meant to make impossible.
+        from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
+        from accounts.models import User as _User
+        owners = list(_User.objects.filter(
+            role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
+        ))
+        for owner in owners:
+            owner.expires_at = (owner.date_joined.date()
+                                + relativedelta(months=account_expiry_months)
+                                + timedelta(days=account_expiry_days))
+        if owners:
+            # batch_size matters here: Postgres' default is one CASE statement
+            # covering every row, which stops being a query at a few thousand
+            # owners. This is the one place a settings save touches many rows.
+            _User.objects.bulk_update(owners, ['expires_at'], batch_size=500)
 
         after   = self._serialize(obj)
         changed = [f"{k}: {before[k]} -> {after[k]}" for k in after if before[k] != after[k]]

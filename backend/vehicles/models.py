@@ -449,12 +449,18 @@ class SystemSettings(models.Model):
         validators=[MinValueValidator(0)],
         help_text="Vehicle Pass registration fee (₱) for employees.",
     )
-    # Vehicle-owner account expiration. When enabled, each owner account gets an
-    # expires_at = creation date + (months, days), and the daily maintenance job
-    # archives accounts once that date passes. Admin/security accounts never expire.
+    # Vehicle-owner account expiration. Every owner account gets an
+    # expires_at = creation date + (months, days), and the daily job archives
+    # accounts once that date passes. Admin/security accounts never expire.
+    #
+    # Expiration cannot be switched off: the period may be shortened or extended,
+    # but a zero period is rejected by the API. The flag is kept only so a
+    # deployment can be frozen from the Django admin in an emergency; nothing in
+    # the app can clear it, and the jobs treat False as "do nothing".
     account_expiry_enabled = models.BooleanField(
-        default=False,
-        help_text="When enabled, vehicle-owner accounts auto-archive after the set duration.",
+        default=True,
+        help_text="Vehicle-owner accounts auto-archive after the set duration. "
+                  "Not clearable from System Settings — the period is the control.",
     )
     account_expiry_months  = models.IntegerField(
         default=12,
@@ -464,7 +470,8 @@ class SystemSettings(models.Model):
     account_expiry_days    = models.IntegerField(
         default=0,
         validators=[MinValueValidator(0), MaxValueValidator(365)],
-        help_text="Extra days (on top of months) before an owner account expires.",
+        help_text="Extra days (on top of months) before an owner account expires. "
+                  "Months + days must total at least 1.",
     )
 
     class Meta:
@@ -476,6 +483,9 @@ class SystemSettings(models.Model):
     def get(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+    def __str__(self):
+        return "System Settings"
 
 
 class DailyJobRun(models.Model):
@@ -507,9 +517,6 @@ class DailyJobRun(models.Model):
 
     def __str__(self):
         return f"{self.job} @ {self.run_date}"
-
-    def __str__(self):
-        return "System Settings"
 
 
 class RegistrationPeriod(models.Model):

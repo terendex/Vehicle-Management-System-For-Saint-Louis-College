@@ -185,7 +185,7 @@ class UserDeleteView(generics.DestroyAPIView):
     permission_classes = [IsAdminRole]
 
     def destroy(self, request, *args, **kwargs):
-        from vehicles.models import Vehicle, VehicleRegistration
+        from .models import delete_user_with_owned_records
 
         user = self.get_object()
         if user.role == 'admin':
@@ -193,10 +193,9 @@ class UserDeleteView(generics.DestroyAPIView):
                 {'detail': 'Cannot delete an admin from this endpoint.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Logged before the delete: log_action reads the user it is pointed at.
         log_action(request, AuditLog.Action.USER_DELETED, target_user=user)
-        Vehicle.objects.filter(user=user).delete()
-        VehicleRegistration.objects.filter(user=user).delete()
-        user.delete()
+        delete_user_with_owned_records(user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

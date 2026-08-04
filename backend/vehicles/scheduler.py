@@ -1,12 +1,12 @@
 """In-process daily scheduler.
 
-The archiving job is defined as a Celery task and scheduled in
+The archive and purge jobs are defined as Celery tasks and scheduled in
 `config/celery.py`, which only fires when a worker AND a beat scheduler are
 running — neither is deployed, because both would be extra always-on
 containers. The documented fallback is a Windows Scheduled Task calling
 `manage.py run_maintenance`, but that has to be registered by hand on the campus
-machine, and if nobody registers it the System Settings card promises automatic
-archiving that never happens.
+machine, and if nobody registers it the System Settings cards promise automatic
+archiving and retention that never happen.
 
 So the server runs it itself. A daemon thread started with the ASGI app wakes up
 periodically and asks the DailyJobRun ledger "has this job run today?" — not
@@ -39,12 +39,17 @@ log = logging.getLogger(__name__)
 # schedule in itself. Hourly keeps the idle cost at 24 cheap queries a day.
 CHECK_INTERVAL_SECONDS = 3600
 
-# Jobs the server runs by itself, in order. Deliberately NOT purge_old_records:
-# that one deletes AccessLog and Violation rows, and turning a delete loose on a
-# schedule nobody has been running is not a side effect to introduce quietly.
-# It stays on `manage.py run_maintenance`.
+# Jobs the server runs by itself, in order: archive first, then purge. Both are
+# what the System Settings cards promise happens automatically, so neither may
+# depend on someone remembering to register a Windows scheduled task.
+#
+# Order matters. Archiving stamps archived_at, and the purge measures the
+# retention window from it — so a run that archives and purges in that order
+# gives every account its full window, while the reverse could delete an account
+# on the same pass that archived it if the clocks ever lined up.
 DAILY_JOBS = (
     'auto_archive_expired_accounts',
+    'purge_old_records',
 )
 
 _started = False

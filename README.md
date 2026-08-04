@@ -477,12 +477,13 @@ when the sources changed, and `npm ci` runs only when the lockfile moved.
 - **Django admin is at `/django-admin/`, not `/admin/`.** On a single origin the
   React app owns `/admin`, `/admin/vehicles`, `/admin/users` — the two collided.
 - **No Celery worker is deployed.** The ML retrain button therefore does
-  nothing, and the two beat-scheduled jobs (`auto_manage_events`,
-  `purge_old_records`) do not run. Schedule
-  `python manage.py run_maintenance` instead — it runs both synchronously with
-  no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
-  The third job, `auto_archive_expired_accounts`, needs no scheduling: the server
-  runs it daily on its own thread (`vehicles/scheduler.py`).
+  nothing, and `auto_manage_events` does not run off its beat schedule —
+  schedule `python manage.py run_maintenance` instead, which runs synchronously
+  with no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
+  The other two jobs, `auto_archive_expired_accounts` and `purge_old_records`,
+  need no scheduling: the server runs them daily on its own thread
+  (`vehicles/scheduler.py`), because the System Settings expiry and retention
+  cards promise they happen automatically.
 - **Redis is not required.** With one replica and no worker, nothing pushes to
   browsers from outside the web process, so the in-memory channel layer is
   enough. `settings.py` picks up `REDIS_URL` automatically if you ever add one.

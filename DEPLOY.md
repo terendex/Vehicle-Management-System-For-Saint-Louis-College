@@ -184,15 +184,16 @@ hosting cost.
   codebase. Restoring it needs a worker service (start command
   `cd backend && celery -A config worker --loglevel=info --pool=solo`, same
   variables) plus Redis as a broker — two extra always-on containers.
-- The **daily maintenance jobs** (`auto_manage_events`, `purge_old_records`) are
-  on a beat schedule that nothing is running. These matter more: without them
-  the events list stops rolling over. Fix them for free with
+- **`auto_manage_events`** is on a beat schedule that nothing is running, so the
+  events list stops rolling over. Fix it for free with
   `python manage.py run_maintenance` on a schedule — see
   **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No broker, no worker, no cost.
-  `auto_archive_expired_accounts` is the exception: the server runs it itself on
-  a daily in-process thread, so owner-account expiry works with no scheduling.
-  Set `DISABLE_DAILY_SCHEDULER=1` here if you would rather the campus machine
-  own it — its clock is Manila time, and these jobs are date-keyed.
+  `auto_archive_expired_accounts` and `purge_old_records` are the exceptions: the
+  server runs both itself on a daily in-process thread, so owner-account expiry
+  and the retention window work with no scheduling. Set
+  `DISABLE_DAILY_SCHEDULER=1` here if you would rather the campus machine own
+  them — its clock is Manila time, and these jobs are date-keyed. Note that
+  disabling it also stops retention, which is what deletes archived accounts.
 
 **Keep this service at a single replica.** The YOLO/Paddle models are loaded per
 process and the parking-camera threads hold per-process state, so scaling out

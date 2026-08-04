@@ -51,5 +51,6 @@ class Command(BaseCommand):
         result = purge_old_records()
         self.stdout.write(self.style.SUCCESS(
             f"purge_old_records: deleted {result['deleted_logs']} access logs, "
-            f"{result['deleted_violations']} violations"
+            f"{result['deleted_violations']} violations, "
+            f"{result['deleted_accounts']} archived accounts"
         ))
