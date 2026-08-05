@@ -78,6 +78,30 @@ export const zoneApi = {
     return data
   },
 
+  // ── Bay scoring method ───────────────────────────────────────────
+  // 'ml'      — the vehicle detector decides which bays are taken
+  // 'classic' — each bay is compared against an empty-lot baseline, no model.
+  // A zone set to 'classic' with no baseline captured keeps running on the
+  // detector, so `has_baseline` is what says which is actually in effect.
+  setOccupancyMethod: async (id, occupancy_method) => {
+    const { data } = await api.patch(`/vehicles/parking-zones/${id}/`, { occupancy_method })
+    return data
+  },
+
+  // Captures the current live frame as the empty-lot baseline. The camera must
+  // be running, and the lot must actually be empty — a car in shot becomes part
+  // of that bay's idea of "empty".
+  setBaseline: async (id) => {
+    const { data } = await api.post(`/vehicles/parking-zones/${id}/set-baseline/`)
+    return data
+  },
+
+  // Raw per-bay scores, for tuning thresholds against a real camera.
+  getSignals: async (id) => {
+    const { data } = await api.get(`/vehicles/parking-zones/${id}/signals/`)
+    return data
+  },
+
   // ── IP Camera ────────────────────────────────────────────────────
   startCamera: async (id) => {
     const { data } = await api.post(`/vehicles/parking-zones/${id}/start-camera/`)

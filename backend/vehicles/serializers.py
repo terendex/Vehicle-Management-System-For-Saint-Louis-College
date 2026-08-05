@@ -107,19 +107,109 @@ class ParkingNoticeSerializer(serializers.ModelSerializer):
 
 
 class ParkingZoneSerializer(serializers.ModelSerializer):
+    """A zone's map plus the capacity picture its category sits in.
+
+    Two granularities on purpose, because they come from two different sources:
+
+      * **Zone/bay fields** (`space_count`, `bays_occupied`, `total_capacity`)
+        describe this zone's drawn map and what the camera sees in it.
+      * **Category fields** (`category_*`) describe capacity and live occupancy
+        for every zone of this vehicle category, counted from the gate ledger.
+        The ledger knows how many cars are on campus, not which car zone each
+        one chose, so a per-zone occupancy would be a fabricated number.
+
+    `is_full` deliberately reports the *category* answer — it is the one that
+    decides whether another car can be let in.
+    """
     spaces              = ParkingSpaceSerializer(many=True, read_only=True)
     reference_image_url = serializers.SerializerMethodField()
     space_count         = serializers.SerializerMethodField()
     total_capacity      = serializers.SerializerMethodField()
     occupied_count      = serializers.SerializerMethodField()
+    bays_occupied       = serializers.SerializerMethodField()
     is_full             = serializers.SerializerMethodField()
     camera_name         = serializers.SerializerMethodField()
+    category_capacity   = serializers.SerializerMethodField()
+    category_occupied   = serializers.SerializerMethodField()
+    category_available  = serializers.SerializerMethodField()
+    category_is_full    = serializers.SerializerMethodField()
+    category_fill_pct   = serializers.SerializerMethodField()
+    occupancy_source    = serializers.SerializerMethodField()
+    baseline_image_url  = serializers.SerializerMethodField()
+    has_baseline        = serializers.SerializerMethodField()
 
     class Meta:
         model  = ParkingZone
         fields = ['id', 'name', 'vehicle_category', 'camera', 'camera_name', 'reference_image',
                   'reference_image_url', 'capacity_override', 'space_count',
-                  'total_capacity', 'occupied_count', 'is_full', 'created_at', 'spaces']
+                  'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
+                  'category_capacity', 'category_occupied', 'category_available',
+                  'category_is_full', 'category_fill_pct', 'occupancy_source',
+                  'occupancy_method', 'baseline_image_url', 'baseline_captured_at',
+                  'has_baseline', 'created_at', 'spaces']
+        read_only_fields = ['baseline_captured_at']
+
+    # ── Category state (gate ledger) ──────────────────────────────────────────
+
+    def _state(self):
+        """Category capacity/occupancy, fetched at most once per serialization.
+
+        Prefers the map the view built for the whole page (`category_state` in
+        context), matching the `build_block_counts` convention used above: a
+        list of N zones then costs the same two queries as a single one. Falls
+        back to computing it once and caching on the serializer instance, so
+        even a caller that forgets the context cannot turn this into N+1.
+        """
+        state = self.context.get('category_state')
+        if state is None:
+            state = getattr(self, '_state_cache', None)
+            if state is None:
+                from .capacity import category_state
+                state = category_state()
+                self._state_cache = state
+        return state
+
+    def _category(self, obj):
+        return self._state().get(obj.vehicle_category) or {}
+
+    def get_category_capacity(self, obj):
+        return self._category(obj).get('capacity', 0)
+
+    def get_category_occupied(self, obj):
+        return self._category(obj).get('occupied', 0)
+
+    def get_category_available(self, obj):
+        return self._category(obj).get('available', 0)
+
+    def get_category_is_full(self, obj):
+        return self._category(obj).get('is_full', False)
+
+    def get_category_fill_pct(self, obj):
+        return self._category(obj).get('fill_pct', 0)
+
+    def get_is_full(self, obj):
+        # The question a guard is really asking: can another one of these come
+        # in? That is a category answer, from the gate ledger.
+        return self._category(obj).get('is_full', False)
+
+    def get_occupancy_source(self, obj):
+        return 'gate_ledger'
+
+    # ── Classic-scorer baseline ───────────────────────────────────────────────
+
+    def get_has_baseline(self, obj):
+        """Whether this zone can actually be scored classically. A zone set to
+        'classic' without one keeps running on the detector, so the UI needs to
+        say which is really in effect rather than which was selected."""
+        return bool(obj.baseline_image)
+
+    def get_baseline_image_url(self, obj):
+        if not obj.baseline_image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.baseline_image.url)
+        return obj.baseline_image.url
 
     def validate_camera(self, camera):
         if camera is not None and camera.assignment != Camera.Assignment.PARKING:
@@ -138,21 +228,34 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.reference_image.url)
         return obj.reference_image.url
 
+    # ── Zone/bay facts (drawn map + camera) ───────────────────────────────────
+    #
+    # All of these read the prefetched `spaces` cache. `obj.spaces.count()` and
+    # `obj.spaces.filter(...)` issue fresh SQL and ignore the prefetch, so the
+    # old versions cost three queries per zone — nine round trips to serialize
+    # three zones, on top of the prefetch that had already loaded the rows.
+    # Counting the cached list in Python costs none.
+
     def get_space_count(self, obj):
-        return obj.spaces.count()
+        return len(obj.spaces.all())
 
     def get_total_capacity(self, obj):
+        """This zone's declared capacity — the admin's number, or the number of
+        bays drawn when they have not set one."""
         if obj.capacity_override is not None:
             return obj.capacity_override
-        return obj.spaces.count()
+        return len(obj.spaces.all())
+
+    def get_bays_occupied(self, obj):
+        """Bays the camera currently reads as taken. A map fact, not a count of
+        vehicles on campus — an unmapped zone reports 0 here while its category
+        may be completely full."""
+        return sum(1 for s in obj.spaces.all() if s.is_occupied)
 
     def get_occupied_count(self, obj):
-        return obj.spaces.filter(is_occupied=True).count()
-
-    def get_is_full(self, obj):
-        cap = obj.capacity_override if obj.capacity_override is not None else obj.spaces.count()
-        occ = obj.spaces.filter(is_occupied=True).count()
-        return cap > 0 and occ >= cap
+        # Kept as the bay reading it has always been; category occupancy is
+        # exposed separately as `category_occupied`.
+        return self.get_bays_occupied(obj)
 
 
 class CameraSerializer(serializers.ModelSerializer):

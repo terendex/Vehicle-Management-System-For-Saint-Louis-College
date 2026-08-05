@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
-  AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid,
+  AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
@@ -86,6 +86,8 @@ export default function ParkingManagement({ embedded = false }) {
   const [assigning,    setAssigning]    = useState(false)
   const [toggling,     setToggling]     = useState(false)
   const [capturing,    setCapturing]    = useState(false)
+  const [methodSaving,   setMethodSaving]   = useState(false)
+  const [baselineSaving, setBaselineSaving] = useState(false)
 
   const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
@@ -279,6 +281,41 @@ export default function ParkingManagement({ embedded = false }) {
     } finally { setCapturing(false) }
   }
 
+  // ── Bay scoring method ──────────────────────────────────────────
+  const handleMethodChange = async (method) => {
+    if (!selId || method === (selZone?.occupancy_method ?? 'ml')) return
+    setMethodSaving(true)
+    try {
+      const z = await zoneApi.setOccupancyMethod(selId, method)
+      setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
+      toast.success(method === 'classic'
+        ? (z.has_baseline
+            ? 'Zone now scores bays against its baseline.'
+            : 'Switched to baseline scoring — capture a baseline to activate it.')
+        : 'Zone now scores bays with the vehicle detector.')
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not change the detection method.')
+    } finally { setMethodSaving(false) }
+  }
+
+  // Captured server-side from the running feed, not from the browser canvas:
+  // the baseline has to be the exact frame the detector sees, and the canvas is
+  // a re-encoded copy that may be a frame or two behind.
+  const handleSetBaseline = async () => {
+    if (!selId) return
+    setBaselineSaving(true)
+    try {
+      const z = await zoneApi.setBaseline(selId)
+      setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
+      toast.success('Empty-lot baseline captured.')
+    } catch (err) {
+      setResultModal({
+        type: 'error',
+        message: err?.response?.data?.error || 'Failed to capture the baseline.',
+      })
+    } finally { setBaselineSaving(false) }
+  }
+
   // ── Image upload ────────────────────────────────────────────────
   const onImageFile = async (e) => {
     const f = e.target.files?.[0]
@@ -447,8 +484,14 @@ export default function ParkingManagement({ embedded = false }) {
   const spaceList   = mode === 'edit' ? drafts : (selZone?.spaces ?? [])
   const selDraftSp  = drafts.find(s => s._id === selDraft)
   const liveSpaces  = selZone?.spaces ?? []
-  const occ         = liveSpaces.filter(s => s.is_occupied).length
-  const sumFr       = liveSpaces.length - occ
+  // Bays are what the camera reads on this zone's map. Free/Occupied come from
+  // the gate ledger for the whole vehicle category, because that is what
+  // capacity actually means — a slot is taken from the entry scan to the exit
+  // scan. The bay count falls back in only when the API has not answered yet.
+  const baysOccupied = liveSpaces.filter(s => s.is_occupied).length
+  const occ         = selZone?.category_occupied  ?? baysOccupied
+  const sumFr       = selZone?.category_available ?? Math.max(0, liveSpaces.length - baysOccupied)
+  const catLabel    = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
 
   // ════════════════════════════════════════════════════════════════
   return (
@@ -501,18 +544,27 @@ export default function ParkingManagement({ embedded = false }) {
             <div className="pm-stat-card">
               <div className="pm-stat-icon blue"><ParkingCircle size={18} /></div>
               <div>
-                <p className="pm-stat-val">{liveSpaces.length}</p>
-                <p className="pm-stat-lbl">Total Spaces</p>
+                <p className="pm-stat-val">{selZone?.category_capacity ?? liveSpaces.length}</p>
+                <p className="pm-stat-lbl">Capacity</p>
               </div>
             </div>
             <div className="pm-stat-card">
               <div className="pm-stat-icon purple"><LayoutGrid size={18} /></div>
               <div>
-                <p className="pm-stat-val">{zones.length}</p>
-                <p className="pm-stat-lbl">{zones.length === 1 ? 'Zone' : 'Zones'}</p>
+                <p className="pm-stat-val">{baysOccupied}/{liveSpaces.length}</p>
+                <p className="pm-stat-lbl">Bays Taken</p>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Naming the two sources beats letting an admin discover the mismatch
+            and assume something is broken. */}
+        {selZone && mode === 'live' && (
+          <p className="pm-stat-caption">
+            Free / Occupied / Capacity count <strong>{catLabel.toLowerCase()}s on campus</strong> from
+            gate entry and exit scans. <strong>Bays Taken</strong> is what the camera sees in {selZone.name}.
+          </p>
         )}
 
         {/* Zone bar — labelled tabs on the left, page actions on the right.
@@ -948,6 +1000,62 @@ export default function ParkingManagement({ embedded = false }) {
                   {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
                   Use as Reference Image
                 </button>
+              )}
+
+              {/* ── Bay scoring method ──
+                  The detector is the default. The baseline method needs no
+                  model at all, but it only works while the camera stays put —
+                  it judges each bay against a picture of that same bay empty. */}
+              {selZone && (
+                <div className="pm-method-box">
+                  <div className="pm-method-head">
+                    <SlidersHorizontal size={12} /> Bay Detection
+                  </div>
+
+                  <div className="pm-method-tabs">
+                    {[
+                      { key: 'ml',      label: 'Detector' },
+                      { key: 'classic', label: 'Baseline' },
+                    ].map(m => (
+                      <button
+                        key={m.key}
+                        className={`pm-method-tab${(selZone.occupancy_method ?? 'ml') === m.key ? ' pm-method-tab--active' : ''}`}
+                        onClick={() => handleMethodChange(m.key)}
+                        disabled={methodSaving}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {(selZone.occupancy_method ?? 'ml') === 'classic' && (
+                    <>
+                      <button
+                        className="pm-btn pm-btn--outline"
+                        style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                        onClick={handleSetBaseline}
+                        disabled={baselineSaving || !camRunning[selZone.id]}
+                        title={camRunning[selZone.id]
+                          ? 'Capture the current frame as the empty-lot reference'
+                          : 'Start this zone’s camera first'}
+                      >
+                        {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
+                        {selZone.has_baseline ? 'Re-capture Baseline' : 'Set Empty Baseline'}
+                      </button>
+
+                      {/* Says which method is really running, not which was
+                          picked — without a baseline this zone is still on the
+                          detector, and silently doing so would be worse. */}
+                      <p className={`pm-method-note${selZone.has_baseline ? '' : ' pm-method-note--warn'}`}>
+                        {selZone.has_baseline
+                          ? `Baseline captured ${selZone.baseline_captured_at
+                              ? new Date(selZone.baseline_captured_at).toLocaleString()
+                              : ''}. Re-capture it after moving the camera.`
+                          : 'No baseline yet — this zone is still using the detector. Capture one with the lot empty.'}
+                      </p>
+                    </>
+                  )}
+                </div>
               )}
 
               {/* Thumbnail strip — only when 2+ cameras */}

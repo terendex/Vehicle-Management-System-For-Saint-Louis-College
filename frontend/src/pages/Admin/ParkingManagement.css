@@ -162,6 +162,76 @@
 .pm-stat-val { font-size: 1.4rem; font-weight: 800; color: #0B2340; margin: 0; line-height: 1; }
 .pm-stat-lbl { font-size: 12px; color: #4A6B85; margin: 3px 0 0; font-weight: 500; }
 
+/* ── Bay detection method (camera sidebar) ── */
+.pm-method-box {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FBFD;
+}
+
+.pm-method-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2E4C63;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+}
+
+.pm-method-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.pm-method-tab {
+  padding: 6px 8px;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 7px;
+  background: #fff;
+  color: #2E4C63;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pm-method-tab:disabled { opacity: 0.6; cursor: default; }
+.pm-method-tab--active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+}
+
+.pm-method-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5C7B92;
+}
+/* A zone set to baseline scoring with no baseline is still on the detector.
+   That has to read as an unfinished setup, not as a neutral hint. */
+.pm-method-note--warn {
+  color: #8A6B00;
+  background: #FDF0BE;
+  border: 1px solid #F7E08A;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* Sits directly under the stat row: says which numbers come from the gate
+   scans and which come from the camera, so the two never look like a bug. */
+.pm-stat-caption {
+  margin: 8px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #5C7B92;
+}
+.pm-stat-caption strong { color: #2E4C63; font-weight: 700; }
+
 /* ── Zone bar ──
    The tabs carry a label: with one zone the bare pill read as a stray button
    rather than "the zone you are looking at". */

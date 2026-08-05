@@ -129,6 +129,11 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
+        # Build the category capacity/occupancy map once for the whole response.
+        # Without this each zone would fetch it itself, turning a two-query page
+        # into two queries per zone.
+        from .capacity import category_state
+        ctx['category_state'] = category_state()
         return ctx
 
     @action(detail=True, methods=['post'], url_path='upload-image')
@@ -170,6 +175,59 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             result.append(space)
 
         return Response(ParkingSpaceSerializer(result, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='set-baseline')
+    def set_baseline(self, request, pk=None):
+        """Capture the current frame as this zone's empty-lot baseline.
+
+        Taken from the live feed rather than uploaded, because the baseline is
+        only meaningful from the exact camera position the bays were drawn
+        against. Refuses when the camera is not running: a baseline captured
+        from a dead feed is worse than none — it would silently score every bay
+        against a blank frame.
+
+        Whoever presses this is responsible for the lot actually being empty. A
+        car sitting in a bay at capture time bakes that car into the bay's
+        'empty' reference, and the bay then reads free while it is occupied.
+        """
+        import cv2 as _cv2
+        from django.core.files.base import ContentFile
+
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None or not thread.running:
+            return Response(
+                {'error': 'Start this zone\'s camera first — the baseline is captured from the live feed.'},
+                status=400)
+
+        frame = thread.get_frame()
+        if frame is None:
+            return Response({'error': 'No frame received from the camera yet. Try again in a moment.'},
+                            status=400)
+
+        ok, buf = _cv2.imencode('.jpg', frame, [_cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            return Response({'error': 'Could not encode the captured frame.'}, status=500)
+
+        zone.baseline_image.save(f'zone_{zone.id}_baseline.jpg',
+                                 ContentFile(buf.tobytes()), save=False)
+        zone.baseline_captured_at = timezone.now()
+        zone.save(update_fields=['baseline_image', 'baseline_captured_at'])
+
+        return Response(self.get_serializer(zone).data)
+
+    @action(detail=True, methods=['get'], url_path='signals')
+    def signals(self, request, pk=None):
+        """Raw per-bay scores from the classic scorer — the tuning readout.
+
+        Thresholds this cheap are only tunable if the numbers behind them are
+        visible; without this the alternative is adjusting constants blind.
+        """
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None:
+            return Response({})
+        return Response(thread.get_signals())
 
     @action(detail=True, methods=['patch'], url_path='set-capacity')
     def set_capacity(self, request, pk=None):
@@ -1781,43 +1839,80 @@ class ParkingAvailabilityView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        """Live availability for the owner portal.
+
+        `summary` is the number that matters — capacity and occupancy per
+        category, counted from the gate ledger, so it reflects vehicles actually
+        on campus rather than how many bays a camera happens to have resolved.
+
+        `zones` and `spaces` are the bay map: which specific slots look free, so
+        an owner can see where to head. Those stay camera-derived, and a zone
+        with no camera simply reports its bays as free.
+
+        Three queries flat, whatever the number of zones, bays or vehicles: the
+        spaces page, the declared-capacity aggregate, and the ledger count. The
+        per-zone name lookup used to run inside the aggregation loop, one SELECT
+        per zone; it now reads the `select_related` row already in hand.
+        """
+        from .capacity import category_state
+
         category = request.query_params.get('category', '')
         qs = ParkingSpace.objects.select_related('zone').all()
         if category in ['motorcycle', 'car']:
             qs = qs.filter(zone__vehicle_category=category)
-        spaces = ParkingSpaceSerializer(qs, many=True).data
+
+        # Materialise once, then serialize from the same rows. Aggregating over
+        # the model objects (whose `zone` is already joined) is what removes the
+        # per-zone query.
+        space_rows = list(qs)
+        spaces = ParkingSpaceSerializer(space_rows, many=True).data
+
+        state = category_state()
         summary = {}
-        zone_agg = {}  # zone_id -> {name, category, total, occupied}
-        for s in spaces:
-            cat = s['vehicle_category']
-            if cat not in summary:
-                summary[cat] = {'total': 0, 'occupied': 0, 'available': 0}
-            summary[cat]['total'] += 1
-            if s['is_occupied']:
-                summary[cat]['occupied'] += 1
-            else:
-                summary[cat]['available'] += 1
-            # per-zone aggregation
-            zid = s['zone']
-            if zid not in zone_agg:
-                zone_obj = ParkingZone.objects.filter(pk=zid).first()
-                zone_agg[zid] = {
-                    'zone_id':   zid,
-                    'zone_name': zone_obj.name if zone_obj else str(zid),
-                    'category':  cat,
+        for cat in ('car', 'motorcycle'):
+            if category in ('car', 'motorcycle') and cat != category:
+                continue
+            cat_state = state.get(cat, {})
+            summary[cat] = {
+                'total':     cat_state.get('capacity', 0),
+                'occupied':  cat_state.get('occupied', 0),
+                'available': cat_state.get('available', 0),
+                'is_full':   cat_state.get('is_full', False),
+                'source':    'gate_ledger',
+            }
+
+        zone_agg = {}  # zone_id -> bay tallies for that zone
+        for space in space_rows:
+            zone = space.zone
+            if zone is None:
+                continue
+            entry = zone_agg.get(zone.id)
+            if entry is None:
+                entry = zone_agg[zone.id] = {
+                    'zone_id':   zone.id,
+                    'zone_name': zone.name,
+                    'category':  zone.vehicle_category,
                     'total':     0,
                     'occupied':  0,
                 }
-            zone_agg[zid]['total'] += 1
-            if s['is_occupied']:
-                zone_agg[zid]['occupied'] += 1
+            entry['total'] += 1
+            if space.is_occupied:
+                entry['occupied'] += 1
 
         zones = []
         for z in zone_agg.values():
             fill_pct = round(z['occupied'] / z['total'] * 100) if z['total'] > 0 else 0
-            zones.append({**z, 'available': z['total'] - z['occupied'], 'fill_pct': fill_pct})
+            zones.append({**z, 'available': z['total'] - z['occupied'],
+                          'fill_pct': fill_pct, 'source': 'camera_bays'})
 
-        return Response({"spaces": spaces, "summary": summary, "zones": zones})
+        return Response({
+            "spaces":  spaces,
+            "summary": summary,
+            "zones":   zones,
+            # Missed exit scans today — surfaced so a gate that stopped scanning
+            # exits is visible rather than quietly inflating the count.
+            "stale_excluded": state.get('stale_excluded', 0),
+        })
 
 
 class SystemSettingsView(APIView):

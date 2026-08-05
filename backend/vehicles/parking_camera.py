@@ -44,6 +44,16 @@ DOUBLE_PARK_COVERAGE = 0.30
 # every normal park would raise a violation.
 DOUBLE_PARK_FRAMES = 60  # ~6s at 10fps
 
+# How often the vehicle detector runs when a zone scores occupancy classically.
+# Occupancy no longer needs it there, but double parking still does, and a
+# straddle must persist seconds before it counts — so running the model ten
+# times a second to answer a six-second question is pure waste.
+DETECT_INTERVAL_SECONDS = 2.0
+
+# The same ~6s of straddle, expressed in checks at the interval above. Derived
+# rather than written as a literal so the two can never drift apart.
+CLASSIC_DP_CHECKS = max(2, round((DOUBLE_PARK_FRAMES * 0.1) / DETECT_INTERVAL_SECONDS))
+
 # How long a zone's space layout is reused before re-reading it from the DB.
 # The loop runs at ~10fps; re-fetching the layout every frame meant 20 queries
 # a second per zone, and against Neon (~40ms per round trip) the DB alone
@@ -182,6 +192,22 @@ class ParkingCameraThread(threading.Thread):
         self._spaces      = []
         self._spaces_at   = 0.0
 
+        # Cached zone settings — scoring method and which baseline image to use.
+        self._cfg         = None
+        self._cfg_at      = 0.0
+
+        # Baseline measured once per layout/baseline change, not per frame.
+        self._prepared    = None
+
+        # Latest per-bay classic signals, for tuning thresholds against a real
+        # camera instead of guessing at them twice.
+        self._signals     = {}
+
+        # Straddle checks required before reporting, and when the detector last
+        # ran. Both move with the scoring method (see _process_frame).
+        self._dp_required = DOUBLE_PARK_FRAMES
+        self._last_detect = 0.0
+
     def stop(self) -> None:
         self._stop.set()
 
@@ -293,44 +319,75 @@ class ParkingCameraThread(threading.Thread):
             log.warning("[ParkingCam] Layout refresh failed zone %d: %s", self.zone_id, exc)
         return self._spaces
 
-    def _process_frame(self, frame: np.ndarray) -> None:
-        # Vehicle model only. This used to call detect_plates(), which ran the
-        # plate detector on every frame of every zone and then let plate boxes
-        # decide occupancy — see detect_vehicles() for why that was wrong.
+    def _detect(self, frame: np.ndarray) -> list:
+        """Vehicle boxes for this frame.
+
+        Vehicle model only. This used to call detect_plates(), which ran the
+        plate detector on every frame of every zone and then let plate boxes
+        decide occupancy — see detect_vehicles() for why that was wrong.
+
+        Per lens, not per frame. A dual-lens camera stacks two views into one
+        picture, and running the detector across the join asked the model to
+        read a scene no camera ever produced. The boxes come back in full-frame
+        coordinates, so the space geometry — placed against the whole frame —
+        needs no adjustment. Single-lens cameras are passed straight through and
+        pay nothing.
+        """
         from scanning.ml.detection import detect_vehicles
         from vehicles.lens_layout import detect_across_lenses
 
-        # Per lens, not per frame. A dual-lens camera stacks two views into one
-        # picture, and running the detector across the join asked the model to
-        # read a scene no camera ever produced. The boxes come back in
-        # full-frame coordinates, so the space geometry below — placed against
-        # the whole frame — needs no adjustment. Single-lens cameras are passed
-        # straight through and pay nothing.
-        detections = detect_across_lenses(frame, detect_vehicles)
+        return detect_across_lenses(frame, detect_vehicles)
 
-        spaces = self._load_spaces()
-        if not spaces:
-            return
-
-        # coverage[space_id][vehicle_index] — computed once, used for both the
-        # occupancy decision and the straddle check.
-        covered_by: dict[int, list[int]] = {}
-
+    def _detector_hits(self, spaces, detections) -> dict:
+        """{space_id: is a vehicle covering this bay} from detector boxes."""
+        hits = {}
         for sp in spaces:
             best = 0.0
-            hits: list[int] = []
-            for vi, det in enumerate(detections):
+            for det in detections:
                 cov = _space_coverage(sp, det["bbox"])
                 if cov > best:
                     best = cov
-                if cov >= OCCUPY_COVERAGE:
-                    hits.append(vi)
-            covered_by[sp.id] = hits
+            hits[sp.id] = best >= OCCUPY_COVERAGE
+        return hits
 
-            hit  = best >= OCCUPY_COVERAGE
+    def _classic_hits(self, frame, spaces, cfg) -> "dict | None":
+        """{space_id: occupied} from baseline comparison, or None when this zone
+        cannot be scored that way yet.
+
+        Returning None rather than an empty result is what makes the fallback
+        safe: a zone switched to 'classic' before anyone captured a baseline
+        keeps running on the detector instead of reporting every bay free.
+        """
+        from vehicles import bay_occupancy
+
+        prepared = self._prepare_baseline(frame, spaces, cfg)
+        if prepared is None or not prepared.bays:
+            return None
+
+        try:
+            signals = bay_occupancy.evaluate(prepared, frame)
+        except Exception as exc:
+            log.warning("[ParkingCam] classic scoring failed zone %d: %s", self.zone_id, exc)
+            return None
+
+        with self._lock:
+            self._signals = signals
+        # A bay the preparation could not measure is absent from `signals`;
+        # `.get` leaves it alone rather than flipping it free on missing data.
+        return {sp.id: signals[sp.id]['occupied'] for sp in spaces if sp.id in signals}
+
+    def _apply_hits(self, spaces, hits: dict) -> None:
+        """Run the occupancy hysteresis and persist any transitions.
+
+        Shared by both scoring methods on purpose — swapping how a bay is judged
+        must not change how long it takes to claim or release one.
+        """
+        for sp in spaces:
+            if sp.id not in hits:
+                continue
             prev = self._hyst.get(sp.id, 0)
 
-            if hit:
+            if hits[sp.id]:
                 nxt = min(prev + 1, OCCUPY_THR)
                 self._hyst[sp.id] = nxt
                 if not sp.is_occupied and nxt >= OCCUPY_THR:
@@ -341,7 +398,127 @@ class ParkingCameraThread(threading.Thread):
                 if sp.is_occupied and nxt <= -FREE_THR:
                     self._set_occupied(sp, False)
 
-        self._check_double_parking(spaces, detections, frame)
+    def _load_zone_config(self) -> dict:
+        """The zone's scoring method and baseline, re-read at most every TTL.
+
+        Same reasoning as _load_spaces: an admin changes these once in a while,
+        the loop runs ten times a second, and against Neon a per-frame lookup
+        would cost more wall clock than the frame interval allows.
+        """
+        now = time.monotonic()
+        if self._cfg is not None and (now - self._cfg_at) < LAYOUT_TTL_SECONDS:
+            return self._cfg
+
+        from django.db import close_old_connections
+        from vehicles.models import ParkingZone
+
+        close_old_connections()
+        try:
+            row = (ParkingZone.objects
+                   .filter(pk=self.zone_id)
+                   .values('occupancy_method', 'baseline_image', 'baseline_captured_at')
+                   .first())
+            if row:
+                self._cfg = {
+                    'method':   row['occupancy_method'] or 'ml',
+                    'baseline': row['baseline_image'] or '',
+                    # Identity of the current baseline. A re-capture changes the
+                    # timestamp even when the filename is reused, which is what
+                    # forces the cached preparation to be rebuilt.
+                    'token':    f"{row['baseline_image']}|{row['baseline_captured_at']}",
+                }
+                self._cfg_at = now
+        except Exception as exc:
+            log.warning("[ParkingCam] Zone config refresh failed zone %d: %s", self.zone_id, exc)
+
+        return self._cfg or {'method': 'ml', 'baseline': '', 'token': ''}
+
+    def _read_baseline(self, name: str):
+        """Decode the stored empty-lot image. None when unset or unreadable."""
+        if not name:
+            return None
+        try:
+            from django.core.files.storage import default_storage
+
+            with default_storage.open(name, 'rb') as fh:
+                buf = np.frombuffer(fh.read(), dtype=np.uint8)
+            return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        except Exception as exc:
+            log.warning("[ParkingCam] Baseline unreadable zone %d (%s): %s",
+                        self.zone_id, name, exc)
+            return None
+
+    def _prepare_baseline(self, frame, spaces, cfg):
+        """The prepared baseline for the current layout, built at most once per
+        change to the bays, the baseline image, or the frame size."""
+        from vehicles import bay_occupancy
+
+        signature = bay_occupancy.layout_signature(spaces, cfg['token'], frame.shape[:2])
+        if self._prepared is not None and self._prepared.signature == signature:
+            return self._prepared
+
+        baseline = self._read_baseline(cfg['baseline'])
+        if baseline is None:
+            return None
+
+        try:
+            self._prepared = bay_occupancy.prepare_zone(
+                baseline, spaces, frame.shape[:2], cfg['token'])
+        except Exception as exc:
+            log.warning("[ParkingCam] Baseline preparation failed zone %d: %s",
+                        self.zone_id, exc)
+            return None
+
+        log.info("[ParkingCam] Zone %d baseline prepared for %d bay(s)",
+                 self.zone_id, len(self._prepared.bays))
+        return self._prepared
+
+    def get_signals(self) -> dict:
+        """Latest per-bay classic scores, for the tuning readout."""
+        with self._lock:
+            return dict(self._signals)
+
+    def _process_frame(self, frame: np.ndarray) -> None:
+        spaces = self._load_spaces()
+        if not spaces:
+            return
+
+        cfg = self._load_zone_config()
+
+        hits, used_classic = None, False
+        if cfg['method'] == 'classic':
+            hits = self._classic_hits(frame, spaces, cfg)
+            used_classic = hits is not None
+
+        detections = None
+        if hits is None:
+            detections = self._detect(frame)
+            hits = self._detector_hits(spaces, detections)
+
+        # Straddle streaks are counted in checks, not seconds, and the two
+        # methods check at different rates. Carrying a streak across a method
+        # switch would compare counts taken at different cadences.
+        required = CLASSIC_DP_CHECKS if used_classic else DOUBLE_PARK_FRAMES
+        if required != self._dp_required:
+            self._dp_required = required
+            self._straddle.clear()
+
+        self._apply_hits(spaces, hits)
+
+        # Occupancy may be settled, but only the detector can see one car lying
+        # across two bays — a per-bay signal reads that as two occupied bays,
+        # exactly like two correctly parked cars. When the classic scorer is
+        # driving, the detector still runs for this, just far less often: a
+        # straddle has to persist several seconds before it counts, so checking
+        # ten times a second buys nothing.
+        if detections is None:
+            now = time.monotonic()
+            if (now - self._last_detect) >= DETECT_INTERVAL_SECONDS:
+                self._last_detect = now
+                detections = self._detect(frame)
+
+        if detections is not None:
+            self._check_double_parking(spaces, detections, frame)
 
     # ── Double parking ────────────────────────────────────────────────────────
 
@@ -386,7 +563,7 @@ class ParkingCameraThread(threading.Thread):
         for key, det in straddling.items():
             n = self._straddle.get(key, 0) + 1
             self._straddle[key] = n
-            if n == DOUBLE_PARK_FRAMES:      # == so it reports once per episode
+            if n == self._dp_required:       # == so it reports once per episode
                 self._report_double_parking(key, det, frame)
 
     def _render_double_park_evidence(self, frame, det_bbox, spaces) -> "bytes | None":

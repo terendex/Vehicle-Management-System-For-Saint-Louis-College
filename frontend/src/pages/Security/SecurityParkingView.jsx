@@ -186,11 +186,22 @@ export default function SecurityParkingView() {
   }, [refreshZone])
 
   // ── Derived ─────────────────────────────────────────────────────
-  const liveSpaces = selZone?.spaces ?? []
-  const occ        = selZone?.occupied_count ?? liveSpaces.filter(s => s.is_occupied).length
-  const totalCap   = selZone?.total_capacity ?? liveSpaces.length
-  const isFull     = selZone?.is_full ?? false
-  const sumFr      = Math.max(0, totalCap - occ)
+  // Two different questions, two different sources.
+  //
+  // Capacity/occupancy comes from the gate ledger and is per *category* — a
+  // vehicle takes a slot when a guard scans it in and gives it back when one
+  // scans it out. That is what decides whether another car can be let in.
+  //
+  // The bay numbers come from the camera and describe this zone's map only:
+  // which specific slots are taken and whether anyone is parked across a line.
+  const liveSpaces   = selZone?.spaces ?? []
+  const baysOccupied = selZone?.bays_occupied ?? liveSpaces.filter(s => s.is_occupied).length
+  const bayTotal     = liveSpaces.length
+  const totalCap     = selZone?.category_capacity  ?? 0
+  const occ          = selZone?.category_occupied  ?? 0
+  const isFull       = selZone?.category_is_full   ?? false
+  const sumFr        = selZone?.category_available ?? Math.max(0, totalCap - occ)
+  const catLabel     = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
 
   return (
     <>
@@ -235,11 +246,22 @@ export default function SecurityParkingView() {
                 {isFull ? <AlertTriangle size={18} /> : <LayoutGrid size={18} />}
               </div>
               <div>
-                <p className="pm-stat-val">{isFull ? 'FULL' : zones.length}</p>
-                <p className="pm-stat-lbl">{isFull ? 'Zone Status' : (zones.length === 1 ? 'Zone' : 'Zones')}</p>
+                <p className="pm-stat-val">{isFull ? 'FULL' : `${baysOccupied}/${bayTotal}`}</p>
+                <p className="pm-stat-lbl">{isFull ? `${catLabel} Parking` : 'Bays Taken'}</p>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Says out loud where each number comes from. The counts above are
+            campus-wide for this vehicle category and move on gate scans; the
+            map below is this zone's camera reading. They are not expected to
+            match, and a guard who thinks they should would distrust both. */}
+        {selZone && (
+          <p className="pm-stat-caption">
+            Free / Occupied / Capacity count <strong>{catLabel.toLowerCase()}s on campus</strong> from
+            gate entry and exit scans. <strong>Bays Taken</strong> is what the camera sees in {selZone.name}.
+          </p>
         )}
 
         {/* Zone bar — labelled tabs left, actions right */}

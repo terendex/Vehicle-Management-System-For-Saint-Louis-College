@@ -279,11 +279,26 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+  /* Fixed layout + <colgroup> keeps every row on the same grid — without it
+     the long Notes text steals width from Owner/Issued row by row. */
+  table-layout: fixed;
+  min-width: 1240px;
 }
+
+/* Column widths (sum = 100%) */
+.vm-col-plate    { width: 8%; }
+.vm-col-owner    { width: 15%; }
+.vm-col-type     { width: 13%; }
+.vm-col-fine     { width: 7%; }
+.vm-col-notes    { width: 19%; }
+.vm-col-evidence { width: 7%; }
+.vm-col-issued   { width: 12%; }
+.vm-col-status   { width: 10%; }
+.vm-col-actions  { width: 9%; }
 
 .vm-table th {
   background: #F4F8FB;
-  padding: 12px 16px;
+  padding: 12px 14px;
   text-align: left;
   font-weight: 600;
   color: #4A6B85;
@@ -295,10 +310,13 @@
 }
 
 .vm-table td {
-  padding: 12px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid #EEF4F9;
   color: #0B2340;
-  vertical-align: middle;
+  /* Rows vary in height (3-line notes vs. a single badge) — top alignment
+     keeps plate/status/actions on one baseline instead of floating. */
+  vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .vm-table tbody tr { transition: background 0.15s ease; }
@@ -316,11 +334,18 @@
   color: #0B2340;
 }
 
+/* Lives on a <div> inside the cell, never on the <td> itself — a flex <td>
+   drops out of table layout and renders as a stray block. */
 .vm-owner {
   display: flex;
   flex-direction: column;
   gap: 1px;
   color: #2E4C63;
+  line-height: 1.35;
+}
+
+.vm-owner-name {
+  font-weight: 600;
 }
 
 .vm-owner-email {
@@ -329,8 +354,6 @@
 }
 
 .vm-notes {
-  max-width: 260px;
-  min-width: 160px;
   color: #5C7B92;
   font-size: 0.8rem;
   line-height: 1.45;
@@ -354,6 +377,10 @@
   font-size: 0.7rem;
   color: #5C7B92;
   margin-top: 2px;
+  /* .vm-time is nowrap for the "17 days ago" line; guard names are long
+     enough to need wrapping. */
+  white-space: normal;
+  line-height: 1.35;
 }
 
 /* ── Type pills ────────────────────────────────────────────────── */
@@ -427,6 +454,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .vm-btn {
@@ -688,6 +716,12 @@
   height: 36px;
   object-fit: cover;
   display: block;
+  /* A broken/slow image otherwise renders its alt text at full width and
+     shoves the column open. */
+  background: #EEF4F9;
+  overflow: hidden;
+  font-size: 0;
+  color: transparent;
 }
 
 .vm-evidence-zoom {

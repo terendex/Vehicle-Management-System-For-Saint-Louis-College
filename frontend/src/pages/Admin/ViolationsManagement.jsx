@@ -519,6 +519,17 @@ export default function ViolationsManagement() {
             <div className="vm-empty">No violations found.</div>
           ) : (
             <table className="vm-table">
+              <colgroup>
+                <col className="vm-col-plate" />
+                <col className="vm-col-owner" />
+                <col className="vm-col-type" />
+                <col className="vm-col-fine" />
+                <col className="vm-col-notes" />
+                <col className="vm-col-evidence" />
+                <col className="vm-col-issued" />
+                <col className="vm-col-status" />
+                <col className="vm-col-actions" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Plate</th>
@@ -536,11 +547,13 @@ export default function ViolationsManagement() {
                 {paginated.map((v) => (
                   <tr key={v.id} className={rowClass(v)}>
                     <td className="vm-plate">{v.plate_number}</td>
-                    <td className="vm-owner">
-                      <span>{v.owner_name || '—'}</span>
-                      {v.owner_email && (
-                        <span className="vm-owner-email">{v.owner_email}</span>
-                      )}
+                    <td>
+                      <div className="vm-owner">
+                        <span className="vm-owner-name">{v.owner_name || '—'}</span>
+                        {v.owner_email && (
+                          <span className="vm-owner-email">{v.owner_email}</span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="vm-type-cell">

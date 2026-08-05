@@ -385,10 +385,25 @@ class ParkingZone(models.Model):
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
         CAR        = 'car',        'Car'
 
+    class OccupancyMethod(models.TextChoices):
+        ML      = 'ml',      'Vehicle detector (YOLO)'
+        CLASSIC = 'classic', 'Baseline comparison (no ML)'
+
     id                = models.BigAutoField(primary_key=True, db_column='parking_zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
+    # The empty-lot reference the classic scorer measures against. Separate from
+    # reference_image, which is the picture the admin draws bays on and may well
+    # have cars in it.
+    baseline_image       = models.ImageField(upload_to='parking_baselines/', blank=True, null=True)
+    baseline_captured_at = models.DateTimeField(null=True, blank=True)
+    occupancy_method     = models.CharField(
+        max_length=20, choices=OccupancyMethod.choices, default=OccupancyMethod.ML,
+        help_text="How this zone decides a bay is taken. 'classic' compares each bay "
+                  "against an empty baseline and needs no detector; it falls back to "
+                  "the detector until a baseline is captured.",
+    )
     camera            = models.ForeignKey(
         'Camera', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='parking_zones',
