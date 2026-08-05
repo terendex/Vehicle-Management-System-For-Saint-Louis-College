@@ -75,6 +75,15 @@ function OffenseBadge({ num }) {
   return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`}</span>
 }
 
+// Evidence is served by the API, not by a public storage URL, so the request
+// has to carry a token. An <img> cannot send an Authorization header — the
+// parking camera stream solves it the same way.
+function evidenceSrc(url) {
+  if (!url) return null
+  const token = localStorage.getItem('access_token') || ''
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
+}
+
 // ─── Evidence Lightbox ─────────────────────────────────────────────────────────
 function EvidenceLightbox({ src, onClose }) {
   return (
@@ -180,6 +189,11 @@ export default function ViolationsManagement() {
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
+  // Evidence URLs the browser could not load. A violation photo lives in object
+  // storage, and the row must stay readable when that fetch fails — a broken
+  // image glyph looks like the app is broken rather than like the file is
+  // unreachable.
+  const [badEvidence, setBadEvidence]     = useState(() => new Set())
   const [confirmAction, setConfirmAction] = useState(null)
   const [orModal, setOrModal]             = useState(null)   // violation waiting for OR
   const [resultModal, setResultModal]     = useState(null)
@@ -566,15 +580,35 @@ export default function ViolationsManagement() {
                     <td><FineTag amount={v.fine_amount} /></td>
                     <td><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
                     <td>
-                      {v.evidence_url ? (
+                      {v.evidence_url && !badEvidence.has(v.evidence_url) ? (
                         <button
                           className="vm-evidence-thumb-btn"
-                          onClick={() => setLightboxSrc(v.evidence_url)}
+                          onClick={() => setLightboxSrc(evidenceSrc(v.evidence_url))}
                           title="View evidence"
                         >
-                          <img src={v.evidence_url} alt="evidence" className="vm-evidence-thumb" />
+                          <img
+                            src={evidenceSrc(v.evidence_url)}
+                            alt="evidence"
+                            className="vm-evidence-thumb"
+                            onError={() => setBadEvidence(prev => {
+                              const next = new Set(prev)
+                              next.add(v.evidence_url)
+                              return next
+                            })}
+                          />
                           <ZoomIn size={12} className="vm-evidence-zoom" />
                         </button>
+                      ) : v.evidence_url ? (
+                        // The record says a photo was captured but it will not
+                        // load. Distinct from "None" on purpose: one means no
+                        // evidence was ever taken, the other means it exists and
+                        // cannot be reached — only the second is worth chasing.
+                        <span
+                          className="vm-no-evidence vm-evidence-broken"
+                          title={`Evidence could not be loaded from storage:\n${v.evidence_url}`}
+                        >
+                          <AlertTriangle size={13} /> Unavailable
+                        </span>
                       ) : (
                         <span className="vm-no-evidence"><Image size={13} /> None</span>
                       )}

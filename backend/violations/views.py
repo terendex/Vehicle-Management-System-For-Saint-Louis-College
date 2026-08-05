@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
@@ -12,7 +13,11 @@ from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 from accounts.audit import audit
 from accounts.models import AuditLog
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from time_utils import day_range, filter_local_date_range
+
+logger = logging.getLogger(__name__)
 
 
 class IsStaffRole(permissions.BasePermission):
@@ -32,6 +37,93 @@ class IsCDSOOrAdmin(permissions.BasePermission):
             and request.user.is_authenticated
             and request.user.role == 'admin'
         )
+
+
+class _QueryParamJWTAuthentication(JWTAuthentication):
+    """JWT taken from ?token= instead of the Authorization header.
+
+    Only used by the evidence endpoint. Browsers cannot attach headers to an
+    <img> request, so a header-only endpoint can never render a thumbnail.
+    Returns None rather than raising when the parameter is absent, which lets
+    the normal header authenticators run for ordinary API callers.
+    """
+
+    def authenticate(self, request):
+        raw = request.GET.get('token', '')
+        if not raw:
+            return None
+        try:
+            validated = self.get_validated_token(raw)
+        except (InvalidToken, TokenError):
+            return None
+        return self.get_user(validated), validated
+
+
+class ViolationEvidenceView(APIView):
+    """Stream a violation's evidence photo through the API.
+
+    Replaces linking the browser straight at the object-storage URL, for two
+    reasons.
+
+    It works. The stored file is reachable with the app's own credentials — the
+    public bucket URL is a separate thing that has to be enabled, is rate
+    limited, and silently serves nothing when it is not, which is exactly how a
+    thumbnail ends up broken while the file is sitting there intact.
+
+    And it is private. A violation photo shows someone's vehicle at a named
+    place and time, attached to a disciplinary record. On a public bucket URL
+    anyone holding the link can open it, forever, with no login. Here the same
+    permission rules as the rest of the module apply: staff see any evidence,
+    an owner sees only their own.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_authenticators(self):
+        """Also accept ?token=<JWT>, because an <img> tag cannot send an
+        Authorization header.
+
+        The same reason the parking MJPEG stream does it. Without this the
+        endpoint is only reachable by fetch(), and the thumbnail this exists to
+        render would get a 401.
+        """
+        return [_QueryParamJWTAuthentication()] + list(super().get_authenticators())
+
+    def get(self, request, pk):
+        from django.http import FileResponse, Http404
+
+        violation = get_object_or_404(Violation, pk=pk)
+
+        role = getattr(request.user, 'role', None)
+        if role not in ('admin', 'security'):
+            # An owner may see their own. Matched on the identity snapshot as
+            # well as the live FK, so an archived owner (whose vehicle link is
+            # cleared) can still open evidence issued against their plate.
+            owner_id = violation.vehicle.user_id if violation.vehicle_id else None
+            own_plates = set(
+                Vehicle.objects.filter(user=request.user)
+                .values_list('plate_number', flat=True)
+            )
+            own_plates.discard('')
+            is_owner = (owner_id == request.user.id) or (
+                violation.plate_number and violation.plate_number in own_plates)
+            if not is_owner:
+                return Response({'detail': 'Not permitted.'},
+                                status=http_status.HTTP_403_FORBIDDEN)
+
+        if not violation.evidence:
+            raise Http404('No evidence attached to this violation.')
+
+        try:
+            handle = violation.evidence.open('rb')
+        except Exception:
+            # The row references a file the storage backend cannot produce —
+            # a wiped ephemeral disk, a bucket rotation. A 404 lets the UI show
+            # "unavailable"; a 500 would read as the whole page being broken.
+            logger.warning("[violations] evidence unreadable for violation %s (%s)",
+                           violation.pk, violation.evidence.name)
+            raise Http404('Evidence file is no longer available.')
+
+        return FileResponse(handle, content_type='image/jpeg')
 
 
 class ViolationViewSet(viewsets.ModelViewSet):

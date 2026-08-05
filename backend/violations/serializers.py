@@ -48,9 +48,17 @@ class ViolationSerializer(serializers.ModelSerializer):
         return owner.email if owner else ''
 
     def get_evidence_url(self, obj):
+        """Point at our own endpoint, not the storage backend's URL.
+
+        `obj.evidence.url` on R2 is the public bucket address, which has to be
+        separately enabled and serves nothing when it is not — the file is
+        intact and the thumbnail is broken anyway. It is also world-readable by
+        anyone holding the link, which a disciplinary photo should not be.
+
+        Relative on purpose: the browser resolves it against whatever origin
+        the app is served from, so it works behind the dev proxy, a tunnel, and
+        production without knowing which it is in.
+        """
         if not obj.evidence:
             return None
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(obj.evidence.url)
-        return obj.evidence.url
+        return f'/api/violations/{obj.pk}/evidence/'

@@ -34,6 +34,14 @@ function pwStrength(pw) {
 
 const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
 
+// Evidence is served by the API rather than a public storage URL, so the
+// request must carry a token — an <img> cannot send an Authorization header.
+function evidenceSrc(url) {
+  if (!url) return null
+  const token = localStorage.getItem('access_token') || ''
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
+}
+
 const VIOLATION_TYPE_LABELS = {
   unauthorized_entry:   'Unauthorized Entry',
   double_parking:       'Double Parking',
@@ -595,8 +603,8 @@ export default function OwnerDashboard() {
                                     </td>
                                     <td>
                                       {v.evidence_url ? (
-                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
-                                          <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
+                                          <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
                                           <ZoomIn size={11} className="od-evidence-zoom" />
                                         </button>
                                       ) : (
@@ -651,8 +659,8 @@ export default function OwnerDashboard() {
                                   <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
                                   <td>
                                     {v.evidence_url ? (
-                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
-                                        <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
+                                        <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
                                         <ZoomIn size={11} className="od-evidence-zoom" />
                                       </button>
                                     ) : (

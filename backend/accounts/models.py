@@ -205,6 +205,24 @@ def delete_users_with_owned_records(users):
     Returns (vehicles, registrations, accounts) deleted.
     """
     from vehicles.models import Vehicle, VehicleRegistration   # avoids an import cycle
+    from violations.models import Violation
+
+    # Violations go with the account, by policy: deleting an owner removes
+    # their violation history rather than leaving it behind unattributed.
+    #
+    # This has to be explicit now. Violation.vehicle is SET_NULL (so a record
+    # survives archiving, which merely unlinks the vehicle from its owner), and
+    # under SET_NULL deleting the vehicle would leave the violation orphaned
+    # instead of removing it.
+    #
+    # It must also run BEFORE the vehicles are deleted — afterwards vehicle_id
+    # is null and there is no longer any path from a violation back to the
+    # account that owned it.
+    #
+    # The cost: a 3rd-offense registration hold is enforced by
+    # Violation.registration_blocked, so deleting an account clears any hold
+    # against its plates. Someone deleted and re-registered starts clean.
+    _, vio_counts  = Violation.objects.filter(vehicle__user__in=users).delete()
 
     # Registrations first: they reference Vehicle with SET_NULL, so clearing
     # them first avoids a pointless UPDATE-to-null on rows about to be deleted.
