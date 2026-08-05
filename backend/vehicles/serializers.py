@@ -45,11 +45,15 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         if not plates:
             return {}
 
+        # Matches the plate snapshot on the violation, not the FK to Vehicle:
+        # a blocking violation has to keep blocking after the owner's account
+        # (and with it their vehicle row) is gone, which is the whole point of
+        # a registration hold.
         rows = (Violation.objects
-                .filter(vehicle__plate_number__in=plates, registration_blocked=True)
-                .values('vehicle__plate_number')
+                .filter(plate_number__in=plates, registration_blocked=True)
+                .values('plate_number')
                 .annotate(n=Count('id')))
-        return {row['vehicle__plate_number']: row['n'] for row in rows}
+        return {row['plate_number']: row['n'] for row in rows}
 
     def get_registration_block_count(self, instance):
         """Number of prior violations that flag this plate for additional review."""

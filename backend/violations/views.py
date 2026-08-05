@@ -139,7 +139,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
         if not was_resolved and response.data.get('is_resolved'):
             instance = self.get_object()
             audit(request, AuditLog.Action.RECORD_UPDATED,
-                  f"Violation resolved | Plate: {instance.vehicle.plate_number} | "
+                  f"Violation resolved | Plate: {instance.identifier} | "
                   f"Type: {instance.get_violation_type_display()} | By: {request.user.full_name}")
             self._notify_resolved(instance)
         return response
@@ -184,7 +184,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation.cdso_report_issued = True
         violation.save(update_fields=['cdso_report_issued'])
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"CDSO violation report issued | Plate: {violation.vehicle.plate_number} | "
+              f"CDSO violation report issued | Plate: {violation.identifier} | "
               f"Type: {violation.get_violation_type_display()} | By: {request.user.full_name}")
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
@@ -214,7 +214,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation.is_resolved       = True
         violation.save(update_fields=['official_receipt', 'status', 'is_resolved'])
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Violation cleared | Plate: {violation.vehicle.plate_number} | "
+              f"Violation cleared | Plate: {violation.identifier} | "
               f"Type: {violation.get_violation_type_display()} | OR: {or_number} | "
               f"Entry access restored | By: {request.user.full_name}")
         self._notify_resolved(violation)
@@ -266,10 +266,14 @@ class ViolationViewSet(viewsets.ModelViewSet):
             'fine_amount', 'registration_blocked',
         ])
 
-        resequenced = Violation.resequence_offenses(vehicle, vtype)
+        # Only renumber when there is still a vehicle to renumber against.
+        # Passing None would match every violation whose vehicle has been
+        # removed and renumber unrelated records together as if they were one
+        # vehicle's ladder.
+        resequenced = Violation.resequence_offenses(vehicle, vtype) if vehicle else 0
 
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Violation lifted (false alarm) | Plate: {vehicle.plate_number} | "
+              f"Violation lifted (false alarm) | Plate: {violation.identifier} | "
               f"Type: {violation.get_violation_type_display()} | "
               f"Was offense {prev_offense} | Reason: {reason} | "
               f"{resequenced} remaining renumbered | By: {request.user.full_name}")
@@ -343,8 +347,12 @@ def _filter_violations_report(request):
     if status_f:
         qs = qs.filter(status=status_f)
     if search:
-        qs = qs.filter(Q(vehicle__plate_number__icontains=search) |
-                       Q(vehicle__user__full_name__icontains=search))
+        # Searches the identity snapshot, so a violation whose vehicle or owner
+        # account has since been removed is still findable by the plate and name
+        # it was issued under.
+        qs = qs.filter(Q(plate_number__icontains=search) |
+                       Q(conduction_number__icontains=search) |
+                       Q(owner_name__icontains=search))
 
     status_labels = dict(Violation.Status.choices)
     desc = []
@@ -363,8 +371,9 @@ def _violation_report_rows(qs):
     status_labels = dict(Violation.Status.choices)
     rows = []
     for i, v in enumerate(qs, start=1):
-        plate     = v.vehicle.plate_number if v.vehicle else '—'
-        owner     = v.vehicle.user.full_name if (v.vehicle and v.vehicle.user) else '—'
+        plate     = v.identifier or '—'
+        owner     = v.owner_name or (v.vehicle.user.full_name
+                                     if (v.vehicle and v.vehicle.user) else '') or '—'
         issued_by = v.issued_by.full_name if v.issued_by else 'System'
         rows.append([
             i,

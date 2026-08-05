@@ -34,7 +34,9 @@ def notify(category, event, title, message='', severity='info',
 def _on_violation_saved(sender, instance, created, **kwargs):
     if not created:
         return
-    plate = instance.vehicle.plate_number if instance.vehicle_id else ''
+    # The snapshot, so a conduction-only vehicle is named rather than blank and
+    # the notification still reads correctly once the vehicle row is gone.
+    plate = instance.identifier
     type_label = instance.get_violation_type_display()
     offense = f" (offense #{instance.offense_number})" if instance.offense_number else ''
     if instance.status == sender.Status.FEE_IMPOSED:

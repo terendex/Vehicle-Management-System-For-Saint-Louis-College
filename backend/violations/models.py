@@ -36,7 +36,28 @@ class Violation(models.Model):
         LIFTED      = 'lifted',      'Lifted (False Alarm)'
 
     id             = models.BigAutoField(primary_key=True, db_column='violation_id')
-    vehicle        = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='violations')
+    # SET_NULL, not CASCADE. A violation is a disciplinary and financial record;
+    # it must outlive the vehicle row it was issued against, exactly as AuditLog
+    # outlives the account it describes. Under CASCADE, deleting an owner took
+    # every violation with it — which also erased the 3rd-offense
+    # registration_blocked flags, so a deleted-and-re-registered owner came back
+    # with a clean record. That is the outcome the offence ladder exists to
+    # prevent.
+    vehicle        = models.ForeignKey(
+        Vehicle, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='violations',
+    )
+
+    # Identity snapshotted at issue time. The list screens used to resolve the
+    # owner live through vehicle.user, so archiving an account (which clears
+    # vehicle.user) blanked the name on violations that were still perfectly
+    # valid. Stored values cannot be un-resolved by a later change to something
+    # else.
+    plate_number      = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    conduction_number = models.CharField(max_length=50, blank=True, default='')
+    owner_name        = models.CharField(max_length=150, blank=True, default='')
+    owner_email       = models.CharField(max_length=254, blank=True, default='')
+
     violation_type = models.CharField(max_length=30, choices=Type.choices)
     notes          = models.TextField(blank=True)
     fine_amount    = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
@@ -88,6 +109,40 @@ class Violation(models.Model):
 
     # Statuses that stop a violation counting toward the offence ladder.
     INACTIVE_STATUSES = ('cleared', 'lifted')
+
+    @property
+    def identifier(self) -> str:
+        """Plate if there is one, otherwise the conduction number — the same
+        rule Vehicle.identifier uses, but read from the snapshot so it survives
+        the vehicle being deleted."""
+        return (self.plate_number or self.conduction_number
+                or (self.vehicle.identifier if self.vehicle_id else ''))
+
+    def _snapshot_identity(self) -> None:
+        """Copy the vehicle's and owner's identity onto this row."""
+        vehicle = self.vehicle
+        if vehicle is None:
+            return
+        self.plate_number      = vehicle.plate_number or ''
+        self.conduction_number = vehicle.conduction_number or ''
+        owner = vehicle.user
+        if owner is not None:
+            self.owner_name  = owner.full_name or ''
+            self.owner_email = owner.email or ''
+
+    def save(self, *args, **kwargs):
+        """Take the identity snapshot once, when the violation is first issued.
+
+        Done here rather than at each call site because violations are created
+        from a dozen places — the gate scanner, the parking camera, the CDSO
+        screen, the tests — and a snapshot that depends on every caller
+        remembering to fill it is one that will be missing on the row that
+        matters. Only on insert: re-saving must never re-resolve identity from a
+        vehicle whose owner has since changed.
+        """
+        if self._state.adding and self.vehicle_id and not self.plate_number:
+            self._snapshot_identity()
+        super().save(*args, **kwargs)
 
     @classmethod
     def compute_offense_number(cls, vehicle, violation_type) -> int:
@@ -169,10 +224,13 @@ class Violation(models.Model):
         plate = (plate_number or '').strip().upper()
         if not plate:
             return cls.objects.none()
+        # Matches the snapshot, not the FK. Deleting the owner used to delete
+        # the vehicle and cascade the violations away, so this query returned
+        # nothing and the registration hold silently lifted itself.
         return cls.objects.filter(
-            vehicle__plate_number=plate,
+            plate_number=plate,
             registration_blocked=True,
         ).order_by('-issued_at')
 
     def __str__(self):
-        return f"{self.vehicle.plate_number} — {self.violation_type}"
+        return f"{self.identifier} — {self.violation_type}"
