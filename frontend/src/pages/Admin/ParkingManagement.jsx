@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
+  VideoOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
@@ -74,7 +75,7 @@ export default function ParkingManagement({ embedded = false }) {
   const [spaceOp,      setSpaceOp]      = useState(null)
   const [spaceOpPlate, setSpaceOpPlate] = useState('')
   const [showNew,      setShowNew]      = useState(false)
-  const [newZone,      setNewZone]      = useState({ name: '', vehicle_category: 'motorcycle' })
+  const [newZone,      setNewZone]      = useState({ name: '', vehicle_category: 'motorcycle', camera: '' })
   const [addingZone,   setAddingZone]   = useState(false)
   const [confirmModal, setConfirmModal] = useState(null) // { type: 'deleteZone' }
   const [resultModal,  setResultModal]  = useState(null) // { type: 'success'|'error', message }
@@ -121,6 +122,69 @@ export default function ParkingManagement({ embedded = false }) {
 
   const selZone = zones.find(z => z.id === selId) ?? null
 
+  // ── Which camera is this zone (and this feed) actually about? ────
+  //
+  // Three different ideas of "camera" meet on this page, and only two of them
+  // share an id:
+  //
+  //   * `deviceCams`  — Device Management rows. `zone.camera` holds one of
+  //                     these ids, and so does the assignment dropdown.
+  //   * `parkingCams` — live feeds from CameraContext. Their `id` is a
+  //                     client-side counter (genId()), NOT the database id.
+  //   * `zones`       — each points at a deviceCam id, or at nothing.
+  //
+  // The RTSP URL is the only field the first two share, so it is the join key.
+  // Without this join the sidebar could show camera B's picture while the
+  // selected zone was watched by camera A, with nothing on screen saying so —
+  // and bays drawn that way line up with a view the detector never sees.
+  //
+  // Indexed rather than scanned. Every lookup below happens inside a render
+  // that repeats on an 8-second occupancy poll, and the naive form — a
+  // `deviceCams.find()` per zone tab and per camera thumbnail — is O(zones ×
+  // cameras) of that work each time. Two Maps built once per data change make
+  // each lookup O(1) and the whole render O(zones + cameras).
+  const camIndex = useMemo(() => {
+    const byId = new Map(), byUrl = new Map()
+    for (const d of deviceCams) {
+      byId.set(d.id, d)
+      // First wins, matching the .find() this replaced. The API already rejects
+      // duplicate stream URLs, so this only decides a case that cannot arise.
+      const url = (d.rtsp_url || '').trim()
+      if (!byUrl.has(url)) byUrl.set(url, d)
+    }
+    return { byId, byUrl }
+  }, [deviceCams])
+
+  const zonesByCamera = useMemo(() => {
+    const m = new Map()
+    for (const z of zones) {
+      if (z.camera == null) continue
+      const list = m.get(z.camera)
+      if (list) list.push(z)
+      else      m.set(z.camera, [z])
+    }
+    return m
+  }, [zones])
+
+  const deviceCamFor = useCallback(
+    (streamCam) => streamCam ? camIndex.byUrl.get((streamCam.url || '').trim()) ?? null : null,
+    [camIndex],
+  )
+
+  const activeDeviceCam  = deviceCamFor(pkActiveCam)
+  const activeCamZones   = activeDeviceCam ? zonesByCamera.get(activeDeviceCam.id) ?? [] : []
+  // A registered parking camera nobody has drawn a zone for yet.
+  const activeCamUnzoned = !!activeDeviceCam && activeCamZones.length === 0
+  const unzonedCams      = useMemo(
+    () => deviceCams.filter(d => !(zonesByCamera.get(d.id)?.length)),
+    [deviceCams, zonesByCamera],
+  )
+  // The feed on screen belongs to a different camera than the selected zone.
+  const camZoneMismatch  = !!(selZone && activeDeviceCam && selZone.camera !== activeDeviceCam.id)
+  const selZoneCamName   = selZone?.camera_name
+    ?? (selZone?.camera != null ? camIndex.byId.get(selZone.camera)?.name : null)
+    ?? null
+
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
     setLoading(true)
@@ -128,6 +192,13 @@ export default function ParkingManagement({ embedded = false }) {
       const data = await zoneApi.listAll()
       setZones(data)
       setSelId(id => id ?? data[0]?.id ?? null)
+      // The camera list is fetched on mount and would otherwise stay there for
+      // the life of the page. "Which cameras have no zone" is answered from
+      // both lists, so a camera registered after this page opened has to reach
+      // it too — otherwise Refresh reports a stale count with a straight face.
+      try {
+        setDeviceCams(await camerasApi.list({ assignment: 'parking' }))
+      } catch { /* keep the cameras already known */ }
     } finally { setLoading(false) }
   }, [])
 
@@ -193,16 +264,31 @@ export default function ParkingManagement({ embedded = false }) {
   }, [tool, penPoints])
 
   // ── Zone CRUD ───────────────────────────────────────────────────
+  // A zone is born attached to a camera, defaulting to the one on screen. It
+  // used to be created camera-less every time, which is how a zone ended up
+  // being drawn from one feed and watched by another.
+  const openNewZone = (cameraId = null) => {
+    setNewZone({
+      name: '',
+      vehicle_category: 'motorcycle',
+      camera: String(cameraId ?? activeDeviceCam?.id ?? ''),
+    })
+    setShowNew(true)
+  }
+
   const handleAddZone = async (e) => {
     e.preventDefault()
     if (!newZone.name.trim()) return
     setAddingZone(true)
     try {
-      const z = await zoneApi.create(newZone)
+      const z = await zoneApi.create({
+        ...newZone,
+        camera: newZone.camera ? Number(newZone.camera) : null,
+      })
       setZones(p => [...p, { ...z, spaces: [] }])
       setSelId(z.id)
       setShowNew(false)
-      setNewZone({ name: '', vehicle_category: 'motorcycle' })
+      setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '' })
       setMode('edit')
     } catch {
       setShowNew(false)
@@ -230,17 +316,21 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Camera assignment (Device Management) ──────────────────────
-  const handleAssignCamera = async (e) => {
-    const cameraId = e.target.value ? Number(e.target.value) : null
-    if (!selId) return
+  const assignCamera = async (cameraId) => {
+    if (!selId) return false
     setAssigning(true)
     try {
       const z = await zoneApi.update(selId, { camera: cameraId })
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
+      return true
     } catch {
       setResultModal({ type: 'error', message: 'Failed to assign camera. Please try again.' })
+      return false
     } finally { setAssigning(false) }
   }
+
+  const handleAssignCamera = (e) =>
+    assignCamera(e.target.value ? Number(e.target.value) : null)
 
   const toggleDetection = async () => {
     if (!selZone) return
@@ -261,7 +351,22 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Capture a still frame from the live feed as the reference image ─────
-  const handleCapture = async () => {
+  //
+  // The frame comes from whichever camera the sidebar is showing, but it is
+  // saved onto the *selected zone*. When those are two different cameras the
+  // result is a zone whose bays were traced over a picture its own camera never
+  // produces, so the mismatch has to be settled before the capture, not
+  // discovered later by an admin wondering why detection reads nothing.
+  const handleCapture = () => {
+    if (!selId || !pkActiveCam) return
+    if (camZoneMismatch) {
+      setConfirmModal({ type: 'captureMismatch' })
+      return
+    }
+    doCapture()
+  }
+
+  const doCapture = async () => {
     if (!selId || !pkActiveCam) return
     const canvas = camCanvasRefs.current[pkActiveCam.id]
     if (!canvas || !pkActiveCam.streamConnected) {
@@ -575,15 +680,26 @@ export default function ParkingManagement({ embedded = false }) {
             <LayoutGrid size={13} /> Zones
           </span>
           <div className="pm-zone-tabs">
+            {/* Each tab names the camera that watches it. Which zone belongs to
+                which feed is the whole question this page turns on, and the
+                tabs were the one place it could be answered at a glance. */}
             {zones.map(z => {
-              const C = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
+              const C   = CAT_OPTS.find(c => c.key === z.vehicle_category)?.Icon ?? ParkingCircle
+              const cam = z.camera_name
+                ?? (z.camera != null ? camIndex.byId.get(z.camera)?.name : null)
+                ?? null
               return (
                 <button
                   key={z.id}
                   className={`pm-zone-tab${z.id === selId ? ' pm-zone-tab--active' : ''}`}
                   onClick={() => { setSelId(z.id); setMode('live') }}
+                  title={cam ? `${z.name} — watched by ${cam}` : `${z.name} — no camera assigned`}
                 >
                   <C size={13} /> {z.name}
+                  <span className={`pm-zone-tab-cam${cam ? '' : ' pm-zone-tab-cam--none'}`}>
+                    {cam ? <Video size={11} /> : <VideoOff size={11} />}
+                    {cam ?? 'No camera'}
+                  </span>
                 </button>
               )
             })}
@@ -602,11 +718,19 @@ export default function ParkingManagement({ embedded = false }) {
               <button
                 className={`pm-btn ${showCamPanel ? 'pm-btn--camera-on' : 'pm-btn--outline'}`}
                 onClick={() => setShowCamPanel(p => !p)}
+                title={unzonedCams.length > 0
+                  ? `${unzonedCams.length} camera(s) with no zone drawn yet: ${unzonedCams.map(c => c.name).join(', ')}`
+                  : 'Show the live parking feeds'}
               >
                 <Video size={14} /> Cameras {parkingCams.length > 0 && `(${parkingCams.length})`}
+                {/* Visible with the panel shut, which is where an unzoned
+                    camera would otherwise go unnoticed indefinitely. */}
+                {unzonedCams.length > 0 && (
+                  <span className="pm-unzoned-badge">{unzonedCams.length} unzoned</span>
+                )}
               </button>
             )}
-            <button className="pm-btn pm-btn--primary" onClick={() => setShowNew(true)}>
+            <button className="pm-btn pm-btn--primary" onClick={() => openNewZone()}>
               <Plus size={14} /> New Zone
             </button>
           </div>
@@ -750,6 +874,38 @@ export default function ParkingManagement({ embedded = false }) {
                 </button>
               </div>
             </div>
+
+            {/* Drawing bays is only meaningful against the picture the detector
+                will actually read. Both of these say, before a single box is
+                drawn, that this layout will not be scored the way it looks. */}
+            {mode === 'edit' && selZone.camera == null && (
+              <div className="pm-draw-warn">
+                <AlertTriangle size={15} />
+                <span>
+                  <strong>{selZone.name} has no camera assigned.</strong> Bays drawn here are saved,
+                  but nothing will detect them until you pick a camera above.
+                </span>
+              </div>
+            )}
+            {mode === 'edit' && camZoneMismatch && (
+              <div className="pm-draw-warn">
+                <AlertTriangle size={15} />
+                <span>
+                  You are viewing <strong>{activeDeviceCam.name}</strong>, but{' '}
+                  <strong>{selZone.name}</strong> is watched by{' '}
+                  <strong>{selZoneCamName ?? 'no camera'}</strong>. Draw against this zone's own
+                  view, or reassign the camera.
+                </span>
+                <button
+                  className="pm-btn pm-btn--outline"
+                  onClick={() => assignCamera(activeDeviceCam.id)}
+                  disabled={assigning}
+                >
+                  {assigning ? <Loader2 size={13} className="pm-spin" /> : <Video size={13} />}
+                  Use {activeDeviceCam.name}
+                </button>
+              </div>
+            )}
 
             {/* Canvas */}
             <div className="pm-canvas-wrapper">
@@ -981,6 +1137,53 @@ export default function ParkingManagement({ embedded = false }) {
                 )}
               </div>
 
+              {/* ── Is this camera zoned? ──
+                  Every camera can have its own zone (and more than one), but
+                  nothing on the page used to say which ones already do. An
+                  admin looking at an unzoned feed would draw bays into whatever
+                  zone happened to be selected — a zone fed by a different
+                  camera — and the layout would silently never match. */}
+              {activeCamUnzoned && (
+                <div className="pm-cam-notice pm-cam-notice--warn">
+                  <div className="pm-cam-notice-head">
+                    <AlertTriangle size={13} /> Camera not yet zoned
+                  </div>
+                  <p className="pm-cam-notice-body">
+                    <strong>{activeDeviceCam.name}</strong> has no parking zone drawn for it.
+                    {selZone
+                      ? <> Anything you draw now is saved to <strong>{selZone.name}</strong>, which
+                          is watched by <strong>{selZoneCamName ?? 'no camera'}</strong>.</>
+                      : <> Create a zone for it before drawing any bays.</>}
+                  </p>
+                  <button
+                    className="pm-btn pm-btn--primary pm-cam-notice-btn"
+                    onClick={() => openNewZone(activeDeviceCam.id)}
+                  >
+                    <Plus size={13} /> Create Zone for {activeDeviceCam.name}
+                  </button>
+                </div>
+              )}
+
+              {/* The camera is zoned, just not with the zone on screen. */}
+              {!activeCamUnzoned && camZoneMismatch && (
+                <div className="pm-cam-notice pm-cam-notice--info">
+                  <div className="pm-cam-notice-head">
+                    <Video size={13} /> Different camera
+                  </div>
+                  <p className="pm-cam-notice-body">
+                    This feed is <strong>{activeDeviceCam.name}</strong>; the selected zone{' '}
+                    <strong>{selZone.name}</strong> is watched by{' '}
+                    <strong>{selZoneCamName ?? 'no camera'}</strong>.
+                  </p>
+                  <button
+                    className="pm-btn pm-btn--outline pm-cam-notice-btn"
+                    onClick={() => { setSelId(activeCamZones[0].id); setMode('live') }}
+                  >
+                    <LayoutGrid size={13} /> Switch to {activeCamZones[0].name}
+                  </button>
+                </div>
+              )}
+
               {/* A captured frame becomes a zone's reference image, so it needs
                   a zone to belong to. */}
               {parkingCams.length > 0 && !selZone && (
@@ -998,7 +1201,7 @@ export default function ParkingManagement({ embedded = false }) {
                   title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
                 >
                   {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
-                  Use as Reference Image
+                  Use as Reference Image for {selZone.name}
                 </button>
               )}
 
@@ -1061,20 +1264,27 @@ export default function ParkingManagement({ embedded = false }) {
               {/* Thumbnail strip — only when 2+ cameras */}
               {parkingCams.length > 1 && (
                 <div className="pm-cam-thumb-strip">
-                  {parkingCams.map(cam => (
-                    <div
-                      key={`st-${cam.id}`}
-                      className={`pm-cam-strip-thumb ${pkActiveCamId === cam.id ? 'active' : ''}`}
-                      onClick={() => setPkActiveCam(cam.id)}
-                    >
-                      <span
-                        className="pm-cam-strip-dot"
-                        style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
-                      />
-                      <Wifi size={14} />
-                      <span className="pm-cam-strip-label">{cam.name}</span>
-                    </div>
-                  ))}
+                  {parkingCams.map(cam => {
+                    const dev     = deviceCamFor(cam)
+                    const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
+                    return (
+                      <div
+                        key={`st-${cam.id}`}
+                        className={`pm-cam-strip-thumb ${pkActiveCamId === cam.id ? 'active' : ''}`}
+                        onClick={() => setPkActiveCam(cam.id)}
+                        title={unzoned ? `${cam.name} — no zone drawn yet` : cam.name}
+                      >
+                        <span
+                          className="pm-cam-strip-dot"
+                          style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
+                        />
+                        <Wifi size={14} />
+                        <span className="pm-cam-strip-label">{cam.name}</span>
+                        {/* Which feeds still need a zone, without clicking through each */}
+                        {unzoned && <span className="pm-cam-strip-badge">No zone</span>}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
@@ -1120,6 +1330,32 @@ export default function ParkingManagement({ embedded = false }) {
                   </button>
                 ))}
               </div>
+
+              {/* Chosen at creation, not afterwards: the camera decides which
+                  picture the bays get drawn on, so picking it later means
+                  drawing them twice. Several zones may share one camera — a
+                  motorcycle zone and a car zone in the same frame is normal. */}
+              <label className="pm-modal-label" style={{ marginTop: 16 }}>Camera</label>
+              <select
+                className="pm-modal-input"
+                value={newZone.camera}
+                onChange={e => setNewZone(p => ({ ...p, camera: e.target.value }))}
+              >
+                <option value="">No camera (assign later)</option>
+                {deviceCams.map(c => {
+                  const n = zonesByCamera.get(c.id)?.length ?? 0
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{n === 0 ? ' — no zone yet' : ` — ${n} zone${n === 1 ? '' : 's'}`}
+                    </option>
+                  )
+                })}
+              </select>
+              {deviceCams.length === 0 && (
+                <p className="pm-modal-note">
+                  No parking cameras registered yet — add one in Device Management, then assign it here.
+                </p>
+              )}
             </div>
             <div className="pm-modal-footer">
               <button type="button" className="pm-btn pm-btn--outline" onClick={() => setShowNew(false)}>Cancel</button>
@@ -1195,6 +1431,47 @@ export default function ParkingManagement({ embedded = false }) {
             <div className="pm-modal-center-actions">
               <button className="pm-btn pm-btn--outline" onClick={() => setConfirmModal(null)}>Cancel</button>
               <button className="pm-btn pm-btn--danger" onClick={executeDeleteZone}>Delete Zone</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirmation Modal: capturing from another zone's camera ──
+          Three ways out on purpose. "Capture anyway" is legitimate when the two
+          cameras genuinely overlap; assigning is what the admin usually meant;
+          cancel is what they meant when they simply had the wrong tab open. */}
+      {confirmModal?.type === 'captureMismatch' && (
+        <div className="pm-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="pm-modal pm-modal--centered" onClick={e => e.stopPropagation()}>
+            <button className="pm-modal-close" onClick={() => setConfirmModal(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="pm-modal-warn-icon" />
+            <h2 className="pm-modal-center-title">Different Camera</h2>
+            <p className="pm-modal-center-body">
+              This frame comes from <strong>{activeDeviceCam?.name}</strong>, but{' '}
+              <strong>{selZone?.name}</strong> is watched by{' '}
+              <strong>{selZoneCamName ?? 'no camera'}</strong>. Bays drawn on it would not match
+              what the detector reads for this zone.
+            </p>
+            <div className="pm-modal-center-actions">
+              <button className="pm-btn pm-btn--outline" onClick={() => setConfirmModal(null)}>
+                Cancel
+              </button>
+              <button
+                className="pm-btn pm-btn--outline"
+                disabled={assigning}
+                onClick={async () => {
+                  setConfirmModal(null)
+                  if (await assignCamera(activeDeviceCam.id)) doCapture()
+                }}
+              >
+                Assign {activeDeviceCam?.name} &amp; Capture
+              </button>
+              <button
+                className="pm-btn pm-btn--primary"
+                onClick={() => { setConfirmModal(null); doCapture() }}
+              >
+                Capture Anyway
+              </button>
             </div>
           </div>
         </div>

@@ -229,6 +229,20 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             return Response({})
         return Response(thread.get_signals())
 
+    @action(detail=True, methods=['get'], url_path='tracked-vehicles')
+    def tracked_vehicles(self, request, pk=None):
+        """Vehicles this zone is following and how long each has been still.
+
+        The companion to `signals` for the dwell thresholds: occupancy and
+        double parking now wait for a vehicle to stop, and without this
+        "why is that bay still free" has no answer but guesswork.
+        """
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None:
+            return Response([])
+        return Response(thread.get_tracked_vehicles())
+
     @action(detail=True, methods=['patch'], url_path='set-capacity')
     def set_capacity(self, request, pk=None):
         """Guard/admin sets (or clears) the event-mode capacity override for a zone."""
@@ -1935,6 +1949,8 @@ class SystemSettingsView(APIView):
             "account_expiry_enabled": obj.account_expiry_enabled,
             "account_expiry_months":  obj.account_expiry_months,
             "account_expiry_days":    obj.account_expiry_days,
+            "parked_after_seconds":      obj.parked_after_seconds,
+            "double_park_after_seconds": obj.double_park_after_seconds,
         }
 
     def get(self, request):
@@ -1958,6 +1974,8 @@ class SystemSettingsView(APIView):
         account_expiry_enabled    = request.data.get("account_expiry_enabled", obj.account_expiry_enabled)
         account_expiry_months     = request.data.get("account_expiry_months",  obj.account_expiry_months)
         account_expiry_days       = request.data.get("account_expiry_days",    obj.account_expiry_days)
+        parked_after_seconds      = request.data.get("parked_after_seconds",      obj.parked_after_seconds)
+        double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
 
         try:
             retention_years = int(retention_years)
@@ -2029,6 +2047,29 @@ class SystemSettingsView(APIView):
                 "Account expiration cannot be switched off. Set at least 1 month or 1 day."
             )
 
+        try:
+            parked_after_seconds = int(parked_after_seconds)
+            if not (1 <= parked_after_seconds <= 120):
+                errors["parked_after_seconds"] = "Must be between 1 and 120 seconds."
+        except (TypeError, ValueError):
+            errors["parked_after_seconds"] = "Must be an integer."
+        try:
+            double_park_after_seconds = int(double_park_after_seconds)
+            if not (1 <= double_park_after_seconds <= 300):
+                errors["double_park_after_seconds"] = "Must be between 1 and 300 seconds."
+        except (TypeError, ValueError):
+            errors["double_park_after_seconds"] = "Must be an integer."
+        # A car cannot be badly parked before it counts as parked at all. Without
+        # this the camera could issue a double-parking fine against a vehicle its
+        # own occupancy logic still considers to be manoeuvring.
+        if ("parked_after_seconds" not in errors
+                and "double_park_after_seconds" not in errors
+                and double_park_after_seconds < parked_after_seconds):
+            errors["double_park_after_seconds"] = (
+                "Must be at least as long as the parked threshold "
+                f"({parked_after_seconds}s)."
+            )
+
         if errors:
             return Response(errors, status=400)
 
@@ -2045,7 +2086,15 @@ class SystemSettingsView(APIView):
         obj.account_expiry_enabled = account_expiry_enabled
         obj.account_expiry_months  = account_expiry_months
         obj.account_expiry_days    = account_expiry_days
+
+        obj.parked_after_seconds      = parked_after_seconds
+        obj.double_park_after_seconds = double_park_after_seconds
         obj.save()
+
+        # Running zones share one cached copy of the thresholds; dropping it
+        # makes the change land on the next frame in this process rather than up
+        # to a TTL later. No restart, and no reaching into the threads.
+        parking_camera.invalidate_dwell_settings()
 
         # Give an expiry date to any owner still missing one, using the duration
         # the admin just chose and counting from their join date. Owners that

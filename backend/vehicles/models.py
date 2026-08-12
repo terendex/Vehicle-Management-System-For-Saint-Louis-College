@@ -488,6 +488,24 @@ class SystemSettings(models.Model):
         help_text="Extra days (on top of months) before an owner account expires. "
                   "Months + days must total at least 1.",
     )
+    # Parking dwell thresholds. The camera follows each vehicle's box and times
+    # how long it has been still; these say how long "still" has to last before
+    # the zone commits. They are here rather than hard-coded because the right
+    # values depend on the lot — a busy aisle needs longer than a quiet bay.
+    parked_after_seconds      = models.IntegerField(
+        default=8,
+        validators=[MinValueValidator(1), MaxValueValidator(120)],
+        help_text="Seconds a vehicle must sit still before the camera counts it "
+                  "as parked and claims the bays it covers.",
+    )
+    double_park_after_seconds = models.IntegerField(
+        default=12,
+        validators=[MinValueValidator(1), MaxValueValidator(300)],
+        help_text="Seconds a vehicle must sit still across two or more bays "
+                  "before it is reported as double parking. Cannot be shorter "
+                  "than the parked threshold — a car cannot be badly parked "
+                  "before it counts as parked at all.",
+    )
 
     class Meta:
         db_table = 'tbl_system_settings'

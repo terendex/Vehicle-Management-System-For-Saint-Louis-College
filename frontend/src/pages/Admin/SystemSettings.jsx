@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
@@ -11,9 +11,15 @@ import './SystemSettings.css'
 // must total at least 1 (the server rejects 0/0), so there is no on/off control
 // and no "never expires" state to render.
 const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
-  account_expiry_months: 12, account_expiry_days: 0 }
+  account_expiry_months: 12, account_expiry_days: 0,
+  parked_after_seconds: 8, double_park_after_seconds: 12 }
 
 const hasExpiryPeriod = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
+
+// A car cannot be badly parked before it counts as parked at all. The server
+// rejects this pair too; checking here shows it as the admin types rather than
+// as a toast after the round trip.
+const dwellOrderValid = (f) => f.double_park_after_seconds >= f.parked_after_seconds
 
 function normalizeSettings(data) {
   return {
@@ -23,6 +29,8 @@ function normalizeSettings(data) {
     vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
     account_expiry_months: data.account_expiry_months ?? 12,
     account_expiry_days:   data.account_expiry_days   ?? 0,
+    parked_after_seconds:      data.parked_after_seconds      ?? 8,
+    double_park_after_seconds: data.double_park_after_seconds ?? 12,
   }
 }
 
@@ -218,16 +226,20 @@ export default function SystemSettings() {
     }
   }
 
+  const isDwellDirty = form.parked_after_seconds !== saved.parked_after_seconds
+    || form.double_park_after_seconds !== saved.double_park_after_seconds
   const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
     || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
     || form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
+    || isDwellDirty
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
   const expiryChanged = form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
   // The server rejects a zero period; block the save here too so the admin sees
   // it as they type rather than as a toast after the round trip.
   const expiryInvalid = !hasExpiryPeriod(form)
+  const dwellInvalid  = !dwellOrderValid(form)
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -539,7 +551,93 @@ export default function SystemSettings() {
                   className="ss-save-btn"
                   style={{ opacity: isDedupDirty ? 1 : 0.45, cursor: isDedupDirty ? 'pointer' : 'default' }}
                   onClick={() => setConfirmSave(true)}
-                  disabled={saving || !isDedupDirty || expiryInvalid}
+                  disabled={saving || !isDedupDirty || expiryInvalid || dwellInvalid}
+                >
+                  {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+
+            {/* ── Parking Detection Delays ──────────────────────────────── */}
+            <div className="ss-card">
+              <div className="ss-card-head">
+                <div className="ss-card-icon ss-icon-blue">
+                  <Timer size={16} />
+                </div>
+                <div>
+                  <h2 className="ss-card-title">Parking Detection Delays</h2>
+                  <p className="ss-card-desc">
+                    Parking cameras follow each vehicle and time how long it has stayed still. These
+                    say how long a vehicle must be stopped before the camera commits — long enough
+                    that a car driving past a bay, or reversing into one, is not mistaken for a
+                    parked one.
+                  </p>
+                </div>
+              </div>
+
+              <div className="ss-field">
+                <label className="ss-label" htmlFor="parked_after_seconds">
+                  Counts as parked after
+                </label>
+                <div className="ss-input-row">
+                  <input
+                    id="parked_after_seconds"
+                    name="parked_after_seconds"
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={form.parked_after_seconds}
+                    onChange={handleChange}
+                    className="ss-input"
+                  />
+                  <span className="ss-unit">seconds</span>
+                </div>
+                <p className="ss-hint">
+                  Allowed range: 1 – 120 seconds. Until this elapses the bay stays free, so someone
+                  else can still be directed to it.
+                </p>
+              </div>
+
+              <div className="ss-field">
+                <label className="ss-label" htmlFor="double_park_after_seconds">
+                  Reports double parking after
+                </label>
+                <div className="ss-input-row">
+                  <input
+                    id="double_park_after_seconds"
+                    name="double_park_after_seconds"
+                    type="number"
+                    min={1}
+                    max={300}
+                    value={form.double_park_after_seconds}
+                    onChange={handleChange}
+                    className="ss-input"
+                  />
+                  <span className="ss-unit">seconds</span>
+                </div>
+                <p className="ss-hint">
+                  Allowed range: 1 – 300 seconds, and never shorter than the parked delay. This one
+                  issues a violation, so it is worth leaving longer.
+                </p>
+              </div>
+
+              <div className="ss-info-row">
+                <ShieldAlert size={13} />
+                {dwellInvalid
+                  ? <>The double-parking delay cannot be shorter than the parked delay — a car
+                     cannot be badly parked before it counts as parked at all.</>
+                  : <>A vehicle across two bays is reported once it has been still
+                     for <strong>{form.double_park_after_seconds} seconds</strong>. Running zones
+                     pick up a change within a few seconds; no restart needed.</>}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="ss-save-btn"
+                  style={{ opacity: isDwellDirty ? 1 : 0.45, cursor: isDwellDirty ? 'pointer' : 'default' }}
+                  onClick={() => setConfirmSave(true)}
+                  disabled={saving || !isDwellDirty || expiryInvalid || dwellInvalid}
                 >
                   {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -739,12 +837,16 @@ export default function SystemSettings() {
         {!loading && (
           <div className={`ss-save-bar ${isDirty ? 'ss-save-bar--visible' : ''}`}>
             <span className="ss-unsaved-label">
-              {expiryInvalid ? 'Account expiration needs at least 1 month or 1 day' : 'Unsaved changes'}
+              {expiryInvalid
+                ? 'Account expiration needs at least 1 month or 1 day'
+                : dwellInvalid
+                  ? 'Double-parking delay cannot be shorter than the parked delay'
+                  : 'Unsaved changes'}
             </span>
             <button
               className="ss-save-btn"
               onClick={() => setConfirmSave(true)}
-              disabled={saving || !isDirty || expiryInvalid}
+              disabled={saving || !isDirty || expiryInvalid || dwellInvalid}
             >
               {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
               {saving ? 'Saving…' : 'Save Changes'}
@@ -789,6 +891,22 @@ export default function SystemSettings() {
                 <li>
                   Owner-account expiry period changes to <strong>{expiryPeriodText(form)}</strong> for
                   newly created accounts. Owners that already have an expiry date keep it.
+                </li>
+              )}
+              {form.parked_after_seconds !== saved.parked_after_seconds && (
+                <li>
+                  A vehicle must stand still for <strong>{form.parked_after_seconds} second{form.parked_after_seconds !== 1 ? 's' : ''}</strong> before
+                  a parking camera claims its bay.
+                </li>
+              )}
+              {form.double_park_after_seconds !== saved.double_park_after_seconds && (
+                <li>
+                  A vehicle across two bays is reported as double parking after
+                  standing still for <strong>{form.double_park_after_seconds} second{form.double_park_after_seconds !== 1 ? 's' : ''}</strong>.
+                  {form.double_park_after_seconds < saved.double_park_after_seconds && (
+                    <> Shortening this makes violations more likely to be issued while a driver is
+                       still manoeuvring.</>
+                  )}
                 </li>
               )}
             </ul>

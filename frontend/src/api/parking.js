@@ -35,8 +35,13 @@ export const zoneApi = {
     const { data } = await api.get(`/vehicles/parking-zones/${id}/`)
     return data
   },
-  create: async ({ name, vehicle_category }) => {
-    const { data } = await api.post('/vehicles/parking-zones/', { name, vehicle_category })
+  // `camera` is the Device Management camera id (or null). A zone created
+  // without one has no feed to draw against and no detector to run, so the
+  // caller should pass the camera the admin is actually looking at.
+  create: async ({ name, vehicle_category, camera = null }) => {
+    const { data } = await api.post('/vehicles/parking-zones/', {
+      name, vehicle_category, camera,
+    })
     return data
   },
   update: async (id, fields) => {
@@ -100,6 +105,14 @@ export const zoneApi = {
   getSignals: async (id) => {
     const { data } = await api.get(`/vehicles/parking-zones/${id}/signals/`)
     return data
+  },
+
+  // Vehicles the zone is following, with how long each has been stationary.
+  // Occupancy and double parking both wait for a vehicle to settle, so this is
+  // what explains a bay that is taken on screen but still reads free.
+  getTrackedVehicles: async (id) => {
+    const { data } = await api.get(`/vehicles/parking-zones/${id}/tracked-vehicles/`)
+    return Array.isArray(data) ? data : []
   },
 
   // ── IP Camera ────────────────────────────────────────────────────
