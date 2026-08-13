@@ -1,6 +1,7 @@
 import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.db.models.functions import Upper
 
 
 class UserManager(BaseUserManager):
@@ -164,6 +165,15 @@ class User(AbstractUser):
             ),
         ]
         indexes = [
+            # Every account lookup by address is case-insensitive — login, the
+            # password reset, the registration duplicate check, and each of the
+            # account serializers' uniqueness validators all use email__iexact.
+            # On PostgreSQL that compiles to UPPER(email) = UPPER(%s), which the
+            # plain db_index=True btree on email cannot answer, so all of them
+            # were sequential scans of tbl_user that grew with the account count.
+            # Indexing the same UPPER(email) expression the ORM emits makes them
+            # index lookups without any query having to change.
+            models.Index(Upper('email'), name='user_email_upper'),
             # The retention purge asks, every single day, "which archived
             # accounts passed the window?". Partial on is_archived so the index
             # holds only archived rows — the minority, and the only ones the

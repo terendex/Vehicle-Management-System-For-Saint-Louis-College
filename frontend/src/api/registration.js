@@ -41,10 +41,14 @@ export const registrationApi = {
     }
     return data
   },
-  // Live duplicate check for the registration form's plate/email/license/student/employee ID fields
-  checkAvailability: async ({ plate_number, email, drivers_license, student_id, employee_id }) => {
+  // Live duplicate check for the registration form's plate/conduction/email/license/
+  // student/employee ID fields. conduction_number must be forwarded like the rest:
+  // the form passes it and reads result.conduction_number back, but it used to be
+  // dropped here, so a brand-new vehicle's duplicate sticker was never flagged in
+  // the field — the applicant only found out when the submit itself 400'd.
+  checkAvailability: async ({ plate_number, conduction_number, email, drivers_license, student_id, employee_id }) => {
     const { data } = await api.get('/vehicles/register/availability/', {
-      params: { plate_number, email, drivers_license, student_id, employee_id },
+      params: { plate_number, conduction_number, email, drivers_license, student_id, employee_id },
     })
     return data
   },

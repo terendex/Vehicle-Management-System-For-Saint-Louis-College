@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from django.conf import settings
@@ -22,6 +23,8 @@ from .serializers import (
     AuditLogSerializer,
     NotificationSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_client_ip(request):
@@ -1188,19 +1191,31 @@ class PasswordResetRequestView(APIView):
         </html>
         """
         
-        send_mail(
-            subject='SLC Vehicle Management — Password Reset',
-            message=(
-                f"Hello {user.full_name or user.email},\n\n"
-                f"Reset your password by visiting:\n{reset_link}\n\n"
-                f"This link expires in 1 hour.\n\n"
-                f"If you did not request this, ignore this email."
-            ),
-            from_email=django_settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=True,
-        )
+        # fail_silently=False + an explicit log. The response stays SAFE_MSG
+        # either way — it must not reveal whether the address exists — but the
+        # send itself must not fail invisibly: with fail_silently=True an
+        # expired SMTP credential produced a cheerful "a reset link has been
+        # sent" for every request while nothing was delivered and nothing was
+        # written to the log, so there was no way to tell the two apart.
+        try:
+            send_mail(
+                subject='SLC Vehicle Management — Password Reset',
+                message=(
+                    f"Hello {user.full_name or user.email},\n\n"
+                    f"Reset your password by visiting:\n{reset_link}\n\n"
+                    f"This link expires in 1 hour.\n\n"
+                    f"If you did not request this, ignore this email."
+                ),
+                from_email=django_settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send the password-reset email to user %s — they were "
+                "told a link was sent, but none was delivered.", user.pk,
+            )
 
         return Response({'message': SAFE_MSG})
 

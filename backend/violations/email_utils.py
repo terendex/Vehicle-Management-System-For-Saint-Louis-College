@@ -2,6 +2,10 @@ from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 from email.mime.image import MIMEImage
 
+# These templates are f-strings, not Django templates, so nothing auto-escapes.
+# Owner names and CDSO-typed notes both reach the HTML body verbatim otherwise.
+from vehicles.email_utils import esc
+
 VIOLATION_TYPE_LABELS = {
     'unauthorized_entry':   'Unauthorized Entry',
     'double_parking':       'Double Parking',
@@ -83,7 +87,7 @@ def send_violation_warning_email(violation):
     issued_str   = violation.issued_at.strftime('%B %d, %Y') if violation.issued_at else '—'
     notes_row = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Notes</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{violation.notes}</td></tr>'
+        f'<td style="padding:8px 0;font-weight:600;">{esc(violation.notes)}</td></tr>'
     ) if violation.notes else ''
 
     remaining = 3 - violation.offense_number
@@ -100,16 +104,16 @@ def send_violation_warning_email(violation):
           <div style="padding:28px 32px 24px;">
             <h2 style="color:#D97706;margin:0 0 6px;">&#9888; Violation Warning — {offense_label} Offense</h2>
             <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">A violation has been recorded against your vehicle.</p>
-            <p style="margin:0 0 4px;">Dear <strong>{owner.full_name}</strong>,</p>
+            <p style="margin:0 0 4px;">Dear <strong>{esc(owner.full_name)}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
-              The following violation for your vehicle (<strong>{vehicle.plate_number}</strong>) has been recorded.
+              The following violation for your vehicle (<strong>{esc(vehicle.plate_number)}</strong>) has been recorded.
             </p>
             <div style="background:#FFFBEB;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
               <table style="width:100%;border-collapse:collapse;">
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Plate Number</td>
-                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{vehicle.plate_number}</td></tr>
+                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{esc(vehicle.plate_number)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Violation</td>
-                    <td style="padding:8px 0;font-weight:600;">{vtype_label}</td></tr>
+                    <td style="padding:8px 0;font-weight:600;">{esc(vtype_label)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Offense</td>
                     <td style="padding:8px 0;font-weight:600;">{offense_label}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Date</td>
@@ -161,7 +165,7 @@ def send_fee_imposed_email(violation):
     issued_str  = violation.issued_at.strftime('%B %d, %Y') if violation.issued_at else '—'
     notes_row = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Notes</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{violation.notes}</td></tr>'
+        f'<td style="padding:8px 0;font-weight:600;">{esc(violation.notes)}</td></tr>'
     ) if violation.notes else ''
 
     html_message = f"""
@@ -171,17 +175,17 @@ def send_fee_imposed_email(violation):
           <div style="padding:28px 32px 24px;">
             <h2 style="color:#DC2626;margin:0 0 6px;">&#128683; Entry Denied — 3rd Offense</h2>
             <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">Your vehicle has been denied entry and a fee has been imposed.</p>
-            <p style="margin:0 0 4px;">Dear <strong>{owner.full_name}</strong>,</p>
+            <p style="margin:0 0 4px;">Dear <strong>{esc(owner.full_name)}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
-              Your vehicle (<strong>{vehicle.plate_number}</strong>) has reached its 3rd offense.
+              Your vehicle (<strong>{esc(vehicle.plate_number)}</strong>) has reached its 3rd offense.
               Entry to campus is now <strong>denied</strong> until the required fee is settled.
             </p>
             <div style="background:#FEF2F2;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
               <table style="width:100%;border-collapse:collapse;">
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Plate Number</td>
-                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{vehicle.plate_number}</td></tr>
+                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{esc(vehicle.plate_number)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Violation</td>
-                    <td style="padding:8px 0;font-weight:600;">{vtype_label}</td></tr>
+                    <td style="padding:8px 0;font-weight:600;">{esc(vtype_label)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Offense</td>
                     <td style="padding:8px 0;font-weight:600;">3rd (Final)</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Fee Imposed</td>
@@ -248,7 +252,7 @@ def send_violation_notified_email(violation):
     ) if fine > 0 else ''
     notes_row = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Notes</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{violation.notes}</td></tr>'
+        f'<td style="padding:8px 0;font-weight:600;">{esc(violation.notes)}</td></tr>'
     ) if violation.notes else ''
 
     html_message = f"""
@@ -258,17 +262,17 @@ def send_violation_notified_email(violation):
           <div style="padding:28px 32px 24px;">
             <h2 style="color:#D97706;margin:0 0 6px;">&#9888; Violation Notice</h2>
             <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">A violation has been officially recorded against your vehicle.</p>
-            <p style="margin:0 0 4px;">Dear <strong>{owner.full_name}</strong>,</p>
+            <p style="margin:0 0 4px;">Dear <strong>{esc(owner.full_name)}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
-              The CDSO office has issued a violation notice for your vehicle (<strong>{vehicle.plate_number}</strong>).
+              The CDSO office has issued a violation notice for your vehicle (<strong>{esc(vehicle.plate_number)}</strong>).
               Please review the details below and settle any outstanding amount at the CDSO office.
             </p>
             <div style="background:#FFFBEB;border-radius:10px;padding:16px 20px;margin-bottom:24px;">
               <table style="width:100%;border-collapse:collapse;">
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Plate Number</td>
-                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{vehicle.plate_number}</td></tr>
+                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{esc(vehicle.plate_number)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Violation</td>
-                    <td style="padding:8px 0;font-weight:600;">{vtype_label}</td></tr>
+                    <td style="padding:8px 0;font-weight:600;">{esc(vtype_label)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Date</td>
                     <td style="padding:8px 0;font-weight:600;">{issued_str}</td></tr>
                 {fine_row}
@@ -316,7 +320,7 @@ def send_violation_resolved_email(violation):
     vtype_label  = VIOLATION_TYPE_LABELS.get(violation.violation_type, violation.violation_type)
     notes_section = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Notes</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{violation.notes}</td></tr>'
+        f'<td style="padding:8px 0;font-weight:600;">{esc(violation.notes)}</td></tr>'
     ) if violation.notes else ''
 
     issued_str = violation.issued_at.strftime('%B %d, %Y') if violation.issued_at else '—'
@@ -328,17 +332,17 @@ def send_violation_resolved_email(violation):
           <div style="padding:28px 32px 24px;">
             <h2 style="color:#059669;margin:0 0 6px;">Violation Cleared &#10003;</h2>
             <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">Your violation has been reviewed and cleared by the CDSO office.</p>
-            <p style="margin:0 0 4px;">Dear <strong>{owner.full_name}</strong>,</p>
+            <p style="margin:0 0 4px;">Dear <strong>{esc(owner.full_name)}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
-              The following violation for your vehicle (<strong>{vehicle.plate_number}</strong>) has been cleared.
+              The following violation for your vehicle (<strong>{esc(vehicle.plate_number)}</strong>) has been cleared.
               Campus entry access has been restored.
             </p>
             <div style="background:#F0FDF4;border-radius:10px;padding:16px 20px;margin-bottom:24px;">
               <table style="width:100%;border-collapse:collapse;">
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Plate Number</td>
-                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{vehicle.plate_number}</td></tr>
+                    <td style="padding:8px 0;font-weight:700;font-family:monospace;">{esc(vehicle.plate_number)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Violation Type</td>
-                    <td style="padding:8px 0;font-weight:600;">{vtype_label}</td></tr>
+                    <td style="padding:8px 0;font-weight:600;">{esc(vtype_label)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Date Issued</td>
                     <td style="padding:8px 0;font-weight:600;">{issued_str}</td></tr>
                 {notes_section}

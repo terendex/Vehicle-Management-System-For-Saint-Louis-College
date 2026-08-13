@@ -1,8 +1,11 @@
+import logging
 import re
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, AuditLog, Notification
+
+logger = logging.getLogger(__name__)
 
 
 def validate_password_strength(password):
@@ -110,12 +113,15 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
     changed on first login (must_change_password is set by the caller)."""
     from django.core.mail import send_mail
     from django.conf import settings as _cfg
+    from vehicles.email_utils import esc
 
     frontend_url = getattr(_cfg, 'FRONTEND_URL', 'http://localhost:5173')
     extra_rows = extra_rows or []
+    # esc(): this template is an f-string, so an admin-entered name or a gate
+    # label containing markup would otherwise land in the HTML body verbatim.
     extra_html = ''.join(
-        f'<tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">{label}</td>'
-        f'<td style="padding:8px 12px;">{value}</td></tr>'
+        f'<tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">{esc(label)}</td>'
+        f'<td style="padding:8px 12px;">{esc(value)}</td></tr>'
         for label, value in extra_rows
     )
     extra_text = ''.join(f"{label:<10}: {value}\n" for label, value in extra_rows)
@@ -127,16 +133,16 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
         <div style="padding:28px 32px 24px;">
           <h2 style="color:#2A2B61;margin:0 0 8px;">Your SLC Account is Ready</h2>
           <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-            Hello <strong>{full_name}</strong>, the administrator has created your account.
+            Hello <strong>{esc(full_name)}</strong>, the administrator has created your account.
           </p>
           <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;width:40%;">Login URL</td>
                 <td style="padding:8px 12px;">{frontend_url}/login</td></tr>
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Email</td>
-                <td style="padding:8px 12px;">{email}</td></tr>
+                <td style="padding:8px 12px;">{esc(email)}</td></tr>
             {extra_html}
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Temp Password</td>
-                <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{password}</td></tr>
+                <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{esc(password)}</td></tr>
           </table>
           <p style="color:#DC2626;font-size:13px;background:#FEF2F2;border:1px solid #FECACA;
                      border-radius:8px;padding:10px 14px;margin:0 0 20px;">
@@ -166,10 +172,16 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
             from_email=_cfg.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
             html_message=html,
-            fail_silently=True,
+            fail_silently=False,
         )
     except Exception:
-        pass
+        # Account creation still succeeds — but a swallowed failure here meant a
+        # new guard or owner simply never received their temporary password and
+        # nobody found out until they tried to log in.
+        logger.exception(
+            "Failed to send the account-created email to %s — the account exists "
+            "but its temporary password was never delivered.", email,
+        )
 
 
 class GuardCreateSerializer(serializers.Serializer):
@@ -330,17 +342,10 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             user=user,
         )
 
-        days_set  = set(campus_days)
-        mwf_days  = {'Monday', 'Wednesday', 'Friday'}
-        tths_days = {'Tuesday', 'Thursday', 'Saturday'}
-        if days_set == mwf_days:
-            schedule = 'MWF'
-        elif days_set == tths_days:
-            schedule = 'TTHS'
-        elif days_set:
-            schedule = 'MIXED'
-        else:
-            schedule = 'ANY'
+        # Same rule as the public form and the CDSO override — see
+        # vehicles/campus_days.py for why this is no longer inlined.
+        from vehicles.campus_days import schedule_group
+        schedule = schedule_group(campus_days)
 
         VehicleRegistration.objects.create(
             user=user,

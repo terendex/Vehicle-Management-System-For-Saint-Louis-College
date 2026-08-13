@@ -27,6 +27,27 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
+        # Everything the *review process* owns, not the applicant.
+        #
+        # This serializer is fed straight from request.data by the public,
+        # AllowAny registration endpoint, and `fields = '__all__'` made every
+        # one of these writable from that payload. A submission could therefore
+        # carry `status: "accepted"` and approve itself without CDSO ever seeing
+        # it; set `user`/`vehicle` to point at somebody else's account; grant
+        # itself `is_special_case`; invent an `or_number`; or claim a
+        # `system_student_id` (a unique column) that the next genuine approval
+        # then collides with. The views supply all of these themselves via
+        # serializer.save(**kwargs), which bypasses read_only_fields, so
+        # nothing legitimate changes here.
+        read_only_fields = (
+            'user', 'vehicle',
+            'registrant_type', 'status', 'source',
+            'or_number', 'reviewed_at', 'rejection_reason',
+            'system_student_id', 'system_employee_id',
+            'is_special_case', 'special_case_reason',
+            'drivers_license_image',   # set only by UploadLicenseImageView
+            'created_at',
+        )
 
     @staticmethod
     def build_block_counts(registrations):
