@@ -341,15 +341,45 @@ else:
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Email Configuration
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
+# ── Email Configuration ───────────────────────────────────────────────────
+# The transport is configurable because the host it runs on decides whether it
+# works at all. Gmail on port 587 is right for the on-campus server, but many
+# cloud platforms (Railway included) block outbound SMTP to deter spam — the
+# connection simply hangs until EMAIL_TIMEOUT, which is indistinguishable from
+# a dead mail server unless you time it. Hard-coding host/port/TLS meant the
+# only way to try another port, or move to a provider that sends over HTTPS,
+# was a code change and a redeploy.
+#
+# Every default below is the previous hard-coded value, so an environment that
+# sets none of these behaves exactly as before.
+def _env_flag(name, default):
+    """Read a boolean env var. Railway/dotenv give strings, so 'false' must not
+    come back truthy the way bool('false') does."""
+    raw = os.getenv(name)
+    if raw is None or raw == '':
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+# TLS (STARTTLS, usually 587) and SSL (implicit, usually 465) are mutually
+# exclusive — Django raises if both are on. Setting EMAIL_USE_SSL therefore
+# turns TLS off unless TLS was asked for explicitly.
+EMAIL_USE_SSL = _env_flag('EMAIL_USE_SSL', False)
+EMAIL_USE_TLS = _env_flag('EMAIL_USE_TLS', not EMAIL_USE_SSL)
+if EMAIL_USE_SSL and EMAIL_USE_TLS:
+    EMAIL_USE_TLS = False
+
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER')
-EMAIL_TIMEOUT = 10  # seconds — a hung SMTP server must not stall the scan pipeline
+# Falls back to the login address, which is what Gmail requires anyway. Set it
+# explicitly when the sending identity differs from the SMTP username — every
+# provider other than Gmail works that way (e.g. user 'resend', from
+# 'noreply@yourdomain').
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or os.getenv('EMAIL_HOST_USER')
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))  # seconds — a hung SMTP server must not stall the scan pipeline
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
