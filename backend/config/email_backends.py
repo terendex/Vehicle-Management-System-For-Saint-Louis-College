@@ -7,66 +7,86 @@ Railway, with nothing in the logs to tell the two apart. No port, password or
 mail-provider change fixes that; the only way out of the container is HTTPS on
 443, which the platform does allow.
 
-This backend sends through Resend's HTTP API instead of speaking SMTP. It is a
-drop-in for the SMTP backend: every existing `send_mail` and
-`EmailMultiAlternatives` call — HTML alternatives, the approval email's PDF
-attachment, the inline `cid:` evidence photo on violation emails — goes through
-unchanged. Only the transport differs, so the campus half keeps using Gmail
-SMTP and needs no configuration at all.
+Two providers are implemented because they fail on different things:
 
-Enable it on Railway only:
+  BrevoEmailBackend   verifies a single *sender address*, so a plain Gmail
+                      address can send to anyone with no domain involved. This
+                      is what the Railway half uses — it needs nothing from the
+                      school's DNS, and it keeps the sender identical to the
+                      campus half's, so recipients see one consistent address.
 
-    EMAIL_BACKEND=config.email_backends.ResendEmailBackend
-    RESEND_API_KEY=re_xxxxxxxx
-    DEFAULT_FROM_EMAIL=noreply@spvvs.slc-sflu.edu.ph
+  ResendEmailBackend  requires a verified sending *domain*. Better deliverability
+                      once `spvvs.slc-sflu.edu.ph` exists, but until then it will
+                      only deliver to the Resend account owner, which is useless
+                      for emailing students.
 
-DEFAULT_FROM_EMAIL must be on a domain verified in the Resend dashboard —
-unlike Gmail, the sending identity is not tied to the account's own address, and
-Resend rejects any other domain outright. Until the school's DNS records exist,
-`onboarding@resend.dev` works for testing and nothing else does.
+Both are drop-in replacements for the SMTP backend: every existing `send_mail`
+and `EmailMultiAlternatives` call goes through unchanged, so the campus half
+needs no configuration at all and keeps using Gmail SMTP.
+
+Enable one on Railway only — setting EMAIL_BACKEND is the whole switch:
+
+    EMAIL_BACKEND=config.email_backends.BrevoEmailBackend
+    BREVO_API_KEY=xkeysib-…
+    DEFAULT_FROM_EMAIL=SLC CDSO <the-verified-address@gmail.com>
 
 Verify a deployment with `python manage.py check_email --to you@example.com`.
 """
 import base64
 import logging
 import time
+from email.utils import parseaddr
 
 import requests
 from django.core.mail.backends.base import BaseEmailBackend
 
 log = logging.getLogger(__name__)
 
-API_URL = 'https://api.resend.com/emails'
-# Resend rate-limits to 2 requests/second by default. A CDSO approving a batch
-# of registrations trips that easily, and a 429 that is not retried loses the
-# owner their credentials email, so the burst is absorbed here rather than being
-# reported as a send failure.
+# Providers rate-limit, and a CDSO approving a batch of registrations trips that
+# easily. A 429 that is not retried loses an owner their credentials email, so
+# the burst is absorbed here rather than surfacing as a send failure.
 MAX_ATTEMPTS = 4
 RETRY_BACKOFF = 1.0  # seconds; doubled per attempt
 
 
-class ResendEmailBackend(BaseEmailBackend):
-    """Django email backend that posts to the Resend API over HTTPS."""
+class _HttpApiEmailBackend(BaseEmailBackend):
+    """Shared machinery for sending Django email through a provider's HTTP API.
+
+    Subclasses supply the endpoint, the auth header and the JSON shape; the
+    session handling, retry policy and Django plumbing are identical between
+    them and live here.
+    """
+
+    API_URL = ''
+    PROVIDER = ''
+    KEY_SETTING = ''        # settings attribute holding the API key
+    KEY_PREFIX = ''         # expected key prefix, for the diagnostic only
 
     def __init__(self, fail_silently=False, **kwargs):
         super().__init__(fail_silently=fail_silently, **kwargs)
         from django.conf import settings
-        self.api_key = getattr(settings, 'RESEND_API_KEY', '') or ''
+        self.api_key = getattr(settings, self.KEY_SETTING, '') or ''
         # Reuse the SMTP knob rather than inventing a second one: it already
         # means "how long a stalled mail server may hold up the caller", and the
         # scan pipeline sends mail inline.
         self.timeout = getattr(settings, 'EMAIL_TIMEOUT', 10) or 10
         self.session = None
 
+    # ── provider hooks ───────────────────────────────────────────────────
+    def _auth_headers(self):
+        raise NotImplementedError
+
+    def _payload(self, message):
+        raise NotImplementedError
+
     # ── connection lifecycle ─────────────────────────────────────────────
     def open(self):
         if self.session is not None:
             return False
         self.session = requests.Session()
-        self.session.headers.update({
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json',
-        })
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+        headers.update(self._auth_headers())
+        self.session.headers.update(headers)
         return True
 
     def close(self):
@@ -84,11 +104,11 @@ class ResendEmailBackend(BaseEmailBackend):
             # how "approved but never emailed" happens.
             if not self.fail_silently:
                 raise ValueError(
-                    'RESEND_API_KEY is not set, so no mail can be sent. Set it on '
-                    'this host, or set EMAIL_BACKEND back to the SMTP backend.'
+                    f'{self.KEY_SETTING} is not set, so no mail can be sent. Set it '
+                    f'on this host, or set EMAIL_BACKEND back to the SMTP backend.'
                 )
-            log.error('RESEND_API_KEY is not set — dropping %d message(s).',
-                      len(email_messages))
+            log.error('%s is not set — dropping %d message(s).',
+                      self.KEY_SETTING, len(email_messages))
             return 0
 
         new_session = self.open()
@@ -100,8 +120,7 @@ class ResendEmailBackend(BaseEmailBackend):
 
     # ── one message ──────────────────────────────────────────────────────
     def _send(self, message):
-        recipients = message.recipients()
-        if not recipients:
+        if not message.recipients():
             return False
 
         try:
@@ -109,48 +128,51 @@ class ResendEmailBackend(BaseEmailBackend):
         except Exception:
             if not self.fail_silently:
                 raise
-            log.exception('Could not build a Resend payload for %r', message.subject)
+            log.exception('Could not build a %s payload for %r',
+                          self.PROVIDER, message.subject)
             return False
 
         delay = RETRY_BACKOFF
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                resp = self.session.post(API_URL, json=payload, timeout=self.timeout)
+                resp = self.session.post(self.API_URL, json=payload, timeout=self.timeout)
             except requests.RequestException as exc:
-                # The network itself failed. Retrying is worthwhile — but only
-                # up to the attempt budget, so a hard outage cannot stall a scan.
+                # The network itself failed. Retrying is worthwhile — but only up
+                # to the attempt budget, so a hard outage cannot stall a scan.
                 if attempt == MAX_ATTEMPTS:
                     if not self.fail_silently:
                         raise
-                    log.exception('Resend unreachable after %d attempts', attempt)
+                    log.exception('%s unreachable after %d attempts',
+                                  self.PROVIDER, attempt)
                     return False
-                log.warning('Resend request failed (%s), retrying in %.1fs', exc, delay)
+                log.warning('%s request failed (%s), retrying in %.1fs',
+                            self.PROVIDER, exc, delay)
             else:
                 if resp.status_code < 300:
                     return True
 
-                # 429 is a rate limit and 5xx is Resend's problem; both clear on
-                # their own. Everything else (bad key, unverified domain,
-                # malformed address) will fail identically forever, so it is
-                # reported immediately rather than after four slow retries.
+                # 429 is a rate limit and 5xx is the provider's problem; both
+                # clear on their own. Everything else (bad key, unverified
+                # sender, malformed address) fails identically forever, so it is
+                # reported at once rather than after four slow retries.
                 retryable = resp.status_code == 429 or resp.status_code >= 500
                 detail = self._error_detail(resp)
                 if not retryable or attempt == MAX_ATTEMPTS:
                     if not self.fail_silently:
                         raise RuntimeError(
-                            f'Resend rejected the message ({resp.status_code}): {detail}'
+                            f'{self.PROVIDER} rejected the message '
+                            f'({resp.status_code}): {detail}'
                         )
-                    log.error('Resend rejected the message (%s): %s',
-                              resp.status_code, detail)
+                    log.error('%s rejected the message (%s): %s',
+                              self.PROVIDER, resp.status_code, detail)
                     return False
 
-                # Honour Retry-After when Resend supplies one.
                 try:
                     delay = max(delay, float(resp.headers.get('Retry-After', 0)))
                 except (TypeError, ValueError):
                     pass
-                log.warning('Resend returned %s (%s), retrying in %.1fs',
-                            resp.status_code, detail, delay)
+                log.warning('%s returned %s (%s), retrying in %.1fs',
+                            self.PROVIDER, resp.status_code, detail, delay)
 
             time.sleep(delay)
             delay *= 2
@@ -159,7 +181,8 @@ class ResendEmailBackend(BaseEmailBackend):
 
     @staticmethod
     def _error_detail(resp):
-        """Resend's JSON error message, falling back to the raw body."""
+        """The provider's JSON error message, falling back to the raw body.
+        Both providers use a top-level `message`."""
         try:
             body = resp.json()
         except ValueError:
@@ -168,50 +191,36 @@ class ResendEmailBackend(BaseEmailBackend):
             return body.get('message') or body.get('error') or str(body)[:300]
         return str(body)[:300]
 
-    # ── Django EmailMessage → Resend JSON ────────────────────────────────
-    def _payload(self, message):
-        payload = {
-            'from': message.from_email,
-            'to': list(message.to),
-            'subject': message.subject or '',
-        }
-        if message.cc:
-            payload['cc'] = list(message.cc)
-        if message.bcc:
-            payload['bcc'] = list(message.bcc)
-        if message.reply_to:
-            payload['reply_to'] = list(message.reply_to)
+    # ── shared Django EmailMessage decoding ──────────────────────────────
+    @staticmethod
+    def _bodies(message):
+        """Return (text, html) for a Django message.
 
-        # `send_mail(html_message=...)` and `attach_alternative` both land in
-        # `alternatives`; a message whose content_subtype is 'html' carries its
-        # HTML in `body` instead. Resend needs at least one of html/text.
+        `send_mail(html_message=...)` and `attach_alternative` both land in
+        `alternatives`; a message whose content_subtype is 'html' carries its
+        HTML in `body` instead. Every provider needs at least one of the two.
+        """
+        text = html = None
         body = message.body or ''
         if getattr(message, 'content_subtype', 'plain') == 'html':
-            payload['html'] = body
+            html = body
         else:
-            payload['text'] = body
-
+            text = body
         for content, mimetype in getattr(message, 'alternatives', None) or []:
             if mimetype == 'text/html':
-                payload['html'] = content
+                html = content
             elif mimetype == 'text/plain':
-                payload['text'] = content
-
-        attachments = [a for a in (self._attachment(a) for a in message.attachments) if a]
-        if attachments:
-            payload['attachments'] = attachments
-        return payload
+                text = content
+        return text, html
 
     @staticmethod
-    def _attachment(attachment):
-        """Convert one Django attachment to Resend's `{filename, content}` form.
+    def _decode_attachment(attachment):
+        """Normalise one Django attachment to (filename, bytes, mimetype, cid).
 
-        Django allows two shapes here and both are used in this project: the
-        approval email attaches a `(filename, bytes, mimetype)` tuple for the
-        registration PDF, while violation emails attach a raw MIMEImage carrying
-        a Content-ID so the evidence photo renders inline from `cid:evidence`.
-        The MIMEBase branch preserves that id — dropping it would turn the inline
-        photo into a bare attachment and leave a broken image in the body.
+        Django allows two shapes and both are used here: the approval email
+        attaches a `(filename, bytes, mimetype)` tuple for the registration PDF,
+        while violation emails attach a raw MIMEImage carrying a Content-ID so
+        the evidence photo renders inline from `cid:evidence`.
         """
         if isinstance(attachment, tuple):
             filename, content, mimetype = attachment
@@ -226,13 +235,138 @@ class ResendEmailBackend(BaseEmailBackend):
             return None
         if isinstance(content, str):
             content = content.encode('utf-8')
+        return filename or 'attachment', content, mimetype, content_id
 
-        item = {
-            'filename': filename or 'attachment',
-            'content': base64.b64encode(content).decode('ascii'),
+    @staticmethod
+    def _b64(content):
+        return base64.b64encode(content).decode('ascii')
+
+
+class BrevoEmailBackend(_HttpApiEmailBackend):
+    """Send through Brevo's transactional email API.
+
+    Brevo verifies an individual *sender address* rather than a domain, so the
+    project's existing Gmail address can be authorised in the dashboard and then
+    used to email arbitrary students — no DNS records, and nothing needed from
+    SLC IT. That is the only reason this is the Railway default over Resend.
+
+    Caveat: Brevo's attachment objects carry no Content-ID field, so an inline
+    `cid:` image cannot be referenced from the HTML the way SMTP allows. Such
+    attachments are still delivered, but as ordinary attachments — see
+    `_payload` below.
+    """
+
+    API_URL = 'https://api.brevo.com/v3/smtp/email'
+    PROVIDER = 'Brevo'
+    KEY_SETTING = 'BREVO_API_KEY'
+    KEY_PREFIX = 'xkeysib-'
+
+    def _auth_headers(self):
+        return {'api-key': self.api_key}
+
+    def _payload(self, message):
+        name, addr = parseaddr(message.from_email or '')
+        sender = {'email': addr}
+        if name:
+            sender['name'] = name
+
+        payload = {
+            'sender': sender,
+            'to': [self._contact(a) for a in message.to],
+            'subject': message.subject or '',
         }
-        if mimetype:
-            item['content_type'] = mimetype
-        if content_id:
-            item['content_id'] = content_id
-        return item
+        if message.cc:
+            payload['cc'] = [self._contact(a) for a in message.cc]
+        if message.bcc:
+            payload['bcc'] = [self._contact(a) for a in message.bcc]
+        if message.reply_to:
+            # Brevo takes a single object here, not a list.
+            payload['replyTo'] = self._contact(message.reply_to[0])
+
+        text, html = self._bodies(message)
+        if html:
+            payload['htmlContent'] = html
+        if text:
+            payload['textContent'] = text
+
+        attachments = []
+        for raw in message.attachments:
+            decoded = self._decode_attachment(raw)
+            if not decoded:
+                continue
+            filename, content, _mimetype, content_id = decoded
+            if content_id:
+                # Delivered, but it will not render inline: the HTML's
+                # `cid:` reference has nothing to bind to. Logged rather than
+                # dropped so the evidence photo still reaches the recipient,
+                # and so the cause is findable if someone reports a broken
+                # image in a violation email.
+                log.warning(
+                    'Brevo cannot inline attachment %r (Content-ID %r); sending it '
+                    'as a normal attachment. Reference the image by its public URL '
+                    'instead of cid: to have it render in the body.',
+                    filename, content_id)
+            attachments.append({'name': filename, 'content': self._b64(content)})
+        if attachments:
+            payload['attachment'] = attachments
+        return payload
+
+    @staticmethod
+    def _contact(address):
+        name, addr = parseaddr(address)
+        return {'email': addr, 'name': name} if name else {'email': addr}
+
+
+class ResendEmailBackend(_HttpApiEmailBackend):
+    """Send through Resend's HTTP API.
+
+    Resend will only send from a domain verified in its dashboard and rejects
+    anything else with a 403 — unlike Gmail, the sending identity is not tied to
+    the account's own address. `onboarding@resend.dev` needs no verification but
+    delivers only to the Resend account owner, so it is a transport test and not
+    a production sender.
+    """
+
+    API_URL = 'https://api.resend.com/emails'
+    PROVIDER = 'Resend'
+    KEY_SETTING = 'RESEND_API_KEY'
+    KEY_PREFIX = 're_'
+
+    def _auth_headers(self):
+        return {'Authorization': f'Bearer {self.api_key}'}
+
+    def _payload(self, message):
+        payload = {
+            'from': message.from_email,
+            'to': list(message.to),
+            'subject': message.subject or '',
+        }
+        if message.cc:
+            payload['cc'] = list(message.cc)
+        if message.bcc:
+            payload['bcc'] = list(message.bcc)
+        if message.reply_to:
+            payload['reply_to'] = list(message.reply_to)
+
+        text, html = self._bodies(message)
+        if html:
+            payload['html'] = html
+        if text:
+            payload['text'] = text
+
+        attachments = []
+        for raw in message.attachments:
+            decoded = self._decode_attachment(raw)
+            if not decoded:
+                continue
+            filename, content, mimetype, content_id = decoded
+            item = {'filename': filename, 'content': self._b64(content)}
+            if mimetype:
+                item['content_type'] = mimetype
+            # Resend does carry Content-ID, so `cid:` images survive here.
+            if content_id:
+                item['content_id'] = content_id
+            attachments.append(item)
+        if attachments:
+            payload['attachments'] = attachments
+        return payload

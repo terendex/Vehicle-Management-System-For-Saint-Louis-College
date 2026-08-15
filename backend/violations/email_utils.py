@@ -34,14 +34,37 @@ _FOOTER = """
 """
 
 
+def _evidence_url(violation):
+    """Absolute URL of the evidence photo, or None to fall back to a cid attachment.
+
+    With USE_R2 on — which production requires — the photo already lives at a
+    public https URL, so the email can simply link it. That matters because the
+    Railway half sends over Brevo's HTTP API, which has no Content-ID field: a
+    `cid:` reference there renders as a broken image. A plain URL renders on both
+    transports, and keeps the message small enough not to trip size limits.
+
+    Local storage yields a relative path (`/media/...`) that means nothing in a
+    mail client, so those still go out as an inline attachment.
+    """
+    evidence = getattr(violation, 'evidence', None)
+    if not evidence:
+        return None
+    try:
+        url = evidence.url
+    except Exception:
+        return None
+    return url if url and url.startswith(('http://', 'https://')) else None
+
+
 def _evidence_html(violation):
-    """Inline evidence-photo block (rendered via cid) — empty when no photo."""
+    """Evidence-photo block — empty when there is no photo."""
     if not getattr(violation, 'evidence', None):
         return ''
+    src = _evidence_url(violation) or 'cid:evidence'
     return (
         '<div style="margin:0 0 20px;">'
         '<p style="font-size:13px;color:#5A5F72;margin:0 0 8px;font-weight:600;">Evidence Photo</p>'
-        '<img src="cid:evidence" alt="violation evidence" '
+        f'<img src="{src}" alt="violation evidence" '
         'style="max-width:100%;border-radius:10px;border:1px solid #E2E6EE;display:block;" />'
         '</div>'
     )
@@ -56,7 +79,9 @@ def _send_violation_email(subject, text, html, recipient, violation=None):
         )
         msg.attach_alternative(html, 'text/html')
         evidence = getattr(violation, 'evidence', None)
-        if evidence:
+        # Only when the photo has no public URL — otherwise the HTML above links
+        # it directly and attaching it would duplicate the payload.
+        if evidence and not _evidence_url(violation):
             try:
                 evidence.open('rb')
                 data = evidence.read()

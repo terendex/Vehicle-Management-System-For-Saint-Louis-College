@@ -35,11 +35,29 @@ from django.core.mail import EmailMessage, get_connection
 from django.core.management.base import BaseCommand
 
 SMTP_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-RESEND_BACKEND = 'config.email_backends.ResendEmailBackend'
-RESEND_HOST = 'api.resend.com'
 # Ports platforms block to deter spam. Railway blocks all three, which is the
 # entire reason this command exists.
 BLOCKED_HINT_PORTS = (25, 465, 587)
+
+# The HTTPS backends, keyed by EMAIL_BACKEND. `sender_rule` is what the operator
+# actually has to get right, and it differs per provider: Brevo authorises an
+# individual address, Resend a whole domain.
+HTTPS_BACKENDS = {
+    'config.email_backends.BrevoEmailBackend': {
+        'name': 'Brevo',
+        'host': 'api.brevo.com',
+        'key_setting': 'BREVO_API_KEY',
+        'key_prefix': 'xkeysib-',
+        'sender_rule': 'this exact address must be a verified sender in Brevo',
+    },
+    'config.email_backends.ResendEmailBackend': {
+        'name': 'Resend',
+        'host': 'api.resend.com',
+        'key_setting': 'RESEND_API_KEY',
+        'key_prefix': 're_',
+        'sender_rule': 'its domain must be verified in Resend',
+    },
+}
 
 
 class Command(BaseCommand):
@@ -55,13 +73,14 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         self._report_config()
 
-        if settings.EMAIL_BACKEND == RESEND_BACKEND:
-            return self._check_resend(opts)
+        provider = HTTPS_BACKENDS.get(settings.EMAIL_BACKEND)
+        if provider:
+            return self._check_https(provider, opts)
 
         if settings.EMAIL_BACKEND != SMTP_BACKEND:
             self.stdout.write(self.style.WARNING(
-                f"\nEMAIL_BACKEND is neither SMTP nor Resend, so this command cannot\n"
-                f"  probe the transport. Mail is handled by {settings.EMAIL_BACKEND}."))
+                f"\nEMAIL_BACKEND is neither SMTP nor an HTTPS provider, so this command\n"
+                f"  cannot probe the transport. Mail is handled by {settings.EMAIL_BACKEND}."))
             if opts['to']:
                 self._send(opts['to'])
             return
@@ -87,17 +106,22 @@ class Command(BaseCommand):
     def _report_config(self):
         self.stdout.write(f"backend       : {settings.EMAIL_BACKEND}")
 
-        if settings.EMAIL_BACKEND == RESEND_BACKEND:
-            key = getattr(settings, 'RESEND_API_KEY', '') or ''
-            self.stdout.write(f"transport     : HTTPS to {RESEND_HOST} (SMTP not used)")
-            # Prefix only. It identifies a Resend key without exposing one, and
-            # a key pasted with the wrong prefix is a common copy error.
-            self.stdout.write(f"api key       : "
-                              + (f"{len(key)} chars, starts {key[:3]!r}" if key else "(unset)")
-                              + ("" if not key or key.startswith('re_') else
-                                 "  <- Resend keys start 're_'; this looks like something else"))
+        provider = HTTPS_BACKENDS.get(settings.EMAIL_BACKEND)
+        if provider:
+            key = getattr(settings, provider['key_setting'], '') or ''
+            prefix = provider['key_prefix']
+            self.stdout.write(f"transport     : HTTPS to {provider['host']} (SMTP not used)")
+            # Length and prefix only, never the key: enough to catch the two
+            # common copy errors (empty, or a key from the other provider)
+            # without printing a credential to a shared terminal.
+            self.stdout.write("api key       : "
+                              + (f"{len(key)} chars, starts {key[:len(prefix)]!r}"
+                                 if key else "(unset)")
+                              + ("" if not key or key.startswith(prefix) else
+                                 f"  <- {provider['name']} keys start {prefix!r}; "
+                                 f"this looks like another provider's"))
             self.stdout.write(f"from          : {settings.DEFAULT_FROM_EMAIL or '(unset)'}"
-                              "   (its domain must be verified in Resend)")
+                              f"   ({provider['sender_rule']})")
             self.stdout.write(f"send timeout  : {settings.EMAIL_TIMEOUT}s")
             return
 
@@ -117,37 +141,41 @@ class Command(BaseCommand):
         self.stdout.write(f"send timeout  : {settings.EMAIL_TIMEOUT}s")
 
     # ── the HTTPS path Railway actually uses ─────────────────────────────
-    def _check_resend(self, opts):
-        """Same three questions as the SMTP path, asked of the HTTPS transport:
+    def _check_https(self, provider, opts):
+        """Same three questions as the SMTP path, asked of an HTTPS transport:
         are the credentials here, can this host reach the provider, and does a
         real send succeed."""
-        if not getattr(settings, 'RESEND_API_KEY', ''):
+        name = provider['name']
+        if not getattr(settings, provider['key_setting'], ''):
             raise SystemExit(
-                "\nNO API KEY ON THIS HOST.\n"
-                "  EMAIL_BACKEND selects Resend but RESEND_API_KEY is unset, so every\n"
-                "  send raises instead of going out. On Railway this is a service\n"
-                "  variable - editing backend/.env locally does nothing for the\n"
-                "  deployed container."
+                f"\nNO API KEY ON THIS HOST.\n"
+                f"  EMAIL_BACKEND selects {name} but {provider['key_setting']} is unset,\n"
+                f"  so every send raises instead of going out. On Railway this is a\n"
+                f"  service variable - editing backend/.env locally does nothing for the\n"
+                f"  deployed container."
             )
 
         if not settings.DEFAULT_FROM_EMAIL:
             raise SystemExit(
-                "\nNO SENDER ADDRESS.\n"
-                "  DEFAULT_FROM_EMAIL is unset. Resend has no account address to fall\n"
-                "  back on the way Gmail does, so the sender must be given explicitly\n"
-                "  and must be on a domain verified in the Resend dashboard."
+                f"\nNO SENDER ADDRESS.\n"
+                f"  DEFAULT_FROM_EMAIL is unset. {name} has no account address to fall\n"
+                f"  back on the way Gmail does, so the sender must be given explicitly,\n"
+                f"  and {provider['sender_rule']}."
             )
 
-        # 443 is the point of this backend, so a timeout here means something far
-        # more wrong than the SMTP block - the container has no egress at all.
-        self._probe_tcp(RESEND_HOST, 443, opts['timeout'])
+        # 443 is the point of these backends, so a timeout here means something
+        # far worse than the SMTP block - the container has no egress at all.
+        self._probe_tcp(provider['host'], 443, opts['timeout'])
 
         if opts['to']:
             self._send(opts['to'])
         else:
-            self.stdout.write("\nResend is reachable. Re-run with --to <address> to send a "
-                              "real message - only that checks the key and the verified\n"
-                              "sender domain, which is where this setup usually fails first.")
+            self.stdout.write(
+                f"\n{name} is reachable. Re-run with --to <address> to send a real "
+                f"message - only that checks the key and the\nsender, which is where "
+                f"this setup usually fails first. Use an address that is NOT your own "
+                f"provider account:\nsending to yourself can succeed while sending to "
+                f"a student still fails.")
 
     # ── can a TCP connection even be opened? ─────────────────────────────
     def _probe_tcp(self, host, port, timeout):

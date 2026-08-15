@@ -145,7 +145,10 @@
      background paints the hairline dividers (rows and columns alike), so no
      per-cell borders are needed. */
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* minmax(0, …), not 1fr: a bare 1fr floors each column at its content width,
+     so the long labels pushed the grid wider than the strip and overflow:hidden
+     silently cropped the last two tiles off the row. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   background: #EEF4F9;
   border: 1px solid #D3E1EC;
@@ -158,14 +161,27 @@
 .ad-kpi-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: 11px;
+  padding: 14px 14px;
   background: #FFFFFF;
   transition: background 0.15s;
+  min-width: 0;
 }
 
 .ad-kpi-item:hover {
   background: #F7FAFC;
+}
+
+/* Work waiting to be done, rather than a number that is merely true. The left
+   rule is the only difference — the tile is not recoloured, so the strip still
+   scans as one row. */
+.ad-kpi-item.attention {
+  box-shadow: inset 3px 0 0 #C8912A;
+  background: #FFFCF5;
+}
+
+.ad-kpi-item.attention:hover {
+  background: #FEF8EC;
 }
 
 .ad-kpi-icon {
@@ -198,10 +214,15 @@
   font-weight: 600;
   color: #5C7B92;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  white-space: nowrap;
+  letter-spacing: 0.4px;
+  /* Wraps rather than truncating. These labels are full phrases now, and an
+     ellipsis on "Applications to rev…" defeats the point of writing them out.
+     Two lines is the practical ceiling at a sixth of the row. */
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .ad-kpi-sub {
@@ -212,18 +233,30 @@
   font-weight: 500;
   line-height: 1.3;
   margin-top: 2px;
+  /* Wraps like the label above it. Truncating this line produced "0 have a
+     fine to …", which reads as an unfinished sentence rather than a stat. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── Charts Grid ────────────────────────────────────────────── */
+/* Six tracks so cards can claim halves or thirds of a row. The five compact
+   part-to-whole cards sit three-up; the two day charts take a half each. Two
+   columns of tall donut cards was what made this page four screens long. */
 .ad-charts-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 28px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
 }
+
+.ad-charts-grid > .ad-chart-card:nth-child(-n+3) { grid-column: span 2; }  /* three-up */
+.ad-charts-grid > .ad-chart-card:nth-child(4),
+.ad-charts-grid > .ad-chart-card:nth-child(5) { grid-column: span 3; }      /* two-up  */
+.ad-charts-grid > .ad-chart-card:nth-child(6),
+.ad-charts-grid > .ad-chart-card:nth-child(7) { grid-column: span 3; }      /* two-up  */
 
 .ad-chart-card {
   background: #FFFFFF;
@@ -250,11 +283,15 @@
 }
 
 .ad-chart-body {
-  padding: 20px 20px 18px;
+  padding: 16px 18px 16px;
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* Top-aligned, not centred. Cards in a grid row stretch to the tallest one,
+     and centring left the shorter card's content floating in the middle with a
+     gap above it that read as a rendering fault. */
+  justify-content: flex-start;
+  gap: 12px;
 }
 
 .ad-section-title {
@@ -272,80 +309,124 @@
 }
 
 /* ── Donut Chart ────────────────────────────────────────────── */
-.ad-donut-wrap {
+/* ── Breakdown (part-to-whole) ───────────────────────────────── */
+/* One stacked bar plus a labelled row per category. Roughly a third of the
+   height the donut it replaced needed, and it still gives the exact number. */
+
+.ad-breakdown {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
-.ad-donut-container {
-  position: relative;
+.ad-breakdown-bar {
+  display: flex;
+  /* The 2px gap is the surface showing through between segments — the spec's
+     separator. Drawing borders on the segments instead would darken the join. */
+  gap: 2px;
+  height: 12px;
   width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #EEF4F9;
 }
 
-.ad-donut-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
+.ad-breakdown-seg {
+  flex-basis: 0;
+  min-width: 3px;
+  transition: opacity 0.15s;
 }
 
-.ad-donut-center-val {
-  display: block;
-  font-size: 28px;
-  font-weight: 800;
-  color: #0B2340;
-  line-height: 1;
-  letter-spacing: -1px;
-}
+.ad-breakdown-bar:hover .ad-breakdown-seg { opacity: 0.55; }
+.ad-breakdown-bar .ad-breakdown-seg:hover { opacity: 1; }
 
-.ad-donut-center-label {
-  display: block;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #5C7B92;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  margin-top: 4px;
-}
-
-.ad-donut-legend {
+.ad-breakdown-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  max-width: 280px;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.ad-donut-legend-item {
+.ad-breakdown-row {
   display: flex;
   align-items: center;
   gap: 9px;
   font-size: 13px;
 }
 
-.ad-donut-legend-dot {
+.ad-breakdown-dot {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 3px;
   flex-shrink: 0;
 }
 
-.ad-donut-legend-label {
+.ad-breakdown-name {
   flex: 1;
   color: #4A6B85;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ad-donut-legend-val {
+/* Share and count align down the card, so tabular figures belong here. */
+.ad-breakdown-pct {
+  color: #7C97AD;
+  font-weight: 600;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+.ad-breakdown-val {
   font-weight: 700;
   color: #0B2340;
   font-size: 13.5px;
-  min-width: 28px;
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
   text-align: right;
+}
+
+/* Inline legend for the day charts. */
+.ad-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: 2px;
+}
+
+.ad-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4A6B85;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* The capacity marker is a dashed rule on the plot, so its legend key is one
+   too — a dot would not match what the reader sees. */
+.ad-chart-legend-rule {
+  width: 14px;
+  border-top: 2px dashed;
+  flex-shrink: 0;
+}
+
+/* One quiet line, not a 120px dashed box — most of these are empty on a fresh
+   install and the old empty state cost more height than a full card. */
+.ad-breakdown-empty {
+  margin: 0;
+  padding: 6px 0;
+  font-size: 12.5px;
+  color: #7C97AD;
+  font-style: italic;
 }
 
 /* ── Bar Chart ──────────────────────────────────────────────── */
@@ -376,18 +457,7 @@
 }
 
 /* ── Chart Empty State ──────────────────────────────────────── */
-.ad-chart-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 120px;
-  font-size: 13px;
-  color: #64839C;
-  font-weight: 500;
-  background: #F7FAFC;
-  border-radius: 10px;
-  border: 1px dashed #D3E1EC;
-}
+/* ── Activity Section ───────────────────────────────────────── */
 
 /* ── Activity Section ───────────────────────────────────────── */
 .ad-activity-section {
@@ -430,7 +500,7 @@
 }
 
 .ad-activity-list {
-  max-height: 340px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
@@ -515,15 +585,43 @@
 }
 
 /* ── Responsive ─────────────────────────────────────────────── */
+/* Six across needs real width now that the labels are phrases rather than one
+   or two words. Below this the sixth of a row is ~145px, and "Applications to
+   review" clips mid-word — which defeats the point of spelling it out. Two
+   rows of three costs ~75px of height and keeps every label readable. */
+@media (max-width: 1450px) {
+  .ad-kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1100px) {
   .ad-kpi-strip {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
+/* Three-up → two-up, then everything full width. Spans are reset explicitly or
+   the nth-child rules above keep applying at narrow widths.
+   The first breakpoint is 1100px, not 1280: the sidebar takes 260px, so a
+   1280px window still leaves ~1020px of content — wide enough for three cards
+   at ~340px. Breaking at 1280 cost a whole extra screen of scrolling on the
+   most common laptop width for no benefit. */
+@media (max-width: 1100px) {
+  .ad-charts-grid > .ad-chart-card:nth-child(-n+3) { grid-column: span 3; }
+}
+
 @media (max-width: 1000px) {
   .ad-charts-grid {
     grid-template-columns: 1fr;
+  }
+  .ad-charts-grid > .ad-chart-card,
+  .ad-charts-grid > .ad-chart-card:nth-child(-n+3),
+  .ad-charts-grid > .ad-chart-card:nth-child(4),
+  .ad-charts-grid > .ad-chart-card:nth-child(5),
+  .ad-charts-grid > .ad-chart-card:nth-child(6),
+  .ad-charts-grid > .ad-chart-card:nth-child(7) {
+    grid-column: span 1;
   }
 }
 

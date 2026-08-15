@@ -402,10 +402,15 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or os.getenv('EMAIL_HOST_USER')
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))  # seconds — a hung SMTP server must not stall the scan pipeline
 
-# Read by config.email_backends.ResendEmailBackend, which is how the Railway
+# Read by the HTTPS backends in config.email_backends, which is how the Railway
 # half sends mail: SMTP cannot leave that container at all, so it goes over
-# HTTPS instead. Unset on campus, where Gmail on 587 works and the SMTP backend
-# above is used as-is.
+# HTTPS instead. Both are unset on campus, where Gmail on 587 works and the SMTP
+# backend above is used as-is.
+#
+# Brevo is the one in use: it verifies a single sender *address*, so the
+# project's Gmail address can email arbitrary students. Resend needs a verified
+# sending *domain* and is kept ready for when spvvs.slc-sflu.edu.ph exists.
+BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
 RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')

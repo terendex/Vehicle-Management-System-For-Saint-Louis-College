@@ -81,9 +81,9 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 | `R2_BUCKET_NAME` | | |
 | `R2_ACCOUNT_ID` | | |
 | `R2_PUBLIC_URL` | e.g. `pub-xxxx.r2.dev` | Public bucket host |
-| `EMAIL_BACKEND` | `config.email_backends.ResendEmailBackend` | **Required on Railway** — see the email note below |
-| `RESEND_API_KEY` | `re_…` | From the Resend dashboard |
-| `DEFAULT_FROM_EMAIL` | `noreply@spvvs.slc-sflu.edu.ph` | Must be on a domain verified in Resend |
+| `EMAIL_BACKEND` | `config.email_backends.BrevoEmailBackend` | **Required on Railway** — see the email note below |
+| `BREVO_API_KEY` | `xkeysib-…` | From the Brevo dashboard |
+| `DEFAULT_FROM_EMAIL` | `SLC CDSO <the-gmail-address>` | The address must be a **verified sender** in Brevo |
 | `FRONTEND_URL` | `https://<your>.up.railway.app` | Used in emailed links |
 | `BACKEND_URL` | `https://<your>.up.railway.app` | Same value — one origin |
 | `DJANGO_ADMIN_URL` | `django-admin` | Change to something unguessable |
@@ -106,34 +106,44 @@ So the two halves use different transports against the same application code:
 
 | | Campus | Railway |
 |---|---|---|
-| Transport | Gmail SMTP, port 587 | Resend HTTPS API |
-| Variables | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | `EMAIL_BACKEND`, `RESEND_API_KEY`, `DEFAULT_FROM_EMAIL` |
+| Transport | Gmail SMTP, port 587 | Brevo HTTPS API |
+| Variables | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | `EMAIL_BACKEND`, `BREVO_API_KEY`, `DEFAULT_FROM_EMAIL` |
 
 Setting `EMAIL_BACKEND` is the whole switch; nothing in `email_utils.py`
-changes, and attachments (the approval PDF, the inline violation evidence
-photo) carry over.
+changes and the approval PDF still goes out as an attachment.
 
-**Sender domain — a verified domain is required before go-live.** Resend is not
-tied to the account's own address the way Gmail is: it only sends from a domain
-verified in its dashboard, and rejects anything else with a 403. A `@gmail.com`
-sender is therefore *not* possible here.
+**Why Brevo and not Resend.** Both backends exist in `config/email_backends.py`
+and both send over HTTPS. They differ in what they make you prove:
 
-`DEFAULT_FROM_EMAIL=onboarding@resend.dev` is Resend's built-in test sender and
-needs no verification — but it **only delivers to the Resend account owner's own
-address**. That is enough to prove the transport works end to end and nothing
-more: with it configured, a student's approval email is refused. This system
-emails arbitrary students and employees, so it cannot go live on the test sender.
+- **Brevo verifies a single sender _address_.** Authorise the project's Gmail
+  address in the Brevo dashboard and it can email arbitrary students at once —
+  no domain, nothing needed from SLC IT, 300 emails/day free. Both halves then
+  send from the same address, so recipients see one consistent sender.
+- **Resend verifies a sending _domain_.** Better deliverability, but until
+  `spvvs.slc-sflu.edu.ph` is verified it delivers **only to the Resend account
+  owner** — fine as a transport test, useless for students. Switch to it once
+  the domain exists by changing `EMAIL_BACKEND` and `RESEND_API_KEY`.
 
-Verify a domain before real users depend on it, either:
+**Evidence photos.** Brevo's API has no Content-ID field, so an inline `cid:`
+image cannot render in the body. Violation emails therefore reference the
+evidence photo by its public R2 URL whenever one exists, which works on both
+transports — this is another reason `USE_R2=true` is required in production.
+With local storage there is no public URL and the photo falls back to a `cid:`
+attachment, which renders on campus SMTP but not through Brevo.
 
-- **`spvvs.slc-sflu.edu.ph`** — add it in Resend, then send SLC IT the DKIM/SPF
-  records it displays. This is the right long-term answer and matches the
-  address in section 6, but it blocks on the same people, so start it early.
-- **Any domain you control** — a cheap personal domain can be verified in
-  minutes without involving SLC IT, giving e.g. `noreply@yourdomain.com`. Less
-  official-looking, but it unblocks the deployment immediately.
+**Verify the sender address in Brevo before go-live.** Brevo will not send from
+an unverified address. In the dashboard: **Senders & IPs → Senders → Add a
+sender**, enter the Gmail address, and click the confirmation link Brevo emails
+to it. Until that is done every send is rejected; after it, mail to any
+recipient works.
 
-Either way the only change is `DEFAULT_FROM_EMAIL`; nothing in the code moves.
+`DEFAULT_FROM_EMAIL` may carry a display name — `SLC CDSO <address@gmail.com>` —
+and recipients see **SLC CDSO** as the sender. The address inside the angle
+brackets is the part that must be verified.
+
+**Testing note:** send the test to an address that is *not* your own provider
+account. Sending to yourself can succeed while sending to a student still fails,
+which is exactly the failure this setup is prone to.
 
 **Verify a deployment** — this reports which of the four distinct failures you
 have (no credentials / blocked port / rejected key / unverified sender) rather

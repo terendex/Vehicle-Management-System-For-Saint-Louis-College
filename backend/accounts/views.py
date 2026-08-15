@@ -387,11 +387,20 @@ class DashboardStatsView(APIView):
             authorized_vehicles   = v_agg['authorized']
             unauthorized_vehicles = total_vehicles - authorized_vehicles
 
-            # Vehicle-type breakdown (car/motorcycle/van/truck/bus) for the fleet-mix chart
-            vehicles_by_type = {
-                row['vehicle_type']: row['count']
-                for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id'))
-            }
+            # Vehicle-type breakdown for the vehicle-types chart.
+            #
+            # vehicle_type is free text and has been written with inconsistent
+            # casing ("Motorcycle" and "motorcycle" both exist, plus values like
+            # "SUV" that are not in any fixed list). Grouping on the raw column
+            # therefore returned split buckets, and the dashboard — which matched
+            # a hardcoded lowercase set — silently dropped everything it did not
+            # recognise. The chart showed 4 of 9 vehicles while its centre label
+            # read the true total. Fold to lowercase here so each type is counted
+            # once and the slices always add up to `total`.
+            vehicles_by_type = {}
+            for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id')):
+                key = (row['vehicle_type'] or '').strip().lower() or 'unknown'
+                vehicles_by_type[key] = vehicles_by_type.get(key, 0) + row['count']
 
             # Suppliers are their own model (not User owners) but form a registered
             # vehicle category alongside students/employees/fetchers. Counted by
