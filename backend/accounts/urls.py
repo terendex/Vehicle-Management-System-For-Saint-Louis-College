@@ -12,6 +12,7 @@ urlpatterns = [
     path('users/<int:pk>/update/',      views.UserUpdateView.as_view(),        name='user-update'),
     path('users/<int:pk>/delete/',      views.UserDeleteView.as_view(),        name='user-delete'),
     path('users/<int:pk>/toggle-status/', views.UserToggleStatusView.as_view(), name='user-toggle-status'),
+    path('users/<int:pk>/registration-pdf/', views.UserRegistrationPdfView.as_view(), name='user-registration-pdf'),
     path('replace-admin/',              views.AdminReplaceView.as_view(),      name='replace-admin'),
     path('audit-logs/',                 views.AuditLogListView.as_view(),       name='audit-log-list'),
     path('audit-logs/export/',          views.AuditLogExportView.as_view(),    name='audit-log-export'),

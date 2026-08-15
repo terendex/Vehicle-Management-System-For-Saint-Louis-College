@@ -202,6 +202,53 @@ class UserDeleteView(generics.DestroyAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class UserRegistrationPdfView(APIView):
+    """Re-issue the approved-registration PDF for a vehicle owner.
+
+    Owners are emailed this document when their registration is approved, but
+    a lost email or a lost printout leaves them with nothing to present at the
+    gate. This serves a byte-identical copy on demand from the CDSO's desk, so
+    a reprint is never a different document from the original.
+
+    Deliberately the same builder the approval email uses — not a second
+    layout that could drift away from it.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+        from vehicles.models import VehicleRegistration
+        from registration_pdf import (registration_confirmation_pdf,
+                                      registration_pdf_filename)
+
+        user = get_object_or_404(User, pk=pk)
+        # Matches MyRegistrationView: registrations created before the account
+        # existed are linked by email, not FK.
+        registration = (
+            VehicleRegistration.objects
+            .filter(Q(user=user) | Q(email=user.email), status='accepted')
+            .order_by('-reviewed_at')
+            .first()
+        )
+        if not registration:
+            return Response(
+                {'detail': 'This account has no approved vehicle registration to print.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pdf = registration_confirmation_pdf(registration)
+        log_action(
+            request, AuditLog.Action.RECORD_CREATED, target_user=user,
+            details=f'Registration PDF re-issued | REG-{registration.id:06d} '
+                    f'({registration.plate_number}) | For: {user.full_name}',
+        )
+        resp = HttpResponse(pdf, content_type='application/pdf')
+        resp['Content-Disposition'] = (
+            f'attachment; filename="{registration_pdf_filename(registration)}"'
+        )
+        return resp
+
+
 class UserToggleStatusView(APIView):
     """Toggle a user's is_active flag."""
     permission_classes = [IsAdminRole]

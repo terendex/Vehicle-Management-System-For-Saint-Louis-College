@@ -36,9 +36,11 @@ export const usersApi = {
     return data
   },
 
-  /** Hard-delete a user. */
-  deleteUser: async (id) => {
-    const { data } = await api.delete(`/accounts/users/${id}/delete/`)
+  /** Re-download an owner's approved-registration PDF (admin only). */
+  getRegistrationPdf: async (id) => {
+    const { data } = await api.get(`/accounts/users/${id}/registration-pdf/`, {
+      responseType: 'blob',
+    })
     return data
   },
 
