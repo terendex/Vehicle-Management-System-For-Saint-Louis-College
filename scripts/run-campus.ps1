@@ -206,9 +206,24 @@ if ($needBuild) {
 
     Say 'Building the React bundle...'
     npm --prefix frontend run build
-    if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
-    Copy-Item -Recurse (Join-Path $repo 'frontend\dist') $buildDir
-    Say 'Bundle placed in backend\frontend_build' 'Green'
+    # Vite empties frontend\dist before it writes, so a build that fails partway
+    # leaves a partial bundle behind. Swapping that in loses chunks, and a page
+    # whose chunk went missing comes up blank with nothing in the console to
+    # explain it. Keep the bundle that is already serving unless the new one
+    # actually built.
+    $distDir = Join-Path $repo 'frontend\dist'
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $distDir 'index.html'))) {
+        if (Test-Path (Join-Path $buildDir 'index.html')) {
+            Say 'Frontend build FAILED - keeping the previous bundle. Fix the build, then re-run with -Rebuild.' 'Red'
+        } else {
+            Say 'Frontend build FAILED and there is no previous bundle to fall back on.' 'Red'
+            exit 1
+        }
+    } else {
+        if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
+        Copy-Item -Recurse $distDir $buildDir
+        Say 'Bundle placed in backend\frontend_build' 'Green'
+    }
 } elseif (-not $SkipFrontend) {
     Say 'Bundle is current - skipping the rebuild.' 'DarkGray'
 }

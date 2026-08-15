@@ -75,9 +75,16 @@ if settings.FRONTEND_BUILD_DIR.exists():
     # route: serve the shell and let React Router resolve it. The admin prefix
     # is escaped because it is user-supplied via DJANGO_ADMIN_URL and would
     # otherwise be interpreted as a regex.
+    #
+    # assets/ is excluded deliberately. WhiteNoise serves the bundle's hashed
+    # files from there and falls through to the URLconf when one is absent —
+    # which used to hand index.html back for a missing .js chunk, with status
+    # 200 and Content-Type text/html. The browser then tried to evaluate HTML
+    # as an ES module, the dynamic import rejected on a syntax error, and the
+    # route rendered blank. A stale asset reference is a 404, not a page.
     urlpatterns += [
         re_path(
-            r'^(?!api/|healthz|media/|static/|{}/).*$'.format(
+            r'^(?!api/|healthz|media/|static/|assets/|{}/).*$'.format(
                 re.escape(settings.DJANGO_ADMIN_URL)
             ),
             spa_index,

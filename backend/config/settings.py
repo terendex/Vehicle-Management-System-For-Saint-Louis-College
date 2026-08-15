@@ -295,8 +295,29 @@ FRONTEND_BUILD_DIR = BASE_DIR / 'frontend_build'
 WHITENOISE_ROOT = FRONTEND_BUILD_DIR if FRONTEND_BUILD_DIR.exists() else None
 # index.html must stay uncached or browsers pin a stale bundle across deploys;
 # the hashed files under /assets/ are safe to cache forever.
+#
+# WHITENOISE_MAX_AGE alone does NOT achieve that. It is applied to every file
+# under WHITENOISE_ROOT, index.html included, and because WHITENOISE_INDEX_FILE
+# makes WhiteNoise answer "/" itself, the middleware returns the shell long
+# before the no-cache view in config/urls.py is ever reached. The result was
+# `Cache-Control: max-age=31536000` on the one file that must never be cached:
+# a browser that opened the app once kept its copy of index.html for a year,
+# then went on requesting that deploy's hashed chunk names. Chunks whose
+# content had not changed kept their hash and still resolved, so the app
+# booted and most pages worked — but any page edited since (its chunk renamed)
+# 404'd, and that route alone came up blank. Force revalidation on HTML so the
+# shell is re-fetched and the current hashes are picked up.
 WHITENOISE_INDEX_FILE = True
 WHITENOISE_MAX_AGE = 31536000
+
+
+def _whitenoise_headers(headers, path, url):
+    """Never let the SPA shell be cached; hashed assets keep the long max-age."""
+    if path.endswith('.html'):
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+
+
+WHITENOISE_ADD_HEADERS_FUNCTION = _whitenoise_headers
 WHITENOISE_SKIP_COMPRESS_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'zip',
                                        'gz', 'tgz', 'bz2', 'tbz', 'xz', 'br', 'pt']
 
@@ -380,6 +401,12 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 # 'noreply@yourdomain').
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or os.getenv('EMAIL_HOST_USER')
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))  # seconds — a hung SMTP server must not stall the scan pipeline
+
+# Read by config.email_backends.ResendEmailBackend, which is how the Railway
+# half sends mail: SMTP cannot leave that container at all, so it goes over
+# HTTPS instead. Unset on campus, where Gmail on 587 works and the SMTP backend
+# above is used as-is.
+RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 

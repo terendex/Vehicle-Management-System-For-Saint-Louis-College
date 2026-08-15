@@ -81,8 +81,9 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 | `R2_BUCKET_NAME` | | |
 | `R2_ACCOUNT_ID` | | |
 | `R2_PUBLIC_URL` | e.g. `pub-xxxx.r2.dev` | Public bucket host |
-| `EMAIL_HOST_USER` | | Gmail address |
-| `EMAIL_HOST_PASSWORD` | | Gmail **app password**, not the account password |
+| `EMAIL_BACKEND` | `config.email_backends.ResendEmailBackend` | **Required on Railway** — see the email note below |
+| `RESEND_API_KEY` | `re_…` | From the Resend dashboard |
+| `DEFAULT_FROM_EMAIL` | `noreply@spvvs.slc-sflu.edu.ph` | Must be on a domain verified in Resend |
 | `FRONTEND_URL` | `https://<your>.up.railway.app` | Used in emailed links |
 | `BACKEND_URL` | `https://<your>.up.railway.app` | Same value — one origin |
 | `DJANGO_ADMIN_URL` | `django-admin` | Change to something unguessable |
@@ -91,6 +92,58 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 > ephemeral: with local storage, every licence photo and violation evidence
 > image is destroyed on each redeploy. The app prints a warning at boot if this
 > is left off.
+
+### Email: Gmail works on campus and cannot work on Railway
+
+Railway blocks outbound SMTP on ports 25, 465 and 587 to deter spam, and blocks
+it by **dropping** the packets rather than refusing them. Gmail on port 587 is
+therefore correct on the campus machine and impossible here: the connection
+hangs until `EMAIL_TIMEOUT` and the send fails with nothing in the logs to
+distinguish it from a dead mail server. No port, password or SMTP provider
+fixes this — mail has to leave over HTTPS on 443, which the platform allows.
+
+So the two halves use different transports against the same application code:
+
+| | Campus | Railway |
+|---|---|---|
+| Transport | Gmail SMTP, port 587 | Resend HTTPS API |
+| Variables | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | `EMAIL_BACKEND`, `RESEND_API_KEY`, `DEFAULT_FROM_EMAIL` |
+
+Setting `EMAIL_BACKEND` is the whole switch; nothing in `email_utils.py`
+changes, and attachments (the approval PDF, the inline violation evidence
+photo) carry over.
+
+**Sender domain — a verified domain is required before go-live.** Resend is not
+tied to the account's own address the way Gmail is: it only sends from a domain
+verified in its dashboard, and rejects anything else with a 403. A `@gmail.com`
+sender is therefore *not* possible here.
+
+`DEFAULT_FROM_EMAIL=onboarding@resend.dev` is Resend's built-in test sender and
+needs no verification — but it **only delivers to the Resend account owner's own
+address**. That is enough to prove the transport works end to end and nothing
+more: with it configured, a student's approval email is refused. This system
+emails arbitrary students and employees, so it cannot go live on the test sender.
+
+Verify a domain before real users depend on it, either:
+
+- **`spvvs.slc-sflu.edu.ph`** — add it in Resend, then send SLC IT the DKIM/SPF
+  records it displays. This is the right long-term answer and matches the
+  address in section 6, but it blocks on the same people, so start it early.
+- **Any domain you control** — a cheap personal domain can be verified in
+  minutes without involving SLC IT, giving e.g. `noreply@yourdomain.com`. Less
+  official-looking, but it unblocks the deployment immediately.
+
+Either way the only change is `DEFAULT_FROM_EMAIL`; nothing in the code moves.
+
+**Verify a deployment** — this reports which of the four distinct failures you
+have (no credentials / blocked port / rejected key / unverified sender) rather
+than a generic send error:
+
+```
+railway run python backend/manage.py check_email --to you@example.com
+```
+
+Run it on the campus machine too; there it probes Gmail on 587 instead.
 
 ## 5. Deploy
 
