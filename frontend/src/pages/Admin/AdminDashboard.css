@@ -168,20 +168,12 @@
   min-width: 0;
 }
 
+/* Every tile carries the same surface. An earlier revision tinted the two
+   "needs attention" tiles cream with a gold rule; it split one strip into two
+   visual groups and read as a rendering fault rather than as emphasis. The
+   colour in this strip belongs to the icon chips alone. */
 .ad-kpi-item:hover {
   background: #F7FAFC;
-}
-
-/* Work waiting to be done, rather than a number that is merely true. The left
-   rule is the only difference — the tile is not recoloured, so the strip still
-   scans as one row. */
-.ad-kpi-item.attention {
-  box-shadow: inset 3px 0 0 #C8912A;
-  background: #FFFCF5;
-}
-
-.ad-kpi-item.attention:hover {
-  background: #FEF8EC;
 }
 
 .ad-kpi-icon {
@@ -308,39 +300,44 @@
   color: #03396C;
 }
 
-/* ── Donut Chart ────────────────────────────────────────────── */
 /* ── Breakdown (part-to-whole) ───────────────────────────────── */
-/* One stacked bar plus a labelled row per category. Roughly a third of the
-   height the donut it replaced needed, and it still gives the exact number. */
-
+/* A small donut with its total in the middle, beside a labelled row per
+   category. Ring beside the legend rather than above it, so it costs no more
+   height than the plain bar did. */
 .ad-breakdown {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  gap: 18px;
 }
 
-.ad-breakdown-bar {
+.ad-breakdown-chart {
+  position: relative;
+  flex-shrink: 0;
+  width: 104px;
+  height: 104px;
+}
+
+.ad-breakdown-center {
+  position: absolute;
+  inset: 0;
   display: flex;
-  /* The 2px gap is the surface showing through between segments — the spec's
-     separator. Drawing borders on the segments instead would darken the join. */
-  gap: 2px;
-  height: 12px;
-  width: 100%;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #EEF4F9;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
-.ad-breakdown-seg {
-  flex-basis: 0;
-  min-width: 3px;
-  transition: opacity 0.15s;
+/* Proportional figures: this is a standalone display number, not a column. */
+.ad-breakdown-center-val {
+  font-size: 21px;
+  font-weight: 800;
+  color: #0B2340;
+  line-height: 1;
+  letter-spacing: -0.6px;
 }
-
-.ad-breakdown-bar:hover .ad-breakdown-seg { opacity: 0.55; }
-.ad-breakdown-bar .ad-breakdown-seg:hover { opacity: 1; }
 
 .ad-breakdown-rows {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -373,16 +370,9 @@
   white-space: nowrap;
 }
 
-/* Share and count align down the card, so tabular figures belong here. */
-.ad-breakdown-pct {
-  color: #7C97AD;
-  font-weight: 600;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  min-width: 34px;
-  text-align: right;
-}
-
+/* One number per row. The percentage column that used to sit beside this is
+   gone — the ring shows the share, and two right-aligned figures per row was
+   the thing that read as clutter. Exact percentages are on hover. */
 .ad-breakdown-val {
   font-weight: 700;
   color: #0B2340;

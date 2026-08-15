@@ -7,7 +7,7 @@ import {
   AlertTriangle, Car as CarIcon, Inbox, BarChart2, PieChart as PieIcon,
 } from 'lucide-react'
 import {
-  BarChart, Bar, XAxis, YAxis,
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import './AdminDashboard.css'
@@ -60,11 +60,14 @@ const CAT = {
 
 // ── Breakdown (part-to-whole) ─────────────────────────────────────────────────
 // Replaces the donuts this page used to draw. A donut costs ~200px of height to
-// say what one 10px bar says, and it reads badly at these counts — several of
-// these breakdowns routinely hold a single category, and a one-slice donut is
-// just a circle. The bar gives the proportion at a glance; the rows underneath
-// give the exact number and share in words, which is what someone actually
-// reads off a dashboard.
+// say what one 10px bar says. A small one sitting BESIDE its legend rather than
+// above it costs about the same height as the bar did, so the layout stays
+// short.
+//
+// The ring carries the share, so the rows carry only the name and the count.
+// Printing "40%" and "6" side by side gave every row two competing right-aligned
+// number columns, which is what made the numbers look busy — the exact
+// percentage is on hover, where a precise figure is actually wanted.
 //
 // Every row is labelled and numbered, so identity never depends on the colour —
 // which is also the relief the palette validator requires for the few hues that
@@ -80,31 +83,49 @@ function Breakdown({ slices, total, emptyMessage }) {
 
   const pct = (v) => (whole > 0 ? Math.round((v / whole) * 100) : 0)
 
+  // A total larger than the slices means there is an unclassified remainder.
+  // Draw it as a neutral gap so the ring stays a true part-to-whole instead of
+  // silently rescaling the slices to fill the circle.
+  const remainder = Math.max(0, whole - sum)
+  const ringData = remainder > 0
+    ? [...slices, { name: 'Unclassified', value: remainder, color: '#E3ECF4' }]
+    : slices
+
   return (
     <div className="ad-breakdown">
-      <div
-        className="ad-breakdown-bar"
-        role="img"
-        aria-label={slices.map(s => `${s.name}: ${s.value}`).join(', ')}
-      >
-        {slices.map((s, i) => (
-          <span
-            key={i}
-            className="ad-breakdown-seg"
-            style={{ flexGrow: s.value, background: s.color }}
-            title={`${s.name}: ${s.value} (${pct(s.value)}%)`}
+      <div className="ad-breakdown-chart">
+        <PieChart width={104} height={104}>
+          <Pie
+            data={ringData}
+            cx="50%"
+            cy="50%"
+            innerRadius={31}
+            outerRadius={50}
+            paddingAngle={ringData.length > 1 ? 2 : 0}
+            dataKey="value"
+            stroke="#fff"
+            strokeWidth={2}
+            isAnimationActive={false}
+          >
+            {ringData.map((s, i) => <Cell key={i} fill={s.color} />)}
+          </Pie>
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(val, name) => [`${val} (${pct(val)}%)`, name]}
           />
-        ))}
+        </PieChart>
+        <div className="ad-breakdown-center">
+          <span className="ad-breakdown-center-val">{whole}</span>
+        </div>
       </div>
 
       <ul className="ad-breakdown-rows">
         {slices.map((s, i) => (
-          <li key={i} className="ad-breakdown-row">
+          <li key={i} className="ad-breakdown-row" title={`${s.name}: ${s.value} (${pct(s.value)}%)`}>
             {s.Icon
               ? <s.Icon size={13} style={{ color: s.color, flexShrink: 0 }} />
               : <span className="ad-breakdown-dot" style={{ background: s.color }} />}
             <span className="ad-breakdown-name">{s.name}</span>
-            <span className="ad-breakdown-pct">{pct(s.value)}%</span>
             <span className="ad-breakdown-val">{s.value}</span>
           </li>
         ))}
@@ -257,7 +278,7 @@ function KpiStrip({ items }) {
   return (
     <div className="ad-kpi-strip">
       {items.map((item, i) => (
-        <div key={i} className={`ad-kpi-item${item.attention ? ' attention' : ''}`}>
+        <div key={i} className="ad-kpi-item">
           <div className="ad-kpi-icon" style={{ background: item.color + '18', color: item.color }}>
             <item.icon size={14} />
           </div>
@@ -463,14 +484,14 @@ export default function AdminDashboard() {
     .filter(s => s.value > 0) : []
 
   // Labels are written as a plain answer to "what is this number?", because the
-  // people reading this dashboard are not all CDSO staff. The two tiles that
-  // represent work waiting to be done are flagged so they stand out from the
-  // tiles that are merely counts.
+  // people reading this dashboard are not all CDSO staff. Every tile is styled
+  // identically — the icon chip carries the only colour, so the six read as one
+  // strip rather than as two groups.
   const kpiItems = stats ? [
     { icon: Users,         label: 'People with accounts', value: stats.users?.total,                 color: '#03396C', sub: `${stats.users?.active ?? 0} can sign in` },
     { icon: CarIcon,       label: 'Vehicles registered',  value: stats.vehicles?.total,              color: '#0F7A5A', sub: `${stats.vehicles?.authorized ?? 0} cleared for entry` },
-    { icon: ClipboardList, label: 'Applications to review', value: stats.registrations?.pending,     color: '#8A6B00', sub: 'waiting for approval', attention: (stats.registrations?.pending ?? 0) > 0 },
-    { icon: AlertTriangle, label: 'Violations unresolved', value: stats.violations?.open,            color: '#C62828', sub: `${stats.violations?.fee_imposed ?? 0} have a fine to pay`, attention: (stats.violations?.open ?? 0) > 0 },
+    { icon: ClipboardList, label: 'Applications to review', value: stats.registrations?.pending,     color: '#8A6B00', sub: 'waiting for approval' },
+    { icon: AlertTriangle, label: 'Violations unresolved', value: stats.violations?.open,            color: '#C62828', sub: `${stats.violations?.fee_imposed ?? 0} have a fine to pay` },
     { icon: ShieldCheck,   label: 'Visitor passes today', value: stats.visitor_passes?.active_today, color: '#1072B3', sub: 'currently valid' },
     { icon: Activity,      label: 'Gate scans today',     value: stats.scans?.today,                 color: '#1072B3', sub: `${stats.scans?.week ?? 0} so far this week` },
   ] : []
