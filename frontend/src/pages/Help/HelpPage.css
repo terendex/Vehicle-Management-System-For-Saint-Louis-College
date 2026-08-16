@@ -4,7 +4,13 @@
   padding: 4px 2px 24px;
 }
 
+/* Title left, the owner's Return control right — same arrangement, and the
+   same .header-back-btn from styles/slc-header.css, as the policy page. */
 .help-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 16px;
 }
 

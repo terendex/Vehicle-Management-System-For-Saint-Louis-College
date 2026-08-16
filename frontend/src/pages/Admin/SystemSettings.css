@@ -89,17 +89,15 @@
 .ss-section:first-child { border-top: none; }
 
 @media (min-width: 960px) {
+  /* The left column takes the slack so the controls stay a readable
+     distance from their labels instead of drifting to the far edge. */
   .ss-section {
-    grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 1fr) minmax(0, 700px);
     row-gap: 0.9rem;
   }
 
   .ss-section-head { grid-column: 1; }
-
-  .ss-rows,
-  .ss-note {
-    grid-column: 2;
-  }
+  .ss-rows { grid-column: 2; }
 
   /* The column break already separates head from controls — the rule on
      top of the first row would just be noise. */
@@ -159,7 +157,10 @@
   border-bottom: 1px solid #EEF4F9;
 }
 
-.ss-row:last-child { border-bottom: none; }
+/* No rule under the last row, whether it ends the group or is followed by
+   the warning strip — the strip's own border is separation enough. */
+.ss-row:last-child,
+.ss-row:has(+ .ss-note) { border-bottom: none; }
 
 .ss-row-text {
   display: flex;
@@ -178,7 +179,7 @@
   font-size: 0.775rem;
   color: #6B8CA6;
   line-height: 1.45;
-  max-width: 62ch;
+  max-width: 52ch;
 }
 
 .ss-row-control {
@@ -234,7 +235,10 @@
 
 /* ── Note / warning strip ───────────────────────────────────────── */
 
+/* Sits as the last child of .ss-rows so it stays tight under the controls
+   it belongs to, rather than being pushed down by a taller left column. */
 .ss-note {
+  margin-top: 0.9rem;
   display: flex;
   align-items: flex-start;
   gap: 7px;

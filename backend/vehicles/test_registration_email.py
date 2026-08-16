@@ -12,6 +12,7 @@ pinned here instead:
   * a mail failure is logged and reported rather than swallowed.
 """
 from datetime import timedelta
+from unittest import mock
 
 from django.core import mail
 from django.test import TestCase, override_settings
@@ -158,14 +159,69 @@ class DepartmentLabelTests(TestCase):
 
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
 class AcceptanceEmailContentTests(TestCase):
+    # MEDIA_URL is overridden in both directions below rather than left to the
+    # ambient .env: USE_R2 decides it, so without pinning it these tests assert
+    # opposite things depending on whose machine runs them — and the remote case
+    # would upload a test QR into the real bucket.
+
+    @override_settings(MEDIA_URL='/media/')
     def test_carries_the_qr_code_and_the_registration_pdf(self):
         send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
         msg = mail.outbox[-1]
+        # Local storage has no absolute URL to link, so the inline copy falls
+        # back to a data URI — see the remote-storage test below for production.
         self.assertIn('data:image/png;base64,', html_of(msg))
         self.assertTrue(
             any(str(name).endswith('.pdf') for name, _content, _type in msg.attachments),
             f"the approval email lost its registration PDF: {msg.attachments!r}")
 
+    @override_settings(MEDIA_URL='/media/')
+    def test_the_qr_is_always_attached_as_a_file(self):
+        """The inline copy cannot be relied on — Gmail strips data: URIs and
+        every client blocks remote images by default — so the owner's gate pass
+        must also arrive as an attachment they can open and save."""
+        send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+        msg = mail.outbox[-1]
+        png = [(n, c) for n, c, t in msg.attachments if str(n).endswith('.png')]
+        self.assertEqual(len(png), 1, f"expected one QR attachment: {msg.attachments!r}")
+        self.assertTrue(png[0][1].startswith(b'\x89PNG'),
+                        "the QR attachment is not a PNG")
+
+    @override_settings(MEDIA_URL='https://cdn.example.test/')
+    def test_qr_is_linked_by_url_when_media_storage_is_remote(self):
+        """With USE_R2 on — which production requires — the QR must be linked
+        rather than embedded. A data: URI does not render in Gmail at all, and
+        cid: cannot work on the Railway half because Brevo's API carries no
+        Content-ID. Storage is faked so the test never writes to the bucket."""
+        storage = mock.MagicMock()
+        storage.exists.return_value = False
+        storage.save.side_effect = lambda name, _content: name
+        storage.url.side_effect = lambda name: f'https://cdn.example.test/{name}'
+        with mock.patch('django.core.files.storage.default_storage', storage):
+            send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+
+        html = html_of(mail.outbox[-1])
+        self.assertIn('https://cdn.example.test/qr_codes/registration-', html)
+        self.assertNotIn('data:image/png;base64,', html)
+        # Still attached, so a client that blocks remote images has a copy.
+        self.assertTrue(any(str(n).endswith('.png') for n, _c, _t
+                            in mail.outbox[-1].attachments))
+
+    @override_settings(MEDIA_URL='https://cdn.example.test/')
+    def test_a_storage_failure_still_sends_the_email_with_the_qr(self):
+        """Uploading the QR is best-effort. If the bucket is unreachable the
+        owner must still get their credentials, with the QR inline and attached."""
+        storage = mock.MagicMock()
+        storage.exists.side_effect = OSError('bucket unreachable')
+        with mock.patch('django.core.files.storage.default_storage', storage):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
+                send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+
+        msg = mail.outbox[-1]
+        self.assertIn('data:image/png;base64,', html_of(msg))
+        self.assertTrue(any(str(n).endswith('.png') for n, _c, _t in msg.attachments))
+
+    @override_settings(MEDIA_URL='/media/')
     def test_a_pdf_failure_still_sends_the_email(self):
         """The PDF is best-effort — losing it must not cost the owner their
         credentials (nor, upstream, roll back the approval)."""
@@ -179,7 +235,12 @@ class AcceptanceEmailContentTests(TestCase):
         finally:
             registration_pdf.registration_confirmation_pdf = original
         msg = mail.outbox[-1]
-        self.assertEqual(msg.attachments, [])
+        # The PDF is the part that must be absent; the QR still rides along,
+        # since it is generated here and does not depend on reportlab.
+        self.assertFalse(any(str(n).endswith('.pdf') for n, _c, _t in msg.attachments),
+                         f"the broken PDF was attached anyway: {msg.attachments!r}")
+        self.assertTrue(any(str(n).endswith('.png') for n, _c, _t in msg.attachments),
+                        "a PDF failure should not cost the owner their QR too")
         self.assertIn('TempPass1!', msg.body)
 
 

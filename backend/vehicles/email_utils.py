@@ -49,7 +49,8 @@ def department_label(registration):
     return ''
 
 
-def _generate_qr_base64(data):
+def _generate_qr_png(data):
+    """The QR as raw PNG bytes."""
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -62,7 +63,41 @@ def _generate_qr_base64(data):
 
     buffer = BytesIO()
     img.save(buffer)
-    return base64.b64encode(buffer.getvalue()).decode()
+    return buffer.getvalue()
+
+
+def _qr_public_url(registration, png):
+    """Upload the QR to media storage and return its absolute URL, or None.
+
+    The QR used to be embedded as a `data:` URI. Gmail does not render those at
+    all — the approval email showed a broken-image placeholder where the owner's
+    gate pass should be — and `cid:` is not an option either, since the Railway
+    half sends over Brevo's API, which has no Content-ID field. A plain https URL
+    is the only form that renders on both transports in every client.
+
+    Only attempted when MEDIA_URL is absolute, i.e. USE_R2 is on, which
+    production requires anyway. With local storage the URL would be a relative
+    `/media/...` path that means nothing inside a mail client, so the caller
+    falls back to the data URI rather than uploading a file for nothing.
+    """
+    if not str(getattr(settings, 'MEDIA_URL', '')).startswith(('http://', 'https://')):
+        return None
+    try:
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        # Stable name, replaced on re-approval, so an owner emailed twice does
+        # not leave an orphaned object per approval.
+        name = f'qr_codes/registration-{registration.pk}.png'
+        if default_storage.exists(name):
+            default_storage.delete(name)
+        return default_storage.url(default_storage.save(name, ContentFile(png)))
+    except Exception:
+        # Storage being down must not cost the owner their credentials email;
+        # the data URI and the attached copy both still carry the QR.
+        log.exception('Could not upload the QR for registration %s — '
+                      'falling back to an inline data URI.', registration.pk)
+        return None
 
 
 def _authorized_driver_row(registration, pad='8px'):
@@ -83,9 +118,12 @@ def _authorized_driver_row(registration, pad='8px'):
 
 
 def send_acceptance_email(registration, temp_password, user_code=None):
-    # Generate QR code
+    # Generate QR code. The payload must stay exactly this shape — the guard
+    # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
     qr_data = f"VEHICLE:{registration.plate_number}|ID:{registration.id}"
-    qr_base64 = _generate_qr_base64(qr_data)
+    qr_png = _generate_qr_png(qr_data)
+    qr_src = (_qr_public_url(registration, qr_png)
+              or f"data:image/png;base64,{base64.b64encode(qr_png).decode()}")
 
     # Determine system-assigned registration ID
     system_id = esc_or_dash(registration.system_student_id or registration.system_employee_id)
@@ -196,7 +234,8 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                 <!-- QR Code -->
                 <div style="text-align: center; margin: 0 32px 24px; background: #F8FAFC; border-radius: 10px; padding: 24px;">
                     <p style="margin: 0 0 12px; color: #5A5F72; font-size: 13px;">Present this QR code to security personnel upon entry:</p>
-                    <img src="data:image/png;base64,{qr_base64}" alt="Vehicle QR Code" style="border: 2px solid #E2E6EE; border-radius: 8px; padding: 8px; background: white; max-width: 200px;" />
+                    <img src="{qr_src}" alt="Vehicle QR Code" style="border: 2px solid #E2E6EE; border-radius: 8px; padding: 8px; background: white; max-width: 200px;" />
+                    <p style="margin: 12px 0 0; color: #7C80A3; font-size: 12px;">Not showing? The same QR is attached to this email, and always available on your portal dashboard.</p>
                 </div>
 
                 <!-- Login Credentials -->
@@ -242,6 +281,13 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         to=[registration.email],
     )
     msg.attach_alternative(html_message, "text/html")
+
+    # The QR also rides along as a real file. Mail clients block remote images by
+    # default and strip data: URIs outright, so the inline copy above cannot be
+    # relied on — but an attachment always arrives, and the owner can save it to
+    # their phone to show at the gate.
+    msg.attach(f'qr-{registration.plate_number or registration.pk}.png',
+               qr_png, 'image/png')
 
     # A failure building the PDF must not cost the owner their approval email
     # (and, upstream, must not roll back the approval itself) \u2014 so send without

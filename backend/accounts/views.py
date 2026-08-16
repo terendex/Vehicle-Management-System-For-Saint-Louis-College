@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
 from time_utils import day_range, day_start, day_end, filter_local_date_range
+from .email_utils import notify_password_set
 from .models import User, AuditLog, Notification
 from .serializers import (
     UserSerializer,
@@ -980,9 +981,17 @@ class ChangePasswordView(APIView):
         if errors:
             return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Read before the flag is cleared: a user still carrying
+        # must_change_password is replacing the temporary password they were
+        # issued, which is the moment the account becomes theirs — that gets the
+        # welcome. Every later change gets the security notice instead.
+        was_first_change = user.must_change_password
+
         user.set_password(new_password)
         user.must_change_password = False
         user.save(update_fields=['password', 'must_change_password'])
+
+        notify_password_set(user, was_first_change)
         return Response({'message': 'Password changed successfully.'})
 
 
@@ -1206,7 +1215,9 @@ class PasswordResetRequestView(APIView):
 
         token = default_token_generator.make_token(user)
         uid   = urlsafe_base64_encode(force_bytes(user.pk))
-        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:5173')
+        # PUBLIC_SITE_URL: a reset link built from the campus half's LAN address
+        # is unreachable for anyone resetting their password from off campus.
+        frontend_url = getattr(django_settings, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
         reset_link   = f"{frontend_url}/reset-password?uid={uid}&token={token}"
 
         html_message = f"""
@@ -1331,9 +1342,16 @@ class PasswordResetConfirmView(APIView):
         if errors:
             return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Same split as ChangePasswordView. A brand-new user who never logged in
+        # with their temporary password and used "forgot password" instead still
+        # arrives here for their first change, so they get the welcome too.
+        was_first_change = user.must_change_password
+
         user.set_password(new_password)
         user.must_change_password = False
         user.save(update_fields=['password', 'must_change_password'])
+
+        notify_password_set(user, was_first_change)
 
         return Response({
             'message': 'Password reset successfully. You can now log in with your new password.',

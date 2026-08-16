@@ -79,18 +79,30 @@ def _send_violation_email(subject, text, html, recipient, violation=None):
         )
         msg.attach_alternative(html, 'text/html')
         evidence = getattr(violation, 'evidence', None)
-        # Only when the photo has no public URL — otherwise the HTML above links
-        # it directly and attaching it would duplicate the payload.
-        if evidence and not _evidence_url(violation):
+        if evidence:
             try:
                 evidence.open('rb')
                 data = evidence.read()
                 evidence.close()
-                subtype = 'png' if (evidence.name or '').lower().endswith('.png') else 'jpeg'
-                img = MIMEImage(data, _subtype=subtype)
-                img.add_header('Content-ID', '<evidence>')
-                img.add_header('Content-Disposition', 'inline', filename='evidence.jpg')
-                msg.attach(img)
+                is_png  = (evidence.name or '').lower().endswith('.png')
+                subtype = 'png' if is_png else 'jpeg'
+
+                if _evidence_url(violation):
+                    # The HTML links the photo by URL, which is what renders it
+                    # in the body. Attach a plain copy anyway: mail clients block
+                    # remote images by default, and some networks block the R2
+                    # public domain outright, so the linked copy cannot be the
+                    # only one. No Content-ID here — it is a separate file, not
+                    # the inline image.
+                    msg.attach(f'evidence.{subtype if is_png else "jpg"}',
+                               data, f'image/{subtype}')
+                else:
+                    # No public URL (local storage): fall back to a cid inline
+                    # image, which the HTML above already points at.
+                    img = MIMEImage(data, _subtype=subtype)
+                    img.add_header('Content-ID', '<evidence>')
+                    img.add_header('Content-Disposition', 'inline', filename='evidence.jpg')
+                    msg.attach(img)
             except Exception:
                 pass
         msg.send(fail_silently=True)

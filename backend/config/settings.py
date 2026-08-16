@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+import sys
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -330,7 +331,14 @@ _STATIC_BACKEND = (
     else 'django.contrib.staticfiles.storage.StaticFilesStorage'
 )
 
-if os.getenv('USE_R2', 'false').lower() == 'true':
+# Tests run against the developer's real .env — the same Neon database and the
+# same R2 credentials as production. Reading from the bucket is harmless, but
+# writing to it is not: every test that approves a registration or files a
+# violation would leave a real object behind, in the bucket the live system
+# serves from. Force local storage under test so the suite cannot litter it.
+_TESTING = 'test' in sys.argv or bool(os.getenv('PYTEST_CURRENT_TEST'))
+
+if os.getenv('USE_R2', 'false').lower() == 'true' and not _TESTING:
     STORAGES = {
         "default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"},
         "staticfiles": {"BACKEND": _STATIC_BACKEND},
@@ -354,7 +362,7 @@ else:
         "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
         "staticfiles": {"BACKEND": _STATIC_BACKEND},
     }
-    if not DEBUG:
+    if not DEBUG and not _TESTING:
         # Railway containers have an ephemeral filesystem: every redeploy wipes
         # MEDIA_ROOT, taking licence photos and violation evidence with it.
         print('[settings] WARNING: USE_R2=false in production - uploaded files '
@@ -414,6 +422,20 @@ BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
 RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+# Every link and image inside an email must use this, never FRONTEND_URL.
+#
+# FRONTEND_URL is per-host by design: on the campus machine it is a LAN address
+# so guards can reach it from the gate. That address is meaningless to a student
+# reading their approval email on mobile data — a QR image sourced from it never
+# loads, and a "reset your password" link goes nowhere. Mail is the one thing
+# both halves send to people who are not on the campus network, so it needs the
+# one address that always resolves: the public Railway domain.
+#
+# Defaults to FRONTEND_URL so Railway and local development need not set it —
+# there the two are the same. The campus .env is where it matters: set it to the
+# Railway URL there.
+PUBLIC_SITE_URL = (os.getenv('PUBLIC_SITE_URL') or FRONTEND_URL).rstrip('/')
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')

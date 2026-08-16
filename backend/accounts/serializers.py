@@ -115,7 +115,9 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
     from django.conf import settings as _cfg
     from vehicles.email_utils import esc
 
-    frontend_url = getattr(_cfg, 'FRONTEND_URL', 'http://localhost:5173')
+    # PUBLIC_SITE_URL, not FRONTEND_URL — see settings. A new guard or owner may
+    # open this mail anywhere, and the campus LAN address only works on campus.
+    frontend_url = getattr(_cfg, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
     extra_rows = extra_rows or []
     # esc(): this template is an f-string, so an admin-entered name or a gate
     # label containing markup would otherwise land in the HTML body verbatim.

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import { Search, X, HelpCircle, Info, ChevronRight } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, X, HelpCircle, Info, ChevronRight, ArrowLeft } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import { HELP_TOPICS } from './helpContent'
 import './HelpPage.css'
@@ -53,7 +54,12 @@ function Block({ block }) {
 
 export default function HelpPage() {
   const { user } = useAuthStore()
+  const navigate = useNavigate()
   const role = user?.role || 'vehicle_owner'
+
+  // Owners reach /help from the header icon and their shell has no sidebar to
+  // navigate back with — admin and security shells do, so they don't need one.
+  const isOwner = role === 'vehicle_owner'
 
   // Topics this role is allowed to see.
   const roleTopics = useMemo(
@@ -92,6 +98,15 @@ export default function HelpPage() {
             <h1 className="help-title"><HelpCircle size={20} /> Help &amp; User Manual</h1>
             <p className="help-subtitle">Search the guide or browse topics for your role.</p>
           </div>
+          {isOwner && (
+            <button
+              className="header-back-btn header-back-btn--end"
+              onClick={() => navigate('/owner')}
+            >
+              <ArrowLeft size={16} />
+              <span>Return</span>
+            </button>
+          )}
         </div>
 
         <div className="help-search">

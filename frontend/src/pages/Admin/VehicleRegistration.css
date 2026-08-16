@@ -1062,31 +1062,37 @@
 .modal-content.modal-account {
   max-width: 640px;
   padding: 0;
-  overflow: hidden;
   max-height: 90vh;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ── Header ── */
+/* Sticky so the title and the Done button stay in view while the details
+   scroll between them — the modal is taller than the viewport on laptops. */
 .account-modal-header {
   display: flex !important;
   flex-direction: row !important;
   align-items: flex-start;
   gap: 14px;
-  padding: 24px 28px 0;
+  padding: 20px 28px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E4EDF4;
 }
 
 .account-success-badge {
-  width: 52px;
-  height: 52px;
+  width: 42px;
+  height: 42px;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #D6F0E6, #A8DCC8);
-  border-radius: 14px;
+  background: #E4F4EC;
+  border-radius: 11px;
   display: flex !important;
   align-items: center;
   justify-content: center;
   color: #0F7A5A;
-  box-shadow: 0 4px 12px rgba(15, 122, 90, 0.2);
 }
 
 .account-modal-subtitle {
@@ -1106,12 +1112,12 @@
   display: flex !important;
   flex-direction: row !important;
   align-items: center;
-  gap: 20px;
-  margin: 20px 28px;
-  background: linear-gradient(135deg, #EAF2F8, #DCE9F2);
-  border: 1px solid #BDD4E5;
-  border-radius: 12px;
-  padding: 16px 20px;
+  gap: 24px;
+  margin: 18px 28px;
+  background: #F4F8FB;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  padding: 14px 18px;
 }
 
 .account-id-item {
@@ -1145,31 +1151,39 @@
 
 /* ── Credentials Box ── */
 .account-credentials-box {
-  margin: 0 28px 20px;
-  background: #F7FAFC;
-  border: 1.5px solid #D3E1EC;
+  margin: 0 28px 16px;
+  background: #FFFFFF;
+  border: 1px solid #D3E1EC;
   border-radius: 12px;
   overflow: hidden;
 }
 
+/* Same tinted bar as the info sections below — one heading treatment for
+   all three boxes instead of a navy slab competing with them. */
 .account-cred-header {
   display: flex !important;
   flex-direction: row !important;
   align-items: center;
-  gap: 8px;
-  background: #03396C;
-  color: #FFFFFF;
+  gap: 7px;
+  background: #F7FAFC;
+  color: #03396C;
+  border-bottom: 1px solid #D3E1EC;
   padding: 10px 16px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .account-cred-note {
   margin-left: auto;
-  font-size: 11px;
-  font-weight: 500;
-  color: #8FC4E8;
-  background: rgba(255,255,255,0.1);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #64839C;
+  background: #EAF2F8;
+  border: 1px solid #D3E1EC;
   padding: 2px 10px;
   border-radius: 20px;
 }
@@ -1204,47 +1218,33 @@
   word-break: break-all;
 }
 
-.account-cred-pw {
-  flex: 1;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 14px;
-  font-weight: 700;
-  color: #03396C;
-  letter-spacing: 1.5px;
-  background: #EAF2F8;
-  padding: 4px 10px;
-  border-radius: 6px;
-  word-break: break-all;
-}
-
-.account-copy-btn {
-  background: none !important;
-  border: 1px solid #D3E1EC !important;
-  padding: 5px !important;
-  border-radius: 7px;
+/* Password is never shown in the UI — it goes to the owner's inbox. */
+.account-cred-muted {
   color: #6B8CA6;
-  cursor: pointer;
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-  flex-shrink: 0;
+  font-style: italic;
+  font-weight: 500;
 }
 
-.account-copy-btn:hover {
-  background: #EEF4F9 !important;
-  border-color: #03396C !important;
-  color: #03396C;
-}
-
+/* The strip carries the delivery outcome, so it is tinted to match it
+   rather than being amber regardless of what happened. */
 .account-cred-warning {
-  font-size: 11px;
-  color: #8A6B00;
-  background: #FEF9E4;
-  border-top: 1px solid #F7E08A;
+  font-size: 11.5px;
   padding: 8px 16px;
   margin: 0;
-  font-weight: 500;
+  font-weight: 600;
+  border-top: 1px solid transparent;
+}
+
+.account-cred-warning.is-ok {
+  color: #0F7A5A;
+  background: #EDF7F2;
+  border-top-color: #C9E7DA;
+}
+
+.account-cred-warning.is-error {
+  color: #C62828;
+  background: #FDF4F4;
+  border-top-color: #F3C0C0;
 }
 
 /* ── Info sections ── */
@@ -1252,7 +1252,7 @@
   margin: 0 28px 20px;
   display: flex !important;
   flex-direction: column !important;
-  gap: 16px;
+  gap: 14px;
 }
 
 .account-info-section {
@@ -1291,12 +1291,14 @@
   border-bottom: 1px solid #EAF2F8;
 }
 
-.account-info-item:nth-last-child(-n+2):not([style]) {
+/* Two per row — the bottom pair closes the grid, so no rule under them. */
+.account-info-item:nth-last-child(-n+2) {
   border-bottom: none;
+  padding-bottom: 0;
 }
 
-.account-info-item[style*="span 2"] {
-  border-bottom: none;
+.account-info-cap {
+  text-transform: capitalize;
 }
 
 .account-info-label {
@@ -1319,6 +1321,32 @@
   font-weight: 700;
   color: #03396C;
   letter-spacing: 1px;
+}
+
+/* ── Footer ── */
+.modal-account .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 14px 28px 18px;
+  background: #FFFFFF;
+  border-top: 1px solid #E4EDF4;
+}
+
+/* The one action of a success dialog — filled rather than outlined, so it
+   does not read as an empty bar across the bottom of the modal. */
+.account-done-btn {
+  flex: 1;
+  justify-content: center;
+  background: #03396C;
+  color: #FFFFFF;
+  border-color: #03396C;
+}
+
+.account-done-btn:hover {
+  background: #032C55;
+  border-color: #032C55;
 }
 
 /* ── Day badges ── */
@@ -1345,8 +1373,14 @@
   .account-info-grid {
     grid-template-columns: 1fr;
   }
+  /* One per row now, so only the very last item closes the grid. */
   .account-info-item {
     border-bottom: 1px solid #EAF2F8;
+    padding-bottom: 8px;
+  }
+  .account-info-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
   }
   .account-modal-header {
     flex-wrap: wrap;

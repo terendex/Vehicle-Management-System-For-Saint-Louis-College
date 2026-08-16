@@ -335,14 +335,14 @@ export default function SystemSettings() {
                       <span className="ss-unit">years</span>
                     </div>
                   </div>
-                </div>
 
-                <div className="ss-note">
-                  <ShieldAlert size={13} />
-                  <span>
-                    Access logs, violations, and accounts archived more than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> ago
-                    will be permanently deleted and cannot be recovered. Audit log history is kept.
-                  </span>
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      Access logs, violations, and accounts archived more than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> ago
+                      will be permanently deleted and cannot be recovered. Audit log history is kept.
+                    </span>
+                  </div>
                 </div>
               </section>
 
@@ -458,17 +458,17 @@ export default function SystemSettings() {
                       <span className="ss-unit">days</span>
                     </div>
                   </div>
-                </div>
 
-                <div className="ss-note">
-                  <ShieldAlert size={13} />
-                  <span>
-                    {expiryInvalid
-                      ? <>Enter at least 1 month or 1 day. Expiration cannot be switched off.</>
-                      : <>Owner accounts archive <strong>{expiryPeriodText(form)}</strong> after creation,
-                         then are deleted {form.retention_years} year{form.retention_years !== 1 ? 's' : ''} later
-                         under the retention policy.</>}
-                  </span>
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      {expiryInvalid
+                        ? <>Enter at least 1 month or 1 day. Expiration cannot be switched off.</>
+                        : <>Owner accounts archive <strong>{expiryPeriodText(form)}</strong> after creation,
+                           then are deleted {form.retention_years} year{form.retention_years !== 1 ? 's' : ''} later
+                           under the retention policy.</>}
+                    </span>
+                  </div>
                 </div>
               </section>
 
@@ -575,18 +575,18 @@ export default function SystemSettings() {
                       <span className="ss-unit">seconds</span>
                     </div>
                   </div>
-                </div>
 
-                <div className="ss-note">
-                  <ShieldAlert size={13} />
-                  <span>
-                    {dwellInvalid
-                      ? <>The double-parking delay cannot be shorter than the parked delay — a car
-                         cannot be badly parked before it counts as parked at all.</>
-                      : <>A vehicle across two bays is reported once it has been still
-                         for <strong>{form.double_park_after_seconds} seconds</strong>. Running zones
-                         pick up a change within a few seconds; no restart needed.</>}
-                  </span>
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      {dwellInvalid
+                        ? <>The double-parking delay cannot be shorter than the parked delay — a car
+                           cannot be badly parked before it counts as parked at all.</>
+                        : <>A vehicle across two bays is reported once it has been still
+                           for <strong>{form.double_park_after_seconds} seconds</strong>. Running zones
+                           pick up a change within a few seconds; no restart needed.</>}
+                    </span>
+                  </div>
                 </div>
               </section>
             </>
@@ -821,14 +821,14 @@ export default function SystemSettings() {
                   </label>
                 </div>
               </div>
-            </div>
 
-            <div className="ss-note">
-              <ShieldAlert size={13} />
-              <span>
-                Restoring overwrites current records with those in the backup. A safety snapshot of the
-                current data is saved automatically before any restore, and the load is rolled back if it fails.
-              </span>
+              <div className="ss-note">
+                <ShieldAlert size={13} />
+                <span>
+                  Restoring overwrites current records with those in the backup. A safety snapshot of the
+                  current data is saved automatically before any restore, and the load is rolled back if it fails.
+                </span>
+              </div>
             </div>
           </section>
 

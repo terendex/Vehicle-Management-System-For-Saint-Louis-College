@@ -868,7 +868,7 @@ export default function VehicleRegistration() {
         <div className="modal-overlay">
           <div className="modal-content modal-account">
             <div className="account-modal-header">
-              <div className="account-success-badge"><ShieldCheck size={28} /></div>
+              <div className="account-success-badge"><ShieldCheck size={22} /></div>
               <div>
                 <h2 className="modal-title" style={{ marginBottom: 4 }}>Account Created Successfully</h2>
                 <p className="account-modal-subtitle">The vehicle owner account has been provisioned and credentials sent via email.</p>
@@ -902,14 +902,14 @@ export default function VehicleRegistration() {
               <div className="account-cred-row">
                 <KeyRound size={14} />
                 <span className="account-cred-field">Password</span>
-                <span className="account-cred-val" style={{ color: '#6B8CA6', fontStyle: 'italic' }}>Sent securely to owner's email</span>
+                <span className="account-cred-val account-cred-muted">Sent securely to owner's email</span>
               </div>
               {emailFailed ? (
-                <p className="account-cred-warning" style={{ color: '#C62828' }}>
+                <p className="account-cred-warning is-error">
                   ⚠ Email failed to send. Please check SMTP settings and share credentials manually.
                 </p>
               ) : (
-                <p className="account-cred-warning" style={{ color: '#0F7A5A' }}>
+                <p className="account-cred-warning is-ok">
                   ✓ Credentials have been emailed to the vehicle owner.
                 </p>
               )}
@@ -925,7 +925,7 @@ export default function VehicleRegistration() {
                   </div>
                   <div className="account-info-item">
                     <span className="account-info-label">Type</span>
-                    <span className="account-info-val" style={{ textTransform: 'capitalize' }}>{accountModal.registrant_type}</span>
+                    <span className="account-info-val account-info-cap">{accountModal.registrant_type}</span>
                   </div>
                   <div className="account-info-item">
                     <span className="account-info-label">Contact</span>
@@ -952,8 +952,8 @@ export default function VehicleRegistration() {
               </div>
             </div>
 
-            <div className="modal-actions" style={{ marginTop: 8 }}>
-              <button className="btn-primary" onClick={() => setAccountModal(null)} style={{ flex: 1, justifyContent: 'center' }}>
+            <div className="modal-actions">
+              <button className="btn-primary account-done-btn" onClick={() => setAccountModal(null)}>
                 <Check size={16} /> Done
               </button>
             </div>
