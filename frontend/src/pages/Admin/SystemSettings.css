@@ -4,8 +4,9 @@
             Panel #FFFFFF · Border #D3E1EC · Text #0B2340 / #4A6B85
 
    Layout: one continuous settings panel — sections separated by
-   hairlines, each setting a label/description row with its control
-   on the right. Deliberately not a card grid.
+   hairlines. On wide screens each section splits in two: what the
+   setting is on the left, the controls on the right. Deliberately
+   not a card grid.
    ============================================================ */
 
 .ss-page {
@@ -13,7 +14,7 @@
   flex-direction: column;
   gap: 1.25rem;
   min-height: 100%;
-  max-width: 1040px;
+  max-width: 1500px;
 }
 
 /* ── Header ─────────────────────────────────────────────────────── */
@@ -74,12 +75,36 @@
   overflow: hidden;
 }
 
+/* Two columns from 960px up: explanation left, controls right. Below that
+   it collapses back to a single stacked column. */
 .ss-section {
-  padding: 1.25rem 1.5rem 1.4rem;
+  padding: 1.4rem 1.75rem 1.5rem;
   border-top: 1px solid #E4EDF4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem 3rem;
+  align-items: start;
 }
 
 .ss-section:first-child { border-top: none; }
+
+@media (min-width: 960px) {
+  .ss-section {
+    grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
+    row-gap: 0.9rem;
+  }
+
+  .ss-section-head { grid-column: 1; }
+
+  .ss-rows,
+  .ss-note {
+    grid-column: 2;
+  }
+
+  /* The column break already separates head from controls — the rule on
+     top of the first row would just be noise. */
+  .ss-rows { border-top: none; }
+}
 
 /* ── Section head ───────────────────────────────────────────────── */
 
@@ -122,7 +147,6 @@
 /* ── Setting row: text left, control right ──────────────────────── */
 
 .ss-rows {
-  margin-top: 0.9rem;
   border-top: 1px solid #EEF4F9;
 }
 
@@ -221,7 +245,6 @@
   border-radius: 8px;
   padding: 9px 12px;
   line-height: 1.45;
-  margin-top: 0.9rem;
 }
 
 .ss-note svg {
