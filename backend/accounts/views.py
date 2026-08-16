@@ -1227,7 +1227,7 @@ class PasswordResetRequestView(APIView):
               <div style="padding:28px 32px 24px;">
                 <h2 style="color:#2A2B61;margin:0 0 8px;">Password Reset Request</h2>
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-                  We received a request to reset the password for your SLC Vehicle Management System account.
+                  We received a request to reset the password for your SLC Smart Parking and Vehicle Verification System account.
                 </p>
                 <p style="margin:0 0 8px;">Hello, <strong>{user.full_name or user.email}</strong>,</p>
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
@@ -1250,7 +1250,7 @@ class PasswordResetRequestView(APIView):
                 </p>
               </div>
               <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:14px 32px;text-align:center;">
-                <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
                 <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
               </div>
             </div>
@@ -1266,7 +1266,7 @@ class PasswordResetRequestView(APIView):
         # written to the log, so there was no way to tell the two apart.
         try:
             send_mail(
-                subject='SLC Vehicle Management — Password Reset',
+                subject='SPVVS — Password Reset',
                 message=(
                     f"Hello {user.full_name or user.email},\n\n"
                     f"Reset your password by visiting:\n{reset_link}\n\n"

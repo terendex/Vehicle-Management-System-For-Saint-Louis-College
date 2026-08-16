@@ -30,7 +30,7 @@ _BODY_STYLE = ('font-family: Arial, sans-serif; color: #1A1D2E; '
 
 _FOOTER = """
   <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:16px 32px;text-align:center;">
-    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
     <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
   </div>
 """
@@ -89,7 +89,7 @@ def send_welcome_email(user):
         <div style="max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:12px;
                     border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden;">
           <div style="padding:28px 32px 8px;">
-            <h2 style="color:#2A2B61;margin:0 0 6px;">Welcome to SLC VMS &#10003;</h2>
+            <h2 style="color:#2A2B61;margin:0 0 6px;">Welcome to SPVVS &#10003;</h2>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
               Your password has been set and your account is ready to use.</p>
             <p style="margin:0 0 4px;">Dear <strong>{name}</strong>,</p>
@@ -111,7 +111,7 @@ def send_welcome_email(user):
 
     text = (
         f"Dear {user.full_name or user.email},\n\n"
-        f"Your password has been set and your SLC VMS account is ready to use.\n\n"
+        f"Your password has been set and your SPVVS account is ready to use.\n\n"
         f"{intro}\n\n"
         f"Email: {user.email}\n"
         + (f"Account ID: {user.user_code}\n" if getattr(user, 'user_code', None) else '')
@@ -120,7 +120,7 @@ def send_welcome_email(user):
     )
 
     send_mail(
-        subject='Welcome to SLC Vehicle Management System',
+        subject='Welcome to SLC Smart Parking and Vehicle Verification System',
         message=text,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],
@@ -148,7 +148,7 @@ def send_password_changed_email(user):
             <h2 style="color:#2A2B61;margin:0 0 6px;">Your password was changed</h2>
             <p style="margin:0 0 16px;">Dear <strong>{name}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-              The password for your SLC Vehicle Management System account was changed.</p>
+              The password for your SLC Smart Parking and Vehicle Verification System account was changed.</p>
             <table style="width:100%;border-collapse:collapse;">
               <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:150px;">Account</td>
                   <td style="padding:8px 0;font-weight:600;">{esc(user.email)}</td></tr>
@@ -171,7 +171,7 @@ def send_password_changed_email(user):
 
     text = (
         f"Dear {user.full_name or user.email},\n\n"
-        f"The password for your SLC Vehicle Management System account was changed.\n\n"
+        f"The password for your SLC Smart Parking and Vehicle Verification System account was changed.\n\n"
         f"Account:    {user.email}\n"
         f"Changed on: {changed_at}\n\n"
         f"If this was not you, contact the CDSO office immediately — someone else "
@@ -180,7 +180,7 @@ def send_password_changed_email(user):
     )
 
     send_mail(
-        subject='SLC VMS - your password was changed',
+        subject='SPVVS - your password was changed',
         message=text,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],

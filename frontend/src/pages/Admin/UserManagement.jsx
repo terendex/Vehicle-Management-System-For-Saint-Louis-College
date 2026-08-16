@@ -86,7 +86,7 @@ export default function UserManagement() {
     doc.text('SAINT LOUIS COLLEGE', W / 2, 7, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6)
-    doc.text('Vehicle Management System', W / 2, 11.5, { align: 'center' })
+    doc.text('Smart Parking and Vehicle Verification System', W / 2, 11.5, { align: 'center' })
 
     // Badge type
     doc.setTextColor(...navy)

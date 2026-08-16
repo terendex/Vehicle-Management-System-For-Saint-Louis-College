@@ -250,7 +250,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
 
                 <!-- Footer -->
                 <div style="background: #F8FAFC; border-top: 1px solid #E2E6EE; padding: 16px 32px; text-align: center;">
-                    <p style="font-size: 12px; color: #7C80A3; margin: 0;">Saint Louis College Vehicle Management System</p>
+                    <p style="font-size: 12px; color: #7C80A3; margin: 0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
                     <p style="font-size: 11px; color: #B0B4C7; margin: 4px 0 0;">This is an automated message. Please do not reply.</p>
                 </div>
 
@@ -437,7 +437,7 @@ def send_pending_email(registration):
 
                 <!-- Footer -->
                 <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:16px 32px;text-align:center;">
-                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
                     <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply to this email.</p>
                 </div>
 
@@ -457,7 +457,7 @@ def send_pending_email(registration):
             f"Type:          {type_display}\n"
             f"Submitted:     {submitted_at}\n\n"
             f"You will be notified by email once a decision has been made.\n\n"
-            f"Saint Louis College Vehicle Management System"
+            f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[registration.email],
@@ -485,7 +485,7 @@ def send_rejection_email(registration, reason):
                 </div>
                 <p>If you have any questions or would like to submit a new application, please contact the administration office.</p>
                 <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Vehicle Management System</p>
+                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
             </div>
         </body>
     </html>
@@ -547,7 +547,7 @@ def send_account_archived_email(user, banned=False, next_window=None):
                 {cta_html}
                 <p>If you believe this is a mistake, please contact the administration office.</p>
                 <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Vehicle Management System</p>
+                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
             </div>
         </body>
     </html>

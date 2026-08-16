@@ -96,7 +96,7 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
 </style></head><body>
 <h2>SAINT LOUIS COLLEGE</h2>
-<div class="sub">Vehicle Management System</div>
+<div class="sub">Smart Parking and Vehicle Verification System</div>
 <div class="sub">--- VISITOR SLIP ---</div>
 <div class="plate">${plate}</div>
 <hr/>

@@ -228,7 +228,7 @@ class Command(BaseCommand):
     def _send(self, to):
         self.stdout.write(f"\nsending a test message to {to}...")
         msg = EmailMessage(
-            subject="SLC VMS - mail transport test",
+            subject="SPVVS - mail transport test",
             body=("This is a test message from `manage.py check_email`.\n\n"
                   "If it arrived, outgoing mail works from the host that sent it."),
             from_email=settings.DEFAULT_FROM_EMAIL,

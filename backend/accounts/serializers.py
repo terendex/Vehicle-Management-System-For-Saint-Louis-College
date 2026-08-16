@@ -151,7 +151,7 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
             Please log in and <strong>change your password immediately</strong>.
           </p>
           <p style="color:#9CA3B0;font-size:12px;margin:0;">
-            This is an automated message from the Saint Louis College Vehicle Management System.
+            This is an automated message from the Saint Louis College Smart Parking and Vehicle Verification System.
             Do not reply to this email.
           </p>
         </div>
@@ -160,7 +160,7 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
     """
     try:
         send_mail(
-            subject='SLC Vehicle Management — Your Account Has Been Created',
+            subject='SPVVS — Your Account Has Been Created',
             message=(
                 f"Hello {full_name},\n\n"
                 f"Your account has been created by the administrator.\n\n"
@@ -169,7 +169,7 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
                 f"{extra_text}"
                 f"Password  : {password}\n\n"
                 f"Please log in and change your password immediately.\n\n"
-                f"Saint Louis College Vehicle Management System"
+                f"Saint Louis College Smart Parking and Vehicle Verification System"
             ),
             from_email=_cfg.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
