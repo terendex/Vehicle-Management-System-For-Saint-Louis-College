@@ -204,3 +204,73 @@ class NotificationBellTests(TestCase):
         client = APIClient()
         client.force_authenticate(user=cdso)
         self.assertEqual(client.get('/api/accounts/notifications/').status_code, 200)
+
+
+class SystemBackupTests(TestCase):
+    """Backup & Restore must be able to serialise every app it claims to cover.
+
+    This exists because the feature was broken for a long time without anything
+    noticing. `User.db_table` was changed to 'tbl_user', but the auto-created
+    M2M through-tables for the inherited `groups` / `user_permissions` fields
+    were never renamed to match, so the ORM looked for a `tbl_user_groups` that
+    did not exist. Nothing in the app reads those fields — access control is the
+    `role` column — so the mismatch stayed invisible until dumpdata walked every
+    relation on User and the whole backup failed with:
+
+        Unable to serialize database: relation "tbl_user_groups" does not exist
+
+    A test that only exercised the app's own models would never have caught it.
+    Calling the real management command over the real app list is the point.
+    """
+
+    def test_every_backup_app_serialises(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from accounts.views import BACKUP_APPS, BACKUP_EXCLUDE
+
+        for app in BACKUP_APPS:
+            with self.subTest(app=app):
+                out = StringIO()
+                call_command('dumpdata', app, exclude=BACKUP_EXCLUDE, stdout=out)
+                self.assertTrue(out.getvalue().strip().startswith('['))
+
+    def test_user_m2m_through_tables_exist(self):
+        """The specific schema fault, asserted directly."""
+        from django.db import connection
+
+        for field in ('groups', 'user_permissions'):
+            table = User._meta.get_field(field).remote_field.through._meta.db_table
+            with self.subTest(field=field), connection.cursor() as cur:
+                cur.execute('SELECT to_regclass(%s)', [f'public.{table}'])
+                self.assertIsNotNone(
+                    cur.fetchone()[0],
+                    f'{table} is missing — dumpdata (and therefore Backup) will fail',
+                )
+
+    def test_backup_endpoint_returns_a_fixture(self):
+        import json
+        from rest_framework.test import APIClient
+
+        admin = User.objects.create_user(
+            email='backup-admin@slc.edu.ph', full_name='BACKUP ADMIN',
+            password='SecurePassword123!', role='admin')
+        client = APIClient()
+        client.force_authenticate(admin)
+
+        resp = client.get('/api/accounts/system/backup/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('attachment;', resp['Content-Disposition'])
+        payload = json.loads(resp.content)
+        self.assertIsInstance(payload, list)
+        # The admin just created must be in it.
+        self.assertTrue(any(r['model'] == 'accounts.user' for r in payload))
+
+    def test_backup_is_admin_only(self):
+        from rest_framework.test import APIClient
+
+        guard = User.objects.create_user(
+            email='backup-guard@slc.edu.ph', full_name='BACKUP GUARD',
+            password='SecurePassword123!', role='security')
+        client = APIClient()
+        client.force_authenticate(guard)
+        self.assertEqual(client.get('/api/accounts/system/backup/').status_code, 403)

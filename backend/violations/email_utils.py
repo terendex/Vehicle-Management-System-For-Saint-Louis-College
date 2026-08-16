@@ -189,23 +189,13 @@ def send_confiscation_email(violation, penalty):
     _send_violation_email(
         subject=f"SLC Vehicle - Offence {offense_label} of 3: {vtype_label} (account confiscated)",
         text=(
-            f"Dear {owner.full_name},
-
-"
+            f"Dear {owner.full_name},\n\n"
             f"A {offense_label} offence ({vtype_label}) has been recorded for your vehicle "
-            f"{plate}.
-
-"
-            f"{reason}
-
-"
+            f"{plate}.\n\n"
+            f"{reason}\n\n"
             "While your account is confiscated you may not enter or park on campus. "
-            "Being detected during this period counts as a further offence.
-
-"
-            + ("You may not register a vehicle again unless the CDSO approves it.
-
-"
+            "Being detected during this period counts as a further offence.\n\n"
+            + ("You may not register a vehicle again unless the CDSO approves it.\n\n"
                if is_final else "")
             + "Contact the CDSO office for any concerns."
         ),
