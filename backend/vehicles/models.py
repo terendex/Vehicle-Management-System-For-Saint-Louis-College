@@ -118,9 +118,11 @@ class VehicleRegistration(models.Model):
 
     class Schedule(models.TextChoices):
         MWF   = 'MWF',   'Monday-Wednesday-Friday'
-        TTHS  = 'TTHS',  'Tuesday-Thursday-Saturday'
+        TTHF  = 'TTHF',  'Tuesday-Thursday-Friday'
         MIXED = 'MIXED', 'Mixed / Custom Days'
-        ANY   = 'ANY',   'Any Day'
+        # Spelled out rather than "Any Day": the campus is closed on Sunday, so
+        # an unqualified "any day" overstates what the pass actually admits.
+        ANY   = 'ANY',   'Any Campus Day (Monday-Saturday)'
 
     class Source(models.TextChoices):
         PUBLIC = 'public', 'Online/Public Form'

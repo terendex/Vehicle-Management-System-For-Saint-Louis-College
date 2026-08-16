@@ -110,17 +110,37 @@ class EntryLogicTests(TestCase):
         self.assertEqual(result['status'], 'no_pass')
         self.assertIn('visitor pass', result['message'].lower())
 
-    def test_fee_imposed_violation_blocks_entry(self):
-        _, vehicle = _make_owner('fee@slc.edu.ph', 'FEE001', User.OwnerType.STUDENT, schedule='ANY')
-        Violation.objects.create(
-            vehicle=vehicle,
+    def test_confiscated_account_is_denied_entry(self):
+        """The fine that used to block entry is gone; the penalty is the
+        account being confiscated, and that is what the gate checks."""
+        from violations.penalty import apply_penalty
+        owner, vehicle = _make_owner('conf@slc.edu.ph', 'CONF01',
+                                     User.OwnerType.STUDENT, schedule='ANY')
+        apply_penalty(Violation.objects.create(
+            vehicle=vehicle, owner=owner,
             violation_type=Violation.Type.UNAUTHORIZED_ENTRY,
-            offense_number=3,
-            status=Violation.Status.FEE_IMPOSED,
-        )
+            offense_number=1,
+        ))
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_confiscated)
+
         result = check_entry(vehicle)
         self.assertFalse(result['allowed'])
-        self.assertIn('₱150', result['message'])
+        self.assertEqual(result['status'], 'confiscated')
+        self.assertIn('confiscated', result['message'].lower())
+
+    def test_expired_confiscation_lets_the_owner_back_in(self):
+        """The penalty ends on its own — nothing has to run to release it."""
+        from datetime import timedelta
+        from django.utils import timezone as tz
+        owner, vehicle = _make_owner('expired@slc.edu.ph', 'CONF02',
+                                     User.OwnerType.STUDENT, schedule='ANY')
+        owner.confiscation_level = 1
+        owner.confiscated_until = tz.localdate() - timedelta(days=1)
+        owner.save(update_fields=['confiscation_level', 'confiscated_until'])
+
+        self.assertFalse(owner.is_confiscated)
+        self.assertTrue(check_entry(vehicle)['allowed'])
 
     def test_open_campus_mode_bypasses_all_rules(self):
         # Unauthorized vehicle + inactive owner — still allowed in open campus mode,
@@ -205,13 +225,21 @@ class ManualEntryAPITests(TestCase):
         self.assertTrue(Violation.objects.filter(vehicle=vehicle).exists())
 
     def test_auto_violation_deduplicated_within_5_minutes(self):
-        """Two denied scans in quick succession must produce only one auto-violation."""
-        _, vehicle = _make_owner('dup@slc.edu.ph', 'DUP001', User.OwnerType.STUDENT,
-                                  is_authorized=False)
+        """Two denied scans in quick succession must produce only one auto-violation.
+
+        The cap is per ACCOUNT per day, not per type. The first denied scan
+        confiscates the owner, so a per-type cap would let the second scan
+        through as "activity while confiscated" and spend two rungs of the
+        ladder on one incident.
+        """
+        owner, vehicle = _make_owner('dup@slc.edu.ph', 'DUP001', User.OwnerType.STUDENT,
+                                     is_authorized=False)
         self.client.post('/api/scan/manual-entry/', {'plate_number': 'DUP001'}, format='json')
         self.client.post('/api/scan/manual-entry/', {'plate_number': 'DUP001'}, format='json')
-        count = Violation.objects.filter(vehicle=vehicle).count()
-        self.assertEqual(count, 1)
+        self.assertEqual(Violation.objects.filter(vehicle=vehicle).count(), 1)
+
+        owner.refresh_from_db()
+        self.assertEqual(owner.confiscation_level, 1)   # one incident, one strike
 
     def test_missing_plate_number_returns_400(self):
         resp = self.client.post('/api/scan/manual-entry/', {}, format='json')

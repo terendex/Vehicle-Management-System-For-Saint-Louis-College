@@ -13,6 +13,17 @@ import { registrationApi } from '../../api/registration'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
 
+/* What each schedule code admits, spelled out — a bare 'ANY' told the owner
+   nothing, and "any day" would overstate it (the campus is closed on Sunday). */
+const SCHEDULE_LABELS = {
+  MWF:   'Mon · Wed · Fri',
+  TTHF:  'Tue · Thu · Fri',
+  TTHS:  'Tue · Thu · Sat',   // pre-rename rotation
+  MIXED: 'Mon – Sat',
+  ANY:   'Mon – Sat',
+  ALL:   'Mon – Sat',
+}
+
 /* ── password strength rules ── */
 const PW_RULES = [
   { key: 'length',  label: 'At least 8 characters',         test: (p) => p.length >= 8 },
@@ -443,7 +454,10 @@ export default function OwnerDashboard() {
                           </div>
                         ) : (
                           <div className="od-day-badges">
-                            <span className="od-day-badge">{reg.schedule}</span>
+                            {/* No stored days — an employee or fetcher pass.
+                                Showing the bare code ('ANY') told the owner
+                                nothing about which days they may come in. */}
+                            <span className="od-day-badge">{SCHEDULE_LABELS[reg.schedule] || reg.schedule}</span>
                           </div>
                         )}
                       </div>

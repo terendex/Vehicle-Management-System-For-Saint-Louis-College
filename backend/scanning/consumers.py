@@ -846,7 +846,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             try:
                 _auto_log_violation(
                     vehicle, entry["message"], gate_id,
-                    evidence_bytes=getattr(self, '_last_frame_jpeg', None))
+                    evidence_bytes=getattr(self, '_last_frame_jpeg', None),
+                    entry_status=entry["status"])
             except Exception:
                 pass
 

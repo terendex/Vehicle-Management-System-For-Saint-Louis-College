@@ -35,3 +35,16 @@ export const clearViolation   = (id, officialReceipt) =>
 // settled), this removes it from the offence ladder and renumbers the rest.
 export const liftViolation = (id, reason) =>
   api.post(`/violations/${id}/lift/`, { reason })
+
+// ── Confiscated accounts ──────────────────────────────────────────────────────
+// An account serving a violation penalty may not enter campus and may not park.
+export const getConfiscatedAccounts = () =>
+  api.get('/violations/confiscated/').then(r => r.data)
+
+export const liftConfiscation = (userId) =>
+  api.post(`/violations/confiscated/${userId}/lift/`).then(r => r.data)
+
+// CDSO discretion: a 3rd offence blocks re-registration, but the office can
+// decide to let the person register again.
+export const setRegistrationPermission = (userId, allow) =>
+  api.post(`/violations/confiscated/${userId}/registration/`, { allow }).then(r => r.data)

@@ -14,9 +14,13 @@ DAY_NAME_TO_WEEKDAY = {
     'Friday': 4, 'Saturday': 5, 'Sunday': 6,
 }
 
-# Legacy fallback: schedule code → weekday numbers, used only when user.campus_days is empty
+# Legacy fallback: schedule code → weekday numbers, used only when user.campus_days is empty.
+# 'TTHS' (Tue/Thu/Sat) was the second rotation before it became TTHF (Tue/Thu/Fri);
+# the migration renames stored codes, but an unknown code here would mean "allowed
+# on no day at all", so the old one keeps its original meaning.
 _SCHEDULE_DAYS_FALLBACK = {
     'MWF':  [0, 2, 4],
+    'TTHF': [1, 3, 4],
     'TTHS': [1, 3, 5],
     'ANY':  [0, 1, 2, 3, 4, 5, 6],
     'ALL':  [0, 1, 2, 3, 4, 5, 6],
@@ -26,6 +30,7 @@ _SCHEDULE_DAYS_FALLBACK = {
 
 _SCHEDULE_TO_DAY_NAMES = {
     'MWF':  ['Monday', 'Wednesday', 'Friday'],
+    'TTHF': ['Tuesday', 'Thursday', 'Friday'],
     'TTHS': ['Tuesday', 'Thursday', 'Saturday'],
 }
 
@@ -105,17 +110,27 @@ def check_entry(vehicle) -> dict:
         owner_name = vehicle.user.full_name if vehicle.user else vehicle.plate_number
         return _result('open_entry', True, f'Open Campus Mode active — {owner_name}. Open entry granted.', None)
 
-    # Block entry if there is an active fee-imposed violation (3rd offense, unpaid)
-    from violations.models import Violation
-    if Violation.objects.filter(vehicle=vehicle, status=Violation.Status.FEE_IMPOSED).exists():
+    user = vehicle.user
+
+    # A confiscated account may not enter. Checked before every other rule —
+    # including the schedule ones — because the penalty is not "you came on the
+    # wrong day", and a guard reading "wrong day" would have no idea the account
+    # is serving a violation penalty.
+    #
+    # The caller turns this status into a fresh offence (see
+    # scanning/views.py): being detected during a confiscation is itself a
+    # violation, which is what stops the penalty from being ignorable.
+    if user is not None and user.is_confiscated:
+        days = user.confiscation_days_left
+        when = (f'{days} day(s) left' if days is not None
+                else 'until the CDSO lifts it')
         return _result(
-            'denied', False,
-            'Entry denied — outstanding violation fee (₱150). '
-            'Please report to the CDSO office to settle.',
+            'confiscated', False,
+            f'Entry denied — account confiscated ({when}). '
+            f'Offence {user.confiscation_level} of 3. '
+            'Report to the CDSO office.',
             None,
         )
-
-    user = vehicle.user
 
     # ── VISITOR / gate-issued vehicle (pass-based entry) ──────────────
     # Covers vehicles created at the gate when a pass is issued (no owner

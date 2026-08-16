@@ -112,13 +112,25 @@ import ComboBox from '../../components/ComboBox'
 import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
 
-const CAMPUS_DAYS = [
-  { key: 'Monday', short: 'Mon' },
-  { key: 'Tuesday', short: 'Tue' },
-  { key: 'Wednesday', short: 'Wed' },
-  { key: 'Thursday', short: 'Thu' },
-  { key: 'Friday', short: 'Fri' },
-  { key: 'Saturday', short: 'Sat' },
+const ALL_CAMPUS_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/* An applicant registers for a whole rotation, not for days of their own
+   choosing — a pass issued as "MWF" has to mean all three of those days.
+   Mirrors SCHEDULE_GROUP_DAYS in backend/vehicles/campus_days.py, Friday's
+   double membership included. */
+const SCHEDULE_GROUPS = [
+  {
+    code: 'MWF',
+    short: 'Mon · Wed · Fri',
+    days: ['Monday', 'Wednesday', 'Friday'],
+    caption: 'Monday, Wednesday and Friday',
+  },
+  {
+    code: 'TTHF',
+    short: 'Tue · Thu · Fri',
+    days: ['Tuesday', 'Thursday', 'Friday'],
+    caption: 'Tuesday, Thursday and Friday',
+  },
 ]
 
 // Fetcher registrations must list at least one student being fetched.
@@ -237,6 +249,10 @@ export default function RegisterPage() {
     driver_name: '',
     driver_relationship: '',
     driver_contact: '',
+    // schedule is the rotation the applicant picks (MWF / TTHF); campus_days is
+    // the week it expands to. Both are sent — the backend re-derives one from
+    // the other, so they can never disagree.
+    schedule: '',
     campus_days: [],
     plate_number: '',
     conduction_number: '',
@@ -556,14 +572,17 @@ export default function RegisterPage() {
     return () => clearTimeout(timer)
   }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType])
 
-  const toggleDay = (dayKey) => {
-    setFormData(prev => {
-      if (prev.campus_days.includes(dayKey))
-        return { ...prev, campus_days: prev.campus_days.filter(d => d !== dayKey) }
-      if (prev.campus_days.length >= 3) return prev
-      return { ...prev, campus_days: [...prev.campus_days, dayKey] }
-    })
+  const selectSchedule = (group) => {
+    setFormData(prev => ({ ...prev, schedule: group.code, campus_days: [...group.days] }))
   }
+
+  // Remaining places on a rotation = its tightest day, since a registration
+  // takes a slot on every day of the schedule.
+  const groupSlots = (group) =>
+    scheduleSlots?.groups?.[group.code]
+      ?? (scheduleSlots
+            ? { available: Math.min(...group.days.map(d => scheduleSlots[d]?.available ?? 0)) }
+            : null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -644,19 +663,14 @@ export default function RegisterPage() {
         }
       }
     }
-    if (registrantType === 'student' && formData.campus_days.length === 0) {
-      setSubmitError('Please select at least one campus day.')
-      return
-    }
-    if (registrantType === 'student' && formData.student_level !== 'sped' && formData.campus_days.length > 3) {
-      setSubmitError('You may only select up to 3 campus days.')
-      return
-    }
-
-    if (registrantType === 'student' && scheduleSlots) {
-      const fullDays = formData.campus_days.filter(d => scheduleSlots[d]?.available === 0)
-      if (fullDays.length > 0) {
-        setSubmitError(`The following day(s) are full: ${fullDays.join(', ')}. Please deselect them and try again.`)
+    if (registrantType === 'student' && formData.student_level !== 'sped') {
+      const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
+      if (!chosen) {
+        setSubmitError('Please choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
+        return
+      }
+      if (groupSlots(chosen)?.available === 0) {
+        setSubmitError(`The ${chosen.short} schedule is full. Please choose the other schedule.`)
         return
       }
     }
@@ -1320,11 +1334,17 @@ export default function RegisterPage() {
                             // Minors and SpEd are locked to a guardian driver;
                             // College/SHS default to self-driving.
                             who_drives: GUARDIAN_ONLY_LEVELS.includes(lvl.id) ? 'guardian' : 'self',
+                            // SpEd students attend every campus day; leaving
+                            // that level clears the assignment so a rotation
+                            // has to be chosen deliberately.
                             campus_days: lvl.id === 'sped'
-                              ? CAMPUS_DAYS.map(d => d.key)
+                              ? [...ALL_CAMPUS_DAYS]
                               : prev.student_level === 'sped'
                                 ? []
                                 : prev.campus_days,
+                            schedule: lvl.id === 'sped' || prev.student_level === 'sped'
+                              ? ''
+                              : prev.schedule,
                           }))}
                         >
                           {lvl.label}
@@ -1696,107 +1716,108 @@ export default function RegisterPage() {
                 {licenseError && <span className="field-error-msg">{licenseError}</span>}
               </div>
 
-              {/* Campus day selector — students only */}
+              {/* Campus schedule — students only. A rotation is taken whole:
+                  picking loose days produced passes whose stored days did not
+                  match the schedule printed on them. */}
               {isStudent && (
                 <div className="form-group col-span-2">
                   <label className="days-label">
-                    Campus Days <span className="required">*</span>
+                    Campus Schedule <span className="required">*</span>
                   </label>
                   {formData.student_level === 'sped' ? (
                     <div className="schedule-note schedule-note--sped">
                       <Info size={13} />
-                      <span>Special Education students are assigned <strong>all campus days</strong>.</span>
+                      <span>
+                        Special Education students are assigned <strong>all campus days
+                        (Monday to Saturday)</strong>.
+                      </span>
                     </div>
                   ) : (
                     <div className="schedule-note">
                       <Info size={13} />
                       <span>
-                        Schedules are <strong>first come, first serve</strong>. Each day has a limited number of slots.
-                        Select up to <strong>3 days</strong>. Days that are <strong>full</strong> cannot be selected.
+                        Choose <strong>one</strong> schedule — it covers all three of its days.
+                        Slots are <strong>first come, first serve</strong>; a schedule that is
+                        <strong> full</strong> cannot be selected.
                       </span>
                     </div>
                   )}
-                  <div className="campus-day-picker campus-day-picker--per-day">
-                    {CAMPUS_DAYS.map(day => {
-                      const isSped = formData.student_level === 'sped'
-                      const slot = scheduleSlots?.[day.key]
-                      const isFull = !isSped && slot?.available === 0
-                      const isSelected = formData.campus_days.includes(day.key)
-                      const limitReached = !isSped && formData.campus_days.length >= 3 && !isSelected
-                      const isDisabled = isSped || isFull || limitReached
-                      return (
-                        <button
-                          key={day.key}
-                          type="button"
-                          className={[
-                            'campus-day-btn campus-day-btn--per-day',
-                            isSelected ? 'campus-day-btn--selected' : '',
-                            isFull ? 'campus-day-btn--full' : '',
-                            limitReached && !isFull ? 'campus-day-btn--limit' : '',
-                            isSped ? 'campus-day-btn--sped' : '',
-                          ].filter(Boolean).join(' ')}
-                          onClick={() => !isDisabled && toggleDay(day.key)}
-                          disabled={isDisabled}
-                          aria-pressed={isSelected}
-                          title={isSped ? 'All days assigned for Special Education' : isFull ? `${day.key} is full` : limitReached ? 'Maximum 3 days selected' : day.key}
-                        >
-                          <span className="campus-day-short">{day.short}</span>
-                          <span className="campus-day-slots">
-                            {isSped
-                              ? 'All'
-                              : loadingSlots
+
+                  {formData.student_level === 'sped' ? (
+                    <div className="schedule-group-picker">
+                      <div className="schedule-group-card schedule-group-card--sped">
+                        <span className="schedule-group-days">Monday – Saturday</span>
+                        <span className="schedule-group-caption">All campus days assigned</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="schedule-group-picker">
+                      {SCHEDULE_GROUPS.map(group => {
+                        const slot = groupSlots(group)
+                        const isFull = slot?.available === 0
+                        const isSelected = formData.schedule === group.code
+                        return (
+                          <button
+                            key={group.code}
+                            type="button"
+                            className={[
+                              'schedule-group-card',
+                              isSelected ? 'schedule-group-card--selected' : '',
+                              isFull ? 'schedule-group-card--full' : '',
+                            ].filter(Boolean).join(' ')}
+                            onClick={() => !isFull && selectSchedule(group)}
+                            disabled={isFull}
+                            aria-pressed={isSelected}
+                            title={isFull ? `The ${group.short} schedule is full` : group.caption}
+                          >
+                            <span className="schedule-group-days">{group.short}</span>
+                            <span className="schedule-group-caption">{group.caption}</span>
+                            <span className="schedule-group-slots">
+                              {loadingSlots
                                 ? '···'
                                 : slot
-                                  ? (isFull ? 'FULL' : `${slot.available} left`)
+                                  ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
                                   : '—'}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
                   <div className="campus-day-summary">
                     <span className="campus-day-counter">
                       {formData.student_level === 'sped'
-                        ? 'All campus days assigned'
-                        : `${formData.campus_days.length}/3 days selected${formData.campus_days.length === 3 ? ' — maximum reached' : ''}`}
+                        ? 'Entry is allowed Monday to Saturday.'
+                        : formData.schedule
+                          ? `You may enter on ${formData.campus_days.join(', ')}.`
+                          : 'No schedule selected yet.'}
                     </span>
-                    {formData.campus_days.length > 0 && scheduleSlots && (
-                      <div className="campus-day-selected-list">
-                        {formData.campus_days.map(d => {
-                          const slot = scheduleSlots[d]
-                          return (
-                            <span key={d} className="campus-day-selected-chip">
-                              {d.slice(0, 3)}
-                              {slot && (
-                                <em>{slot.available} slot{slot.available !== 1 ? 's' : ''} left</em>
-                              )}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
 
-              {/* Employee — all days, no picker */}
+              {/* Employee — every campus day, no picker. Spelled out as
+                  Monday–Saturday: "any day" reads as Sunday included, and the
+                  campus is closed then. */}
               {isEmployee && (
                 <div className="form-group col-span-2">
                   <p className="campus-day-anyday-note">
                     <Info size={13} />
-                    Employees are permitted to enter and park on any day of the week.
+                    Employees are permitted to enter and park on <strong>any campus day
+                    (Monday to Saturday)</strong>.
                   </p>
                 </div>
               )}
 
-              {/* Fetcher — all days; entry rules depend on classification */}
+              {/* Fetcher — every campus day; entry rules depend on classification */}
               {isFetcher && (
                 <div className="form-group col-span-2">
                   <p className="campus-day-anyday-note fetcher-note">
                     <Info size={13} />
                     {fetcherType === 'standby'
-                      ? <>Standby fetchers may enter on <strong>any day</strong> and are allowed to park inside the campus while waiting.</>
-                      : <>Fetchers / Drop &amp; Go may enter on <strong>any day</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
+                      ? <>Standby fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to park inside the campus while waiting.</>
+                      : <>Fetchers / Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
                   </p>
                 </div>
               )}

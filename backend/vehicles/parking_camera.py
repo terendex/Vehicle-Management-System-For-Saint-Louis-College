@@ -1094,8 +1094,9 @@ class ParkingCameraThread(threading.Thread):
             try:
                 from violations.models import Violation
                 from scanning.views import _auto_log_violation
-                # Reuses the gate path: one per vehicle per day, offense
-                # numbering, 3rd-offense fee, evidence image and owner email.
+                # Reuses the gate path: one per vehicle per day, offence
+                # numbering, the confiscation penalty, evidence image and owner
+                # email.
                 _auto_log_violation(
                     vehicle,
                     f"Double parking detected by camera across bays {label}",

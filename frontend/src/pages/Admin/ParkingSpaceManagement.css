@@ -4,3 +4,13 @@
   background: #D3E1EC;
   margin: 28px 0;
 }
+
+/* Confiscated-accounts card sits in the page gutter like the sections either
+   side of it, rather than edge to edge. */
+.psm-confiscated {
+  padding: 0 2rem;   /* matches .parking-page's own gutter */
+}
+
+@media (max-width: 768px) {
+  .psm-confiscated { padding: 0 20px; }
+}

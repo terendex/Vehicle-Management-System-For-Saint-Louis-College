@@ -772,8 +772,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
-from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, allows_unlimited_days,
-                          clean_campus_days, schedule_group)
+from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
+                          SCHEDULE_GROUP_DAYS, clean_campus_days,
+                          resolve_student_schedule, schedule_group)
 from accounts.models import User
 from .email_utils import send_acceptance_email, send_rejection_email, send_pending_email
 
@@ -1349,7 +1350,7 @@ class AcceptRegistrationView(APIView):
             registration.save()
 
             # Sync final campus_days / schedule onto the user account so entry_logic
-            # can check actual days rather than a fixed MWF/TTHS group.
+            # can check actual days rather than a fixed MWF/TTHF group.
             user.campus_days = registration.campus_days or []
             user.schedule    = registration.schedule or user.schedule
             user.save(update_fields=['campus_days', 'schedule'])
@@ -1659,6 +1660,25 @@ class ScheduleSlotsView(APIView):
                 "limit": limit,
                 "available": max(0, limit - used),
             }
+
+        # The public form books a whole rotation, so what it needs is the
+        # rotation's headroom: its tightest day, since one full day closes the
+        # schedule. The per-day grid stays for the CDSO day picker, which still
+        # assigns days one at a time.
+        #
+        # Friday is on both rotations, so its count is MWF students + TTHF
+        # students and it is normally the tightest day of the two — meaning
+        # `used` here is the rotation's busiest day, not its headcount.
+        result['groups'] = {
+            code: {
+                "days": days,
+                "label": SCHEDULE_DAY_LABELS[code],
+                "used": max(result[d]['used'] for d in days),
+                "limit": limit,
+                "available": min(result[d]['available'] for d in days),
+            }
+            for code, days in SCHEDULE_GROUP_DAYS.items()
+        }
         return Response(result)
 
 
@@ -1830,25 +1850,15 @@ class PublicOpenRegistrationView(APIView):
             # entry_logic can never match, leaving a pass valid on no day) or
             # for all six days, silently taking more than the 3-day allowance
             # that CDSO otherwise has to approve as a special case.
-            campus_days, rejected = clean_campus_days(data.get('campus_days', []))
-            if rejected:
-                return Response(
-                    {"error": f"Not a campus day: {', '.join(str(d) for d in rejected)}. "
-                              f"Choose from {', '.join(ALL_DAYS)}."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not campus_days:
-                return Response({"error": "Students must select at least one campus day."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # SpEd students attend daily and are exempt from the cap; everyone
-            # else gets the standard allowance. Beyond it is a CDSO decision
-            # made at review time, not something a submission may grant itself.
-            if (len(campus_days) > MAX_CAMPUS_DAYS
-                    and not allows_unlimited_days(data.get('student_level'))):
-                return Response(
-                    {"error": f"You may only select up to {MAX_CAMPUS_DAYS} campus days."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            #
+            # An applicant now picks a rotation rather than loose days, so the
+            # resolution lives in campus_days.resolve_student_schedule and both
+            # `schedule` (what the form sends) and `campus_days` (older clients,
+            # direct callers) arrive at the same whole week.
+            campus_days, schedule_code, day_error = resolve_student_schedule(
+                data.get('schedule'), data.get('campus_days', []), data.get('student_level'))
+            if day_error:
+                return Response({"error": day_error}, status=status.HTTP_400_BAD_REQUEST)
 
             active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
             base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
@@ -1858,13 +1868,19 @@ class PublicOpenRegistrationView(APIView):
                 if used >= SCHEDULE_SLOT_LIMIT:
                     full_days.append(day)
             if full_days:
+                # A rotation is taken as a whole, so one full day closes the
+                # whole schedule — saying "Friday is full, pick another day"
+                # would offer a choice the form no longer has.
+                label = SCHEDULE_DAY_LABELS.get(schedule_code, schedule_code)
                 return Response(
-                    {"error": f"The following day(s) are full: {', '.join(full_days)}. Please choose other days."},
+                    {"error": f"The {label} schedule is full "
+                              f"({', '.join(full_days)} at capacity). "
+                              f"Please choose the other schedule."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
             data['campus_days'] = campus_days
-            data['schedule'] = schedule_group(campus_days)
+            data['schedule'] = schedule_code
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():

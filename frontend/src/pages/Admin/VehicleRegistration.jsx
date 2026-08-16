@@ -8,7 +8,17 @@ import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
 import './VehicleRegistration.css'
 
-const SCHEDULE_LABELS = { MWF: 'Mon · Wed · Fri', TTHS: 'Tue · Thu · Sat', ANY: 'Any Day', MIXED: 'Mixed Days' }
+// "Any Day" reads as Sunday included; the campus is closed then, so the ANY
+// pass is labelled with the week it actually admits. TTHS is the pre-rename
+// rotation (Tue/Thu/Sat) — kept so a row that missed the migration still reads
+// as the days it was actually issued for.
+const SCHEDULE_LABELS = {
+  MWF: 'Mon · Wed · Fri',
+  TTHF: 'Tue · Thu · Fri',
+  TTHS: 'Tue · Thu · Sat',
+  ANY: 'Mon – Sat',
+  MIXED: 'Mixed Days',
+}
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DAY_SHORT = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' }
 

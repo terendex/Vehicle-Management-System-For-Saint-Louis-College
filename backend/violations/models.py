@@ -6,13 +6,24 @@ FINE_STANDARD    = Decimal('20.00')   # legacy
 FINE_REPEAT      = Decimal('10.00')   # legacy
 REPEAT_THRESHOLD = 3                   # legacy
 
-FEE_THIRD_OFFENSE = Decimal('150.00')
+# ── The penalty ladder ────────────────────────────────────────────────────────
+# Offences no longer carry a fine. Each one costs the owner their campus access
+# for a period that grows with the count:
+#
+#   1st offence — account confiscated for 1 week
+#   2nd offence — account confiscated for 2 weeks
+#   3rd offence — confiscated for the rest of the registration period, and the
+#                 person may not register again unless the CDSO allows it
+#
+# The count is per ACCOUNT across every tracked type, not per type: three
+# different kinds of offence still add up to a third strike. Cleared and lifted
+# violations drop out of the count.
+CONFISCATION_DAYS = {1: 7, 2: 14}     # 3 runs to the end of the registration period
 
-# Types that escalate to ₱150 fee on 3rd offense and block entry
-FEE_ESCALATING_TYPES = {'unauthorized_entry', 'time_exceed'}
-
-# Types that use the new 3-offense tracking system
-NEW_STYLE_TYPES = {'unauthorized_entry', 'double_parking', 'time_exceed'}
+# Types that count toward the ladder.
+NEW_STYLE_TYPES = {
+    'unauthorized_entry', 'double_parking', 'time_exceed', 'confiscated_activity',
+}
 
 
 class Violation(models.Model):
@@ -22,12 +33,18 @@ class Violation(models.Model):
         TIME_EXCEED          = 'time_exceed',           'Time Exceed'
         NO_STICKER           = 'no_sticker',           'No Sticker'
         EXPIRED_REGISTRATION = 'expired_registration', 'Expired Registration'
+        # Logged when a confiscated account is caught entering or parking. The
+        # penalty is meant to keep them off campus, so being detected during it
+        # is itself an offence and moves them up the ladder.
+        CONFISCATED_ACTIVITY = 'confiscated_activity', 'Activity While Confiscated'
         UNAUTHORIZED         = 'unauthorized',          'Unauthorized (Legacy)'
         OTHER                = 'other',                'Other'
 
     class Status(models.TextChoices):
         WARNING     = 'warning',     'Warning'
-        FEE_IMPOSED = 'fee_imposed', 'Fee Imposed'
+        # Kept so historical rows issued under the old fine system still render.
+        # Nothing sets it any more — offences cost access, not money.
+        FEE_IMPOSED = 'fee_imposed', 'Fee Imposed (Legacy)'
         CLEARED     = 'cleared',     'Cleared'
         # Voided as a false alarm. Distinct from CLEARED: cleared means the
         # offence happened and was settled (OR presented); lifted means it
@@ -57,6 +74,18 @@ class Violation(models.Model):
     conduction_number = models.CharField(max_length=50, blank=True, default='')
     owner_name        = models.CharField(max_length=150, blank=True, default='')
     owner_email       = models.CharField(max_length=254, blank=True, default='')
+
+    # The account the ladder is counted against. The snapshot fields above are
+    # for display and survive deletion; this FK is what the offence count and
+    # the confiscation are keyed on. SET_NULL for the same reason as `vehicle`
+    # — the disciplinary record outlives the account.
+    #
+    # Resolved from vehicle.user at issue time. Counting through `vehicle`
+    # instead would restart someone's ladder the moment they swapped cars.
+    owner             = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='violations', db_index=True,
+    )
 
     violation_type = models.CharField(max_length=30, choices=Type.choices)
     notes          = models.TextField(blank=True)
@@ -129,6 +158,8 @@ class Violation(models.Model):
         if owner is not None:
             self.owner_name  = owner.full_name or ''
             self.owner_email = owner.email or ''
+            if self.owner_id is None:
+                self.owner = owner
 
     def save(self, *args, **kwargs):
         """Take the identity snapshot once, when the violation is first issued.
@@ -145,63 +176,60 @@ class Violation(models.Model):
         super().save(*args, **kwargs)
 
     @classmethod
-    def compute_offense_number(cls, vehicle, violation_type) -> int:
-        """Count active new-style violations of this type to get the next offense number.
+    def active_for_owner(cls, owner):
+        """Every violation still counting toward this account's ladder.
 
         Cleared ones are settled and lifted ones never happened, so neither
-        counts.
+        counts. Falls back to the email snapshot so offences issued before the
+        owner FK existed — or after the account row was replaced — still count
+        against the same person.
         """
-        count = cls.objects.filter(
-            vehicle=vehicle,
-            violation_type=violation_type,
-            offense_number__isnull=False,
-        ).exclude(status__in=cls.INACTIVE_STATUSES).count()
-        return min(count + 1, 3)
+        if owner is None:
+            return cls.objects.none()
+        from django.db.models import Q
+        q = Q(owner=owner)
+        if owner.email:
+            q |= Q(owner__isnull=True, owner_email__iexact=owner.email)
+        return (cls.objects.filter(q, offense_number__isnull=False)
+                           .exclude(status__in=cls.INACTIVE_STATUSES))
 
     @classmethod
-    def resequence_offenses(cls, vehicle, violation_type) -> int:
-        """Renumber a vehicle's active violations of one type, oldest first.
+    def compute_offense_number(cls, owner) -> int:
+        """The strike number the next offence for this account will carry.
+
+        Counted per ACCOUNT across every tracked type — three different kinds
+        of offence still reach a third strike. Capped at 3: the ladder has no
+        rung above "confiscated for the rest of the period".
+        """
+        return min(cls.active_for_owner(owner).count() + 1, 3)
+
+    @classmethod
+    def resequence_offenses(cls, owner) -> int:
+        """Renumber an account's active violations, oldest first.
 
         `offense_number` is stamped at creation and never revisited, so lifting
         the 1st of two warnings used to leave the survivor still reading
         "offense 2" — the count the owner sees, and the ladder that decides the
-        3rd-offense fee, would both stay wrong. This walks what remains and
-        rewrites the number, the fee, and the status to match.
+        penalty, would both stay wrong. This walks what remains and rewrites the
+        strike numbers to match.
 
-        A violation that was already settled with an Official Receipt is left
-        alone: money changed hands, and renumbering it would either invent a
-        refund or silently re-impose a fee.
+        Only the 3rd strike holds registration, so dropping below it releases
+        that hold as well.
 
         Returns the number of rows changed.
         """
-        from decimal import Decimal
-
-        active = list(
-            cls.objects.filter(
-                vehicle=vehicle,
-                violation_type=violation_type,
-                offense_number__isnull=False,
-            ).exclude(status__in=cls.INACTIVE_STATUSES).order_by('issued_at', 'id')
-        )
+        active = list(cls.active_for_owner(owner).order_by('issued_at', 'id'))
 
         changed = 0
         for idx, v in enumerate(active, start=1):
             n = min(idx, 3)
-            is_fee_event = (n == 3 and violation_type in FEE_ESCALATING_TYPES)
-            new_status = cls.Status.FEE_IMPOSED if is_fee_event else cls.Status.WARNING
-            new_fine   = FEE_THIRD_OFFENSE if is_fee_event else Decimal('0.00')
+            blocks = (n == 3)
 
             fields = []
             if v.offense_number != n:
                 v.offense_number = n; fields.append('offense_number')
-            if v.status != new_status:
-                v.status = new_status; fields.append('status')
-            if v.fine_amount != new_fine:
-                v.fine_amount = new_fine; fields.append('fine_amount')
-            # Dropping below the 3rd offence releases the registration hold that
-            # only the fee event should ever have set.
-            if v.registration_blocked != is_fee_event:
-                v.registration_blocked = is_fee_event; fields.append('registration_blocked')
+            if v.registration_blocked != blocks:
+                v.registration_blocked = blocks; fields.append('registration_blocked')
 
             if fields:
                 v.save(update_fields=fields)

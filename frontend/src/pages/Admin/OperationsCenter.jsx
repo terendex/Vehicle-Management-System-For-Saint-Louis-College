@@ -13,6 +13,7 @@ import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
 import TableLoader from '../../components/TableLoader'
+import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -641,6 +642,12 @@ export default function OperationsCenter() {
               </>
             )}
           </div>
+        </div>
+
+        {/* Accounts serving a violation penalty — barred from entering and
+            from parking until the term runs out or the CDSO lifts it. */}
+        <div className="oc-confiscated">
+          <ConfiscatedAccounts />
         </div>
 
       </div>

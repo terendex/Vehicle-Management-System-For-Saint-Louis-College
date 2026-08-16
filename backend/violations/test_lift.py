@@ -3,7 +3,7 @@
 `offense_number` is stamped at creation and never revisited, so without
 resequencing, lifting the 1st of two warnings leaves the survivor still reading
 "offense 2" — wrong in the owner's list, and wrong for the ladder that decides
-the 3rd-offense fee.
+how long the account stays confiscated.
 """
 from decimal import Decimal
 
@@ -13,7 +13,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from vehicles.models import Vehicle
-from violations.models import Violation, FEE_THIRD_OFFENSE
+from violations.models import Violation
 
 User = get_user_model()
 UE = Violation.Type.UNAUTHORIZED_ENTRY
@@ -37,9 +37,9 @@ class LiftViolationTests(APITestCase):
         # is_released=True matches how the API issues them — MyViolationsView
         # filters on it, so leaving it default hides the row from the owner.
         return Violation.objects.create(
-            vehicle=self.vehicle, violation_type=vtype, offense_number=n,
-            status=status_, fine_amount=Decimal(fine),
-            is_released=True, issued_at=timezone.now(),
+            vehicle=self.vehicle, owner=self.owner,
+            violation_type=vtype, offense_number=n,
+            status=status_, is_released=True, issued_at=timezone.now(),
         )
 
     def _lift(self, v, reason='False alarm — camera artefact', as_user=None):
@@ -88,11 +88,11 @@ class LiftViolationTests(APITestCase):
     def test_next_violation_after_a_lift_reuses_the_freed_number(self):
         first, second = self._issue(1), self._issue(2)
         self._lift(first)
-        self.assertEqual(Violation.compute_offense_number(self.vehicle, UE), 2)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 2)
 
-    def test_lifting_drops_a_third_offense_fee_back_to_a_warning(self):
+    def test_lifting_drops_a_third_offense_back_to_a_second(self):
         v1, v2 = self._issue(1), self._issue(2)
-        v3 = self._issue(3, status_=Violation.Status.FEE_IMPOSED, fine=str(FEE_THIRD_OFFENSE))
+        v3 = self._issue(3)
         v3.registration_blocked = True
         v3.save(update_fields=['registration_blocked'])
 
@@ -101,11 +101,41 @@ class LiftViolationTests(APITestCase):
         v3.refresh_from_db()
         self.assertEqual(v3.offense_number, 2)
         self.assertEqual(v3.status, Violation.Status.WARNING)
-        self.assertEqual(v3.fine_amount, Decimal('0.00'))
-        self.assertFalse(v3.registration_blocked)   # hold released with the fee
+        # Only the 3rd strike holds registration, so dropping to 2 releases it.
+        self.assertFalse(v3.registration_blocked)
+
+    def test_lifting_shortens_the_confiscation(self):
+        """The penalty must follow the record it was derived from."""
+        from violations.penalty import apply_penalty
+        for n in (1, 2, 3):
+            apply_penalty(self._issue(n))
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.confiscation_level, 3)
+
+        newest = Violation.objects.filter(owner=self.owner).order_by('-offense_number').first()
+        self._lift(newest)
+
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.confiscation_level, 2)
+        self.assertTrue(self.owner.is_confiscated)
+
+    def test_lifting_every_offence_lifts_the_confiscation(self):
+        from violations.penalty import apply_penalty
+        issued = [self._issue(n) for n in (1, 2)]
+        for v in issued:
+            apply_penalty(v)
+        self.owner.refresh_from_db()
+        self.assertTrue(self.owner.is_confiscated)
+
+        for v in issued:
+            self._lift(v)
+
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.confiscation_level, 0)
+        self.assertFalse(self.owner.is_confiscated)
 
     def test_lifted_violation_is_zeroed_and_unblocked(self):
-        v = self._issue(3, status_=Violation.Status.FEE_IMPOSED, fine=str(FEE_THIRD_OFFENSE))
+        v = self._issue(3)
         v.registration_blocked = True
         v.save(update_fields=['registration_blocked'])
 
@@ -114,7 +144,6 @@ class LiftViolationTests(APITestCase):
         v.refresh_from_db()
         self.assertEqual(v.status, Violation.Status.LIFTED)
         self.assertTrue(v.is_resolved)
-        self.assertEqual(v.fine_amount, Decimal('0.00'))
         self.assertFalse(v.registration_blocked)
         self.assertEqual(v.lifted_by, self.admin)
         self.assertIsNotNone(v.lifted_at)
@@ -127,8 +156,8 @@ class LiftViolationTests(APITestCase):
         self.assertEqual(self._lift(v).status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_cannot_lift_a_settled_violation(self):
-        """Money changed hands — this action cannot invent a refund."""
-        v = self._issue(3, status_=Violation.Status.CLEARED, fine=str(FEE_THIRD_OFFENSE))
+        """Already settled by the CDSO — lifting would double-handle it."""
+        v = self._issue(3, status_=Violation.Status.CLEARED)
         r = self._lift(v)
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         v.refresh_from_db()

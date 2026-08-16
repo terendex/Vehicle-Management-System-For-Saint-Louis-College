@@ -10,6 +10,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import QrScanModal from '../../components/QrScanModal'
+import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
@@ -1175,6 +1176,13 @@ export default function SecurityEntryManagement() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Confiscated owners may not enter. The guard meeting the car at the
+            barrier is the person who has to know, and a car turning up during
+            the penalty is itself a further offence. */}
+        <div className="em-confiscated">
+          <ConfiscatedAccounts />
         </div>
 
         {showExitScanner && (

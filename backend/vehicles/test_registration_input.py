@@ -8,7 +8,10 @@ nothing else.
 
 The campus-day tests cover the second half of the same problem. Day names went
 into a JSONField unchecked, so the only thing enforcing "real weekdays, at most
-three of them" was the React form — which is not enforcement at all.
+three of them" was the React form — which is not enforcement at all. An
+applicant now registers for a whole rotation (MWF or TTHF) rather than for days
+of their choosing, and these tests pin that the endpoint resolves to one whether
+the payload names the rotation or names days.
 """
 from datetime import timedelta
 
@@ -17,7 +20,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from vehicles.campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, clean_campus_days,
+from vehicles.campus_days import (ALL_DAYS, SCHEDULE_GROUP_DAYS,
+                                  clean_campus_days, resolve_student_schedule,
                                   schedule_group)
 from vehicles.models import RegistrationPeriod, VehicleRegistration
 
@@ -143,23 +147,40 @@ class CampusDayValidationTests(RegistrationInputTestCase):
         res = self.submit(campus_days=['Monday', 'DROP TABLE'])
         self.assertEqual(res.status_code, 400)
 
-    def test_more_than_the_allowance_is_rejected(self):
+    def test_days_from_both_rotations_are_rejected(self):
+        """The form offers two rotations; a payload combining them is asking
+        for a week that no schedule grants."""
         res = self.submit(campus_days=list(ALL_DAYS))
         self.assertEqual(res.status_code, 400)
-        self.assertIn(str(MAX_CAMPUS_DAYS), res.data['error'])
+        self.assertIn('one rotation', res.data['error'])
 
-    def test_sped_students_are_exempt_from_the_cap(self):
+    def test_sped_students_get_every_campus_day(self):
         reg = self.submit_ok(student_level='sped', campus_days=list(ALL_DAYS),
                              driver_name='Parent Name', driver_relationship='parent')
         self.assertEqual(len(reg.campus_days), len(ALL_DAYS))
 
-    def test_no_days_at_all_is_rejected(self):
+    def test_no_schedule_at_all_is_rejected(self):
         res = self.submit(campus_days=[])
         self.assertEqual(res.status_code, 400)
 
-    def test_duplicates_are_collapsed_and_days_stored_in_order(self):
+    def test_choosing_a_rotation_books_the_whole_week(self):
+        """The point of the change: a pass issued as MWF admits all three days,
+        so the stored days can't be a subset of the schedule printed on it."""
+        reg = self.submit_ok(schedule='MWF', campus_days=[])
+        self.assertEqual(reg.schedule, 'MWF')
+        self.assertEqual(reg.campus_days, SCHEDULE_GROUP_DAYS['MWF'])
+
+    def test_the_other_rotation(self):
+        reg = self.submit_ok(schedule='TTHF', campus_days=[])
+        self.assertEqual(reg.schedule, 'TTHF')
+        self.assertEqual(reg.campus_days, SCHEDULE_GROUP_DAYS['TTHF'])
+
+    def test_loose_days_are_snapped_up_to_their_rotation(self):
+        """Older clients (and direct API callers) send days, not a rotation —
+        they must not be able to buy a cheaper, partial week."""
         reg = self.submit_ok(campus_days=['Wednesday', 'Monday', 'Monday'])
-        self.assertEqual(reg.campus_days, ['Monday', 'Wednesday'])
+        self.assertEqual(reg.schedule, 'MWF')
+        self.assertEqual(reg.campus_days, SCHEDULE_GROUP_DAYS['MWF'])
 
     def test_employees_never_carry_campus_days(self):
         reg = self.submit_ok(registrant_type='employee', student_id='',
@@ -176,12 +197,23 @@ class ScheduleGroupTests(TestCase):
     def test_partial_weeks_keep_their_rotation(self):
         self.assertEqual(schedule_group(['Monday']), 'MWF')
         self.assertEqual(schedule_group(['Monday', 'Wednesday']), 'MWF')
-        self.assertEqual(schedule_group(['Tuesday']), 'TTHS')
-        self.assertEqual(schedule_group(['Thursday', 'Saturday']), 'TTHS')
+        self.assertEqual(schedule_group(['Tuesday']), 'TTHF')
+        self.assertEqual(schedule_group(['Thursday', 'Friday']), 'TTHF')
 
     def test_full_weeks(self):
         self.assertEqual(schedule_group(['Monday', 'Wednesday', 'Friday']), 'MWF')
-        self.assertEqual(schedule_group(['Tuesday', 'Thursday', 'Saturday']), 'TTHS')
+        self.assertEqual(schedule_group(['Tuesday', 'Thursday', 'Friday']), 'TTHF')
+
+    def test_friday_alone_is_ambiguous_and_resolves_to_mwf(self):
+        """Friday is on both rotations. The answer only has to be stable —
+        the form names its rotation outright and never relies on this."""
+        self.assertEqual(schedule_group(['Friday']), 'MWF')
+
+    def test_saturday_belongs_to_no_student_rotation(self):
+        """Saturday is still a campus day CDSO can assign, but it is not part
+        of MWF or TTHF, so a Saturday student is a custom case."""
+        self.assertEqual(schedule_group(['Saturday']), 'MIXED')
+        self.assertEqual(schedule_group(['Tuesday', 'Saturday']), 'MIXED')
 
     def test_straddling_both_rotations_is_mixed(self):
         self.assertEqual(schedule_group(['Monday', 'Tuesday']), 'MIXED')
@@ -199,6 +231,57 @@ class ScheduleGroupTests(TestCase):
     def test_clean_campus_days_survives_a_non_list(self):
         self.assertEqual(clean_campus_days('Monday'), ([], []))
         self.assertEqual(clean_campus_days(None), ([], []))
+
+
+class ResolveStudentScheduleTests(TestCase):
+    """A student registers for a rotation, so whatever the payload says has to
+    come out as one of exactly two weeks (or SpEd's six days)."""
+
+    def test_a_named_rotation_expands_to_its_week(self):
+        for code, days in SCHEDULE_GROUP_DAYS.items():
+            got_days, got_code, err = resolve_student_schedule(code, [], 'college')
+            self.assertIsNone(err)
+            self.assertEqual(got_code, code)
+            self.assertEqual(got_days, days)
+
+    def test_the_named_rotation_beats_stale_days_in_the_payload(self):
+        days, code, err = resolve_student_schedule('TTHF', ['Monday'], 'college')
+        self.assertIsNone(err)
+        self.assertEqual(code, 'TTHF')
+        self.assertEqual(days, SCHEDULE_GROUP_DAYS['TTHF'])
+
+    def test_a_partial_week_is_filled_out(self):
+        days, code, err = resolve_student_schedule('', ['Thursday'], 'college')
+        self.assertIsNone(err)
+        self.assertEqual(code, 'TTHF')
+        self.assertEqual(days, SCHEDULE_GROUP_DAYS['TTHF'])
+
+    def test_an_unknown_code_falls_back_to_the_days(self):
+        days, code, err = resolve_student_schedule('WHENEVER', ['Wednesday'], 'college')
+        self.assertIsNone(err)
+        self.assertEqual(code, 'MWF')
+
+    def test_saturday_is_no_longer_a_rotation_students_can_register_for(self):
+        _, _, err = resolve_student_schedule('', ['Tuesday', 'Saturday'], 'college')
+        self.assertIn('one rotation', err)
+
+    def test_straddling_rotations_is_an_error_not_a_guess(self):
+        days, code, err = resolve_student_schedule('MIXED', ['Monday', 'Tuesday'], 'college')
+        self.assertEqual(days, [])
+        self.assertIn('one rotation', err)
+
+    def test_nothing_chosen_is_an_error(self):
+        _, _, err = resolve_student_schedule('', [], 'college')
+        self.assertIn('must choose a schedule', err)
+
+    def test_bogus_days_are_named_back(self):
+        _, _, err = resolve_student_schedule('', ['Funday'], 'college')
+        self.assertIn('Not a campus day', err)
+
+    def test_sped_takes_every_campus_day_whatever_was_sent(self):
+        days, _, err = resolve_student_schedule('MWF', ['Monday'], 'sped')
+        self.assertIsNone(err)
+        self.assertEqual(days, list(ALL_DAYS))
 
 
 class ScheduleGroupIsConsistentAcrossEntryPointsTests(RegistrationInputTestCase):
@@ -298,8 +381,10 @@ class WalkInRegistrationStillWorksTests(RegistrationInputTestCase):
         payload, res = self._direct(campus_days=['Tuesday', 'Thursday'])
         self.assertEqual(res.status_code, 201, res.data)
         reg = VehicleRegistration.objects.get(email=payload['email'])
-        self.assertEqual(reg.schedule, 'TTHS')
-        self.assertEqual(reg.user.schedule, 'TTHS')
+        self.assertEqual(reg.schedule, 'TTHF')
+        self.assertEqual(reg.user.schedule, 'TTHF')
+        # The walk-in path is CDSO keying in exactly what they mean, so unlike
+        # the public form the days are kept as given, not filled out to a week.
         self.assertEqual(reg.user.campus_days, ['Tuesday', 'Thursday'])
 
     def test_walk_in_rejects_unknown_days(self):

@@ -76,10 +76,12 @@ class User(AbstractUser):
 
     class Schedule(models.TextChoices):
         MWF   = 'MWF',   'Monday-Wednesday-Friday'
-        TTHS  = 'TTHS',  'Tuesday-Thursday-Saturday'
+        TTHF  = 'TTHF',  'Tuesday-Thursday-Friday'
         MIXED = 'MIXED', 'Custom / Mixed Days'
-        ANY   = 'ANY',   'Any Day'
-        ALL   = 'ALL',   'All Days'
+        # "Any Day" / "All Days" read as Sunday included; the campus is closed
+        # then, so both are spelled out as the week they really cover.
+        ANY   = 'ANY',   'Any Campus Day (Monday-Saturday)'
+        ALL   = 'ALL',   'All Campus Days (Monday-Saturday)'
 
     # Role-prefixed human-readable ID, e.g. SLC-ADM-000001
     _ROLE_PREFIX = {
@@ -129,6 +131,32 @@ class User(AbstractUser):
     # new vehicle pass — their identity is NOT freed on archive.
     registration_banned = models.BooleanField(default=False, db_index=True)
 
+    # ── Confiscation (violation penalty) ─────────────────────────────────────
+    # The penalty ladder replaced fines: 1st offence costs the account a week,
+    # 2nd two weeks, 3rd the rest of the registration period. A confiscated
+    # account may not enter campus and may not park.
+    #
+    # This is deliberately NOT is_active. Disabling an account is an
+    # administrative act that also stops the person logging in to see why they
+    # were penalised; confiscation only withdraws campus access, and the owner
+    # keeps their portal so they can read the reason and the end date.
+    #
+    # `confiscated_until` is a date rather than a flag so the penalty expires on
+    # its own: is_confiscated compares it to today on every read, and no job has
+    # to run for the account to come back. NULL with a level set means
+    # indefinite — the 3rd offence with no registration period to end against.
+    confiscation_level  = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='0 = not confiscated. 1, 2 or 3 = which offence imposed it.',
+    )
+    confiscated_at      = models.DateTimeField(null=True, blank=True)
+    confiscated_until   = models.DateField(
+        null=True, blank=True, db_index=True,
+        help_text='Last day of the penalty, inclusive. NULL while a level is '
+                  'set means indefinite (until the CDSO lifts it).',
+    )
+    confiscation_reason = models.TextField(blank=True, default='')
+
     # Security-guard QR badge secret — a UUID printed on the guard's badge as a QR code.
     # Format in QR: "SLC-GUARD:{user_code}:{guard_qr_secret}"
     guard_qr_secret = models.UUIDField(null=True, blank=True, unique=True)
@@ -148,6 +176,44 @@ class User(AbstractUser):
             prefix = self._ROLE_PREFIX.get(self.role, 'USR')
             self.user_code = f"SLC-{prefix}-{str(self.pk).zfill(6)}"
             User.objects.filter(pk=self.pk).update(user_code=self.user_code)
+
+    # ── Confiscation helpers ─────────────────────────────────────────────────
+
+    @property
+    def is_confiscated(self) -> bool:
+        """True while the account is serving a violation penalty.
+
+        Evaluated from the stored end date rather than from a boolean that a
+        scheduled job has to clear, so a one-week penalty ends on its own even
+        if nothing is running. A level with no end date is indefinite.
+        """
+        if not self.confiscation_level:
+            return False
+        if self.confiscated_until is None:
+            return True
+        from django.utils import timezone as _tz
+        return _tz.localdate() <= self.confiscated_until
+
+    @property
+    def confiscation_days_left(self):
+        """Whole days remaining, or None when indefinite / not confiscated."""
+        if not self.is_confiscated or self.confiscated_until is None:
+            return None
+        from django.utils import timezone as _tz
+        return max(0, (self.confiscated_until - _tz.localdate()).days)
+
+    def clear_confiscation(self):
+        """Lift the penalty. Leaves the violations themselves untouched — the
+        offence history is what the ladder counts, and forgiving the penalty is
+        not the same as saying the offences never happened."""
+        self.confiscation_level  = 0
+        self.confiscated_at      = None
+        self.confiscated_until   = None
+        self.confiscation_reason = ''
+        self.save(update_fields=[
+            'confiscation_level', 'confiscated_at',
+            'confiscated_until', 'confiscation_reason',
+        ])
 
     def __str__(self):
         return f"{self.full_name} ({self.role})"

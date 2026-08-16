@@ -1,0 +1,200 @@
+/* Confiscated accounts card — gate and parking screens.
+   Same palette as the rest of the admin surfaces (SLC navy on #EEF4F9). */
+
+.ca-card {
+  background: #FFFFFF;
+  border: 1px solid #D3E1EC;
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ca-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 18px;
+  border-bottom: 1px solid #EEF4F9;
+  background: #F7FAFC;
+}
+
+.ca-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.ca-title svg { color: #C62828; }
+
+.ca-count {
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: #EEF4F9;
+  color: #64839C;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Only tinted when there is actually someone on the list — a permanent red
+   badge reading 0 trains people to ignore it. */
+.ca-count-active {
+  background: #FCEDED;
+  color: #C62828;
+}
+
+.ca-body { padding: 14px 18px 16px; }
+
+.ca-loading {
+  display: flex;
+  justify-content: center;
+  padding: 14px 0;
+  color: #64839C;
+}
+
+.ca-spin { animation: ca-spin 1s linear infinite; }
+@keyframes ca-spin { to { transform: rotate(360deg); } }
+
+.ca-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: #7C97AD;
+  font-style: italic;
+}
+
+.ca-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8A6B00;
+  background: #FFFBEB;
+  border-left: 3px solid #C8912A;
+  border-radius: 0 6px 6px 0;
+  padding: 8px 11px;
+}
+
+.ca-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ca-row {
+  border: 1px solid #D3E1EC;
+  border-left: 3px solid #C8912A;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #FFFFFF;
+}
+
+/* The 3rd offence is the one that also closes registration, so it reads red. */
+.ca-row.ca-level-3 { border-left-color: #C62828; }
+
+.ca-row-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ca-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.ca-plates {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4A6B85;
+}
+
+.ca-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 7px;
+}
+
+.ca-level {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #FFFBEB;
+  color: #8A6B00;
+  white-space: nowrap;
+}
+
+.ca-level-tag-3 {
+  background: #FCEDED;
+  color: #C62828;
+}
+
+.ca-until {
+  font-size: 11.5px;
+  color: #64839C;
+  font-weight: 500;
+}
+
+.ca-banned {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #FCEDED;
+  color: #C62828;
+  white-space: nowrap;
+}
+
+.ca-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ca-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1.5px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #3E5B72;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ca-btn:hover:not(:disabled) {
+  background: #F4F8FB;
+  border-color: #BDD4E5;
+}
+
+.ca-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Sidebar placement on the guard screens, where vertical room is scarce. */
+.ca-compact .ca-body { padding: 12px 14px 14px; }
+.ca-compact .ca-list { max-height: 320px; overflow-y: auto; }
