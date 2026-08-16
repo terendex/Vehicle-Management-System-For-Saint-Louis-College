@@ -16,6 +16,25 @@ import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+/* Registration windows are always named for a school year and a term, so the
+   label is picked rather than typed. Typing it produced four different names
+   for the same thing — 'test', 'test 2', 'S.Y 26-27' and 'SY 26-27' — which is
+   no help at all when you are looking down the archived list a year later. */
+const PERIOD_TERMS = ['First Semester', 'Second Semester', 'Summer']
+
+function periodLabelOptions(today = new Date()) {
+  // The school year rolls over in June: register in April and you are still
+  // finishing the year that began the previous June, so the label has to be
+  // that year's, not the calendar year's.
+  const startYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1
+  const options = []
+  for (const offset of [0, 1]) {
+    const from = startYear + offset
+    for (const term of PERIOD_TERMS) options.push(`S.Y. ${from}–${from + 1} ${term}`)
+  }
+  return options
+}
+
 const DAY_LABELS = [
   { key: 'mon', label: 'Mon' },
   { key: 'tue', label: 'Tue' },
@@ -307,7 +326,7 @@ export default function RuleConstraints() {
 
   const handleAddPeriod = async () => {
     const errors = {}
-    if (!periodForm.label.trim())      errors.label      = 'Label is required.'
+    if (!periodForm.label.trim())      errors.label      = 'Select a school year and term.'
     if (!periodForm.start_date)        errors.start_date = 'Start date is required.'
     if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
@@ -430,12 +449,16 @@ export default function RuleConstraints() {
                 <div className="rc-period-form-fields">
                   <div className="rc-reg-field" style={{ flex: 2 }}>
                     <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
-                    <input
-                      className={`rc-field-input ${periodErrors.label ? 'rc-input-error' : ''}`}
-                      placeholder="e.g. S.Y. 2025–2026 First Semester"
+                    <select
+                      className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
                       value={periodForm.label}
                       onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
-                    />
+                    >
+                      <option value="">Select a school year and term…</option>
+                      {periodLabelOptions().map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
                     {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
                   </div>
                   <div className="rc-reg-field">
