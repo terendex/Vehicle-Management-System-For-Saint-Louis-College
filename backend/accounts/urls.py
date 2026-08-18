@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import twofa_api, views
 
 urlpatterns = [
     path('register/',                   views.RegisterView.as_view(),          name='register'),
@@ -31,4 +31,16 @@ urlpatterns = [
     path('notifications/',              views.NotificationListView.as_view(),      name='notification-list'),
     path('notifications/mark-read/',    views.NotificationMarkReadView.as_view(),  name='notification-mark-read'),
     path('notifications/clear/',        views.NotificationClearView.as_view(),     name='notification-clear'),
+
+    # ── Two-factor authentication (Google Authenticator / TOTP) ─────────────
+    # setup + confirm + verify are AllowAny by design: they run while a login
+    # is paused, before any session token exists. Each one is gated by a signed
+    # challenge that is only issued after the right password was given.
+    path('2fa/setup/',        twofa_api.TwoFactorSetupView.as_view(),       name='twofa-setup'),
+    path('2fa/confirm/',      twofa_api.TwoFactorConfirmView.as_view(),     name='twofa-confirm'),
+    path('2fa/verify/',       twofa_api.TwoFactorVerifyView.as_view(),      name='twofa-verify'),
+    path('2fa/step-up/',      twofa_api.TwoFactorStepUpView.as_view(),      name='twofa-step-up'),
+    path('2fa/status/',       twofa_api.TwoFactorStatusView.as_view(),      name='twofa-status'),
+    path('2fa/backup-codes/', twofa_api.TwoFactorBackupCodesView.as_view(), name='twofa-backup-codes'),
+    path('users/<int:pk>/2fa/reset/', twofa_api.TwoFactorResetView.as_view(), name='twofa-reset'),
 ]

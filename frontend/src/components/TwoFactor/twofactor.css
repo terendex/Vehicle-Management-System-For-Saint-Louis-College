@@ -1,0 +1,351 @@
+/* Two-factor UI — shared by the login challenge and the step-up dialog.
+   Palette follows the rest of the system:
+   - Primary:  #03396C (SLC Navy)
+   - Text:     #0B2340 / #4A6B85
+   - Danger:   #B3261E   Success: #0F7A5A                                    */
+
+/* ── Code entry ───────────────────────────────────────────────────────────
+   One wide input rather than six boxes. Six boxes look the part but fight
+   paste, password managers and the iOS/Android SMS-style autofill that
+   `autocomplete="one-time-code"` triggers; a single field gets all three for
+   free and still reads as a code with the letter-spacing below.            */
+
+.tfa-code-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  /* The tracking is applied to the right of each glyph, including the last
+     one, which visually shoves the whole string left. Half of it back as
+     padding re-centres it. */
+  text-indent: 0.42em;
+  text-align: center;
+  color: #0B2340;
+  background: #F7FAFC;
+  border: 1.5px solid #C7D5E0;
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tfa-code-input:focus {
+  border-color: #03396C;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.12);
+}
+
+.tfa-code-input.tfa-invalid {
+  border-color: #B3261E;
+  box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.10);
+}
+
+.tfa-code-input.tfa-backup {
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+}
+
+.tfa-field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0B2340;
+}
+
+.tfa-hint {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4A6B85;
+}
+
+/* ── Alerts ──────────────────────────────────────────────────────────────── */
+
+.tfa-error,
+.tfa-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: 8px;
+}
+
+.tfa-error {
+  color: #8C1D18;
+  background: #FCEEEE;
+  border: 1px solid #F3C9C6;
+}
+
+.tfa-success {
+  color: #0B5138;
+  background: #E9F7F1;
+  border: 1px solid #BFE5D5;
+}
+
+.tfa-error svg,
+.tfa-success svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.tfa-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.tfa-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 9px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tfa-btn-primary {
+  color: #fff;
+  background: #03396C;
+  border-color: #03396C;
+}
+
+.tfa-btn-primary:hover:not(:disabled) { background: #032C55; border-color: #032C55; }
+
+.tfa-btn-ghost {
+  color: #03396C;
+  background: #fff;
+  border-color: #C7D5E0;
+}
+
+.tfa-btn-ghost:hover:not(:disabled) { border-color: #03396C; background: #F2F7FB; }
+
+.tfa-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.tfa-link-btn {
+  margin-top: 14px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #03396C;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tfa-link-btn:hover { color: #0B5C9C; }
+
+/* ── Step-up dialog ──────────────────────────────────────────────────────── */
+
+.tfa-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;   /* above the page modals at 1000 — this interrupts them */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tfa-dialog {
+  width: 100%;
+  max-width: 420px;
+  padding: 26px 26px 24px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(3, 35, 64, 0.28);
+}
+
+.tfa-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.tfa-dialog-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  color: #03396C;
+  background: #E8F0F7;
+  border-radius: 10px;
+}
+
+.tfa-dialog-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-dialog-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4A6B85;
+}
+
+.tfa-dialog-body { margin-top: 18px; }
+
+/* ── Login challenge card ────────────────────────────────────────────────── */
+
+.tfa-card { text-align: left; }
+
+.tfa-card-head { margin-bottom: 20px; text-align: center; }
+
+.tfa-card-title {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-card-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #4A6B85;
+}
+
+/* Enrollment steps */
+
+.tfa-steps {
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  counter-reset: tfa-step;
+}
+
+.tfa-steps li {
+  position: relative;
+  counter-increment: tfa-step;
+  padding: 0 0 12px 34px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #0B2340;
+}
+
+.tfa-steps li::before {
+  content: counter(tfa-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #03396C;
+  border-radius: 50%;
+}
+
+.tfa-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+  background: #F7FAFC;
+  border: 1px solid #DCE7EF;
+  border-radius: 12px;
+}
+
+.tfa-qr-wrap img {
+  width: 190px;
+  height: 190px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.tfa-secret {
+  width: 100%;
+  text-align: center;
+}
+
+.tfa-secret code {
+  display: inline-block;
+  padding: 7px 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #0B2340;
+  background: #fff;
+  border: 1px solid #DCE7EF;
+  border-radius: 7px;
+  /* A base32 secret has no spaces to wrap at, and overflowing it would push
+     the dialog wider than the phone screen it is being typed into. */
+  word-break: break-all;
+}
+
+.tfa-secret-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4A6B85;
+}
+
+/* ── Backup codes ────────────────────────────────────────────────────────── */
+
+.tfa-codes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+  padding: 16px;
+  background: #F7FAFC;
+  border: 1px solid #DCE7EF;
+  border-radius: 10px;
+}
+
+.tfa-codes-grid span {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #0B2340;
+  text-align: center;
+}
+
+.tfa-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7A4B00;
+  background: #FFF6E5;
+  border: 1px solid #F3DFB4;
+  border-radius: 8px;
+}
+
+.tfa-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+@media (max-width: 480px) {
+  .tfa-dialog { padding: 22px 18px 20px; }
+  .tfa-code-input { font-size: 22px; letter-spacing: 0.3em; text-indent: 0.3em; }
+  .tfa-qr-wrap img { width: 160px; height: 160px; }
+  .tfa-codes-grid { grid-template-columns: 1fr; }
+}

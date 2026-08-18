@@ -6,6 +6,7 @@ import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
 import LoginPage from './pages/Login/LoginPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
+import StepUpGate from './components/TwoFactor/StepUpGate'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 // Every page below goes through lazyWithRetry rather than React's lazy: a
 // chunk left behind by an older deploy must not blank the route.
@@ -110,6 +111,9 @@ export default function App() {
     <CameraProvider>
     <BrowserRouter>
       <Toaster richColors position="top-right" />
+      {/* Renders nothing until a sensitive request is held for a code. Mounted
+          at the root so every screen is covered without knowing it exists. */}
+      <StepUpGate />
       {/* Outer Suspense covers only the routes that render no layout (login,
           register, 404). Layout routes have their own boundary inside the
           shell so the sidebar is never unmounted by a chunk load. */}

@@ -104,6 +104,21 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VEHICLE_OWNER)
     user_code = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
     must_change_password = models.BooleanField(default=False)
+    # Set when a password is reset through the "forgot password" email flow, and
+    # cleared only once a two-factor code has actually been entered.
+    #
+    # A reset is the account-takeover path: whoever reads the mailbox can set a
+    # new password without ever knowing the old one. Demanding the second factor
+    # on the very next login is what stops a stolen inbox from being a stolen
+    # account. Trusted devices and the weekly dormancy window are both ignored
+    # while this is set — it outranks them.
+    #
+    # This is deliberately an explicit flag rather than a side effect. Changing
+    # the password already invalidates the device token (see twofa._fingerprint),
+    # which happens to force a challenge too, but that is emergent behaviour of
+    # the signing scheme. Anyone reworking token signing later would silently
+    # remove the protection; a stored flag and a test say what is actually meant.
+    must_verify_2fa = models.BooleanField(default=False)
 
     # Security guard fields
     # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows
@@ -333,6 +348,14 @@ class AuditLog(models.Model):
         USER_ENABLED     = 'user_enabled',     'User Enabled'
         USER_ARCHIVED    = 'user_archived',    'Account Auto-Archived (Expired)'
         ADMIN_REPLACED   = 'admin_replaced',   'Admin Replaced'
+        # Two-factor lifecycle. Enrollment and removal are security-relevant
+        # account changes; a repeated TWOFA_FAILED against one account is the
+        # signal that someone is guessing codes against a known password.
+        TWOFA_ENABLED    = 'twofa_enabled',    'Two-Factor Enabled'
+        TWOFA_DISABLED   = 'twofa_disabled',   'Two-Factor Disabled'
+        TWOFA_RESET      = 'twofa_reset',      'Two-Factor Reset by Admin'
+        TWOFA_FAILED     = 'twofa_failed',     'Two-Factor Verification Failed'
+        TWOFA_BACKUP_USED = 'twofa_backup_used', 'Two-Factor Backup Code Used'
         SCAN             = 'scan',             'Vehicle Scanned'
         VEHICLE_ENTERED  = 'vehicle_entered',  'Vehicle Entered'
         VEHICLE_EXITED   = 'vehicle_exited',   'Vehicle Exited'
@@ -404,3 +427,70 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"[{self.category}] {self.title}"
+
+class TwoFactorDevice(models.Model):
+    """A user's enrolled TOTP authenticator (Google Authenticator and friends).
+
+    One per account. The row exists from the moment enrollment starts, but
+    `confirmed_at` stays NULL until the person proves they can read a code off
+    the app — so an abandoned setup never locks anyone out of their own account.
+
+    Guards never get a row here; see accounts.twofa.TWO_FACTOR_ROLES for why.
+    """
+
+    id = models.BigAutoField(primary_key=True, db_column='two_factor_device_id')
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='twofa_device',
+    )
+    # Base32 TOTP secret. Stored in the clear, as it must be to compute codes —
+    # the database is the trust boundary, the same one the password hashes and
+    # the guard QR secrets already sit behind.
+    secret = models.CharField(max_length=64)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    # Highest TOTP timestep already spent, so a code cannot be replayed inside
+    # its validity window. See twofa.verify_code.
+    last_used_step = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'tbl_two_factor_device'
+
+    @property
+    def is_confirmed(self) -> bool:
+        return self.confirmed_at is not None
+
+    def __str__(self):
+        state = 'confirmed' if self.is_confirmed else 'pending'
+        return f"2FA device for {self.user.email} ({state})"
+
+
+class TwoFactorBackupCode(models.Model):
+    """One single-use recovery code, stored only as a hash.
+
+    These are what stand between a lost phone and an unrecoverable system: the
+    CDSO account can hold the only admin login, and a wiped authenticator with
+    no way back would take the whole administration surface with it.
+    """
+
+    id = models.BigAutoField(primary_key=True, db_column='two_factor_backup_code_id')
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='twofa_backup_codes',
+    )
+    code_hash = models.CharField(max_length=64, db_index=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tbl_two_factor_backup_code'
+        indexes = [
+            # The lookup on every backup-code login: this user's unused codes.
+            models.Index(
+                fields=['user'],
+                condition=models.Q(used_at__isnull=True),
+                name='twofa_backup_unused',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Backup code for {self.user.email} ({'used' if self.used_at else 'unused'})"

@@ -1,9 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, CheckCircle, AlertCircle, ArrowLeft } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, CheckCircle, AlertCircle, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { authApi } from '../../api/auth'
 import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
+// For .tfa-warn on the post-reset notice, so the warning matches the one the
+// two-factor screens use rather than being restyled here.
+import '../../components/TwoFactor/twofactor.css'
 import './ResetPasswordPage.css'
 
 function strengthCheck(pw) {
@@ -70,6 +73,11 @@ export default function ResetPasswordPage() {
   const [showConfirm, setShowConfirm]       = useState(false)
   const [isLoading, setLoading]             = useState(false)
   const [success, setSuccess]               = useState(false)
+  // The server tells us whether this account will be asked for an authenticator
+  // code at the next sign-in. Saying so here means the prompt is expected rather
+  // than alarming — a code demanded straight after a password reset is exactly
+  // what a phishing victim should be suspicious of if it arrives unannounced.
+  const [twofaNext, setTwofaNext]           = useState(false)
   const [error, setError]                   = useState('')
   const [fieldErrors, setFieldErrors]       = useState([])
   const [resetRole, setResetRole]           = useState(null)
@@ -101,6 +109,7 @@ export default function ResetPasswordPage() {
     try {
       const data = await authApi.confirmPasswordReset(uid, token, newPassword, confirmPassword)
       setResetRole(data?.role || null)
+      setTwofaNext(!!data?.twofa_required_next_login)
       setSuccess(true)
     } catch (err) {
       const data = err?.response?.data
@@ -159,6 +168,16 @@ export default function ResetPasswordPage() {
               <p className="card-subtitle rp-state-subtitle">
                 Your password has been reset successfully. You can now log in with your new password.
               </p>
+              {twofaNext && (
+                <div className="tfa-warn" style={{ margin: '0 0 18px', textAlign: 'left' }}>
+                  <ShieldCheck size={15} />
+                  <span>
+                    For your security, you&rsquo;ll be asked for a code from your
+                    authenticator app the next time you sign in &mdash; even on a
+                    device you&rsquo;ve used before.
+                  </span>
+                </div>
+              )}
               <button className="login-button" onClick={() => navigate(loginPath)}>
                 <div className="button-content">
                   <KeyRound size={17} />

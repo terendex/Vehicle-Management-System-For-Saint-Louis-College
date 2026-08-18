@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { authApi } from '../api/auth'
+import { deviceToken } from '../api/twofa'
+import { clearStepUpToken, setStepUpToken } from '../api/stepUpToken'
 
 // Decode JWT payload without verifying signature (verification is the server's job)
 function _jwtExp(token) {
@@ -72,31 +74,67 @@ const useAuthStore = create((set, get) => {
       if (token) _scheduleRefresh(token, _doRefresh, get().logout)
     },
 
+    /**
+     * Persist a login payload and start the session.
+     *
+     * Shared by the password path and the two-factor path so both store the
+     * same things — including the `device_token` that lets this browser skip
+     * the code next time, which is the whole mechanism behind the weekly rule.
+     */
+    _startSession: (data) => {
+      const user = data.user
+      const accessToken = data.access
+      const refreshToken = data.refresh
+
+      localStorage.setItem('access_token', accessToken)
+      localStorage.setItem('refresh_token', refreshToken)
+      localStorage.setItem('user', JSON.stringify(user))
+      deviceToken.set(data.device_token)
+
+      // Enrollment hands back a step-up alongside the session: a code was just
+      // entered, and a brand-new account is about to be pushed straight into a
+      // forced password change, which is itself step-up protected. Without this
+      // the user would be asked for a second code seconds after the first.
+      if (data.step_up_token) {
+        setStepUpToken(data.step_up_token, data.step_up_expires_in)
+      }
+
+      set({
+        user,
+        accessToken,
+        refreshToken,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      })
+
+      _scheduleRefresh(accessToken, _doRefresh, get().logout)
+      return user
+    },
+
+    /** Finish a login that was paused for a code. `data` is the verify/confirm
+     *  response, which carries the same fields a direct login would have. */
+    completeTwoFactorLogin: (data) => get()._startSession(data),
+
+    /**
+     * Password sign-in.
+     *
+     * Resolves to `{ user }` on a completed login, or `{ twofa }` when the
+     * server paused it for a code — the caller renders the challenge and hands
+     * the result back through `completeTwoFactorLogin`. Nothing is written to
+     * localStorage in the paused case: there is no session yet.
+     */
     login: async (email, password) => {
       set({ isLoading: true, error: null })
       try {
         const data = await authApi.login(email, password)
 
-        const user = data.user
-        const accessToken = data.access
-        const refreshToken = data.refresh
+        if (data.twofa_required) {
+          set({ isLoading: false, error: null })
+          return { twofa: data }
+        }
 
-        localStorage.setItem('access_token', accessToken)
-        localStorage.setItem('refresh_token', refreshToken)
-        localStorage.setItem('user', JSON.stringify(user))
-
-        set({
-          user,
-          accessToken,
-          refreshToken,
-          isAuthenticated: true,
-          isLoading: false,
-          error: null,
-        })
-
-        _scheduleRefresh(accessToken, _doRefresh, get().logout)
-
-        return user
+        return { user: get()._startSession(data) }
       } catch (error) {
         const raw =
           error.response?.data?.detail ||
@@ -158,6 +196,10 @@ const useAuthStore = create((set, get) => {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('user')
+      // Any sudo-mode authority dies with the session. The device token is
+      // deliberately kept: "remember this browser" is meant to outlive a
+      // sign-out, and it is worthless without the password anyway.
+      clearStepUpToken()
 
       set({
         user: null,

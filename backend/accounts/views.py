@@ -13,6 +13,7 @@ from django.utils import timezone
 from time_utils import day_range, day_start, day_end, filter_local_date_range
 from .email_utils import notify_password_set
 from .models import User, AuditLog, Notification
+from .twofa_api import HasRecentTwoFactor
 from .serializers import (
     UserSerializer,
     UserUpdateSerializer,
@@ -823,8 +824,15 @@ BACKUP_EXCLUDE = ['scanning.platerecognitionrecord', 'scanning.mltrainingsample'
 
 
 class SystemBackupView(APIView):
-    """Download a JSON snapshot of all application data — admin (CDSO) only."""
-    permission_classes = [IsAdminRole]
+    """Download a JSON snapshot of all application data — admin (CDSO) only.
+
+    Step-up protected: the file contains every account, plate and registration
+    in the system, so one click on a borrowed session is a full data breach.
+    `step_up_on_read` opts this GET into the check, which otherwise exempts
+    safe methods.
+    """
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    step_up_on_read = True
 
     def get(self, request):
         import io
@@ -845,11 +853,16 @@ class SystemBackupView(APIView):
 class SystemRestoreView(APIView):
     """Restore application data from an uploaded JSON backup — admin (CDSO) only.
 
-    Safety measures: admin-only, file validated as a JSON fixture, an automatic
-    pre-restore snapshot of current data is saved to disk, and the load runs in
-    a single transaction that rolls back completely on any error.
+    Safety measures: admin-only, a fresh two-factor step-up, file validated as a
+    JSON fixture, an automatic pre-restore snapshot of current data saved to
+    disk, and a load that runs in a single transaction and rolls back completely
+    on any error.
+
+    The step-up is the one that matters most on this endpoint: a restore
+    overwrites live data wholesale, and a crafted fixture can rewrite the admin
+    account itself.
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
 
     def post(self, request):
         import io, json, os, tempfile
@@ -945,8 +958,15 @@ class AuditLogStatsView(APIView):
 
 class ChangePasswordView(APIView):
     """Allow any authenticated user to change their own password.
-    Clears the must_change_password flag after a successful change."""
-    permission_classes = [permissions.IsAuthenticated]
+    Clears the must_change_password flag after a successful change.
+
+    Step-up protected for accounts that carry two-factor: the current password
+    alone is not enough, because a session left open on an unlocked machine
+    already has it. Guards, who carry no second factor, are unaffected — and so
+    is anyone still completing their first-login enrollment, since a confirmed
+    device is what arms the check.
+    """
+    permission_classes = [permissions.IsAuthenticated, HasRecentTwoFactor]
 
     def post(self, request):
         user = request.user
@@ -1349,13 +1369,20 @@ class PasswordResetConfirmView(APIView):
 
         user.set_password(new_password)
         user.must_change_password = False
-        user.save(update_fields=['password', 'must_change_password'])
+        # Demand the second factor on the next login. A reset proves control of
+        # the mailbox, nothing more — and the mailbox is exactly what an attacker
+        # takes first. Guards are skipped because they carry no second factor to
+        # ask for; the flag would sit unread and never be cleared.
+        from . import twofa
+        user.must_verify_2fa = twofa.requires_2fa(user)
+        user.save(update_fields=['password', 'must_change_password', 'must_verify_2fa'])
 
         notify_password_set(user, was_first_change)
 
         return Response({
             'message': 'Password reset successfully. You can now log in with your new password.',
             'role': user.role,
+            'twofa_required_next_login': user.must_verify_2fa,
         })
 
 

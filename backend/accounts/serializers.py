@@ -432,6 +432,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         from rest_framework.exceptions import AuthenticationFailed
+        from . import twofa
 
         email = attrs.get(self.username_field, '')
         password = attrs.get('password', '')
@@ -450,6 +451,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     raise AuthenticationFailed(
                         'Security personnel must log in at the guard gate login page.'
                     )
+
+                # Second factor, decided here rather than in the view because
+                # this is the one point where the password is known to be right
+                # and no token has been minted yet. Returning early matters:
+                # the blacklist app records every refresh token that is created,
+                # so minting a pair and throwing it away would leave a row
+                # behind for a login that never completed.
+                challenge = twofa.login_challenge(user, self.context.get('request'))
+                if challenge is not None:
+                    return challenge
         except User.DoesNotExist:
             pass
 
@@ -472,6 +483,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'photo_url': photo_url,
             'gate_assignment': self.user.gate_assignment,
         }
+        # Refreshes the trust window on every successful login, so an account
+        # in regular use is never asked for a code twice in the same week.
+        if twofa.requires_2fa(self.user):
+            data['device_token'] = twofa.issue_device_token(self.user)
+            data['device_trust_days'] = twofa.DEVICE_TRUST_DAYS
         return data
 
 

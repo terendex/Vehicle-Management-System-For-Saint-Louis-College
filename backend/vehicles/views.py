@@ -22,6 +22,7 @@ from . import parking_camera
 
 logger = logging.getLogger(__name__)
 from accounts.audit import audit, AuditedViewSetMixin
+from accounts.twofa_api import HasRecentTwoFactor
 from time_utils import filter_local_date_range
 from accounts.models import AuditLog
 
@@ -70,10 +71,24 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         })
 
 class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
+    """Campus schedule rules. Read by any signed-in role; changed only by the
+    CDSO, and only with a fresh two-factor step-up.
+
+    These rules decide who may enter campus and when, so editing one is a
+    change to the access-control policy itself rather than to a record. The
+    admin-only write check is not redundant with the step-up: guards carry no
+    second factor by design, so a step-up alone would have waved a guard token
+    straight through to the policy every gate reads.
+    """
+
     queryset           = RuleConstraint.objects.all()
     serializer_class   = RuleConstraintSerializer
-    permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Schedule Rule'
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated()]
+        return [IsAdminOrCdso(), HasRecentTwoFactor()]
 
 class ReferenceItemViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ReferenceItem.objects.all()
@@ -2062,10 +2077,19 @@ class ParkingAvailabilityView(APIView):
 
 
 class SystemSettingsView(APIView):
+    """System-wide configuration. Readable by any signed-in role — screens all
+    over the app need the retention, fee and event-mode values — but writable
+    only by the CDSO with a fresh two-factor step-up.
+
+    A write here can silently turn off account expiry, shorten the retention
+    window that deletes archived accounts, or open the campus, so it is exactly
+    the kind of quiet change a stolen session would be used for.
+    """
+
     def get_permissions(self):
         if self.request.method == 'GET':
             return [permissions.IsAuthenticated()]
-        return [IsAdminOrCdso()]
+        return [IsAdminOrCdso(), HasRecentTwoFactor()]
 
     def _serialize(self, obj):
         return {

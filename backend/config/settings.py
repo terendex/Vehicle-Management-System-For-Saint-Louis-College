@@ -129,7 +129,15 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS':  True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # The two-factor dormancy rule ("challenge an account that has not signed
+    # in for a week") reads User.last_login, and SimpleJWT leaves that column
+    # NULL unless this is on. Nothing read it before, so nothing noticed.
+    'UPDATE_LAST_LOGIN': True,
 }
+
+# Shown as the account issuer inside Google Authenticator, so a phone holding
+# codes for several systems labels this one recognisably.
+TWO_FACTOR_ISSUER = os.getenv('TWO_FACTOR_ISSUER', 'SLC Vehicle Management')
 
 TEMPLATES = [
     {

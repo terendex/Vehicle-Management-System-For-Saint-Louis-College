@@ -3,6 +3,7 @@ import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
+import { twofaApi } from '../../api/twofa'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import { toUpperName, normalizeEmail } from '../../utils/textFormat'
@@ -10,7 +11,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Printer,
+  Shield, Info, Lock, Printer, Smartphone,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
@@ -394,6 +395,27 @@ export default function UserManagement() {
     finally { setSubmitting(false) }
   }
 
+  /** Clear a user's authenticator so they can pair a new phone.
+   *
+   *  The lost-phone path. Without it the only way back for a locked-out owner
+   *  would be deleting and re-creating the account, which takes their vehicle
+   *  registration with it. This does NOT switch two-factor off — the account
+   *  returns to unenrolled, so their next login walks them through setup again.
+   *
+   *  The CDSO's own step-up is demanded by the server; the axios interceptor
+   *  raises the code prompt and replays this call, so nothing is needed here. */
+  const handleReset2fa = async () => {
+    setSubmitting(true)
+    try {
+      const { message } = await twofaApi.reset(selectedUser.id)
+      closeModal()
+      toast.success(message || 'Authenticator reset.')
+    } catch (err) {
+      if (err.stepUpCancelled) return   // they backed out of the code prompt
+      toast.error(err.response?.data?.error || 'Failed to reset two-factor authentication.')
+    } finally { setSubmitting(false) }
+  }
+
   const formatDate    = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
   const roleLabel     = (user) => {
     if (user.role === 'security') return 'Security Personnel'
@@ -560,6 +582,15 @@ export default function UserManagement() {
                             onClick={() => { setSelectedUser(u); setActiveMenu(null); printRegistrationFor(u) }}
                           >
                             <Printer size={15} /> Print Registration
+                          </button>
+                        )}
+                        {u.role !== 'security' && (
+                          <button
+                            className="um-dropdown-item view"
+                            title="Clear this user's authenticator so they can pair a new phone"
+                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); setActiveMenu(null) }}
+                          >
+                            <Smartphone size={15} /> Reset 2FA
                           </button>
                         )}
                         <button
@@ -960,6 +991,39 @@ export default function UserManagement() {
                   <CheckCircle size={16} /> {submitting ? 'Enabling…' : 'Enable User'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESET TWO-FACTOR */}
+      {modal === 'reset2fa' && selectedUser && (
+        <div className="um-modal-overlay" onClick={closeModal}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="um-modal-header">
+              <h2>Reset Two-Factor Authentication</h2>
+              <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body">
+              <div className="um-confirm-body">
+                <div className="um-confirm-icon warning"><Smartphone size={24} /></div>
+                <h3>Reset this user&rsquo;s authenticator?</h3>
+                <p>
+                  <span className="um-confirm-name">{selectedUser.full_name}</span> will be
+                  asked to set up a new authenticator app the next time they sign in.
+                  Their existing codes and backup codes stop working immediately.
+                </p>
+                <p style={{ marginTop: 10 }}>
+                  Do this only when they have lost access to their phone &mdash; and only
+                  once you are sure it is really them asking.
+                </p>
+              </div>
+            </div>
+            <div className="um-modal-footer">
+              <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
+              <button className="um-btn-warning" disabled={submitting} onClick={handleReset2fa}>
+                <Smartphone size={16} /> {submitting ? 'Resetting…' : 'Reset 2FA'}
+              </button>
             </div>
           </div>
         </div>

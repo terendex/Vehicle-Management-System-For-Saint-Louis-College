@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight, ShieldCheck } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import TwoFactorChallenge from '../../components/TwoFactor/TwoFactorChallenge'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
 
@@ -16,8 +17,12 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
   const [showErrorModal, setShowErrorModal] = useState(false)
+  // Set when the server accepts the password but wants a code before it hands
+  // over a session. Holds { twofa_action, challenge, email, ... }.
+  const [challenge, setChallenge] = useState(null)
 
-  const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore()
+  const { login, completeTwoFactorLogin, isLoading, error, clearError, isAuthenticated, user } =
+    useAuthStore()
 
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -38,18 +43,41 @@ export default function LoginPage() {
     if (error) setShowErrorModal(true)
   }, [error])
 
+  const goToDashboard = (u) => {
+    if (u.role === 'admin') navigate('/admin')
+    else if (u.role === 'vehicle_owner') navigate('/owner')
+    else navigate('/')
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
     setShowErrorModal(false)
     try {
-      const u = await login(email, password)
-      if (u.role === 'admin') navigate('/admin')
-      else if (u.role === 'vehicle_owner') navigate('/owner')
-      else navigate('/')
+      const result = await login(email, password)
+      // The password was right but a second factor is owed — swap the form for
+      // the challenge rather than navigating, so a wrong code lands the user
+      // back here with their email still filled in.
+      if (result.twofa) {
+        setChallenge(result.twofa)
+        return
+      }
+      goToDashboard(result.user)
     } catch {
       setShowErrorModal(true)
     }
+  }
+
+  const handleTwoFactorDone = (data) => {
+    const u = completeTwoFactorLogin(data)
+    setChallenge(null)
+    setPassword('')
+    goToDashboard(u)
+  }
+
+  const cancelTwoFactor = () => {
+    setChallenge(null)
+    setPassword('')
   }
 
   const closeErrorModal = () => {
@@ -73,6 +101,16 @@ export default function LoginPage() {
 
       <main className="login-main">
         <div className="login-card" id="login-card">
+          {challenge ? (
+            <TwoFactorChallenge
+              challenge={challenge.challenge}
+              action={challenge.twofa_action}
+              email={challenge.email || email}
+              onComplete={handleTwoFactorDone}
+              onCancel={cancelTwoFactor}
+            />
+          ) : (
+          <>
           <div className="card-header">
             <h1 className="card-title">Account Login</h1>
             <p className="card-subtitle">Sign in to access the smart parking and vehicle verification system</p>
@@ -202,6 +240,8 @@ export default function LoginPage() {
               </button>
             </div>
           </form>
+          </>
+          )}
         </div>
       </main>
 
