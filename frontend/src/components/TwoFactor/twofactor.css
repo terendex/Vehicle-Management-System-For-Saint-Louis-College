@@ -95,12 +95,20 @@
 
 .tfa-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
 }
 
+/* Rows whose labels are long ("New backup codes", "Pair a new phone") need more
+   room before they are worth sitting side by side. */
+.tfa-actions-wide .tfa-btn { flex-basis: 165px; }
+
 .tfa-btn {
-  flex: 1;
+  /* Share the row when each button can hold its label, stack when they cannot.
+     A flex-basis does this at whatever width the container happens to be —
+     inside a 420px dialog, a 720px page, or a phone in portrait. */
+  flex: 1 1 120px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -154,10 +162,19 @@
 .tfa-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1200;   /* above the page modals at 1000 — this interrupts them */
+  /* Above EVERY other layer in the app. This dialog interrupts whatever the
+     user was doing — including the owner dashboard's own modals, which sit at
+     9000. At a lower value the code prompt raised from inside one of those
+     renders behind it: invisible, unclickable, and the action never completes. */
+  z-index: 9500;
   display: flex;
-  align-items: center;
+  /* flex-start + margin:auto on the child, rather than align-items:center.
+     Centring alone has no way to scroll to content taller than the viewport —
+     the top gets cut off and cannot be reached, which is exactly what happens
+     to this dialog on a phone held sideways. */
+  align-items: flex-start;
   justify-content: center;
+  overflow-y: auto;
   padding: 16px;
   background: rgba(0, 0, 0, 0.45);
 }
@@ -165,6 +182,7 @@
 .tfa-dialog {
   width: 100%;
   max-width: 420px;
+  margin: auto;   /* centres when there is room, scrolls when there is not */
   padding: 26px 26px 24px;
   background: #fff;
   border-radius: 14px;
@@ -343,11 +361,47 @@
 
 .tfa-warn svg { flex-shrink: 0; margin-top: 1px; }
 
+/* ── Small screens ───────────────────────────────────────────────────────── */
+
 @media (max-width: 480px) {
   .tfa-dialog { padding: 22px 18px 20px; }
   .tfa-code-input { font-size: 22px; letter-spacing: 0.3em; text-indent: 0.3em; }
   .tfa-qr-wrap img { width: 160px; height: 160px; }
-  .tfa-codes-grid { grid-template-columns: 1fr; }
+  /* The codes stay in two columns deliberately. A single column turns ten
+     codes into a ten-row list, and vertical space is the scarce resource on a
+     phone — "00000-00000" is only ~92px of monospace, so two fit side by side
+     even at 320px. Shrinking the type buys far more than stacking would. */
+  .tfa-codes-grid { gap: 6px; padding: 13px; }
+  .tfa-codes-grid span { font-size: 13px; }
+}
+
+@media (max-width: 360px) {
+  .tfa-code-input { font-size: 19px; letter-spacing: 0.24em; text-indent: 0.24em; }
+  .tfa-codes-grid span { font-size: 12px; letter-spacing: 0; }
+  .tfa-steps li { padding-left: 30px; font-size: 13px; }
+}
+
+/* A phone held sideways leaves ~340px of height. Without this the dialog is
+   taller than the screen; the overlay scrolls (see .tfa-overlay), but trimming
+   it to fit is better than making someone scroll to reach the buttons. */
+@media (max-height: 640px) and (orientation: landscape) {
+  .tfa-dialog { padding: 18px 20px 16px; }
+  .tfa-dialog-body { margin-top: 14px; }
+  .tfa-code-input { font-size: 20px; padding: 10px 14px; }
+  /* Landscape has width to spare and no height — so the QR and the manual key
+     sit side by side instead of stacked. */
+  .tfa-qr-wrap { flex-direction: row; gap: 16px; padding: 14px; }
+  .tfa-qr-wrap img { width: 128px; height: 128px; flex-shrink: 0; }
+  .tfa-qr-wrap .tfa-secret {
+    flex: 1;
+    width: auto;
+    min-width: 0;   /* lets the base32 key wrap instead of stretching the row */
+    text-align: left;
+  }
+  .tfa-actions { margin-top: 12px; }
+  .tfa-btn { padding: 10px 14px; }
+  .tfa-steps li { padding-bottom: 7px; }
+  .tfa-codes-grid { grid-template-columns: repeat(3, 1fr); margin: 12px 0; }
 }
 
 /* ── Security panel (CDSO page + owner modal) ────────────────────────────── */

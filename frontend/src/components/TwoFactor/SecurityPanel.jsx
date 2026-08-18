@@ -280,7 +280,7 @@ export default function SecurityPanel({ compact = false }) {
             </div>
           )}
 
-          <div className="tfa-actions">
+          <div className="tfa-actions tfa-actions-wide">
             <button
               type="button"
               className="tfa-btn tfa-btn-ghost"
