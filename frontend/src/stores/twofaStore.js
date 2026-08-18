@@ -43,8 +43,46 @@ const useTwofaStore = create((set, get) => ({
    *  exactly the dead end backup codes exist to prevent. */
   newBackupCodes: null,
 
+  /** null until asked: does this account owe a code for sensitive actions?
+   *  Cached for the session so `ensureStepUp` costs one request, not one per
+   *  action. Guards and anyone not yet enrolled answer false. */
+  stepUpApplies: null,
+
   /** A token we still believe is good, or '' — checked before prompting. */
   liveToken: () => liveStepUpToken(),
+
+  /**
+   * Ask for the code BEFORE the work, not after.
+   *
+   * The 403-driven flow in the axios interceptor is the safety net and still
+   * covers everything, but on its own it means filling in a whole password form
+   * and only then being interrupted for a code. Calling this first flips the
+   * order: verify, then let the person start.
+   *
+   * Resolves with a token (or '' when the account owes no code, e.g. a guard).
+   * Rejects only if the prompt is dismissed, which callers treat as "cancelled"
+   * and simply abandon the action.
+   */
+  ensureStepUp: async (reason) => {
+    const existing = get().liveToken()
+    if (existing) return existing
+
+    let applies = get().stepUpApplies
+    if (applies === null) {
+      try {
+        const st = await twofaApi.status()
+        applies = !!(st.applicable && st.confirmed)
+      } catch {
+        // Can't tell — say no and let the interceptor's 403 handle it rather
+        // than demanding a code from someone who may not even have one.
+        applies = false
+      }
+      set({ stepUpApplies: applies })
+    }
+    if (!applies) return ''
+
+    return get().requestStepUp(reason)
+  },
 
   clear: () => {
     clearStepUpToken()

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
+import useTwofaStore from '../../stores/twofaStore'
 import { usersApi } from '../../api/users'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
@@ -72,6 +73,25 @@ const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().
 export default function OwnerDashboard() {
   const { user, logout, clearMustChangePassword } = useAuthStore()
   const [securityModal, setSecurityModal] = useState(false)
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
+  /** Prove it's you, then open the form — not the other way round.
+   *
+   *  The server would ask anyway when the form is submitted, but being stopped
+   *  after typing a password three times is a poor way to find out. Cancelling
+   *  the prompt simply leaves the modal closed.
+   *
+   *  The forced first-time change is exempt: that user enrolled seconds ago and
+   *  is already carrying a step-up, so `ensureStepUp` returns it without a
+   *  prompt — and if it ever did prompt, they have nowhere else to go. */
+  const openPasswordModal = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing your password.')
+      setPwModal(true)
+    } catch {
+      /* prompt dismissed — leave the form closed */
+    }
+  }
 
   /* ── registration data ── */
   const [reg, setReg] = useState(null)
@@ -403,14 +423,16 @@ export default function OwnerDashboard() {
             <h1>Welcome, {user?.full_name || 'Vehicle Owner'}!</h1>
             <p>Here is your registration summary and vehicle access details.</p>
           </div>
-          <button className="od-change-pw-btn" onClick={() => setSecurityModal(true)} title="Two-factor authentication and backup codes">
-            <ShieldCheck size={15} />
-            Security
-          </button>
-          <button className="od-change-pw-btn" onClick={() => setPwModal(true)} title="Change Password">
-            <KeyRound size={15} />
-            Change Password
-          </button>
+          <div className="od-welcome-actions">
+            <button className="od-change-pw-btn" onClick={() => setSecurityModal(true)} title="Two-factor authentication and backup codes">
+              <ShieldCheck size={15} />
+              Security
+            </button>
+            <button className="od-change-pw-btn" onClick={openPasswordModal} title="Change Password">
+              <KeyRound size={15} />
+              Change Password
+            </button>
+          </div>
         </div>
 
         {/* ID Cards */}

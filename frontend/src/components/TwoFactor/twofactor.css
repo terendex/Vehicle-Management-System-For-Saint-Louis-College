@@ -296,34 +296,6 @@
   border-radius: 8px;
 }
 
-.tfa-secret {
-  width: 100%;
-  text-align: center;
-}
-
-.tfa-secret code {
-  display: inline-block;
-  padding: 7px 12px;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: #0B2340;
-  background: #fff;
-  border: 1px solid #DCE7EF;
-  border-radius: 7px;
-  /* A base32 secret has no spaces to wrap at, and overflowing it would push
-     the dialog wider than the phone screen it is being typed into. */
-  word-break: break-all;
-}
-
-.tfa-secret-label {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #4A6B85;
-}
-
 /* ── Backup codes ────────────────────────────────────────────────────────── */
 
 .tfa-codes-grid {
@@ -403,16 +375,8 @@
   .tfa-dialog { padding: 18px 20px 16px; }
   .tfa-dialog-body { margin-top: 14px; }
   .tfa-code-input { font-size: 20px; padding: 10px 14px; }
-  /* Landscape has width to spare and no height — so the QR and the manual key
-     sit side by side instead of stacked. */
-  .tfa-qr-wrap { flex-direction: row; gap: 16px; padding: 14px; }
-  .tfa-qr-wrap img { width: 128px; height: 128px; flex-shrink: 0; }
-  .tfa-qr-wrap .tfa-secret {
-    flex: 1;
-    width: auto;
-    min-width: 0;   /* lets the base32 key wrap instead of stretching the row */
-    text-align: left;
-  }
+  .tfa-qr-wrap { padding: 12px; }
+  .tfa-qr-wrap img { width: 128px; height: 128px; }
   .tfa-actions { margin-top: 12px; }
   .tfa-btn { padding: 10px 14px; }
   .tfa-steps li { padding-bottom: 7px; }

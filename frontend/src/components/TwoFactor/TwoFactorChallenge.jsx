@@ -248,10 +248,6 @@ export default function TwoFactorChallenge({
         {enrollment ? (
           <div className="tfa-qr-wrap">
             <img src={enrollment.qr_code} alt="QR code for your authenticator app" />
-            <div className="tfa-secret">
-              <p className="tfa-secret-label">Can&rsquo;t scan? Enter this key by hand:</p>
-              <code>{enrollment.secret}</code>
-            </div>
           </div>
         ) : (
           <div className="tfa-qr-wrap">

@@ -12,6 +12,7 @@ import {
   activateRegistrationPeriod, deactivateRegistrationPeriod,
 } from '../../api/vehicles'
 import api from '../../api/axios'
+import useTwofaStore from '../../stores/twofaStore'
 import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -296,8 +297,18 @@ export default function RuleConstraints() {
   }
   useLiveUpdates(reloadRuleData, ['ruleconstraint', 'systemsettings', 'registrationperiod'])
 
+  // Asked for before the change goes anywhere, rather than after the server
+  // bounces it — these rules decide who may enter campus, and the prompt should
+  // read as part of the decision, not as an error.
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
   const handleSave = async (data) => {
     const rule = rules[editingType.key]
+    try {
+      await ensureStepUp('Confirm it’s you before changing a campus rule.')
+    } catch {
+      return
+    }
     try {
       // A fresh database may not have a row for this type yet — create it on first save
       const { data: saved } = rule?.id
@@ -312,6 +323,11 @@ export default function RuleConstraints() {
 
   const toggleMode = async (field) => {
     const next = !ss[field]
+    try {
+      await ensureStepUp('Confirm it’s you before changing this mode.')
+    } catch {
+      return
+    }
     try {
       const { data } = await api.patch('/vehicles/system-settings/', { [field]: next })
       setSs(f => ({ ...f, [field]: data[field] }))

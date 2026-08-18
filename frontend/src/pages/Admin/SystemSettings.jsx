@@ -5,6 +5,7 @@ import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deac
 import { getGates, createGate, updateGate } from '../../api/scanning'
 import { invalidateGates } from '../../hooks/useGates'
 import { usersApi } from '../../api/users'
+import useTwofaStore from '../../stores/twofaStore'
 import './SystemSettings.css'
 
 // Expiration cannot be switched off — only shortened or extended. The period
@@ -180,7 +181,17 @@ export default function SystemSettings() {
     }
   }
 
+  // Verify before the work, not after. The server demands a code either way,
+  // but being asked up front beats being interrupted once a file is already
+  // chosen or a form already filled. Cancelling just abandons the action.
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
   const handleDownloadBackup = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before downloading a full backup.')
+    } catch {
+      return
+    }
     setDownloading(true)
     try {
       const blob = await usersApi.downloadBackup()
@@ -198,12 +209,17 @@ export default function SystemSettings() {
     }
   }
 
-  const handleRestorePick = (e) => {
+  const handleRestorePick = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = '' // reset so picking the same file again re-triggers
     if (!file) return
     if (!file.name.toLowerCase().endsWith('.json')) {
       toast.error('Please choose a .json backup file.')
+      return
+    }
+    try {
+      await ensureStepUp('Confirm it’s you before restoring over live data.')
+    } catch {
       return
     }
     setRestoreFile(file) // opens the confirmation modal
@@ -250,6 +266,11 @@ export default function SystemSettings() {
   }
 
   const handleSave = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing system settings.')
+    } catch {
+      return
+    }
     setConfirmSave(false)
     setSaving(true)
     try {

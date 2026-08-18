@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import { twofaApi } from '../../api/twofa'
+import useTwofaStore from '../../stores/twofaStore'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import { toUpperName, normalizeEmail } from '../../utils/textFormat'
@@ -405,6 +406,12 @@ export default function UserManagement() {
    *  The CDSO's own step-up is demanded by the server; the axios interceptor
    *  raises the code prompt and replays this call, so nothing is needed here. */
   const handleReset2fa = async () => {
+    try {
+      await useTwofaStore.getState().ensureStepUp(
+        'Confirm it’s you before resetting someone’s two-factor.')
+    } catch {
+      return   // prompt dismissed
+    }
     setSubmitting(true)
     try {
       const { message } = await twofaApi.reset(selectedUser.id)
