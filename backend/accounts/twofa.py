@@ -63,7 +63,12 @@ STEP_UP_MINUTES = 10
 # by up to 30s still works. Wider than this and a stolen code stays live longer.
 TOTP_VALID_WINDOW = 1
 
-BACKUP_CODE_COUNT = 10
+# One recovery code, not a sheet of them. It is the single thing standing
+# between a wiped phone and an account only the CDSO can reopen, so it is worth
+# knowing the trade: using it leaves nothing in reserve. The mitigation is that
+# Account Security can mint a replacement the moment they are back in, and the
+# UI says so — a set of ten mostly ends up as ten codes nobody wrote down.
+BACKUP_CODE_COUNT = 1
 
 _CHALLENGE_SALT = 'accounts.twofa.challenge'
 _STEP_UP_SALT = 'accounts.twofa.stepup'
@@ -336,10 +341,15 @@ def verify_code(device, code):
 # ── Backup codes ────────────────────────────────────────────────────────────
 
 def generate_backup_codes(count=BACKUP_CODE_COUNT):
-    """Plain-text recovery codes. Shown once, stored only as hashes.
+    """Plain-text recovery code(s). Shown once, stored only as hashes.
 
     Without these, a lost or wiped phone means an admin locked out of the
     system that holds the only admin account — the classic 2FA dead end.
+
+    Still written as a list rather than a single value: the count is a policy
+    number that may well move again, and every caller, serializer and test
+    already speaks in terms of a set. Changing BACKUP_CODE_COUNT is the only
+    edit needed to issue more.
     """
     return [
         '{:05d}-{:05d}'.format(secrets.randbelow(10 ** 5), secrets.randbelow(10 ** 5))

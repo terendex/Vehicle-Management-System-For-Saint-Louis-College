@@ -31,6 +31,9 @@ export default function TwoFactorChallenge({
   const [enrollment, setEnrollment] = useState(null)   // { qr_code, secret, ... }
   const [backupCodes, setBackupCodes] = useState(null) // shown once, after confirm
   const [pendingLogin, setPendingLogin] = useState(null)
+  // True when these codes replace one just spent, rather than being the first
+  // set handed out at enrollment — the two need different words.
+  const [replaced, setReplaced] = useState(false)
 
   const [code, setCode] = useState('')
   const [backupCode, setBackupCode] = useState('')
@@ -93,7 +96,17 @@ export default function TwoFactorChallenge({
           challenge,
           usingBackup ? { backupCode: backupCode.trim() } : { code: value },
         )
-        onComplete(data)
+        // Signing in with the last backup code returns a replacement. Show it
+        // on the same screen enrollment uses, and hold the session back until
+        // it has been acknowledged — handing someone a code they never saw is
+        // no better than leaving them with none.
+        if (data.backup_codes?.length) {
+          setBackupCodes(data.backup_codes)
+          setReplaced(true)
+          setPendingLogin(data)
+        } else {
+          onComplete(data)
+        }
       }
     } catch (err) {
       setError(err.response?.data?.error
@@ -132,13 +145,25 @@ export default function TwoFactorChallenge({
 
   // ── Backup codes, shown once before the session starts ──────────────────
   if (backupCodes) {
+    // Worded from the actual count rather than assuming one or many, so
+    // changing BACKUP_CODE_COUNT on the server cannot leave the copy lying.
+    const one = backupCodes.length === 1
     return (
       <div className="tfa-card">
         <div className="tfa-card-head">
-          <h1 className="tfa-card-title">Save your backup codes</h1>
+          <h1 className="tfa-card-title">
+            {replaced
+              ? <>Here&rsquo;s your new backup code{one ? '' : 's'}</>
+              : <>Save your backup code{one ? '' : 's'}</>}
+          </h1>
           <p className="tfa-card-sub">
-            Two-factor authentication is on. These codes let you sign in if you
-            ever lose your phone.
+            {replaced
+              ? <>You just signed in with your last one, so we&rsquo;ve issued
+                {one ? ' a replacement' : ' replacements'}. Save
+                {one ? ' it' : ' them'} before you continue.</>
+              : <>Two-factor authentication is on. {one
+                ? 'This code lets you sign in if you ever lose your phone.'
+                : 'These codes let you sign in if you ever lose your phone.'}</>}
           </p>
         </div>
 
@@ -149,12 +174,37 @@ export default function TwoFactorChallenge({
         <div className="tfa-warn">
           <AlertCircle size={15} />
           <span>
-            This is the only time these are shown. Each one works once. If you
-            close this without saving them, generate a new set from
-            <strong> Account Security</strong> &mdash; you will not be locked
-            out, but these exact codes cannot be shown again.
+            {one
+              ? <>This is the only time it is shown, and it works <strong>once</strong>.
+                Write it down somewhere safe. If you close this without saving it,
+                generate a new one from <strong>Account Security</strong> &mdash; you
+                will not be locked out, but this exact code cannot be shown again.</>
+              : <>This is the only time these are shown. Each one works once. If you
+                close this without saving them, generate a new set from
+                <strong> Account Security</strong> &mdash; you will not be locked out,
+                but these exact codes cannot be shown again.</>}
           </span>
         </div>
+
+        {/* Reaching this screen by *using* a code means the authenticator did
+            not answer. The server cannot see a deleted app — there is no channel
+            to the phone — so this is the one moment it has evidence something is
+            wrong, and the only chance to say so before the person carries on and
+            forgets. Without it they fall into signing in by backup code forever
+            and never re-pair. */}
+        {replaced && (
+          <div className="tfa-warn" style={{ marginTop: 10 }}>
+            <Smartphone size={15} />
+            <span>
+              Couldn&rsquo;t use your authenticator app? If you&rsquo;ve lost it,
+              changed phone, or deleted the entry, use <strong>Pair a new
+              phone</strong> in <strong>Account Security</strong> right after this
+              &mdash; it shows a QR to scan, and for the next few minutes it
+              won&rsquo;t ask you for another code. Otherwise you&rsquo;ll be
+              signing in this way every time.
+            </span>
+          </div>
+        )}
 
         <div className="tfa-actions">
           <button type="button" className="tfa-btn tfa-btn-ghost" onClick={copyCodes}>
@@ -170,7 +220,7 @@ export default function TwoFactorChallenge({
             className="tfa-btn tfa-btn-primary"
             onClick={() => onComplete(pendingLogin)}
           >
-            I&rsquo;ve saved them &mdash; continue
+            I&rsquo;ve saved {one ? 'it' : 'them'} &mdash; continue
           </button>
         </div>
       </div>
@@ -253,7 +303,7 @@ export default function TwoFactorChallenge({
         <h1 className="tfa-card-title">Two-step verification</h1>
         <p className="tfa-card-sub">
           {useBackup
-            ? 'Enter one of the backup codes you saved when you set this up.'
+            ? 'Enter the backup code you saved when you set this up.'
             : <>Enter the 6-digit code from your authenticator app for <strong>{email}</strong>.</>}
         </p>
       </div>

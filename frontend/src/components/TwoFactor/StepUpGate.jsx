@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, KeyRound, ShieldCheck } from 'lucide-react'
+import { AlertCircle, Copy, KeyRound, ShieldCheck } from 'lucide-react'
 import useTwofaStore from '../../stores/twofaStore'
 import CodeField from './CodeField'
 import './twofactor.css'
@@ -30,10 +30,13 @@ function StepUpDialog() {
   const error = useTwofaStore((s) => s.error)
   const submitCode = useTwofaStore((s) => s.submitCode)
   const cancel = useTwofaStore((s) => s.cancel)
+  const newBackupCodes = useTwofaStore((s) => s.newBackupCodes)
+  const acknowledgeBackupCodes = useTwofaStore((s) => s.acknowledgeBackupCodes)
 
   const [code, setCode] = useState('')
   const [backupCode, setBackupCode] = useState('')
   const [useBackup, setUseBackup] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const submit = useCallback(
     async (submittedCode) => {
@@ -54,10 +57,70 @@ function StepUpDialog() {
   // Escape cancels, which rejects the held request rather than leaving the
   // calling screen waiting on a promise that never settles.
   useEffect(() => {
+    // Not while a replacement code is on screen: it is shown exactly once, and
+    // a stray Escape would take it away with no way to get it back.
+    if (newBackupCodes) return undefined
     const onKey = (e) => { if (e.key === 'Escape') cancel() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cancel])
+  }, [cancel, newBackupCodes])
+
+  // ── A spent backup code was replaced — show it before releasing the action ──
+  if (newBackupCodes) {
+    const one = newBackupCodes.length === 1
+    return (
+      <div className="tfa-overlay" role="dialog" aria-modal="true">
+        <div className="tfa-dialog">
+          <div className="tfa-dialog-head">
+            <div className="tfa-dialog-icon"><KeyRound size={21} /></div>
+            <div>
+              <h2 className="tfa-dialog-title">
+                Here&rsquo;s your new backup code{one ? '' : 's'}
+              </h2>
+              <p className="tfa-dialog-sub">
+                You just used your last one, so we&rsquo;ve issued
+                {one ? ' a replacement' : ' replacements'}.
+              </p>
+            </div>
+          </div>
+
+          <div className="tfa-codes-grid">
+            {newBackupCodes.map((c) => <span key={c}>{c}</span>)}
+          </div>
+
+          <div className="tfa-warn">
+            <AlertCircle size={15} />
+            <span>
+              Shown once only. Save {one ? 'it' : 'them'} now &mdash; your action
+              continues as soon as you do.
+            </span>
+          </div>
+
+          <div className="tfa-actions">
+            <button
+              type="button"
+              className="tfa-btn tfa-btn-ghost"
+              onClick={() => {
+                navigator.clipboard?.writeText(newBackupCodes.join('\n')).then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 2200)
+                })
+              }}
+            >
+              <Copy size={16} />{copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              type="button"
+              className="tfa-btn tfa-btn-primary"
+              onClick={acknowledgeBackupCodes}
+            >
+              I&rsquo;ve saved {one ? 'it' : 'them'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -99,7 +162,8 @@ function StepUpDialog() {
                 onChange={(e) => setBackupCode(e.target.value)}
               />
               <p className="tfa-hint">
-                Each backup code works once. Generate a new set afterwards if you are running low.
+                A backup code works once. Generate a replacement from Account
+                Security afterwards so you are not left without one.
               </p>
             </>
           ) : (

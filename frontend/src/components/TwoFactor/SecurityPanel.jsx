@@ -21,8 +21,25 @@ import './twofactor.css'
  * Both actions are step-up protected by the server. Nothing here asks for a
  * code directly: the axios interceptor raises the prompt and replays the call.
  */
+/** Describe when the authenticator last worked, reading the clock once.
+ *
+ *  Called from the fetch callback rather than during render: `Date.now()` is
+ *  impure, and a component that re-derives "days ago" on every render is one
+ *  React can legitimately render twice and get two answers from.
+ */
+function describeLastUsed(iso) {
+  if (!iso) return null
+  const at = new Date(iso)
+  return {
+    text: at.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
+    days: Math.floor((Date.now() - at.getTime()) / 86400000),
+  }
+}
+
+
 export default function SecurityPanel({ compact = false }) {
   const [status, setStatus] = useState(null)
+  const [lastUsed, setLastUsed] = useState(null)
   const [loadError, setLoadError] = useState('')
 
   const [mode, setMode] = useState('idle')      // idle | pairing | codes
@@ -35,7 +52,10 @@ export default function SecurityPanel({ compact = false }) {
 
   const load = useCallback(() => {
     twofaApi.status()
-      .then(setStatus)
+      .then((data) => {
+        setStatus(data)
+        setLastUsed(describeLastUsed(data.last_verified_at))
+      })
       .catch(() => setLoadError('Could not load your security settings.'))
   }, [])
 
@@ -93,7 +113,7 @@ export default function SecurityPanel({ compact = false }) {
       setMode('codes')
       load()
     } catch (err) {
-      failed(err, 'Could not generate new backup codes.')
+      failed(err, 'Could not generate a new backup code.')
     } finally { setBusy(false) }
   }
 
@@ -138,11 +158,14 @@ export default function SecurityPanel({ compact = false }) {
 
   // ── Fresh codes, shown once ─────────────────────────────────────────────
   if (mode === 'codes' && codes) {
+    const one = codes.length === 1
     return (
       <div className="tfa-sec">
-        <h3 className="tfa-sec-title">Your new backup codes</h3>
+        <h3 className="tfa-sec-title">Your new backup code{one ? '' : 's'}</h3>
         <p className="tfa-hint" style={{ marginTop: 0 }}>
-          Any codes you had before have stopped working. Save these in their place.
+          {one
+            ? 'Any code you had before has stopped working. Save this one in its place.'
+            : 'Any codes you had before have stopped working. Save these in their place.'}
         </p>
 
         <div className="tfa-codes-grid">
@@ -152,9 +175,13 @@ export default function SecurityPanel({ compact = false }) {
         <div className="tfa-warn">
           <AlertCircle size={15} />
           <span>
-            This is the only time these are shown. Each one works once. Save them
-            before you close this &mdash; you can always generate a new set, but
-            these exact codes cannot be shown again.
+            {one
+              ? <>This is the only time it is shown, and it works <strong>once</strong>.
+                Save it before you close this &mdash; you can always generate another,
+                but this exact code cannot be shown again.</>
+              : <>This is the only time these are shown. Each one works once. Save them
+                before you close this &mdash; you can always generate a new set, but
+                these exact codes cannot be shown again.</>}
           </span>
         </div>
 
@@ -185,8 +212,10 @@ export default function SecurityPanel({ compact = false }) {
       <div className="tfa-sec">
         <h3 className="tfa-sec-title">Pair a new device</h3>
         <p className="tfa-hint" style={{ marginTop: 0 }}>
-          Scan this in Google Authenticator on the new phone, then enter the code
-          it shows. Your old device stops working as soon as you finish.
+          Scan this in Google Authenticator on the phone you want to use from now
+          on, then enter the code it shows. Works whether you still have the old
+          device or lost it &mdash; whatever was paired before stops working as
+          soon as you finish.
         </p>
 
         <div className="tfa-qr-wrap">
@@ -234,7 +263,13 @@ export default function SecurityPanel({ compact = false }) {
   }
 
   // ── Overview ────────────────────────────────────────────────────────────
-  const low = status.backup_codes_remaining <= 2
+  const total = status.backup_code_total || 1
+  const remaining = status.backup_codes_remaining
+  const none = remaining === 0
+  // "Running low" only means something when a set has more than one in it. With
+  // a single code you either still hold it or you do not, and there is no
+  // middle state to warn about.
+  const low = !none && total > 1 && remaining <= 2
 
   return (
     <div className="tfa-sec">
@@ -257,20 +292,45 @@ export default function SecurityPanel({ compact = false }) {
       {status.confirmed && (
         <>
           <div className="tfa-sec-row">
-            <div className={`tfa-sec-badge${low ? ' warn' : ''}`}>
-              <KeyRound size={15} />
-              {status.backup_codes_remaining} backup code
-              {status.backup_codes_remaining === 1 ? '' : 's'} left
+            <div className="tfa-sec-badge">
+              <Smartphone size={15} />
+              {lastUsed ? `Last used ${lastUsed.text}` : 'Not used yet'}
             </div>
             <p className="tfa-hint" style={{ margin: 0 }}>
-              {status.backup_codes_remaining === 0
-                ? <><strong>You have none left.</strong> If you lose your phone
-                  you will need the CDSO to reset your account. Generate a new
-                  set now.</>
+              {/* The nearest thing to "is the authenticator still there?" the
+                  server can offer: it cannot see the phone, so it reports when
+                  the app last demonstrably worked and lets the person draw the
+                  conclusion. A deleted app still shows a confirmed pairing —
+                  only this date hints that anything changed. */}
+              {lastUsed && lastUsed.days >= 30
+                ? <>Your authenticator app hasn&rsquo;t produced a code in
+                  {' '}{lastUsed.days} days. If you no longer have it &mdash; new phone,
+                  app deleted &mdash; pair a new device now rather than finding out
+                  when you are locked out.</>
+                : <>When your authenticator app last produced a valid code. If that
+                  looks wrong, pair a new device.</>}
+            </p>
+          </div>
+
+          <div className="tfa-sec-row">
+            <div className={`tfa-sec-badge${none || low ? ' warn' : ''}`}>
+              <KeyRound size={15} />
+              {none
+                ? 'No backup code'
+                : `${remaining} backup code${remaining === 1 ? '' : 's'} left`}
+            </div>
+            <p className="tfa-hint" style={{ margin: 0 }}>
+              {none
+                ? <><strong>You have none left.</strong> If you lose your phone now,
+                  the CDSO will have to reset your account. Generate
+                  {total > 1 ? ' a new set' : ' a new one'} today.</>
                 : low
                   ? 'Running low — generate a new set so you are not locked out.'
-                  : <>Never saw your codes, or lost them? Generate a new set &mdash;
-                    the old ones stop working straight away.</>}
+                  : total > 1
+                    ? <>Never saw your codes, or lost them? Generate a new set &mdash;
+                      the old ones stop working straight away.</>
+                    : <>Never saw your code, or lost it? Generate a new one &mdash;
+                      the old one stops working straight away.</>}
             </p>
           </div>
 
@@ -287,7 +347,7 @@ export default function SecurityPanel({ compact = false }) {
               onClick={regenerate}
               disabled={busy}
             >
-              <RefreshCw size={16} />New backup codes
+              <RefreshCw size={16} />New backup code{total > 1 ? 's' : ''}
             </button>
             <button
               type="button"

@@ -483,7 +483,10 @@ class BackupCodeTests(TwoFactorTestCase):
                                {'challenge': challenge, 'backup_code': codes[0]}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertTrue(res.data['used_backup_code'])
-        self.assertEqual(res.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT - 1)
+        # Spending the last one is topped up in the same response, so the count
+        # comes back full rather than dropping to zero. The code just used is
+        # still dead — replacement is not forgiveness.
+        self.assertEqual(res.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT)
 
         # The same code a second time is dead.
         challenge = self.login(self.admin).data['challenge']
@@ -491,9 +494,81 @@ class BackupCodeTests(TwoFactorTestCase):
                                  {'challenge': challenge, 'backup_code': codes[0]}, format='json')
         self.assertEqual(again.status_code, 400)
 
+    def test_spending_the_last_code_hands_back_a_replacement(self):
+        """Otherwise a single-code account is left with no way in but the CDSO."""
+        totp, codes = self.enroll_with_backup_codes(self.admin)
+
+        challenge = self.login(self.admin).data['challenge']
+        res = self.client.post('/api/accounts/2fa/verify/',
+                               {'challenge': challenge, 'backup_code': codes[-1]},
+                               format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data['backup_codes_replaced'])
+        self.assertEqual(len(res.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
+        # Never left empty, and the replacement is genuinely new.
+        self.assertEqual(res.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT)
+        self.assertNotEqual(set(res.data['backup_codes']), set(codes))
+
+    def test_the_replacement_code_actually_works(self):
+        totp, codes = self.enroll_with_backup_codes(self.admin)
+        first = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.login(self.admin).data['challenge'],
+             'backup_code': codes[-1]}, format='json')
+        replacement = first.data['backup_codes'][0]
+
+        res = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.login(self.admin).data['challenge'],
+             'backup_code': replacement}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+
+    def test_a_step_up_with_the_last_code_also_replaces_it(self):
+        _, totp = make_confirmed_device(self.admin)
+        from accounts.twofa_api import _issue_backup_codes
+        codes = _issue_backup_codes(self.admin)
+
+        client = self.authed_client(self.admin)
+        res = client.post('/api/accounts/2fa/step-up/',
+                          {'backup_code': codes[-1]}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data['backup_codes_replaced'])
+        self.assertEqual(len(res.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
+
+    def test_codes_still_held_are_not_replaced_or_destroyed(self):
+        """Top-up-when-empty, not replace-on-every-use. With the count at 1 the
+        distinction is invisible; raise it and replacing would silently throw
+        away every code the person had not spent yet."""
+        _, totp = make_confirmed_device(self.admin)
+        from accounts.twofa_api import _issue_backup_codes
+        codes = twofa.generate_backup_codes(3)
+        TwoFactorBackupCode.objects.filter(user=self.admin).delete()
+        TwoFactorBackupCode.objects.bulk_create([
+            TwoFactorBackupCode(user=self.admin, code_hash=twofa.hash_backup_code(c))
+            for c in codes
+        ])
+
+        res = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.login(self.admin).data['challenge'],
+             'backup_code': codes[0]}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertNotIn('backup_codes', res.data)      # nothing reissued
+        self.assertEqual(res.data['backup_codes_remaining'], 2)
+
+        # And the two survivors still work.
+        later = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.login(self.admin).data['challenge'],
+             'backup_code': codes[1]}, format='json')
+        self.assertEqual(later.status_code, 200, later.data)
+
     def test_backup_code_matches_regardless_of_dashes_and_spacing(self):
         totp, codes = self.enroll_with_backup_codes(self.admin)
-        messy = ' ' + codes[1].replace('-', ' ') + ' '
+        # Indexed from the end so this keeps working whatever BACKUP_CODE_COUNT
+        # is — with a single code that is the same one, with ten it is a
+        # different one from the test above.
+        messy = ' ' + codes[-1].replace('-', ' ') + ' '
 
         challenge = self.login(self.admin).data['challenge']
         res = self.client.post('/api/accounts/2fa/verify/',

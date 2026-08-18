@@ -340,10 +340,15 @@ class LostPhone(Journey):
         self.verify(paused.data['challenge'], backup_code=backup_codes[0])
         self.assertTrue(self.access, 'a backup code is a way back in')
 
-        # That code is spent for good.
+        # That code is spent for good — but they are not left with nothing: the
+        # login response carried a replacement, which the screen shows before it
+        # lets them through.
         self.assertEqual(
             TwoFactorBackupCode.objects.filter(user=owner, used_at__isnull=True).count(),
-            twofa.BACKUP_CODE_COUNT - 1)
+            twofa.BACKUP_CODE_COUNT)
+        self.assertNotIn(backup_codes[0],
+                         [c for c in TwoFactorBackupCode.objects.filter(user=owner)
+                          .values_list('code_hash', flat=True)])
 
         # Meanwhile the CDSO clears the old device so a new phone can be paired.
         cdso = Journey()
@@ -468,6 +473,69 @@ class ClosedTheTabOnTheBackupCodes(Journey):
         self.assertEqual(rejected.status_code, 400)
         self.verify(self.sign_in(owner).data['challenge'], new_totp)
         self.assertTrue(self.access)
+
+
+class LostPhoneReconnects(Journey):
+    """The whole recovery, self-service, in one sitting.
+
+    Someone deletes their authenticator (or loses the phone). They must be able
+    to get back to a working app without an admin, and without spending backup
+    codes to buy the right to see a QR — the QR is step-up protected, and a
+    backup code is exactly what a person in this position is short of.
+    """
+
+    def test_backup_code_login_leads_straight_to_a_working_new_device(self):
+        owner = self.make_owner()
+        old_totp, first_codes = self.enroll(self.sign_in(owner).data['challenge'])
+
+        # The phone is gone: new browser, no device trust, no authenticator.
+        self.browser = APIClient()
+        self.access = self.device_token = self.step_up = ''
+
+        paused = self.sign_in(owner)
+        self.assertEqual(paused.data['twofa_action'], 'verify')
+        signed_in = self.verify(paused.data['challenge'], backup_code=first_codes[-1])
+
+        # Signing in with the code both replaces it and carries the authority to
+        # re-pair, so the QR is reachable without spending a second one.
+        self.assertTrue(signed_in['backup_codes_replaced'])
+        self.assertTrue(self.step_up, 'a typed code should authorise the next few minutes')
+
+        qr = self.post('/api/accounts/2fa/setup/')
+        self.assertEqual(qr.status_code, 200, qr.data)
+        self.assertTrue(qr.data['qr_code'].startswith('data:image/png;base64,'))
+
+        new_totp = pyotp.TOTP(qr.data['secret'])
+        done = self.post('/api/accounts/2fa/confirm/', {'code': new_totp.now()})
+        self.assertEqual(done.status_code, 200, done.data)
+
+        # The new phone signs them in; the lost one is dead.
+        self.browser = APIClient()
+        self.access = self.device_token = self.step_up = ''
+        stale = self.browser.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.sign_in(owner).data['challenge'], 'code': old_totp.now()},
+            format='json')
+        self.assertEqual(stale.status_code, 400)
+        self.verify(self.sign_in(owner).data['challenge'], new_totp)
+        self.assertTrue(self.access)
+
+    def test_a_trusted_device_login_grants_no_such_authority(self):
+        """The grant follows a typed code, not merely being signed in — the
+        everyday trusted-browser login must still be challenged."""
+        admin = self.make_admin()
+        totp, _ = self.enroll(self.sign_in(admin).data['challenge'])
+        self.access = self.step_up = ''
+
+        quiet = self.sign_in(admin)          # trusted browser, no code entered
+        self.assertIn('access', quiet.data)
+        self.assertNotIn('step_up_token', quiet.data)
+
+        self.start_session(quiet.data)
+        self.assertFalse(self.step_up)
+        denied = self.put('/api/vehicles/system-settings/', {'retention_years': 3})
+        self.assertEqual(denied.status_code, 403)
+        self.assertTrue(denied.data['stepup_required'])
 
 
 class ForgotPassword(Journey):

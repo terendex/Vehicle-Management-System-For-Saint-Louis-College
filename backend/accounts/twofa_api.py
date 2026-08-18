@@ -273,6 +273,24 @@ def _issue_backup_codes(user):
     return codes
 
 
+def _replenish_backup_codes(user):
+    """Issue a fresh set if spending a code left the account with none.
+
+    Deliberately "top up when empty" rather than "replace on every use": with
+    BACKUP_CODE_COUNT at 1 that fires each time, which is the point — a single
+    code that is spent leaves nothing behind. Were the count raised to ten,
+    replacing on every use would destroy the nine unused ones, so the emptiness
+    check is what keeps this correct at any count.
+
+    Returns the new plain-text codes, or None when the account still has some.
+    The caller must SHOW whatever comes back: a code issued and never displayed
+    is the exact failure this whole path exists to avoid.
+    """
+    if TwoFactorBackupCode.objects.filter(user=user, used_at__isnull=True).exists():
+        return None
+    return _issue_backup_codes(user)
+
+
 # ── Enrollment ──────────────────────────────────────────────────────────────
 
 class TwoFactorSetupView(APIView):
@@ -421,8 +439,29 @@ class TwoFactorVerifyView(APIView):
             )
 
         data = build_login_response(user, request)
+
+        # A code was just entered, so the next few minutes of sensitive work
+        # need no second one. This is what makes re-pairing reachable after a
+        # lost phone: the QR is step-up protected, and without this the only way
+        # to it is a backup code — the very thing someone in that position is
+        # short of. They would spend one to get in and another to open the QR.
+        #
+        # Note this is granted only on THIS endpoint, where a code was actually
+        # typed. A trusted-device login enters nothing and gets nothing, so a
+        # sensitive action there is still challenged — which is the common case
+        # and the one the rule was written for.
+        data['step_up_token'] = twofa.issue_step_up(user)
+        data['step_up_expires_in'] = twofa.STEP_UP_MINUTES * 60
+
         if used_backup:
             data['used_backup_code'] = True
+            # Signing in with the last backup code hands back a replacement in
+            # the same response, so nobody is left with no way in but the CDSO.
+            # The client shows it before letting them onto their dashboard.
+            replacement = _replenish_backup_codes(user)
+            if replacement:
+                data['backup_codes'] = replacement
+                data['backup_codes_replaced'] = True
             data['backup_codes_remaining'] = TwoFactorBackupCode.objects.filter(
                 user=user, used_at__isnull=True,
             ).count()
@@ -465,11 +504,20 @@ class TwoFactorStepUpView(APIView):
             return Response({'error': _code_error(request)},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({
+        payload = {
             'step_up_token': twofa.issue_step_up(user),
             'expires_in': twofa.STEP_UP_MINUTES * 60,
             'used_backup_code': used_backup,
-        })
+        }
+        # Same rule as the login path. A backup code spent here would otherwise
+        # leave the account empty just as surely, only without the login screen
+        # to notice it.
+        if used_backup:
+            replacement = _replenish_backup_codes(user)
+            if replacement:
+                payload['backup_codes'] = replacement
+                payload['backup_codes_replaced'] = True
+        return Response(payload)
 
 
 # ── Status / management ─────────────────────────────────────────────────────
@@ -494,6 +542,10 @@ class TwoFactorStatusView(APIView):
             'backup_codes_remaining': TwoFactorBackupCode.objects.filter(
                 user=user, used_at__isnull=True,
             ).count(),
+            # How many a fresh set contains. Sent so the screen can word itself
+            # ("code" vs "codes", and whether "running low" even means anything)
+            # instead of hardcoding a number the backend owns.
+            'backup_code_total': twofa.BACKUP_CODE_COUNT,
             'step_up_minutes': twofa.STEP_UP_MINUTES,
             'device_trust_days': twofa.DEVICE_TRUST_DAYS,
         })

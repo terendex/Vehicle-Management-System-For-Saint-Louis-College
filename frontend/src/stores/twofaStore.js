@@ -38,6 +38,10 @@ const useTwofaStore = create((set, get) => ({
   promptReason: '',
   submitting: false,
   error: '',
+  /** Set when a spent backup code was replaced. The held request waits until
+   *  the user acknowledges the new one — issuing a code without showing it is
+   *  exactly the dead end backup codes exist to prevent. */
+  newBackupCodes: null,
 
   /** A token we still believe is good, or '' — checked before prompting. */
   liveToken: () => liveStepUpToken(),
@@ -81,6 +85,20 @@ const useTwofaStore = create((set, get) => ({
       const data = await twofaApi.stepUp({ code, backupCode })
       const token = data.step_up_token
       const expiresAt = setStepUpToken(token, data.expires_in)
+
+      if (data.backup_codes?.length) {
+        // Keep the dialog open on the new code. The original request is still
+        // held; it goes through the moment they acknowledge.
+        set({
+          expiresAt,
+          submitting: false,
+          error: '',
+          newBackupCodes: data.backup_codes,
+          _pendingToken: token,
+        })
+        return true
+      }
+
       set({ expiresAt, prompting: false, submitting: false, error: '' })
       get()._resolve?.(token)
       set({ _resolve: null, _reject: null })
@@ -95,15 +113,26 @@ const useTwofaStore = create((set, get) => ({
     }
   },
 
+  /** Called once the replacement backup code has been noted down. Releases
+   *  the request that has been waiting behind the dialog. */
+  acknowledgeBackupCodes: () => {
+    const token = get()._pendingToken
+    set({ newBackupCodes: null, _pendingToken: '', prompting: false })
+    get()._resolve?.(token)
+    set({ _resolve: null, _reject: null })
+  },
+
   /** Called by the dialog when the user backs out. */
   cancel: () => {
     const reject = get()._reject
-    set({ prompting: false, submitting: false, error: '', _resolve: null, _reject: null })
+    set({ prompting: false, submitting: false, error: '', newBackupCodes: null,
+          _pendingToken: '', _resolve: null, _reject: null })
     reject?.(new Error('step-up-cancelled'))
   },
 
   _resolve: null,
   _reject: null,
+  _pendingToken: '',
 }))
 
 export default useTwofaStore
