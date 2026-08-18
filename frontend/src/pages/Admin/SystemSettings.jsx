@@ -803,7 +803,7 @@ export default function SystemSettings() {
               <div>
                 <h2 className="ss-section-title">Backup &amp; Restore</h2>
                 <p className="ss-section-desc">
-                  Download a full snapshot of all system data — users, vehicles, registrations,
+                  Download a snapshot of system data — users, vehicles, registrations,
                   violations and scan logs — as a JSON file you can save anywhere, or restore the
                   system from a previously downloaded backup.
                 </p>
@@ -815,7 +815,11 @@ export default function SystemSettings() {
                 <div className="ss-row-text">
                   <span className="ss-row-label">Full system snapshot</span>
                   <span className="ss-row-hint">
-                    The file downloads to this computer — keep it somewhere safe.
+                    The file downloads to this computer — keep it somewhere safe, it holds
+                    every account and plate in the system. Uploaded images (owner photos,
+                    licence scans, snapshots) are <strong>not</strong> included — only their
+                    filenames — so back those up separately. Authenticator pairings are also
+                    left out, so a restore never breaks anyone&rsquo;s 2FA.
                   </span>
                 </div>
                 <div className="ss-backup-actions">
@@ -989,9 +993,15 @@ export default function SystemSettings() {
             <AlertTriangle size={32} className="ss-modal-icon-warn" />
             <h2 className="ss-modal-title">Restore from Backup?</h2>
             <p className="ss-modal-body">
-              This will overwrite current system data with the contents of{' '}
-              <strong>{restoreFile.name}</strong>. A safety snapshot of the current data is saved
-              first, and the restore is rolled back automatically if anything goes wrong. Continue?
+              This loads <strong>{restoreFile.name}</strong> over your current data. Records in
+              the file replace the matching ones, but anything created since the backup was
+              taken <strong>stays</strong> &mdash; this is a merge, not a rewind to that date.
+            </p>
+            <p className="ss-modal-body">
+              Passwords are part of the file, so anyone who has changed theirs since will need
+              the older one. Authenticator pairings are not touched. A safety snapshot of the
+              current data is saved first, and the whole restore is rolled back automatically if
+              anything fails. Continue?
             </p>
             <div className="ss-modal-actions">
               <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreFile(null)}>Cancel</button>

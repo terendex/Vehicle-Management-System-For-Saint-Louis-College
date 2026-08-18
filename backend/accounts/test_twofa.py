@@ -706,6 +706,50 @@ class StepUpEnforcementTests(TwoFactorTestCase):
         self.assertEqual(res.status_code, 403)
 
 
+# ── Backup interaction ───────────────────────────────────────────────────────
+
+class BackupExcludesTwoFactorTests(TwoFactorTestCase):
+    """A backup must never carry authenticator pairings.
+
+    They are not business data — they are the bond between an account and a
+    physical phone. Restoring them would overwrite the secret someone's app
+    holds today, so their codes would stop working while an older handset
+    started working again. On the only CDSO account that is an unrecoverable
+    lock-out, caused by an operation that reads as routine.
+    """
+
+    def dump(self):
+        import io as _io
+        import json
+
+        from django.core.management import call_command
+        from accounts.views import BACKUP_APPS, BACKUP_EXCLUDE
+
+        buf = _io.StringIO()
+        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, stdout=buf)
+        return json.loads(buf.getvalue())
+
+    def test_backup_carries_no_two_factor_rows(self):
+        make_confirmed_device(self.admin)
+        from accounts.twofa_api import _issue_backup_codes
+        _issue_backup_codes(self.admin)
+
+        # Both exist in the database...
+        self.assertTrue(TwoFactorDevice.objects.filter(user=self.admin).exists())
+        self.assertTrue(TwoFactorBackupCode.objects.filter(user=self.admin).exists())
+
+        # ...and neither reaches the file.
+        models = {row['model'] for row in self.dump()}
+        self.assertNotIn('accounts.twofactordevice', models)
+        self.assertNotIn('accounts.twofactorbackupcode', models)
+
+    def test_backup_still_carries_the_accounts_it_should(self):
+        """The exclusion must be surgical — users and audit history stay in."""
+        make_confirmed_device(self.admin)
+        models = {row['model'] for row in self.dump()}
+        self.assertIn('accounts.user', models)
+
+
 # ── Status endpoint ──────────────────────────────────────────────────────────
 
 class StatusTests(TwoFactorTestCase):

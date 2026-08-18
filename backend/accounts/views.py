@@ -820,7 +820,23 @@ BACKUP_APPS = ['accounts', 'vehicles', 'scanning', 'violations', 'realtime']
 # High-volume ML artefacts (plate-recognition crops and training samples) are
 # rebuildable and would bloat every backup by ~20k rows / many MB, making
 # restore impractically slow. Business data — including the access log — is kept.
-BACKUP_EXCLUDE = ['scanning.platerecognitionrecord', 'scanning.mltrainingsample']
+#
+# Two-factor rows are excluded for a different reason: they are not data, they
+# are the pairing between an account and a physical phone. Restoring them would
+# overwrite whatever secret a person's authenticator holds today with the one
+# from the file, so their app would silently stop producing valid codes and an
+# older, possibly discarded phone would start working again. On the only CDSO
+# account that is a lock-out with no way back.
+#
+# Leaving them out means a restore never disturbs anyone's authenticator: live
+# pairings survive untouched, and a restore onto an empty database simply asks
+# each person to enroll at their next login, which is the correct outcome.
+BACKUP_EXCLUDE = [
+    'scanning.platerecognitionrecord',
+    'scanning.mltrainingsample',
+    'accounts.twofactordevice',
+    'accounts.twofactorbackupcode',
+]
 
 
 class SystemBackupView(APIView):
@@ -851,7 +867,21 @@ class SystemBackupView(APIView):
 
 
 class SystemRestoreView(APIView):
-    """Restore application data from an uploaded JSON backup — admin (CDSO) only.
+    """Merge an uploaded JSON backup into the live data — admin (CDSO) only.
+
+    "Restore" overstates it, and the difference matters. `loaddata` writes each
+    record by primary key: rows in the file overwrite the matching live rows and
+    missing ones are inserted, but nothing is ever deleted. An account or
+    vehicle created after the backup was taken therefore survives the restore
+    untouched. This is a merge, not a rewind to the backup's date, and the
+    confirmation dialog says so in those words.
+
+    Making it a true rewind would mean emptying every backed-up table first.
+    That is technically possible — the excluded ML tables carry no foreign keys
+    into these, so nothing would cascade unnoticed — but it turns a recoverable
+    operation into one that destroys everything created since the file was
+    written, including the row of the admin performing it. It is not a change to
+    make quietly; the honest description above is the safer half of the trade.
 
     Safety measures: admin-only, a fresh two-factor step-up, file validated as a
     JSON fixture, an automatic pre-restore snapshot of current data saved to
