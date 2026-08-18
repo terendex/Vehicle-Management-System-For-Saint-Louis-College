@@ -483,6 +483,9 @@ class TwoFactorStatusView(APIView):
         user = request.user
         device = TwoFactorDevice.objects.filter(user=user).first()
         return Response({
+            # Named so a downloaded backup-code file says whose account it is —
+            # people end up with files from more than one system.
+            'email': user.email,
             'applicable': twofa.requires_2fa(user),
             'enrolled': device is not None,
             'confirmed': bool(device and device.is_confirmed),

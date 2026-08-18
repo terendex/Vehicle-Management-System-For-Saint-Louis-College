@@ -362,6 +362,114 @@ class LostPhone(Journey):
         self.assertTrue(self.access)
 
 
+class ClosedTheTabOnTheBackupCodes(Journey):
+    """The accidental-exit case, and the way back from it.
+
+    Abandoning the QR is harmless — nothing is confirmed, so the next login
+    starts over. Closing the tab on the *backup codes* is the one step that
+    cannot be repeated: the account is enrolled and the codes are stored hashed,
+    so those exact codes are gone. Account Security has to be able to replace
+    them, or the person is one lost phone away from needing a CDSO reset.
+    """
+
+    def test_abandoning_the_qr_leaves_no_damage(self):
+        owner = self.make_owner()
+        challenge = self.sign_in(owner).data['challenge']
+
+        # Fetch the QR, then walk away without confirming.
+        first = self.browser.post('/api/accounts/2fa/setup/',
+                                  {'challenge': challenge}, format='json')
+        self.assertEqual(first.status_code, 200)
+        abandoned_secret = first.data['secret']
+
+        device = TwoFactorDevice.objects.get(user=owner)
+        self.assertIsNone(device.confirmed_at, 'an abandoned setup must not count')
+
+        # Next login offers setup again — with a brand-new secret, so the
+        # abandoned one can never be used against the account.
+        self.browser = APIClient()
+        again = self.sign_in(owner)
+        self.assertEqual(again.data['twofa_action'], 'setup')
+
+        second = self.browser.post('/api/accounts/2fa/setup/',
+                                   {'challenge': again.data['challenge']}, format='json')
+        self.assertNotEqual(second.data['secret'], abandoned_secret)
+
+        totp = pyotp.TOTP(second.data['secret'])
+        done = self.browser.post('/api/accounts/2fa/confirm/',
+                                 {'challenge': again.data['challenge'], 'code': totp.now()},
+                                 format='json')
+        self.assertEqual(done.status_code, 200, done.data)
+
+    def test_new_codes_can_be_generated_for_someone_who_never_saw_theirs(self):
+        owner = self.make_owner()
+        totp, original = self.enroll(self.sign_in(owner).data['challenge'])
+
+        # Pretend the tab was closed here: enrolled, ten codes stored, none read.
+        self.assertEqual(
+            TwoFactorBackupCode.objects.filter(user=owner, used_at__isnull=True).count(),
+            twofa.BACKUP_CODE_COUNT)
+
+        # Account Security shows the state...
+        self.step_up = ''
+        status = self.get('/api/accounts/2fa/status/')
+        self.assertEqual(status.status_code, 200)
+        self.assertTrue(status.data['confirmed'])
+        self.assertEqual(status.data['email'], owner.email)
+        self.assertEqual(status.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT)
+
+        # ...and regenerating needs a code, then hands over a fresh set.
+        blocked = self.post('/api/accounts/2fa/backup-codes/')
+        self.assertEqual(blocked.status_code, 403)
+        self.assertTrue(blocked.data['stepup_required'])
+
+        self.do_step_up(totp)
+        fresh = self.post('/api/accounts/2fa/backup-codes/')
+        self.assertEqual(fresh.status_code, 200, fresh.data)
+        self.assertEqual(len(fresh.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
+        self.assertNotEqual(set(fresh.data['backup_codes']), set(original))
+
+        # The unseen originals are dead, and a new one works.
+        self.browser = APIClient()
+        self.access = self.device_token = self.step_up = ''
+        stale = self.browser.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.sign_in(owner).data['challenge'],
+             'backup_code': original[0]}, format='json')
+        self.assertEqual(stale.status_code, 400)
+
+        self.verify(self.sign_in(owner).data['challenge'],
+                    backup_code=fresh.data['backup_codes'][0])
+        self.assertTrue(self.access)
+
+    def test_a_new_phone_can_be_paired_without_involving_the_cdso(self):
+        owner = self.make_owner()
+        old_totp, _ = self.enroll(self.sign_in(owner).data['challenge'])
+
+        # Pairing over a working device is sensitive — prove the old one first.
+        self.step_up = ''
+        self.assertEqual(self.post('/api/accounts/2fa/setup/').status_code, 403)
+
+        self.do_step_up(old_totp)
+        paired = self.post('/api/accounts/2fa/setup/')
+        self.assertEqual(paired.status_code, 200, paired.data)
+
+        new_totp = pyotp.TOTP(paired.data['secret'])
+        confirmed = self.post('/api/accounts/2fa/confirm/', {'code': new_totp.now()})
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        # The new phone works; the old one is now useless.
+        self.browser = APIClient()
+        self.access = self.device_token = self.step_up = ''
+        challenge = self.sign_in(owner).data['challenge']
+        rejected = self.browser.post('/api/accounts/2fa/verify/',
+                                     {'challenge': challenge, 'code': old_totp.now()},
+                                     format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.verify(self.sign_in(owner).data['challenge'], new_totp)
+        self.assertTrue(self.access)
+
+
 class ForgotPassword(Journey):
     """A reset proves the mailbox, not the person."""
 

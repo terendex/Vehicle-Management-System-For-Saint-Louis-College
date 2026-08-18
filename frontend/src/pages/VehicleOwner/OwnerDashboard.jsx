@@ -7,6 +7,7 @@ import {
   ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
 import { usersApi } from '../../api/users'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
@@ -70,6 +71,7 @@ const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().
 
 export default function OwnerDashboard() {
   const { user, logout, clearMustChangePassword } = useAuthStore()
+  const [securityModal, setSecurityModal] = useState(false)
 
   /* ── registration data ── */
   const [reg, setReg] = useState(null)
@@ -373,6 +375,22 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* ── Security (two-factor) ── */}
+      {securityModal && (
+        <div className="od-modal-overlay" onClick={() => setSecurityModal(false)}>
+          <div className="od-modal od-modal-wide" onClick={e => e.stopPropagation()}>
+            <h2 className="od-modal-title">Account Security</h2>
+            <p className="od-modal-subtitle">
+              Manage your authenticator app and backup codes.
+            </p>
+            <SecurityPanel compact />
+            <div className="od-modal-actions" style={{ marginTop: 18 }}>
+              <button className="od-btn-ghost" onClick={() => setSecurityModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main dashboard ── */}
       <div className="od-page">
 
@@ -385,6 +403,10 @@ export default function OwnerDashboard() {
             <h1>Welcome, {user?.full_name || 'Vehicle Owner'}!</h1>
             <p>Here is your registration summary and vehicle access details.</p>
           </div>
+          <button className="od-change-pw-btn" onClick={() => setSecurityModal(true)} title="Two-factor authentication and backup codes">
+            <ShieldCheck size={15} />
+            Security
+          </button>
           <button className="od-change-pw-btn" onClick={() => setPwModal(true)} title="Change Password">
             <KeyRound size={15} />
             Change Password

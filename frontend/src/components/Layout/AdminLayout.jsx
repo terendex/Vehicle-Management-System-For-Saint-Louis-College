@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   Shield,
+  ShieldCheck,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -65,6 +66,9 @@ function buildNavGroups(isAdmin) {
         { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
         { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
         { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
+        // Own account, not a system-wide policy — but it belongs beside the
+        // other things only the CDSO can reach, and there is no other menu.
+        { name: 'Account Security', path: '/admin/security', icon: <ShieldCheck size={18} /> },
       ],
     })
   }

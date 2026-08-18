@@ -1680,3 +1680,10 @@
 }
 .od-btn-ghost:hover { background: #E2E8F0; }
 .od-btn-ghost:disabled, .od-btn-primary:disabled { opacity: 0.6; cursor: default; }
+
+/* The security modal carries a QR and a two-column code grid, so it needs more
+   room than the confirm-style dialogs the base .od-modal was sized for. */
+.od-modal.od-modal-wide {
+  max-width: 520px;
+  text-align: left;
+}

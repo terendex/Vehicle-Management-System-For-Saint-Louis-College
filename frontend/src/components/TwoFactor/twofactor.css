@@ -349,3 +349,56 @@
   .tfa-qr-wrap img { width: 160px; height: 160px; }
   .tfa-codes-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Security panel (CDSO page + owner modal) ────────────────────────────── */
+
+.tfa-sec-title {
+  margin: 0 0 14px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-sec-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid #E6EDF3;
+}
+
+.tfa-sec-row:first-of-type { border-top: none; padding-top: 0; }
+
+.tfa-sec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  /* Fixed width so the badges stack into a column and the explanations beside
+     them line up, instead of each row starting at its own indent. */
+  min-width: 168px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4A6B85;
+  background: #F1F5F8;
+  border: 1px solid #DCE7EF;
+  border-radius: 8px;
+}
+
+.tfa-sec-badge.on {
+  color: #0B5138;
+  background: #E9F7F1;
+  border-color: #BFE5D5;
+}
+
+.tfa-sec-badge.warn {
+  color: #7A4B00;
+  background: #FFF6E5;
+  border-color: #F3DFB4;
+}
+
+@media (max-width: 560px) {
+  .tfa-sec-row { flex-direction: column; gap: 8px; }
+  .tfa-sec-badge { min-width: 0; }
+}

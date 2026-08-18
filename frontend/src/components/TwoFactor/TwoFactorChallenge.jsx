@@ -60,6 +60,19 @@ export default function TwoFactorChallenge({
   // cannot get it — no separate flag needed.
   const loadingEnrollment = isSetup && !enrollment && !error
 
+  // Closing the tab on the backup-codes screen is the one irreversible slip in
+  // this whole flow: the account is already enrolled by then, and the codes are
+  // stored hashed, so they can never be shown again. Everything else here is
+  // safely repeatable — abandoning the QR just means an unconfirmed device and
+  // a fresh secret next time. One browser warning is worth it for the one step
+  // that cannot be undone.
+  useEffect(() => {
+    if (!backupCodes) return undefined
+    const warn = (e) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [backupCodes])
+
   const submit = useCallback(async (submitted) => {
     if (busy) return
     const value = (submitted || code).trim()
@@ -137,7 +150,9 @@ export default function TwoFactorChallenge({
           <AlertCircle size={15} />
           <span>
             This is the only time these are shown. Each one works once. If you
-            lose them and your phone, the CDSO has to reset your account.
+            close this without saving them, generate a new set from
+            <strong> Account Security</strong> &mdash; you will not be locked
+            out, but these exact codes cannot be shown again.
           </span>
         </div>
 
