@@ -811,32 +811,16 @@ class AuditLogPdfExportView(APIView):
         )
 
 
-# ── System Backup & Restore ─────────────────────────────────────────────────
-# App labels whose data is captured in a backup. Excludes contenttypes,
-# permissions, sessions, admin log entries and token blacklists (volatile /
-# rebuildable) — the schema itself is versioned by migrations.
-BACKUP_APPS = ['accounts', 'vehicles', 'scanning', 'violations', 'realtime']
-
-# High-volume ML artefacts (plate-recognition crops and training samples) are
-# rebuildable and would bloat every backup by ~20k rows / many MB, making
-# restore impractically slow. Business data — including the access log — is kept.
-#
-# Two-factor rows are excluded for a different reason: they are not data, they
-# are the pairing between an account and a physical phone. Restoring them would
-# overwrite whatever secret a person's authenticator holds today with the one
-# from the file, so their app would silently stop producing valid codes and an
-# older, possibly discarded phone would start working again. On the only CDSO
-# account that is a lock-out with no way back.
-#
-# Leaving them out means a restore never disturbs anyone's authenticator: live
-# pairings survive untouched, and a restore onto an empty database simply asks
-# each person to enroll at their next login, which is the correct outcome.
-BACKUP_EXCLUDE = [
-    'scanning.platerecognitionrecord',
-    'scanning.mltrainingsample',
-    'accounts.twofactordevice',
-    'accounts.twofactorbackupcode',
-]
+# ── System Backup & Restore ─────────────────────────────
+# The app list, the exclusions and the on-disk layout live in backup_utils so
+# the scheduled job (vehicles.tasks.auto_backup) and the buttons on this page
+# produce exactly the same kind of file. Re-exported here because tests and
+# other modules have imported these names from this module since before that
+# helper existed.
+from .backup_utils import (                                        # noqa: E402
+    AUTO_PREFIX, BACKUP_APPS, BACKUP_EXCLUDE, MANUAL_PREFIX, SAFETY_PREFIX,
+    dump_backup, list_backups, prune_backups, safe_path, stamp, write_backup,
+)
 
 
 class SystemBackupView(APIView):
@@ -851,23 +835,97 @@ class SystemBackupView(APIView):
     step_up_on_read = True
 
     def get(self, request):
-        import io
-        from django.core.management import call_command
         from django.http import HttpResponse
-        from django.utils import timezone as tz
+        from vehicles.models import SystemSettings
 
-        buf = io.StringIO()
-        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=buf)
+        payload = dump_backup()
 
-        response = HttpResponse(buf.getvalue(), content_type='application/json')
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
-        response['Content-Disposition'] = f'attachment; filename="slc-vms-backup-{stamp}.json"'
+        # Keep a copy on the server as well. A manual download is the moment the
+        # data was known-good enough for someone to want it saved, and keeping
+        # it means the restore list is not empty on a system where the automatic
+        # schedule has only just been switched on. Rotated by the same keep count
+        # as the automatic ones, so repeated downloads cannot fill the disk. A
+        # disk problem here must not cost the admin the download they asked for.
+        try:
+            write_backup(MANUAL_PREFIX, payload)
+            prune_backups(SystemSettings.get().auto_backup_keep)
+        except OSError:
+            logger.warning("Could not keep a server-side copy of the manual backup", exc_info=True)
+
+        response = HttpResponse(payload, content_type='application/json')
+        response['Content-Disposition'] = (
+            f'attachment; filename="slc-vms-backup-{stamp(seconds=False)}.json"')
         log_action(request, AuditLog.Action.RECORD_UPDATED, details='System backup downloaded')
         return response
 
 
+class SystemBackupListView(APIView):
+    """The backup files sitting on the server — admin (CDSO) only.
+
+    Covers the automatic backups, the copy kept on each manual download, and the
+    pre-restore safety snapshots. This reads filenames and sizes, not the data
+    inside them, so it needs admin but no step-up; downloading one of them does.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from vehicles.models import SystemSettings
+
+        cfg = SystemSettings.get()
+        return Response({
+            'backups': list_backups(),
+            'auto_backup_frequency': cfg.auto_backup_frequency,
+            'auto_backup_keep': cfg.auto_backup_keep,
+        })
+
+
+class SystemBackupFileView(APIView):
+    """Download or delete one saved backup file — admin (CDSO) only.
+
+    Same step-up as taking a fresh backup, and for the same reason: the file
+    holds every account and plate in the system whether it was written a minute
+    ago or last term.
+    """
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    step_up_on_read = True
+
+    def get(self, request, name):
+        from django.http import FileResponse
+
+        path = safe_path(name)
+        if not path:
+            return Response({'error': 'Backup file not found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        log_action(request, AuditLog.Action.RECORD_UPDATED,
+                   details=f'Saved backup downloaded ({name})')
+        return FileResponse(open(path, 'rb'), as_attachment=True,
+                            filename=name, content_type='application/json')
+
+    def delete(self, request, name):
+        import os
+
+        path = safe_path(name)
+        if not path:
+            return Response({'error': 'Backup file not found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        try:
+            os.remove(path)
+        except OSError as exc:
+            return Response({'error': f'Could not delete the file. ({exc})'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        log_action(request, AuditLog.Action.RECORD_UPDATED,
+                   details=f'Saved backup deleted ({name})')
+        return Response({'deleted': name}, status=status.HTTP_200_OK)
+
+
 class SystemRestoreView(APIView):
-    """Merge an uploaded JSON backup into the live data — admin (CDSO) only.
+    """Merge a JSON backup into the live data — admin (CDSO) only.
+
+    Takes either an uploaded file (`file`) or the name of a backup already on
+    the server (`filename`) — an automatic one, or a pre-restore snapshot from
+    an earlier attempt. Both paths run the same validation, the same safety
+    snapshot and the same atomic load; a saved file simply skips the download /
+    re-upload round trip.
 
     "Restore" overstates it, and the difference matters. `loaddata` writes each
     record by primary key: rows in the file overwrite the matching live rows and
@@ -895,20 +953,31 @@ class SystemRestoreView(APIView):
     permission_classes = [IsAdminRole, HasRecentTwoFactor]
 
     def post(self, request):
-        import io, json, os, tempfile
+        import json, os, tempfile
         from django.core.management import call_command
         from django.db import transaction
-        from django.utils import timezone as tz
 
         upload = request.FILES.get('file')
-        if not upload:
+        filename = (request.data.get('filename') or '').strip()
+
+        if upload:
+            source = upload.name
+            if upload.size > 50 * 1024 * 1024:
+                return Response({'error': 'Backup file is too large (max 50 MB).'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            raw = upload.read()
+        elif filename:
+            path = safe_path(filename)
+            if not path:
+                return Response({'error': 'Saved backup not found.'},
+                                status=status.HTTP_404_NOT_FOUND)
+            source = filename
+            with open(path, 'rb') as fh:
+                raw = fh.read()
+        else:
             return Response({'error': 'No backup file provided.'},
                             status=status.HTTP_400_BAD_REQUEST)
-        if upload.size > 50 * 1024 * 1024:
-            return Response({'error': 'Backup file is too large (max 50 MB).'},
-                            status=status.HTTP_400_BAD_REQUEST)
 
-        raw = upload.read()
         try:
             parsed = json.loads(raw.decode('utf-8'))
             if not isinstance(parsed, list):
@@ -918,15 +987,9 @@ class SystemRestoreView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         # 1) Auto safety snapshot of current data before overwriting anything.
-        safety = io.StringIO()
-        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=safety)
-        safety_dir = os.path.join(settings.BASE_DIR, 'backups')
-        os.makedirs(safety_dir, exist_ok=True)
-        safety_name = f"pre-restore-{tz.localtime().strftime('%Y%m%d-%H%M%S')}.json"
-        with open(os.path.join(safety_dir, safety_name), 'w', encoding='utf-8') as fh:
-            fh.write(safety.getvalue())
+        safety_name, _ = write_backup(SAFETY_PREFIX)
 
-        # 2) Load the uploaded fixture atomically (rolls back on any error).
+        # 2) Load the fixture atomically (rolls back on any error).
         tmp = tempfile.NamedTemporaryFile('wb', suffix='.json', delete=False)
         try:
             tmp.write(raw)
@@ -946,7 +1009,7 @@ class SystemRestoreView(APIView):
                 pass
 
         log_action(request, AuditLog.Action.RECORD_UPDATED,
-                   details=f'System restore from backup ({len(parsed)} records)')
+                   details=f'System restore from backup ({len(parsed)} records, source: {source})')
         return Response({'restored': len(parsed), 'safety_backup': safety_name},
                         status=status.HTTP_200_OK)
 

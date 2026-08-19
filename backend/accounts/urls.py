@@ -22,6 +22,10 @@ urlpatterns = [
     path('dashboard/stats/',            views.DashboardStatsView.as_view(),    name='dashboard-stats'),
     path('system/backup/',              views.SystemBackupView.as_view(),      name='system-backup'),
     path('system/restore/',             views.SystemRestoreView.as_view(),     name='system-restore'),
+    path('system/backups/',             views.SystemBackupListView.as_view(),  name='system-backup-list'),
+    # <name> is a filename, so no slashes: the view still re-checks that it
+    # resolves inside the backups directory before it opens anything.
+    path('system/backups/<str:name>/',  views.SystemBackupFileView.as_view(),  name='system-backup-file'),
     path('password-reset/request/',     views.PasswordResetRequestView.as_view(),  name='password-reset-request'),
     path('password-reset/confirm/',     views.PasswordResetConfirmView.as_view(),  name='password-reset-confirm'),
     path('guard-qr-available/',         views.GuardQrAvailabilityView.as_view(),   name='guard-qr-available'),

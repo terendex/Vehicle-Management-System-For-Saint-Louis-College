@@ -84,6 +84,27 @@ export const usersApi = {
     return data
   },
 
+  /** List the backup files held on the server, plus the automatic-backup
+   *  schedule they were written under (admin only). */
+  listBackups: async () => {
+    const { data } = await api.get('/accounts/system/backups/')
+    return data
+  },
+
+  /** Download one backup already saved on the server (admin only). */
+  downloadSavedBackup: async (name) => {
+    const { data } = await api.get(`/accounts/system/backups/${encodeURIComponent(name)}/`, {
+      responseType: 'blob',
+    })
+    return data
+  },
+
+  /** Delete one saved backup file from the server (admin only). */
+  deleteSavedBackup: async (name) => {
+    const { data } = await api.delete(`/accounts/system/backups/${encodeURIComponent(name)}/`)
+    return data
+  },
+
   /** Restore application data from an uploaded JSON backup file (admin only). */
   restoreBackup: async (file) => {
     const form = new FormData()
@@ -91,6 +112,13 @@ export const usersApi = {
     const { data } = await api.post('/accounts/system/restore/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
+    return data
+  },
+
+  /** Restore from a backup already on the server — same endpoint and the same
+   *  safety snapshot as an upload, without the download / re-upload trip. */
+  restoreSavedBackup: async (name) => {
+    const { data } = await api.post('/accounts/system/restore/', { filename: name })
     return data
   },
 

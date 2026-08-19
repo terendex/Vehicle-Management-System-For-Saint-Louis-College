@@ -2107,6 +2107,8 @@ class SystemSettingsView(APIView):
             "account_expiry_days":    obj.account_expiry_days,
             "parked_after_seconds":      obj.parked_after_seconds,
             "double_park_after_seconds": obj.double_park_after_seconds,
+            "auto_backup_frequency": obj.auto_backup_frequency,
+            "auto_backup_keep":      obj.auto_backup_keep,
         }
 
     def get(self, request):
@@ -2132,6 +2134,8 @@ class SystemSettingsView(APIView):
         account_expiry_days       = request.data.get("account_expiry_days",    obj.account_expiry_days)
         parked_after_seconds      = request.data.get("parked_after_seconds",      obj.parked_after_seconds)
         double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
+        auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
+        auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
 
         try:
             retention_years = int(retention_years)
@@ -2226,6 +2230,19 @@ class SystemSettingsView(APIView):
                 f"({parked_after_seconds}s)."
             )
 
+        # "off" is a real frequency, not a missing value — it is how automatic
+        # backups are switched off, so it is accepted like any other choice.
+        valid_freqs = {'off', 'hourly', 'daily', 'weekly', 'monthly'}
+        auto_backup_frequency = str(auto_backup_frequency or 'off').lower()
+        if auto_backup_frequency not in valid_freqs:
+            errors["auto_backup_frequency"] = "Must be one of: off, hourly, daily, weekly, monthly."
+        try:
+            auto_backup_keep = int(auto_backup_keep)
+            if not (1 <= auto_backup_keep <= 90):
+                errors["auto_backup_keep"] = "Must be between 1 and 90 backups."
+        except (TypeError, ValueError):
+            errors["auto_backup_keep"] = "Must be an integer."
+
         if errors:
             return Response(errors, status=400)
 
@@ -2245,12 +2262,22 @@ class SystemSettingsView(APIView):
 
         obj.parked_after_seconds      = parked_after_seconds
         obj.double_park_after_seconds = double_park_after_seconds
+
+        obj.auto_backup_frequency = auto_backup_frequency
+        obj.auto_backup_keep      = auto_backup_keep
         obj.save()
 
         # Running zones share one cached copy of the thresholds; dropping it
         # makes the change land on the next frame in this process rather than up
         # to a TTL later. No restart, and no reaching into the threads.
         parking_camera.invalidate_dwell_settings()
+
+        # Apply a lowered keep-count now rather than at the next scheduled run.
+        # An admin who reduces it is usually looking at a disk that is filling
+        # up, and "it will tidy itself tomorrow" is not the answer they came for.
+        if before["auto_backup_keep"] != auto_backup_keep:
+            from accounts.backup_utils import prune_backups
+            prune_backups(auto_backup_keep)
 
         # Give an expiry date to any owner still missing one, using the duration
         # the admin just chose and counting from their join date. Owners that

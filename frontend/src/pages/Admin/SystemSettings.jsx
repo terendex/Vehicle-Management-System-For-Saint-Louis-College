@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
 import { invalidateGates } from '../../hooks/useGates'
 import { usersApi } from '../../api/users'
 import useTwofaStore from '../../stores/twofaStore'
+import { pickSaveLocation, saveBlobTo, discardSaveLocation } from '../../utils/saveFile'
 import './SystemSettings.css'
 
 // Expiration cannot be switched off — only shortened or extended. The period
@@ -13,7 +14,8 @@ import './SystemSettings.css'
 // and no "never expires" state to render.
 const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
   account_expiry_months: 12, account_expiry_days: 0,
-  parked_after_seconds: 8, double_park_after_seconds: 12 }
+  parked_after_seconds: 8, double_park_after_seconds: 12,
+  auto_backup_frequency: 'off', auto_backup_keep: 10 }
 
 const hasExpiryPeriod = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
 
@@ -32,7 +34,53 @@ function normalizeSettings(data) {
     account_expiry_days:   data.account_expiry_days   ?? 0,
     parked_after_seconds:      data.parked_after_seconds      ?? 8,
     double_park_after_seconds: data.double_park_after_seconds ?? 12,
+    auto_backup_frequency: data.auto_backup_frequency ?? 'off',
+    auto_backup_keep:      data.auto_backup_keep      ?? 10,
   }
+}
+
+// "Off" is one of the frequencies rather than a separate switch, so there is no
+// way to leave the schedule on with nothing set.
+const BACKUP_FREQUENCIES = [
+  ['off',     'Off'],
+  ['hourly',  'Hourly'],
+  ['daily',   'Daily'],
+  ['weekly',  'Weekly'],
+  ['monthly', 'Monthly'],
+]
+
+const FREQ_HINT = {
+  off:     'The server takes no backups on its own — only the ones you download here.',
+  hourly:  'The server saves a backup every hour, around the clock.',
+  daily:   'The server saves a backup once a day, before old records are purged.',
+  weekly:  'The server saves a backup once every seven days.',
+  monthly: 'The server saves a backup once a month.',
+}
+
+// How far back the saved backups actually reach. Worth spelling out because the
+// keep count means something very different at each frequency: ten of them is
+// most of a day on hourly and the better part of a year on monthly, and an
+// admin switching to hourly should see that their history just got shorter.
+const FREQ_UNIT = { hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month' }
+
+function backupSpanText(freq, keep) {
+  const unit = FREQ_UNIT[freq]
+  if (!unit) return ''
+  return `That is about ${keep} ${unit}${keep !== 1 ? 's' : ''} of history.`
+}
+
+// What wrote the file. Pre-restore snapshots are the automatic copy taken right
+// before someone restored, which is usually the file you want after a mistake.
+const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', other: 'File' }
+
+const formatBytes = (n) =>
+  n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`
+
+const formatStamp = (iso) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 /** e.g. '12 months', '30 days', '1 month and 15 days' */
@@ -69,8 +117,14 @@ export default function SystemSettings() {
   // Backup & Restore state
   const [downloading, setDownloading] = useState(false)
   const [restoring, setRestoring]     = useState(false)
-  const [restoreFile, setRestoreFile] = useState(null) // File pending confirmation
+  // Pending confirmation — { label, file } for an upload, { label, name } for a
+  // backup already on the server. One modal covers both.
+  const [restoreTarget, setRestoreTarget] = useState(null)
   const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
+  const [backups, setBackups]                 = useState([])
+  const [backupsLoading, setBackupsLoading]   = useState(true)
+  const [backupBusy, setBackupBusy]           = useState(null) // filename being acted on
+  const [confirmDeleteBackup, setConfirmDeleteBackup] = useState(null)
 
   // Tick an elapsed-seconds counter while a backup/restore is in progress so the
   // long-running restore visibly shows progression.
@@ -92,6 +146,7 @@ export default function SystemSettings() {
       .finally(() => setLoading(false))
     fetchNotices()
     fetchGates()
+    fetchBackups()
   }, [])
 
   const fetchGates = () => {
@@ -100,6 +155,14 @@ export default function SystemSettings() {
       .then(({ data }) => setGates(data))
       .catch(() => toast.error('Failed to load gates.'))
       .finally(() => setGatesLoading(false))
+  }
+
+  const fetchBackups = () => {
+    setBackupsLoading(true)
+    usersApi.listBackups()
+      .then((data) => setBackups(data.backups || []))
+      .catch(() => setBackups([]))
+      .finally(() => setBackupsLoading(false))
   }
 
   const handleAddGate = async (e) => {
@@ -186,26 +249,80 @@ export default function SystemSettings() {
   // chosen or a form already filled. Cancelling just abandons the action.
   const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
 
-  const handleDownloadBackup = async () => {
+  /** Fetch a backup and put it where the person chose.
+   *
+   * The save dialog is opened first, before the two-factor prompt and before
+   * the download: the browser only offers it while the click is still a live
+   * user gesture, and awaiting anything spends that gesture. Asking first also
+   * matches what the person is doing — decide where this file goes, then get
+   * it — rather than having it land in the downloads folder and be moved after.
+   */
+  const runBackupDownload = async (suggestedName, fetchBlob, reason) => {
+    const target = await pickSaveLocation(suggestedName)
+    if (target === null) return   // dialog dismissed — nothing was downloaded
+
     try {
-      await ensureStepUp('Confirm it’s you before downloading a full backup.')
+      await ensureStepUp(reason)
     } catch {
+      // The picker already created an empty file at the chosen path; drop it so
+      // a cancelled code prompt does not leave a 0-byte backup behind.
+      await discardSaveLocation(target)
       return
     }
+
     setDownloading(true)
     try {
-      const blob = await usersApi.downloadBackup()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `slc-vms-backup-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success('Backup downloaded successfully.')
+      const blob = await fetchBlob()
+      const chosen = await saveBlobTo(target, blob, suggestedName)
+      toast.success(chosen
+        ? `Backup saved as ${suggestedName}.`
+        : 'Backup downloaded successfully.')
+      return true
     } catch {
+      await discardSaveLocation(target)
       toast.error('Failed to generate backup.')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  const handleDownloadBackup = async () => {
+    const ok = await runBackupDownload(
+      `slc-vms-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      () => usersApi.downloadBackup(),
+      'Confirm it’s you before downloading a full backup.',
+    )
+    // The server keeps its own copy of every manual backup, so the list on this
+    // page has a new row to show.
+    if (ok) fetchBackups()
+  }
+
+  const handleDownloadSaved = async (item) => {
+    setBackupBusy(item.name)
+    try {
+      await runBackupDownload(
+        item.name,
+        () => usersApi.downloadSavedBackup(item.name),
+        'Confirm it’s you before downloading a saved backup.',
+      )
+    } finally {
+      setBackupBusy(null)
+    }
+  }
+
+  const handleDeleteSaved = async () => {
+    const item = confirmDeleteBackup
+    setConfirmDeleteBackup(null)
+    if (!item) return
+    setBackupBusy(item.name)
+    try {
+      await usersApi.deleteSavedBackup(item.name)
+      setBackups((prev) => prev.filter((b) => b.name !== item.name))
+      toast.success(`${item.name} deleted.`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not delete that backup.')
+    } finally {
+      setBackupBusy(null)
     }
   }
 
@@ -222,19 +339,31 @@ export default function SystemSettings() {
     } catch {
       return
     }
-    setRestoreFile(file) // opens the confirmation modal
+    setRestoreTarget({ label: file.name, file }) // opens the confirmation modal
+  }
+
+  const handleRestoreSavedPick = async (item) => {
+    try {
+      await ensureStepUp('Confirm it’s you before restoring over live data.')
+    } catch {
+      return
+    }
+    setRestoreTarget({ label: item.name, name: item.name })
   }
 
   const handleRestoreConfirm = async () => {
-    const file = restoreFile
-    setRestoreFile(null)
-    if (!file) return
+    const target = restoreTarget
+    setRestoreTarget(null)
+    if (!target) return
     setRestoring(true)
     try {
-      const res = await usersApi.restoreBackup(file)
+      const res = target.file
+        ? await usersApi.restoreBackup(target.file)
+        : await usersApi.restoreSavedBackup(target.name)
       toast.success(`Restore complete — ${res.restored} records loaded. A safety snapshot was saved first.`)
       fetchNotices()
       fetchGates()
+      fetchBackups()   // the safety snapshot the restore just took
     } catch (err) {
       toast.error(err.response?.data?.error || 'Restore failed. No changes were applied.')
     } finally {
@@ -248,6 +377,8 @@ export default function SystemSettings() {
     || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
     || form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
+    || form.auto_backup_frequency !== saved.auto_backup_frequency
+    || form.auto_backup_keep !== saved.auto_backup_keep
     || isDwellDirty
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
   const expiryChanged = form.account_expiry_months !== saved.account_expiry_months
@@ -256,6 +387,10 @@ export default function SystemSettings() {
   // it as they type rather than as a toast after the round trip.
   const expiryInvalid = !hasExpiryPeriod(form)
   const dwellInvalid  = !dwellOrderValid(form)
+  // Only meaningful while a schedule is on — with backups off the box is hidden
+  // and whatever number it holds is never used.
+  const keepInvalid   = form.auto_backup_frequency !== 'off'
+    && (form.auto_backup_keep < 1 || form.auto_backup_keep > 90)
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -804,8 +939,8 @@ export default function SystemSettings() {
                 <h2 className="ss-section-title">Backup &amp; Restore</h2>
                 <p className="ss-section-desc">
                   Download a snapshot of system data — users, vehicles, registrations,
-                  violations and scan logs — as a JSON file you can save anywhere, or restore the
-                  system from a previously downloaded backup.
+                  violations and scan logs — to a folder you choose, let the server take one on a
+                  schedule, or restore the system from any backup you still have.
                 </p>
               </div>
             </div>
@@ -815,7 +950,7 @@ export default function SystemSettings() {
                 <div className="ss-row-text">
                   <span className="ss-row-label">Full system snapshot</span>
                   <span className="ss-row-hint">
-                    The file downloads to this computer — keep it somewhere safe, it holds
+                    You pick the folder and filename before the download starts — keep it somewhere safe, it holds
                     every account and plate in the system. Uploaded images (owner photos,
                     licence scans, snapshots) are <strong>not</strong> included — only their
                     filenames — so back those up separately. Authenticator pairings are also
@@ -847,11 +982,120 @@ export default function SystemSettings() {
                 </div>
               </div>
 
+              <div className="ss-row">
+                <div className="ss-row-text">
+                  <label className="ss-row-label" htmlFor="auto_backup_frequency">Automatic backups</label>
+                  <span className="ss-row-hint">
+                    {FREQ_HINT[form.auto_backup_frequency]} Automatic backups are kept on the server
+                    and listed below, where you can download or restore any of them.
+                  </span>
+                </div>
+                <div className="ss-row-control">
+                  <select
+                    id="auto_backup_frequency"
+                    name="auto_backup_frequency"
+                    className="ss-select"
+                    value={form.auto_backup_frequency}
+                    onChange={handleChange}
+                  >
+                    {BACKUP_FREQUENCIES.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {form.auto_backup_frequency !== 'off' && (
+                <div className="ss-row">
+                  <div className="ss-row-text">
+                    <label className="ss-row-label" htmlFor="auto_backup_keep">Automatic backups to keep</label>
+                    <span className="ss-row-hint">
+                      Once there are more than this, the oldest is deleted so backups cannot fill
+                      the disk. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)} Applies
+                      to the automatic ones and to the server&rsquo;s copy of each download
+                      &mdash; pre-restore snapshots are never rotated away. Allowed range: 1 &ndash; 90.
+                    </span>
+                  </div>
+                  <div className="ss-row-control">
+                    <input
+                      id="auto_backup_keep"
+                      name="auto_backup_keep"
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={form.auto_backup_keep}
+                      onChange={handleChange}
+                      className="ss-input"
+                    />
+                    <span className="ss-unit">backups</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="ss-row ss-row--stacked">
+                <div className="ss-list-head">
+                  <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
+                </div>
+                {backupsLoading ? (
+                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading backups…</span></div>
+                ) : backups.length === 0 ? (
+                  <p className="ss-no-notices">
+                    No backups saved on the server yet. Download one, or switch automatic backups on above.
+                  </p>
+                ) : (
+                  <div className="ss-notices-list">
+                    {backups.map((item) => (
+                      <div key={item.name} className="ss-backup-item">
+                        <div className="ss-backup-info">
+                          <span className="ss-backup-name">{item.name}</span>
+                          <span className="ss-backup-meta">
+                            <History size={11} />
+                            {formatStamp(item.created_at)} &middot; {formatBytes(item.size)}
+                            <span className={`ss-backup-tag ss-backup-tag--${item.kind}`}>
+                              {KIND_LABEL[item.kind] || KIND_LABEL.other}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="ss-backup-item-actions">
+                          <button
+                            type="button"
+                            className="ss-gate-btn"
+                            title="Choose where to save this file"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => handleDownloadSaved(item)}
+                          >
+                            <Download size={12} /> Save As…
+                          </button>
+                          <button
+                            type="button"
+                            className="ss-gate-btn"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => handleRestoreSavedPick(item)}
+                          >
+                            <RotateCcw size={12} /> Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="ss-gate-btn ss-gate-btn--danger"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => setConfirmDeleteBackup(item)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="ss-note">
                 <ShieldAlert size={13} />
                 <span>
                   Restoring overwrites current records with those in the backup. A safety snapshot of the
                   current data is saved automatically before any restore, and the load is rolled back if it fails.
+                  Backups held on the server live with the app &mdash; keep your own downloaded copy of
+                  anything you would not want to lose with it.
                 </span>
               </div>
             </div>
@@ -867,12 +1111,14 @@ export default function SystemSettings() {
                 ? 'Account expiration needs at least 1 month or 1 day'
                 : dwellInvalid
                   ? 'Double-parking delay cannot be shorter than the parked delay'
-                  : 'Unsaved changes'}
+                  : keepInvalid
+                    ? 'Automatic backups to keep must be between 1 and 90'
+                    : 'Unsaved changes'}
             </span>
             <button
               className="ss-save-btn"
               onClick={() => setConfirmSave(true)}
-              disabled={saving || !isDirty || expiryInvalid || dwellInvalid}
+              disabled={saving || !isDirty || expiryInvalid || dwellInvalid || keepInvalid}
             >
               {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
               {saving ? 'Saving…' : 'Save Changes'}
@@ -935,6 +1181,25 @@ export default function SystemSettings() {
                   )}
                 </li>
               )}
+              {form.auto_backup_frequency !== saved.auto_backup_frequency && (
+                <li>
+                  {form.auto_backup_frequency === 'off'
+                    ? <>The server <strong>stops</strong> taking backups on its own. Existing backups are kept.</>
+                    : <>The server saves a backup by itself <strong>{form.auto_backup_frequency}</strong>, keeping
+                       the newest {form.auto_backup_keep}. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}</>}
+                </li>
+              )}
+              {form.auto_backup_frequency !== 'off'
+                && form.auto_backup_frequency === saved.auto_backup_frequency
+                && form.auto_backup_keep !== saved.auto_backup_keep && (
+                <li>
+                  <strong>{form.auto_backup_keep}</strong> automatic backup{form.auto_backup_keep !== 1 ? 's are' : ' is'} kept.
+                  {' '}{backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}
+                  {form.auto_backup_keep < saved.auto_backup_keep && (
+                    <> Older automatic backups beyond that are deleted as soon as you save.</>
+                  )}
+                </li>
+              )}
             </ul>
 
             <div className="ss-modal-actions">
@@ -986,14 +1251,14 @@ export default function SystemSettings() {
       )}
 
       {/* ── Confirm Restore Modal ─── */}
-      {restoreFile && (
-        <div className="ss-overlay" onClick={() => setRestoreFile(null)}>
+      {restoreTarget && (
+        <div className="ss-overlay" onClick={() => setRestoreTarget(null)}>
           <div className="ss-modal" onClick={e => e.stopPropagation()}>
-            <button className="ss-modal-close" onClick={() => setRestoreFile(null)}><X size={16} /></button>
+            <button className="ss-modal-close" onClick={() => setRestoreTarget(null)}><X size={16} /></button>
             <AlertTriangle size={32} className="ss-modal-icon-warn" />
             <h2 className="ss-modal-title">Restore from Backup?</h2>
             <p className="ss-modal-body">
-              This loads <strong>{restoreFile.name}</strong> over your current data. Records in
+              This loads <strong>{restoreTarget.label}</strong> over your current data. Records in
               the file replace the matching ones, but anything created since the backup was
               taken <strong>stays</strong> &mdash; this is a merge, not a rewind to that date.
             </p>
@@ -1004,8 +1269,28 @@ export default function SystemSettings() {
               anything fails. Continue?
             </p>
             <div className="ss-modal-actions">
-              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreFile(null)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreTarget(null)}>Cancel</button>
               <button className="ss-modal-btn ss-modal-btn-danger" onClick={handleRestoreConfirm}>Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Delete Saved Backup Modal ─── */}
+      {confirmDeleteBackup && (
+        <div className="ss-overlay" onClick={() => setConfirmDeleteBackup(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setConfirmDeleteBackup(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Delete This Backup?</h2>
+            <p className="ss-modal-body">
+              <strong>{confirmDeleteBackup.name}</strong> will be removed from the server. If you have
+              no downloaded copy, the data as it stood on {formatStamp(confirmDeleteBackup.created_at)} is
+              gone with it. Live data is not affected.
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setConfirmDeleteBackup(null)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-danger" onClick={handleDeleteSaved}>Delete</button>
             </div>
           </div>
         </div>

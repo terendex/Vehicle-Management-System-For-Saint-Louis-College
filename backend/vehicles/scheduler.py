@@ -34,20 +34,30 @@ from django.utils import timezone
 
 log = logging.getLogger(__name__)
 
-# How often the thread re-checks. The jobs are date-keyed, so this is only the
+# How often the thread re-checks. The jobs are date-keyed, so this is mostly the
 # granularity of "how soon after midnight (or after a boot) does it run", not a
 # schedule in itself. Hourly keeps the idle cost at 24 cheap queries a day.
+#
+# It is also the ceiling on how often anything here can run, which matters for
+# exactly one setting: automatic backups on "hourly" happen once per pass, so
+# this interval is what "hourly" means in practice.
 CHECK_INTERVAL_SECONDS = 3600
 
-# Jobs the server runs by itself, in order: archive first, then purge. Both are
-# what the System Settings cards promise happens automatically, so neither may
-# depend on someone remembering to register a Windows scheduled task.
+# Jobs the server runs by itself, in order: back up, archive, then purge. All
+# three are what the System Settings cards promise happens automatically, so
+# none may depend on someone remembering to register a Windows scheduled task.
 #
 # Order matters. Archiving stamps archived_at, and the purge measures the
 # retention window from it — so a run that archives and purges in that order
 # gives every account its full window, while the reverse could delete an account
 # on the same pass that archived it if the clocks ever lined up.
+#
+# The backup runs first, before either of the jobs that delete rows. A snapshot
+# taken ahead of the purge still contains the records the purge is about to
+# remove, so the day's backup is the copy someone can go back to if the
+# retention window turns out to have been set too short.
 DAILY_JOBS = (
+    'auto_backup',
     'auto_archive_expired_accounts',
     'purge_old_records',
 )
@@ -68,6 +78,29 @@ def _claim(job: str, today):
         return None
 
 
+def _claim_key(job: str) -> str:
+    """The ledger key this job claims on this pass.
+
+    Almost everything here runs once a day, so the key is just the job name and
+    the (job, run_date) unique constraint allows exactly one run per day.
+
+    Automatic backups are the exception: they can be set to hourly, and a
+    day-granular claim would silently cap that at one backup a day no matter
+    what the admin chose. When hourly is on, the key carries the hour, so each
+    hour is its own claim — still exactly one process per slot, just twenty-four
+    slots in a day instead of one. Every other frequency keeps the plain daily
+    key, which is why the ledger only grows when hourly is actually in use.
+    """
+    if job != 'auto_backup':
+        return job
+    from .models import SystemSettings
+    try:
+        hourly = SystemSettings.get().auto_backup_frequency == 'hourly'
+    except Exception:                                   # noqa: BLE001 — pre-migrate
+        return job
+    return f'{job}:h{timezone.localtime():%H}' if hourly else job
+
+
 def run_due_jobs(force: bool = False) -> dict:
     """Run each daily job that has not run today. Safe to call at any time."""
     from . import tasks
@@ -76,7 +109,7 @@ def run_due_jobs(force: bool = False) -> dict:
     outcomes: dict[str, str] = {}
 
     for job in DAILY_JOBS:
-        row = _claim(job, today)
+        row = _claim(_claim_key(job), today)
         if row is None and not force:
             continue
 

@@ -429,6 +429,99 @@
 .ss-restore-btn:hover { background: #EEF4F9; }
 .ss-restore-btn.is-busy { opacity: 0.6; cursor: default; pointer-events: none; }
 
+/* Frequency picker — matches .ss-input's box so the two sit level in a row. */
+.ss-select {
+  padding: 7px 11px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0B2340;
+  background: #F7FAFC;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ss-select:focus {
+  border-color: #03396C;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.08);
+}
+
+/* Saved-backup rows */
+
+.ss-backup-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.ss-backup-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ss-backup-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #0B2340;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.ss-backup-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: 0.74rem;
+  color: #64839C;
+}
+
+.ss-backup-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #EEF4F9;
+  color: #2E4C63;
+}
+
+/* Colour by origin: the pre-restore snapshot is the one someone reaches for
+   after a bad restore, so it should not read as just another file. */
+.ss-backup-tag--auto   { background: #E4F1E6; color: #245C31; }
+.ss-backup-tag--safety { background: #FDF0BE; color: #8A6B00; }
+
+.ss-backup-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ss-backup-item-actions .ss-gate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ss-gate-btn--danger { color: #A32323; border-color: #F0CACA; }
+.ss-gate-btn--danger:hover:not(:disabled) { background: #FDF4F4; border-color: #E4A9A9; }
+
+@media (max-width: 720px) {
+  .ss-backup-item { flex-direction: column; align-items: stretch; }
+  .ss-backup-item-actions { justify-content: flex-end; }
+}
+
 /* ── Lists (gates / notices) ────────────────────────────────────── */
 
 .ss-list-head {

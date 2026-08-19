@@ -215,12 +215,16 @@ export const HELP_TOPICS = [
     category: 'CDSO',
     roles: ['admin'],
     body: [
-      { type: 'p', text: 'Protect your data with regular backups. Both actions live in System Settings and are available to the CDSO only.' },
+      { type: 'p', text: 'Protect your data with regular backups. Everything below lives in System Settings and is available to the CDSO only.' },
       { type: 'steps', items: [
-        'Download Backup — saves a complete JSON snapshot of all system data. Your browser’s save dialog lets you choose where to store it.',
-        'Restore from Backup — upload a previously downloaded backup file and confirm.',
+        'Download Backup — a save dialog opens first so you choose the folder and filename, then a complete JSON snapshot of all system data is written there.',
+        'Automatic backups — set Off, Hourly, Daily, Weekly or Monthly and the server saves a snapshot by itself, before each day’s retention purge runs.',
+        'Automatic backups to keep — how many the server holds before the oldest is deleted. Ten of them is about ten hours of history on Hourly but ten months on Monthly, so raise it if you pick a fast schedule. Pre-restore snapshots are never removed by this.',
+        'Backups on the server — every saved file, with what wrote it and when. Save As… downloads one to a folder you pick, Restore loads it back, and the bin deletes it.',
+        'Restore from Backup — upload a backup file from your own computer and confirm.',
       ] },
       { type: 'note', text: 'Before any restore, the system automatically saves a safety snapshot of the current data, and the whole restore is rolled back if anything goes wrong — so a bad file never leaves the system half-updated.' },
+      { type: 'note', text: 'Backups on the server live with the app. Keep your own downloaded copy of anything you would not want to lose along with it.' },
     ],
   },
 ]

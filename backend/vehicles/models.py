@@ -508,6 +508,30 @@ class SystemSettings(models.Model):
                   "than the parked threshold — a car cannot be badly parked "
                   "before it counts as parked at all.",
     )
+    # Automatic backups. The frequency doubles as the on/off switch — "off" is a
+    # real choice rather than a separate boolean, so there is no way to end up
+    # with a schedule that is enabled but has no interval.
+    #
+    # Files land in BASE_DIR/backups alongside the pre-restore snapshots, and
+    # `auto_backup_keep` rotates the automatic ones so a daily schedule cannot
+    # fill the disk over a semester.
+    auto_backup_frequency = models.CharField(
+        max_length=10, default='off',
+        choices=[
+            ('off',     'Off'),
+            ('hourly',  'Hourly'),
+            ('daily',   'Daily'),
+            ('weekly',  'Weekly'),
+            ('monthly', 'Monthly'),
+        ],
+        help_text="How often the server takes a backup of system data by itself.",
+    )
+    auto_backup_keep = models.IntegerField(
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(90)],
+        help_text="How many automatic backups to keep before the oldest is deleted. "
+                  "Pre-restore snapshots are never rotated away.",
+    )
 
     class Meta:
         db_table = 'tbl_system_settings'
