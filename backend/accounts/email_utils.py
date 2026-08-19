@@ -1,4 +1,4 @@
-"""Emails sent when a user's password changes.
+"""Account-security emails: password changes, and blocked sign-in attempts.
 
 Two different messages come out of the same event, because the first password
 change means something the later ones do not. Accounts are created by the CDSO
@@ -187,6 +187,117 @@ def send_password_changed_email(user):
         html_message=html_message,
         fail_silently=True,
     )
+
+
+def send_twofa_lockout_alert(user, ip_address=None, attempts=None):
+    """Warn the owner that somebody got past their password but not the code.
+
+    This is the most informative alert the system can send. A wrong password
+    means nothing — bots try those constantly and never get this far. Reaching
+    the two-factor step means whoever it was already had the right password, and
+    then failed the codes. Either the account holder fumbled their own app, or
+    the password is known to someone else.
+
+    That is why the call to action is "change your password" rather than
+    "ignore this if it was you". Two-factor already did its job and stopped the
+    attempt; the password is the half that is now suspect, and it is the only
+    half the owner can actually fix.
+
+    Sent once per lockout window, not once per wrong code — see
+    accounts.twofa_api._record_failure. Never raises: an alert that broke the
+    request it describes would be worse than one that quietly failed to send.
+    """
+    when = timezone.localtime(timezone.now()).strftime('%B %d, %Y at %I:%M %p')
+    url = _login_url()
+    name = esc(user.full_name or user.email)
+    where = esc(ip_address or 'an unknown location')
+    tries = attempts or 'Several'
+
+    html_message = f"""
+    <html>
+      <body style="{_BODY_STYLE}">
+        <div style="max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:12px;
+                    border-top:4px solid #DC2626;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden;">
+          <div style="padding:28px 32px 8px;">
+            <h2 style="color:#B91C1C;margin:0 0 6px;">Someone tried to sign in to your account</h2>
+            <p style="margin:0 0 16px;">Dear <strong>{name}</strong>,</p>
+            <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
+              Someone signed in with <strong>your correct password</strong> but could not provide
+              the code from your authenticator app. Sign-in was blocked and the account is
+              locked for 15 minutes.</p>
+            <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:150px;">Account</td>
+                  <td style="padding:8px 0;font-weight:600;">{esc(user.email)}</td></tr>
+              <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">When</td>
+                  <td style="padding:8px 0;font-weight:600;">{esc(when)}</td></tr>
+              <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">From</td>
+                  <td style="padding:8px 0;font-weight:600;">{where}</td></tr>
+              <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Failed attempts</td>
+                  <td style="padding:8px 0;font-weight:600;">{esc(str(tries))}</td></tr>
+            </table>
+            <div style="background:#FEF2F2;border-left:4px solid #DC2626;padding:15px;
+                        margin:20px 0;border-radius:4px;">
+              <p style="margin:0 0 8px;color:#7F1D1D;font-size:14px;">
+                <strong>If this was not you, change your password now.</strong></p>
+              <p style="margin:0;color:#7F1D1D;font-size:13px;">
+                Whoever tried already knows your current password &mdash; only your
+                authenticator app stopped them. Changing it is the part you control.</p>
+            </div>
+            <div style="background:#F0F9FF;border-left:4px solid #0369A1;padding:15px;
+                        margin:20px 0;border-radius:4px;">
+              <p style="margin:0;color:#0C4A6E;font-size:13px;">
+                <strong>If this was you</strong> &mdash; wrong code, or a phone whose clock has
+                drifted &mdash; wait 15 minutes and try again. In Google Authenticator, use
+                Settings &rarr; Time correction for codes. If you no longer have the app,
+                sign in with your backup code and pair a new device.</p>
+            </div>
+            {_button(url, 'Go to sign in')}
+          </div>
+          {_FOOTER}
+        </div>
+      </body>
+    </html>
+    """
+
+    text = (
+        f"Dear {user.full_name or user.email},\n\n"
+        f"Someone signed in with your correct password but could not provide the code "
+        f"from your authenticator app. Sign-in was blocked and the account is locked "
+        f"for 15 minutes.\n\n"
+        f"Account:         {user.email}\n"
+        f"When:            {when}\n"
+        f"From:            {ip_address or 'an unknown location'}\n"
+        f"Failed attempts: {tries}\n\n"
+        f"IF THIS WAS NOT YOU, CHANGE YOUR PASSWORD NOW. Whoever tried already knows "
+        f"your current password - only your authenticator app stopped them.\n\n"
+        f"If this was you (wrong code, or a phone whose clock has drifted), wait 15 "
+        f"minutes and try again.\n"
+        + (f"\nSign in: {url}\n" if url else '')
+    )
+
+    send_mail(
+        subject='SPVVS - someone tried to sign in to your account',
+        message=text,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        html_message=html_message,
+        fail_silently=True,
+    )
+
+
+def notify_twofa_lockout(user, ip_address=None, attempts=None):
+    """Send the lockout warning, swallowing anything that goes wrong.
+
+    Wrapped for the same reason as notify_password_set: this runs inside a
+    failed login, and an exception here would turn "wrong code" into a 500.
+    An account with no email address simply gets nothing.
+    """
+    if not getattr(user, 'email', None):
+        return
+    try:
+        send_twofa_lockout_alert(user, ip_address=ip_address, attempts=attempts)
+    except Exception:
+        log.exception('Failed to send the two-factor lockout alert to user %s', user.pk)
 
 
 def notify_password_set(user, was_first_change):

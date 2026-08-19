@@ -12,11 +12,12 @@ import time
 
 import pyotp
 from django.core.cache import cache
+from django.core import mail
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts import twofa
+from accounts import twofa, twofa_api
 from accounts.models import AuditLog, TwoFactorBackupCode, TwoFactorDevice, User
 
 PASSWORD = 'Passw0rd!23'
@@ -746,6 +747,108 @@ class StepUpEnforcementTests(TwoFactorTestCase):
                          {'retention_years': 5}, format='json',
                          HTTP_X_STEPUP_TOKEN=owner_token)
         self.assertEqual(res.status_code, 403)
+
+
+# ── Lockout alerting ─────────────────────────────────────────────────────────
+
+class LockoutAlertTests(TwoFactorTestCase):
+    """Reaching the code step means the password already worked.
+
+    A wrong password is noise — bots produce it endlessly and never get this
+    far. Wrong *codes* mean somebody had the right password, which is the one
+    thing worth telling the owner about, and the one thing they can still fix.
+    """
+
+    def fail_code(self, challenge=None):
+        challenge = challenge or self.login(self.admin).data['challenge']
+        return self.client.post('/api/accounts/2fa/verify/',
+                                {'challenge': challenge, 'code': '000000'},
+                                format='json')
+
+    def test_three_wrong_codes_lock_the_account(self):
+        make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS):
+            self.assertEqual(self.fail_code().status_code, 400)
+
+        locked = self.fail_code()
+        self.assertEqual(locked.status_code, 429)
+        self.assertTrue(locked.data['locked_out'])
+
+    def test_the_owner_is_emailed_when_the_lockout_trips(self):
+        make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS):
+            self.fail_code()
+
+        self.assertEqual(len(mail.outbox), 1)
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, [self.admin.email])
+        self.assertIn('tried to sign in', sent.subject.lower())
+        # The point of the message: your password is the half that is now
+        # suspect, and the half you can change.
+        self.assertIn('change your password', sent.body.lower())
+        self.assertIn('correct password', sent.body.lower())
+
+    def test_the_alert_is_sent_once_not_per_attempt(self):
+        """Otherwise the warning becomes a way to flood somebody's inbox."""
+        make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS + 6):
+            self.fail_code()
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_no_alert_before_the_ceiling(self):
+        """A single fat-fingered code is not worth an alarming email."""
+        make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS - 1):
+            self.fail_code()
+
+        self.assertEqual(mail.outbox, [])
+
+    def test_a_wrong_password_never_triggers_it(self):
+        """Nothing here fires until the password has already been accepted."""
+        make_confirmed_device(self.admin)
+        for _ in range(6):
+            self.client.post('/api/auth/login/',
+                             {'email': self.admin.email, 'password': 'not-the-password'},
+                             format='json')
+
+        self.assertEqual(mail.outbox, [])
+
+    def test_the_lockout_is_recorded_in_the_audit_log(self):
+        make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS):
+            self.fail_code()
+
+        entry = AuditLog.objects.filter(
+            action=AuditLog.Action.TWOFA_FAILED, target_user=self.admin,
+            details__contains='owner alerted').first()
+        self.assertIsNotNone(entry, 'the CDSO needs to see this in the Audit Log')
+
+    def test_a_correct_code_is_refused_while_locked(self):
+        """The lock is real, not just a message — it holds against the right
+        code too, which is what makes it worth an email."""
+        _, totp = make_confirmed_device(self.admin)
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS):
+            self.fail_code()
+
+        res = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': self.login(self.admin).data['challenge'], 'code': totp.now()},
+            format='json')
+        self.assertEqual(res.status_code, 429)
+
+    def test_an_account_with_no_email_does_not_break_the_lockout(self):
+        """The alert must never turn a wrong code into a server error."""
+        make_confirmed_device(self.admin)
+        User.objects.filter(pk=self.admin.pk).update(email='')
+        self.admin.refresh_from_db()
+
+        # Logging in by email is impossible now, so drive the counter directly.
+        for _ in range(twofa_api.MAX_CODE_ATTEMPTS):
+            twofa_api._record_failure(self.admin)
+
+        self.assertEqual(mail.outbox, [])
+        self.assertTrue(twofa_api._too_many_attempts(self.admin))
 
 
 # ── Backup interaction ───────────────────────────────────────────────────────

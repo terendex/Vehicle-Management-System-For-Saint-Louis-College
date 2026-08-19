@@ -18,16 +18,22 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import twofa
-from .audit import audit
+from .audit import _client_ip, audit
 from .models import AuditLog, TwoFactorBackupCode, TwoFactorDevice, User
 
 logger = logging.getLogger(__name__)
 
 # Brute-force ceiling. A TOTP code is six digits, so an attacker who already
 # has the password needs roughly 10^6/2 guesses on average — trivial at machine
-# speed and impossible at five per fifteen minutes. Keyed per account, not per
+# speed and hopeless at three per fifteen minutes. Keyed per account, not per
 # IP, because the account is what is under attack and IPs are cheap.
-MAX_CODE_ATTEMPTS = 5
+#
+# Three is deliberately tight. The cost of being wrong is small — a genuine user
+# waits fifteen minutes, and a drifting phone clock is the usual innocent cause,
+# which the lockout email explains how to fix. The cost of being loose is an
+# attacker who already holds the password getting more swings at the only thing
+# still standing between them and the account.
+MAX_CODE_ATTEMPTS = 3
 ATTEMPT_WINDOW_SECONDS = 15 * 60
 
 
@@ -39,14 +45,33 @@ def _too_many_attempts(user) -> bool:
     return (cache.get(_attempt_key(user)) or 0) >= MAX_CODE_ATTEMPTS
 
 
-def _record_failure(user) -> None:
+def _record_failure(user, request=None) -> None:
+    """Count a wrong code, and warn the owner the moment it becomes a lockout.
+
+    The alert fires on the attempt that *reaches* the ceiling — `incr` returns
+    the new count, so `== MAX_CODE_ATTEMPTS` is true exactly once per window.
+    Every later attempt inside that window is refused before reaching here, so
+    an attacker cannot turn the warning into a way to flood someone's inbox.
+    """
     key = _attempt_key(user)
     try:
         cache.add(key, 0, ATTEMPT_WINDOW_SECONDS)
-        cache.incr(key)
+        count = cache.incr(key)
     except ValueError:
         # The key expired between add() and incr() — the next attempt re-seeds it.
         cache.set(key, 1, ATTEMPT_WINDOW_SECONDS)
+        count = 1
+
+    if count == MAX_CODE_ATTEMPTS:
+        from .email_utils import notify_twofa_lockout
+        notify_twofa_lockout(user, ip_address=_client_ip(request) if request else None,
+                             attempts=count)
+        audit(
+            request, AuditLog.Action.TWOFA_FAILED,
+            f'Sign-in blocked for {user.full_name} ({user.user_code}) after '
+            f'{count} incorrect codes — owner alerted by email',
+            target_user=user,
+        )
 
 
 def _clear_failures(user) -> None:
@@ -55,7 +80,9 @@ def _clear_failures(user) -> None:
 
 def _lockout_response():
     return Response(
-        {'error': 'Too many incorrect codes. Please wait 15 minutes and try again.'},
+        {'error': 'Too many incorrect codes. For your security this account is '
+                  'locked for 15 minutes, and we have emailed the account owner.',
+         'locked_out': True},
         status=status.HTTP_429_TOO_MANY_REQUESTS,
     )
 
@@ -235,7 +262,7 @@ def _check_code(user, device, code, backup_code, request):
                 target_user=user,
             )
             return True, True
-        _record_failure(user)
+        _record_failure(user, request)
         return False, False
 
     if device is not None:
@@ -252,7 +279,7 @@ def _check_code(user, device, code, backup_code, request):
     # spending an attempt on it would let a user lock themselves out by being
     # quick. It buys an attacker nothing either: the code is already dead.
     if request.twofa_code_reason != twofa.CODE_REPLAYED:
-        _record_failure(user)
+        _record_failure(user, request)
         audit(
             request, AuditLog.Action.TWOFA_FAILED,
             f'Incorrect verification code for {user.full_name} ({user.user_code})',
