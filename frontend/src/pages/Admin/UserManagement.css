@@ -428,18 +428,17 @@
   50% { opacity: 0.4; }
 }
 
-/* --- Action Dropdown --- */
+/* --- Action Dropdown ---
+   Portalled to <body> and positioned with fixed coordinates by the component,
+   so the scrolling table card can never clip it. */
 .um-actions-dropdown {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 8px;
+  position: fixed;
   background: #FFFFFF;
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(3, 57, 108, 0.12), 0 0 0 1px rgba(3, 57, 108, 0.05);
   padding: 8px;
   width: 160px;
-  z-index: 50;
+  z-index: 90;
   display: flex;
   flex-direction: column;
   gap: 4px;

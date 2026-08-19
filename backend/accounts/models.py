@@ -339,6 +339,34 @@ def delete_user_with_owned_records(user):
     return vehicles, regs
 
 
+class AuditLogManager(models.Manager):
+    """Refuses to write rows that record a vehicle owner's own activity.
+
+    The rule lives here rather than at each call site because that is not where
+    the leak came from: rows were reaching the table from view helpers, from
+    ad-hoc server-shell sessions, and from code written long after the policy
+    was set. A manager is the one place all of them pass through.
+
+    create() returns None when a row is suppressed. No caller uses the return
+    value of a suppressed write; staff writes are unaffected and still return
+    the saved instance.
+    """
+
+    def create(self, **kwargs):
+        if AuditLog.records_owner_activity(
+            kwargs.get('action'), kwargs.get('actor'), kwargs.get('target_user')
+        ):
+            return None
+        return super().create(**kwargs)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        kept = [
+            o for o in objs
+            if not AuditLog.records_owner_activity(o.action, o.actor, o.target_user)
+        ]
+        return super().bulk_create(kept, *args, **kwargs)
+
+
 class AuditLog(models.Model):
     """Administrative accountability trail: what *staff* did to the system.
 
@@ -353,6 +381,13 @@ class AuditLog(models.Model):
     So: never add an action here that records an owner simply arriving or
     leaving. Exception events that need a named accountable staff member
     (ENTRY_OVERRIDE, VISITOR_ISSUED) are the deliberate carve-out.
+
+    The same boundary applies to account activity, and it turns on *who acted*,
+    not on who is named. An owner enabling two-factor on their own account is
+    the owner's business and is not recorded. A CDSO resetting that owner's
+    two-factor is a staff act on someone else's account and is recorded, owner
+    named, because that is exactly the kind of privilege use an audit trail
+    exists to hold someone answerable for. AuditLogManager enforces this.
     """
 
     class Action(models.TextChoices):
@@ -390,6 +425,31 @@ class AuditLog(models.Model):
     details     = models.TextField(blank=True)
     ip_address  = models.GenericIPAddressField(null=True, blank=True)
     created_at  = models.DateTimeField(auto_now_add=True)
+
+    # Actions an account holder performs on their own account. The person who
+    # acted is the target_user, so these are owner activity whenever that user
+    # is an owner — including the rows written before this rule existed, whose
+    # actor was never captured and reads as 'System'.
+    SELF_SERVICE_ACTIONS = frozenset({
+        'twofa_enabled', 'twofa_disabled', 'twofa_failed', 'twofa_backup_used',
+    })
+
+    objects = AuditLogManager()
+
+    @staticmethod
+    def records_owner_activity(action, actor, target_user):
+        """True when this row would record what a vehicle owner did.
+
+        Two shapes count. The plain one is an owner as the actor. The other is
+        a self-service action with no actor recorded: nobody else can perform
+        those, so the target is the one who acted.
+        """
+        def _is_owner(u):
+            return u is not None and getattr(u, 'role', None) == User.Role.VEHICLE_OWNER
+
+        if _is_owner(actor):
+            return True
+        return actor is None and action in AuditLog.SELF_SERVICE_ACTIONS and _is_owner(target_user)
 
     class Meta:
         db_table = 'tbl_audit_log'

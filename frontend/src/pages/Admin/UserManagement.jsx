@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
@@ -40,6 +41,7 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [submitting, setSubmitting]   = useState(false)
   const [activeMenu, setActiveMenu]   = useState(null)
+  const [menuAnchor, setMenuAnchor] = useState(null)
   const [addType, setAddType]         = useState('guard')   // 'guard' | 'admin'
   const [formErrors, setFormErrors]   = useState({})
 
@@ -202,12 +204,62 @@ export default function UserManagement() {
   const activeUsers   = users.filter((u) => u.is_active).length
   const disabledUsers = users.filter((u) => !u.is_active).length
 
-  /* ── close menu on outside click ── */
+  /* ── close menu on outside click, scroll or resize ──
+     The menu is portalled to <body> at fixed coordinates, so any scroll would
+     leave it floating away from its row — close it instead of re-measuring. */
+  const menuRef = useRef(null)
+  const closeMenu = useCallback(() => { setActiveMenu(null); setMenuAnchor(null) }, [])
+
   useEffect(() => {
-    const handleClickOutside = () => setActiveMenu(null)
-    if (activeMenu) window.addEventListener('click', handleClickOutside)
-    return () => window.removeEventListener('click', handleClickOutside)
-  }, [activeMenu])
+    if (!activeMenu) return
+    /* The menu lives outside #root, so guard by node instead of trusting bubbling. */
+    const onDocClick = (e) => { if (!menuRef.current?.contains(e.target)) closeMenu() }
+    window.addEventListener('click', onDocClick)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
+    return () => {
+      window.removeEventListener('click', onDocClick)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
+    }
+  }, [activeMenu, closeMenu])
+
+  /* ── row action menu ──
+     The menu is rendered into <body> at fixed coordinates instead of inside the
+     scrolling table card, which used to clip it and push it outside the card on
+     the last rows. It flips above the button when the viewport runs out below. */
+  const MENU_WIDTH = 160
+  const menuItemCount = (u) => (
+    1                                     /* View Profile */
+    + (u.role === 'security' ? 1 : 0)     /* QR Badge */
+    + (u.role === 'vehicle_owner' ? 1 : 0)/* Print Registration */
+    + (u.role !== 'security' ? 1 : 0)     /* Reset 2FA */
+    + 1                                   /* Disable / Enable */
+  )
+
+  const toggleMenu = (e, u) => {
+    if (activeMenu === u.id) { closeMenu(); return }
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const items = menuItemCount(u)
+    const height = items * 38 + (items - 1) * 4 + 16   /* item + gap + padding */
+    const gap = 8
+
+    const openUp = rect.bottom + gap + height > window.innerHeight - 8
+                   && rect.top - gap - height > 8
+    const left = Math.max(8, Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8))
+
+    setMenuAnchor({
+      style: {
+        position: 'fixed',
+        left: `${left}px`,
+        ...(openUp
+          ? { bottom: `${window.innerHeight - rect.top + gap}px`, transformOrigin: 'bottom right' }
+          : { top: `${rect.bottom + gap}px`, transformOrigin: 'top right' }),
+      },
+    })
+    setActiveMenu(u.id)
+  }
 
   /* ── open modals ── */
   const openAdd = () => {
@@ -560,16 +612,21 @@ export default function UserManagement() {
                     </span>
                   </td>
                   {/* QR lives in View Profile — no column here */}
-                  <td style={{ position: 'relative' }}>
+                  <td>
                     <button
                       className="um-action-btn"
-                      onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === u.id ? null : u.id) }}
+                      onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
                     >
                       <MoreVertical size={16} />
                     </button>
-                    {activeMenu === u.id && (
-                      <div className="um-actions-dropdown" onClick={(e) => e.stopPropagation()}>
-                        <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
+                    {activeMenu === u.id && menuAnchor && createPortal(
+                      <div
+                        ref={menuRef}
+                        className="um-actions-dropdown"
+                        style={menuAnchor.style}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
                           <Eye size={15} /> View Profile
                         </button>
                         {u.role === 'security' && (
@@ -577,7 +634,7 @@ export default function UserManagement() {
                             className="um-dropdown-item view"
                             disabled={badgeLocked(u)}
                             title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                            onClick={() => openQrModal(u)}
+                            onClick={() => { closeMenu(); openQrModal(u) }}
                           >
                             {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
                           </button>
@@ -586,7 +643,7 @@ export default function UserManagement() {
                           <button
                             className="um-dropdown-item view"
                             title="Re-download the approved registration PDF emailed to this owner"
-                            onClick={() => { setSelectedUser(u); setActiveMenu(null); printRegistrationFor(u) }}
+                            onClick={() => { setSelectedUser(u); closeMenu(); printRegistrationFor(u) }}
                           >
                             <Printer size={15} /> Print Registration
                           </button>
@@ -595,18 +652,19 @@ export default function UserManagement() {
                           <button
                             className="um-dropdown-item view"
                             title="Clear this user's authenticator so they can pair a new phone"
-                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); setActiveMenu(null) }}
+                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
                           >
                             <Smartphone size={15} /> Reset 2FA
                           </button>
                         )}
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
-                          onClick={() => { openToggle(u); setActiveMenu(null) }}
+                          onClick={() => { openToggle(u); closeMenu() }}
                         >
                           {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
                         </button>
-                      </div>
+                      </div>,
+                      document.body
                     )}
                   </td>
                 </tr>
