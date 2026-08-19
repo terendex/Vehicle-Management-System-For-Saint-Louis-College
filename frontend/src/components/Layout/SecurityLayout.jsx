@@ -561,24 +561,41 @@ export default function SecurityLayout({ children, fillHeight = false }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-profile">
-            {user?.photo_url ? (
-              <img src={user.photo_url} alt={user.full_name} style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid #D3E1EC' }} />
-            ) : (
-              <div className="user-avatar">
-                {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'S'}
-              </div>
-            )}
-            <div className="user-info">
-              <span className="user-name">{user?.full_name || 'Security Guard'}</span>
-              {shift?.clocked_in_at ? (
-                <span className="user-role" style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <Clock size={9} />
-                  On duty · {shiftDuration(shift.clocked_in_at)}
-                </span>
+          {/* Identity and the icon shortcuts read as one card, matching the
+              admin sidebar; Change Shift and Log Out get their own rows. */}
+          <div className="footer-card">
+            <div className="user-profile">
+              {user?.photo_url ? (
+                <img src={user.photo_url} alt={user.full_name} className="user-avatar-photo" />
               ) : (
-                <span className="user-role">{gateLabel} · Security</span>
+                <div className="user-avatar">
+                  {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'S'}
+                </div>
               )}
+              <div className="user-info">
+                <span className="user-name" title={user?.full_name || 'Security Guard'}>
+                  {user?.full_name || 'Security Guard'}
+                </span>
+                {shift?.clocked_in_at ? (
+                  <span className="user-role user-role--on-duty">
+                    <Clock size={9} />
+                    On duty · {shiftDuration(shift.clocked_in_at)}
+                  </span>
+                ) : (
+                  <span className="user-role">{gateLabel} · Security</span>
+                )}
+              </div>
+            </div>
+
+            <div className="footer-actions footer-actions--pair">
+              <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
+                <HelpCircle size={17} />
+                <span className="action-btn-label">Help</span>
+              </button>
+              <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+                <Shield size={17} />
+                <span className="action-btn-label">Policy</span>
+              </button>
             </div>
           </div>
 
@@ -592,18 +609,10 @@ export default function SecurityLayout({ children, fillHeight = false }) {
             <span>Change Shift</span>
           </button>
 
-          <div className="footer-actions">
-            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
-              <HelpCircle size={18} />
-            </button>
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
-              <Shield size={18} />
-            </button>
-            <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
-              <LogOut size={16} />
-              <span>Log Out</span>
-            </button>
-          </div>
+          <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
+            <LogOut size={16} />
+            <span>Log Out</span>
+          </button>
         </div>
       </aside>
 

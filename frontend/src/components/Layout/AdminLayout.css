@@ -221,30 +221,40 @@
 }
 
 /* --- Sidebar Footer ---
-   Three stacked bands: identity card, labelled shortcut tiles, then Log Out on
-   its own full-width row so the label can never wrap. */
+   Two bands: one identity card that holds the profile row and the shortcut
+   tiles under a hairline, then Log Out on its own full-width row so the label
+   can never wrap. The footer never shrinks — a short viewport scrolls the nav
+   above it instead of squashing the tiles. */
 .sidebar-footer {
-  padding: 1rem 1rem 1.15rem;
+  flex-shrink: 0;
+  padding: 0.8rem 0.85rem 0.95rem;
   border-top: 1px solid #D3E1EC;
-  background: #FAFCFE;
+  background: linear-gradient(180deg, #FAFCFE 0%, #F2F8FC 100%);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
+}
+
+/* The card that groups identity + shortcuts into one object */
+.footer-card {
+  background: #FFFFFF;
+  border: 1px solid #E3EDF5;
+  border-radius: 13px;
+  box-shadow: 0 1px 2px rgba(3, 57, 108, 0.05);
+  overflow: hidden;
 }
 
 .user-profile {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 11px;
-  background: #FFFFFF;
-  border: 1px solid #E3EDF5;
-  border-radius: 11px;
+  gap: 10px;
+  padding: 10px 11px;
+  min-width: 0;
 }
 
 .user-avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border-radius: 50%;
   background: linear-gradient(140deg, #0B4A87 0%, #03396C 100%);
@@ -253,19 +263,32 @@
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: 0.3px;
-  box-shadow: 0 2px 6px rgba(3, 57, 108, 0.22);
+  box-shadow: 0 0 0 3px #F1F7FC, 0 2px 5px rgba(3, 57, 108, 0.2);
+}
+
+/* Security guards can have a profile photo in place of the initial */
+.user-avatar-photo {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 0 0 3px #F1F7FC, 0 2px 5px rgba(3, 57, 108, 0.2);
 }
 
 .user-info {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   line-height: 1.2;
   min-width: 0; /* lets a long full name ellipsize instead of overflowing */
 }
 
 .user-name {
+  max-width: 100%;
   font-size: 13px;
   font-weight: 700;
   color: #0B2340;
@@ -274,19 +297,35 @@
   text-overflow: ellipsis;
 }
 
+/* Role reads as a chip rather than loose caption text */
 .user-role {
-  font-size: 10px;
+  max-width: 100%;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  background: #EEF4F9;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: #6B8CA6;
-  margin-top: 3px;
+  color: #2A5B87;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* Shortcut tiles sit under a hairline inside the same card */
 .footer-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 4px;
+  border-top: 1px solid #EEF4F9;
+  background: #FCFDFE;
+}
+
+/* Two-shortcut variant (security sidebar) */
+.footer-actions--pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .action-btn {
@@ -294,30 +333,38 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
+  width: 100%;
   min-width: 0;
-  padding: 8px 2px 7px;
-  border-radius: 10px;
-  background: #FFFFFF;
-  border: 1px solid #E3EDF5;
-  color: #4A6B85;
+  height: auto;
+  padding: 7px 2px 6px;
+  border-radius: 9px;
+  background: transparent;
+  border: none;
+  color: #5B7C96;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  transition: background 0.16s ease, color 0.16s ease;
 }
 
 .action-btn-label {
-  font-size: 10px;
+  max-width: 100%;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.1px;
+  letter-spacing: 0.2px;
   line-height: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .action-btn:hover {
-  background: #F1F7FC;
+  background: #EFF6FC;
   color: #03396C;
-  border-color: #BDD4E5;
+}
+
+.action-btn:active {
+  background: #E4EFF8;
 }
 
 .action-btn:focus-visible,
@@ -333,22 +380,32 @@
   justify-content: center;
   gap: 8px;
   height: 38px;
-  background: #FFFFFF;
+  padding: 0 12px;
+  background: #FEF4F4;
   color: #C62828;
-  border: 1px solid #F3C0C0;
+  border: 1px solid #F4CFCF;
   border-radius: 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
+  letter-spacing: 0.2px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
 .logout-btn:hover {
-  background: #FCEDED;
+  background: #C62828;
+  color: #FFFFFF;
   border-color: #C62828;
-  box-shadow: 0 2px 6px rgba(198, 40, 40, 0.1);
+  box-shadow: 0 2px 8px rgba(198, 40, 40, 0.25);
+}
+
+.logout-btn:active {
+  background: #A81E1E;
+  border-color: #A81E1E;
+  box-shadow: none;
 }
 
 /* --- Content Wrapper --- */

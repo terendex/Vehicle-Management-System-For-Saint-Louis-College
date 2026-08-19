@@ -200,35 +200,38 @@ export default function AdminLayout({ children, fillHeight = false }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="user-avatar">
-              {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
+          {/* Identity and the icon shortcuts read as one card; Log Out gets its
+              own row below it so the label never wraps. */}
+          <div className="footer-card">
+            <div className="user-profile">
+              <div className="user-avatar">
+                {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
+              </div>
+              <div className="user-info">
+                <span className="user-name" title={user?.full_name || 'CDSO'}>
+                  {user?.full_name || 'CDSO'}
+                </span>
+                <span className="user-role">CDSO</span>
+              </div>
             </div>
-            <div className="user-info">
-              <span className="user-name" title={user?.full_name || 'CDSO'}>
-                {user?.full_name || 'CDSO'}
-              </span>
-              <span className="user-role">CDSO</span>
+            <div className="footer-actions">
+              <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
+                <HelpCircle size={17} />
+                <span className="action-btn-label">Help</span>
+              </button>
+              <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+                <Shield size={17} />
+                <span className="action-btn-label">Policy</span>
+              </button>
+              <button
+                className="action-btn"
+                title="Account Security — authenticator app and backup code"
+                onClick={() => setSecurityOpen(true)}
+              >
+                <ShieldCheck size={17} />
+                <span className="action-btn-label">Security</span>
+              </button>
             </div>
-          </div>
-          {/* Icon shortcuts share one row; Log Out gets its own so the label never wraps. */}
-          <div className="footer-actions">
-            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
-              <HelpCircle size={17} />
-              <span className="action-btn-label">Help</span>
-            </button>
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
-              <Shield size={17} />
-              <span className="action-btn-label">Policy</span>
-            </button>
-            <button
-              className="action-btn"
-              title="Account Security — authenticator app and backup code"
-              onClick={() => setSecurityOpen(true)}
-            >
-              <ShieldCheck size={17} />
-              <span className="action-btn-label">Security</span>
-            </button>
           </div>
           <button className="logout-btn" onClick={handleLogout}>
             <LogOut size={16} />

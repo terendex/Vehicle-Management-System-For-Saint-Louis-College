@@ -61,6 +61,15 @@
   gap: 10px;
 }
 
+/* On-duty state reads as a live green chip instead of the neutral role chip */
+.security-layout .user-role--on-duty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #E8F7F0;
+  color: #0A5C43;
+}
+
 /* ── Change Shift trigger button (in sidebar footer) ── */
 .cs-trigger-btn {
   display: flex;
