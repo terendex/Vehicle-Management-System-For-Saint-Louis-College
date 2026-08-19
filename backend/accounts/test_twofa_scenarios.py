@@ -109,13 +109,29 @@ class Journey(TestCase):
         self.start_session(confirmed.data)
         return totp, confirmed.data['backup_codes']
 
-    def verify(self, challenge, totp=None, backup_code=None):
-        payload = {'challenge': challenge}
-        payload.update(
-            {'backup_code': backup_code} if backup_code else {'code': next_code(totp)})
-        res = self.browser.post('/api/accounts/2fa/verify/', payload, format='json')
+    def verify(self, challenge, totp):
+        """Finish a paused login with an authenticator code."""
+        res = self.browser.post('/api/accounts/2fa/verify/',
+                                {'challenge': challenge, 'code': next_code(totp)},
+                                format='json')
         self.assertEqual(res.status_code, 200, res.data)
         return self.start_session(res.data)
+
+    def spend_backup_code(self, challenge, backup_code):
+        """Use a backup code. This does NOT sign you in: the server voids the
+        authenticator that failed to answer and returns a setup challenge, so
+        the only way on is pairing a new device. Returns that response."""
+        res = self.browser.post('/api/accounts/2fa/verify/',
+                                {'challenge': challenge, 'backup_code': backup_code},
+                                format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['twofa_action'], 'setup')
+        self.assertNotIn('access', res.data)
+        return res.data
+
+    def enroll_from(self, challenge):
+        """Complete a setup challenge. Returns (totp, backup_codes)."""
+        return self.enroll(challenge)
 
     def do_step_up(self, totp):
         """What StepUpGate does when a request comes back needing a code."""
@@ -337,18 +353,18 @@ class LostPhone(Journey):
 
         paused = self.sign_in(owner)
         self.assertEqual(paused.data['twofa_action'], 'verify')
-        self.verify(paused.data['challenge'], backup_code=backup_codes[0])
-        self.assertTrue(self.access, 'a backup code is a way back in')
 
-        # That code is spent for good — but they are not left with nothing: the
-        # login response carried a replacement, which the screen shows before it
-        # lets them through.
+        # The code does not sign them in — it hands them the setup screen, and
+        # only pairing a phone finishes the login and earns a new code.
+        pivot = self.spend_backup_code(paused.data['challenge'], backup_codes[0])
+        self.assertFalse(self.access, 'a backup code alone is not a session')
+
+        _, fresh_codes = self.enroll(pivot['challenge'])
+        self.assertTrue(self.access, 'pairing is what lets them back in')
+        self.assertNotEqual(set(fresh_codes), set(backup_codes))
         self.assertEqual(
             TwoFactorBackupCode.objects.filter(user=owner, used_at__isnull=True).count(),
             twofa.BACKUP_CODE_COUNT)
-        self.assertNotIn(backup_codes[0],
-                         [c for c in TwoFactorBackupCode.objects.filter(user=owner)
-                          .values_list('code_hash', flat=True)])
 
         # Meanwhile the CDSO clears the old device so a new phone can be paired.
         cdso = Journey()
@@ -434,7 +450,8 @@ class ClosedTheTabOnTheBackupCodes(Journey):
         self.assertEqual(len(fresh.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
         self.assertNotEqual(set(fresh.data['backup_codes']), set(original))
 
-        # The unseen originals are dead, and a new one works.
+        # The unseen originals are dead, and a new one still opens the door —
+        # which now means being taken to the setup screen, not straight in.
         self.browser = APIClient()
         self.access = self.device_token = self.step_up = ''
         stale = self.browser.post(
@@ -443,8 +460,9 @@ class ClosedTheTabOnTheBackupCodes(Journey):
              'backup_code': original[0]}, format='json')
         self.assertEqual(stale.status_code, 400)
 
-        self.verify(self.sign_in(owner).data['challenge'],
-                    backup_code=fresh.data['backup_codes'][0])
+        pivot = self.spend_backup_code(self.sign_in(owner).data['challenge'],
+                                       fresh.data['backup_codes'][0])
+        self.enroll(pivot['challenge'])
         self.assertTrue(self.access)
 
     def test_a_new_phone_can_be_paired_without_involving_the_cdso(self):
@@ -494,20 +512,23 @@ class LostPhoneReconnects(Journey):
 
         paused = self.sign_in(owner)
         self.assertEqual(paused.data['twofa_action'], 'verify')
-        signed_in = self.verify(paused.data['challenge'], backup_code=first_codes[-1])
 
-        # Signing in with the code both replaces it and carries the authority to
-        # re-pair, so the QR is reachable without spending a second one.
-        self.assertTrue(signed_in['backup_codes_replaced'])
-        self.assertTrue(self.step_up, 'a typed code should authorise the next few minutes')
+        # The code leads straight to the QR — no session in between, and no
+        # second code spent to earn the right to see it.
+        pivot = self.spend_backup_code(paused.data['challenge'], first_codes[-1])
 
-        qr = self.post('/api/accounts/2fa/setup/')
+        qr = self.browser.post('/api/accounts/2fa/setup/',
+                               {'challenge': pivot['challenge']}, format='json')
         self.assertEqual(qr.status_code, 200, qr.data)
         self.assertTrue(qr.data['qr_code'].startswith('data:image/png;base64,'))
 
         new_totp = pyotp.TOTP(qr.data['secret'])
-        done = self.post('/api/accounts/2fa/confirm/', {'code': new_totp.now()})
+        done = self.browser.post('/api/accounts/2fa/confirm/',
+                                 {'challenge': pivot['challenge'], 'code': new_totp.now()},
+                                 format='json')
         self.assertEqual(done.status_code, 200, done.data)
+        self.start_session(done.data)
+        self.assertEqual(len(done.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
 
         # The new phone signs them in; the lost one is dead.
         self.browser = APIClient()
@@ -639,7 +660,7 @@ class StolenPassword(Journey):
 
     def test_a_used_backup_code_is_dead(self):
         challenge = self.sign_in(self.admin).data['challenge']
-        self.verify(challenge, backup_code=self.backup_codes[0])
+        self.spend_backup_code(challenge, self.backup_codes[0])
 
         thief = Journey()
         thief.setUp()

@@ -475,72 +475,105 @@ class BackupCodeTests(TwoFactorTestCase):
         from accounts.twofa_api import _issue_backup_codes
         return totp, _issue_backup_codes(user)
 
-    def test_backup_code_logs_in_and_is_single_use(self):
-        totp, codes = self.enroll_with_backup_codes(self.admin)
+    def spend_backup_code(self, user, code):
+        """Sign in as far as a backup code takes you — which is not all the way."""
+        challenge = self.login(user).data['challenge']
+        return self.client.post('/api/accounts/2fa/verify/',
+                                {'challenge': challenge, 'backup_code': code},
+                                format='json')
 
-        challenge = self.login(self.admin).data['challenge']
-        res = self.client.post('/api/accounts/2fa/verify/',
-                               {'challenge': challenge, 'backup_code': codes[0]}, format='json')
+    def test_backup_code_does_not_sign_you_in(self):
+        """It buys the right to pair a new phone, not a session.
+
+        A backup code is only ever spent because the authenticator did not
+        answer. Handing back a session there would let someone keep working
+        indefinitely on an account with no working second factor.
+        """
+        _, codes = self.enroll_with_backup_codes(self.admin)
+
+        res = self.spend_backup_code(self.admin, codes[-1])
         self.assertEqual(res.status_code, 200, res.data)
         self.assertTrue(res.data['used_backup_code'])
-        # Spending the last one is topped up in the same response, so the count
-        # comes back full rather than dropping to zero. The code just used is
-        # still dead — replacement is not forgiveness.
-        self.assertEqual(res.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT)
+        self.assertEqual(res.data['twofa_action'], 'setup')
+        self.assertIn('challenge', res.data)
+        self.assertNotIn('access', res.data)
+        self.assertNotIn('refresh', res.data)
+        # The replacement is earned by re-pairing, not by spending the old one.
+        self.assertNotIn('backup_codes', res.data)
 
-        # The same code a second time is dead.
-        challenge = self.login(self.admin).data['challenge']
-        again = self.client.post('/api/accounts/2fa/verify/',
-                                 {'challenge': challenge, 'backup_code': codes[0]}, format='json')
+    def test_using_a_backup_code_voids_the_missing_authenticator(self):
+        _, codes = self.enroll_with_backup_codes(self.admin)
+        device = TwoFactorDevice.objects.get(user=self.admin)
+        old_totp = pyotp.TOTP(device.secret)
+
+        self.spend_backup_code(self.admin, codes[-1])
+
+        device.refresh_from_db()
+        self.assertIsNone(device.confirmed_at, 'the lost phone must stop counting')
+
+        # The account now reads as unenrolled, and the old app cannot get in.
+        resumed = self.login(self.admin)
+        self.assertEqual(resumed.data['twofa_action'], 'setup')
+        stale = self.client.post(
+            '/api/accounts/2fa/verify/',
+            {'challenge': resumed.data['challenge'], 'code': old_totp.now()},
+            format='json')
+        self.assertEqual(stale.status_code, 400)
+
+    def test_the_new_backup_code_arrives_only_after_re_pairing(self):
+        _, codes = self.enroll_with_backup_codes(self.admin)
+        pivot = self.spend_backup_code(self.admin, codes[-1])
+
+        # Nothing yet — the account is mid-repair.
+        self.assertEqual(
+            TwoFactorBackupCode.objects.filter(
+                user=self.admin, used_at__isnull=True).count(), 0)
+
+        setup = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': pivot.data['challenge']}, format='json')
+        new_totp = pyotp.TOTP(setup.data['secret'])
+        done = self.client.post(
+            '/api/accounts/2fa/confirm/',
+            {'challenge': pivot.data['challenge'], 'code': new_totp.now()}, format='json')
+
+        self.assertEqual(done.status_code, 200, done.data)
+        self.assertIn('access', done.data)                       # session at last
+        self.assertEqual(len(done.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
+        self.assertNotEqual(set(done.data['backup_codes']), set(codes))
+        self.assertEqual(
+            TwoFactorBackupCode.objects.filter(
+                user=self.admin, used_at__isnull=True).count(),
+            twofa.BACKUP_CODE_COUNT)
+
+    def test_a_spent_backup_code_cannot_be_used_again(self):
+        _, codes = self.enroll_with_backup_codes(self.admin)
+        self.assertEqual(self.spend_backup_code(self.admin, codes[-1]).status_code, 200)
+
+        again = self.spend_backup_code(self.admin, codes[-1])
         self.assertEqual(again.status_code, 400)
 
-    def test_spending_the_last_code_hands_back_a_replacement(self):
-        """Otherwise a single-code account is left with no way in but the CDSO."""
-        totp, codes = self.enroll_with_backup_codes(self.admin)
+    def test_abandoning_the_re_pair_is_not_a_lockout(self):
+        """A spent code must never strand anyone. Clearing confirmed_at is the
+        resume path: the next login simply offers setup again."""
+        _, codes = self.enroll_with_backup_codes(self.admin)
+        self.spend_backup_code(self.admin, codes[-1])
 
-        challenge = self.login(self.admin).data['challenge']
-        res = self.client.post('/api/accounts/2fa/verify/',
-                               {'challenge': challenge, 'backup_code': codes[-1]},
-                               format='json')
-        self.assertEqual(res.status_code, 200, res.data)
-        self.assertTrue(res.data['backup_codes_replaced'])
-        self.assertEqual(len(res.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
-        # Never left empty, and the replacement is genuinely new.
-        self.assertEqual(res.data['backup_codes_remaining'], twofa.BACKUP_CODE_COUNT)
-        self.assertNotEqual(set(res.data['backup_codes']), set(codes))
+        # Walk away, come back with nothing but the password.
+        resumed = self.login(self.admin)
+        self.assertEqual(resumed.data['twofa_action'], 'setup')
 
-    def test_the_replacement_code_actually_works(self):
-        totp, codes = self.enroll_with_backup_codes(self.admin)
-        first = self.client.post(
-            '/api/accounts/2fa/verify/',
-            {'challenge': self.login(self.admin).data['challenge'],
-             'backup_code': codes[-1]}, format='json')
-        replacement = first.data['backup_codes'][0]
+        setup = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': resumed.data['challenge']}, format='json')
+        totp = pyotp.TOTP(setup.data['secret'])
+        done = self.client.post(
+            '/api/accounts/2fa/confirm/',
+            {'challenge': resumed.data['challenge'], 'code': totp.now()}, format='json')
+        self.assertEqual(done.status_code, 200, done.data)
 
-        res = self.client.post(
-            '/api/accounts/2fa/verify/',
-            {'challenge': self.login(self.admin).data['challenge'],
-             'backup_code': replacement}, format='json')
-        self.assertEqual(res.status_code, 200, res.data)
-
-    def test_a_step_up_with_the_last_code_also_replaces_it(self):
+    def test_holding_other_codes_still_forces_a_re_pair(self):
+        """The trigger is that the app failed to answer, not that codes ran out.
+        With several issued, spending one still means re-pairing."""
         _, totp = make_confirmed_device(self.admin)
-        from accounts.twofa_api import _issue_backup_codes
-        codes = _issue_backup_codes(self.admin)
-
-        client = self.authed_client(self.admin)
-        res = client.post('/api/accounts/2fa/step-up/',
-                          {'backup_code': codes[-1]}, format='json')
-        self.assertEqual(res.status_code, 200, res.data)
-        self.assertTrue(res.data['backup_codes_replaced'])
-        self.assertEqual(len(res.data['backup_codes']), twofa.BACKUP_CODE_COUNT)
-
-    def test_codes_still_held_are_not_replaced_or_destroyed(self):
-        """Top-up-when-empty, not replace-on-every-use. With the count at 1 the
-        distinction is invisible; raise it and replacing would silently throw
-        away every code the person had not spent yet."""
-        _, totp = make_confirmed_device(self.admin)
-        from accounts.twofa_api import _issue_backup_codes
         codes = twofa.generate_backup_codes(3)
         TwoFactorBackupCode.objects.filter(user=self.admin).delete()
         TwoFactorBackupCode.objects.bulk_create([
@@ -548,32 +581,41 @@ class BackupCodeTests(TwoFactorTestCase):
             for c in codes
         ])
 
-        res = self.client.post(
-            '/api/accounts/2fa/verify/',
-            {'challenge': self.login(self.admin).data['challenge'],
-             'backup_code': codes[0]}, format='json')
-        self.assertEqual(res.status_code, 200, res.data)
-        self.assertNotIn('backup_codes', res.data)      # nothing reissued
-        self.assertEqual(res.data['backup_codes_remaining'], 2)
+        res = self.spend_backup_code(self.admin, codes[0])
+        self.assertEqual(res.data['twofa_action'], 'setup')
+        self.assertNotIn('access', res.data)
+        # The untouched two are left alone, not wiped.
+        self.assertEqual(
+            TwoFactorBackupCode.objects.filter(
+                user=self.admin, used_at__isnull=True).count(), 2)
 
-        # And the two survivors still work.
-        later = self.client.post(
-            '/api/accounts/2fa/verify/',
-            {'challenge': self.login(self.admin).data['challenge'],
-             'backup_code': codes[1]}, format='json')
-        self.assertEqual(later.status_code, 200, later.data)
+    def test_step_up_refuses_a_backup_code(self):
+        """Backup codes belong to signing in. Anyone holding a session got it by
+        pairing a working app, so an authenticator code is always available —
+        and accepting recovery codes here would let one carry an account
+        indefinitely without ever re-pairing."""
+        _, totp = make_confirmed_device(self.admin)
+        from accounts.twofa_api import _issue_backup_codes
+        codes = _issue_backup_codes(self.admin)
+
+        client = self.authed_client(self.admin)
+        res = client.post('/api/accounts/2fa/step-up/',
+                          {'backup_code': codes[0]}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('signing in', res.data['error'])
+        # Refused, not silently spent.
+        self.assertEqual(
+            TwoFactorBackupCode.objects.filter(
+                user=self.admin, used_at__isnull=True).count(),
+            twofa.BACKUP_CODE_COUNT)
 
     def test_backup_code_matches_regardless_of_dashes_and_spacing(self):
-        totp, codes = self.enroll_with_backup_codes(self.admin)
-        # Indexed from the end so this keeps working whatever BACKUP_CODE_COUNT
-        # is — with a single code that is the same one, with ten it is a
-        # different one from the test above.
+        _, codes = self.enroll_with_backup_codes(self.admin)
         messy = ' ' + codes[-1].replace('-', ' ') + ' '
 
-        challenge = self.login(self.admin).data['challenge']
-        res = self.client.post('/api/accounts/2fa/verify/',
-                               {'challenge': challenge, 'backup_code': messy}, format='json')
+        res = self.spend_backup_code(self.admin, messy)
         self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['twofa_action'], 'setup')
 
     def test_admin_reset_returns_a_locked_out_user_to_enrollment(self):
         make_confirmed_device(self.owner)

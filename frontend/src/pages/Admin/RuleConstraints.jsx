@@ -52,6 +52,7 @@ const ENTRY_TYPES = [
     title: 'Student — Vehicle',
     desc: 'Registered SLC student with a car or motorcycle',
     Icon: User,
+    hasOwnDays: true,
   },
   {
     key: 'employee',
@@ -65,6 +66,7 @@ const ENTRY_TYPES = [
     desc: 'Parent or guardian fetching a student',
     Icon: Users,
     hasStayLimit: true,
+    hasOwnDays: true,
   },
   {
     key: 'supplier',
@@ -132,6 +134,12 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                   </button>
                 ))}
               </div>
+              {entryType.hasOwnDays && (
+                <span style={{ fontSize: 11.5, color: '#64839C', marginTop: 4, display: 'block' }}>
+                  Campus-wide ceiling. An owner still needs the day on their own
+                  registered campus days to be let in.
+                </span>
+              )}
             </div>
 
             <div className="rc-field-row">
@@ -184,7 +192,9 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                 <span style={{ fontSize: '13px', color: '#3E5B72', fontWeight: 500 }}>
                   {enabled
                     ? 'Enabled — day & time restrictions apply at the gate'
-                    : 'Disabled — no schedule restriction (entry not limited by this rule)'}
+                    : entryType.hasOwnDays
+                      ? 'Disabled — this rule adds no restriction, but each owner’s own registered campus days still apply'
+                      : 'Disabled — no schedule restriction (entry not limited by this rule)'}
                 </span>
               </label>
             </div>

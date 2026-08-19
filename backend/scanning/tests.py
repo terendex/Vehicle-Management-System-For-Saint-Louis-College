@@ -190,6 +190,92 @@ class EntryLogicTests(TestCase):
         self.assertIn('Fetcher', result['message'])
 
 
+class RuleConstraintDayCeilingTests(TestCase):
+    """The rule's Allowed Days is a campus-wide ceiling: an owner needs the day
+    on both the rule and their own campus_days. These used to pass no matter
+    what the rule said, because only campus_days was consulted."""
+
+    MONDAY = date(2026, 7, 6)
+
+    def _check_on_monday(self, vehicle):
+        monday_10am = timezone.make_aware(datetime(2026, 7, 6, 10, 0))
+        with patch('scanning.entry_logic.timezone') as mock_tz:
+            mock_tz.localdate.return_value = self.MONDAY
+            mock_tz.localtime.return_value = monday_10am
+            return check_entry(vehicle)
+
+    def _set_rule_days(self, constraint_type, days):
+        from vehicles.models import RuleConstraint
+        rule = RuleConstraint.objects.filter(
+            constraint_type=constraint_type, enabled=True).first()
+        self.assertIsNotNone(rule, f'no seeded {constraint_type} rule to edit')
+        rule.days = days
+        rule.save(update_fields=['days'])
+        return rule
+
+    def test_student_denied_when_rule_excludes_today(self):
+        """Student registered for Monday, but the campus rule is closed Monday."""
+        _, vehicle = _make_owner('ceil1@slc.edu.ph', 'CEIL01', User.OwnerType.STUDENT,
+                                 campus_days=['Monday'])
+        rule = self._set_rule_days('student_vehicle', ['tue', 'wed', 'thu', 'fri'])
+        result = self._check_on_monday(vehicle)
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['status'], 'wrong_day')
+        self.assertIn(rule.name, result['message'])
+
+    def test_student_allowed_when_rule_and_campus_days_agree(self):
+        _, vehicle = _make_owner('ceil2@slc.edu.ph', 'CEIL02', User.OwnerType.STUDENT,
+                                 campus_days=['Monday'])
+        self._set_rule_days('student_vehicle', ['mon', 'tue', 'wed', 'thu', 'fri'])
+        self.assertTrue(self._check_on_monday(vehicle)['allowed'])
+
+    def test_student_still_denied_on_unregistered_day_the_rule_allows(self):
+        """The owner's own days keep restricting inside the ceiling."""
+        _, vehicle = _make_owner('ceil3@slc.edu.ph', 'CEIL03', User.OwnerType.STUDENT,
+                                 campus_days=['Tuesday'])
+        self._set_rule_days('student_vehicle', ['mon', 'tue'])
+        result = self._check_on_monday(vehicle)
+        self.assertEqual(result['status'], 'wrong_day')
+        self.assertIn('Registered days', result['message'])
+
+    def test_fetcher_denied_when_rule_excludes_today(self):
+        _, vehicle = _make_owner('ceil4@slc.edu.ph', 'CEIL04', User.OwnerType.FETCHER,
+                                 schedule='ANY')
+        rule = self._set_rule_days('fetcher', ['sat'])
+        result = self._check_on_monday(vehicle)
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['status'], 'wrong_day')
+        self.assertIn(rule.name, result['message'])
+
+
+class OvernightWindowTests(TestCase):
+    """A window whose end is before its start wraps past midnight. It used to
+    compare as start <= now <= end and deny entry every minute of the day."""
+
+    class _Rule:
+        def __init__(self, start, end):
+            self.start_time, self.end_time = start, end
+
+    def _at(self, hour, minute=0):
+        return timezone.make_aware(datetime(2026, 7, 6, hour, minute))
+
+    def test_overnight_window_covers_both_sides_of_midnight(self):
+        from scanning.entry_logic import _is_within_window
+        rule = self._Rule('20:00', '06:00')
+        self.assertTrue(_is_within_window(rule, self._at(21)))   # before midnight
+        self.assertTrue(_is_within_window(rule, self._at(2)))    # after midnight
+        self.assertTrue(_is_within_window(rule, self._at(20)))   # on the boundary
+        self.assertTrue(_is_within_window(rule, self._at(6)))
+        self.assertFalse(_is_within_window(rule, self._at(12)))  # midday gap
+
+    def test_normal_window_is_unchanged(self):
+        from scanning.entry_logic import _is_within_window
+        rule = self._Rule('06:00', '19:00')
+        self.assertTrue(_is_within_window(rule, self._at(10)))
+        self.assertFalse(_is_within_window(rule, self._at(21)))
+        self.assertFalse(_is_within_window(rule, self._at(3)))
+
+
 # ── Manual entry API (integration) ────────────────────────────────────────────
 
 class ManualEntryAPITests(TestCase):

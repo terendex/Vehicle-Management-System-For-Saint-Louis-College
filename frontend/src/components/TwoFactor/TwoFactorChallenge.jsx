@@ -26,14 +26,20 @@ export default function TwoFactorChallenge({
   onComplete,
   onCancel,
 }) {
-  const isSetup = action === 'setup'
+  // The screen can change its own mind mid-flow: entering a backup code turns a
+  // 'verify' into a 'setup', because the server voids the missing authenticator
+  // and answers with a fresh setup challenge instead of a session. Held as state
+  // rather than read from props so that pivot has somewhere to live.
+  const [phase, setPhase] = useState(action)
+  const [activeChallenge, setActiveChallenge] = useState(challenge)
+  const isSetup = phase === 'setup'
 
   const [enrollment, setEnrollment] = useState(null)   // { qr_code, secret, ... }
   const [backupCodes, setBackupCodes] = useState(null) // shown once, after confirm
   const [pendingLogin, setPendingLogin] = useState(null)
-  // True when these codes replace one just spent, rather than being the first
-  // set handed out at enrollment — the two need different words.
-  const [replaced, setReplaced] = useState(false)
+  // True once a backup code has been spent this session — the re-pair screens
+  // then explain why they are here rather than reading as a first enrollment.
+  const [viaBackup, setViaBackup] = useState(false)
 
   const [code, setCode] = useState('')
   const [backupCode, setBackupCode] = useState('')
@@ -46,9 +52,9 @@ export default function TwoFactorChallenge({
   // synchronously here — the "still loading" state is derived below instead,
   // which keeps this effect from triggering a cascading render.
   useEffect(() => {
-    if (!isSetup || !challenge) return undefined
+    if (!isSetup || !activeChallenge) return undefined
     let cancelled = false
-    twofaApi.setup(challenge)
+    twofaApi.setup(activeChallenge)
       .then((data) => { if (!cancelled) setEnrollment(data) })
       .catch((err) => {
         if (!cancelled) {
@@ -57,7 +63,7 @@ export default function TwoFactorChallenge({
         }
       })
     return () => { cancelled = true }
-  }, [isSetup, challenge])
+  }, [isSetup, activeChallenge])
 
   // The QR is on its way exactly while we have neither it nor a reason we
   // cannot get it — no separate flag needed.
@@ -86,24 +92,28 @@ export default function TwoFactorChallenge({
     setError('')
     try {
       if (isSetup) {
-        const data = await twofaApi.confirm(value, challenge)
-        // Hold the session back until the backup codes have been seen — they
-        // are shown exactly once, and navigating away loses them for good.
+        const data = await twofaApi.confirm(value, activeChallenge)
+        // Hold the session back until the backup code has been seen — it is
+        // shown exactly once, and navigating away loses it for good.
         setBackupCodes(data.backup_codes || [])
         setPendingLogin(data)
       } else {
         const data = await twofaApi.verify(
-          challenge,
+          activeChallenge,
           usingBackup ? { backupCode: backupCode.trim() } : { code: value },
         )
-        // Signing in with the last backup code returns a replacement. Show it
-        // on the same screen enrollment uses, and hold the session back until
-        // it has been acknowledged — handing someone a code they never saw is
-        // no better than leaving them with none.
-        if (data.backup_codes?.length) {
-          setBackupCodes(data.backup_codes)
-          setReplaced(true)
-          setPendingLogin(data)
+        // A backup code does not sign you in — the server voids the phone that
+        // failed to answer and sends back a setup challenge. Pivot straight to
+        // the QR rather than bouncing back to the login form: the person is
+        // already here, and the only way on is a working authenticator.
+        if (data.twofa_action === 'setup' && data.challenge) {
+          setViaBackup(true)
+          setActiveChallenge(data.challenge)
+          setPhase('setup')
+          setEnrollment(null)
+          setUseBackup(false)
+          setBackupCode('')
+          setCode('')
         } else {
           onComplete(data)
         }
@@ -116,7 +126,7 @@ export default function TwoFactorChallenge({
     } finally {
       setBusy(false)
     }
-  }, [busy, code, useBackup, backupCode, isSetup, challenge, onComplete])
+  }, [busy, code, useBackup, backupCode, isSetup, activeChallenge, onComplete])
 
   const copyCodes = () => {
     navigator.clipboard?.writeText(backupCodes.join('\n')).then(() => {
@@ -152,14 +162,15 @@ export default function TwoFactorChallenge({
       <div className="tfa-card">
         <div className="tfa-card-head">
           <h1 className="tfa-card-title">
-            {replaced
-              ? <>Here&rsquo;s your new backup code{one ? '' : 's'}</>
+            {viaBackup
+              ? <>You&rsquo;re set up again</>
               : <>Save your backup code{one ? '' : 's'}</>}
           </h1>
           <p className="tfa-card-sub">
-            {replaced
-              ? <>You just signed in with your last one, so we&rsquo;ve issued
-                {one ? ' a replacement' : ' replacements'}. Save
+            {viaBackup
+              ? <>Your new phone is paired and the old one no longer works. The
+                backup code you just used is spent, so here
+                {one ? ' is its replacement' : ' are its replacements'} &mdash; save
                 {one ? ' it' : ' them'} before you continue.</>
               : <>Two-factor authentication is on. {one
                 ? 'This code lets you sign in if you ever lose your phone.'
@@ -186,25 +197,6 @@ export default function TwoFactorChallenge({
           </span>
         </div>
 
-        {/* Reaching this screen by *using* a code means the authenticator did
-            not answer. The server cannot see a deleted app — there is no channel
-            to the phone — so this is the one moment it has evidence something is
-            wrong, and the only chance to say so before the person carries on and
-            forgets. Without it they fall into signing in by backup code forever
-            and never re-pair. */}
-        {replaced && (
-          <div className="tfa-warn" style={{ marginTop: 10 }}>
-            <Smartphone size={15} />
-            <span>
-              Couldn&rsquo;t use your authenticator app? If you&rsquo;ve lost it,
-              changed phone, or deleted the entry, use <strong>Pair a new
-              phone</strong> in <strong>Account Security</strong> right after this
-              &mdash; it shows a QR to scan, and for the next few minutes it
-              won&rsquo;t ask you for another code. Otherwise you&rsquo;ll be
-              signing in this way every time.
-            </span>
-          </div>
-        )}
 
         <div className="tfa-actions">
           <button type="button" className="tfa-btn tfa-btn-ghost" onClick={copyCodes}>
@@ -232,9 +224,15 @@ export default function TwoFactorChallenge({
     return (
       <div className="tfa-card">
         <div className="tfa-card-head">
-          <h1 className="tfa-card-title">Set up two-factor authentication</h1>
+          <h1 className="tfa-card-title">
+            {viaBackup ? 'Pair a new authenticator' : 'Set up two-factor authentication'}
+          </h1>
           <p className="tfa-card-sub">
-            Your account needs a second step at sign-in. It takes about a minute.
+            {viaBackup
+              ? <>Your backup code worked. Because it is only used when the app
+                cannot answer, the old pairing has been switched off &mdash; pair a
+                phone now to finish signing in.</>
+              : <>Your account needs a second step at sign-in. It takes about a minute.</>}
           </p>
         </div>
 

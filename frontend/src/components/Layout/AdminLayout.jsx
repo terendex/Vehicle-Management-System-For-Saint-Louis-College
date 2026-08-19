@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
+import SecurityPanel from '../TwoFactor/SecurityPanel'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
@@ -66,9 +67,6 @@ function buildNavGroups(isAdmin) {
         { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
         { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
         { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
-        // Own account, not a system-wide policy — but it belongs beside the
-        // other things only the CDSO can reach, and there is no other menu.
-        { name: 'Account Security', path: '/admin/security', icon: <ShieldCheck size={18} /> },
       ],
     })
   }
@@ -87,6 +85,10 @@ function getGroupForPath(groups, pathname) {
 
 export default function AdminLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
+  // A pop-up rather than a route: this is about the signed-in person's own
+  // phone, not a screen of the system, and it is reached from the same footer
+  // as Help and Policy on every page instead of navigating away from work.
+  const [securityOpen, setSecurityOpen] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -214,6 +216,13 @@ export default function AdminLayout({ children, fillHeight = false }) {
             <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
               <Shield size={18} />
             </button>
+            <button
+              className="action-btn"
+              title="Account Security — authenticator app and backup code"
+              onClick={() => setSecurityOpen(true)}
+            >
+              <ShieldCheck size={18} />
+            </button>
             <button className="logout-btn" onClick={handleLogout}>
               <LogOut size={16} />
               <span>Log Out</span>
@@ -221,6 +230,36 @@ export default function AdminLayout({ children, fillHeight = false }) {
           </div>
         </div>
       </aside>
+
+      {securityOpen && (
+        <div className="tfa-overlay" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setSecurityOpen(false)
+        }}>
+          <div className="tfa-dialog" style={{ maxWidth: 520 }}>
+            <div className="tfa-dialog-head">
+              <div className="tfa-dialog-icon"><ShieldCheck size={21} /></div>
+              <div>
+                <h2 className="tfa-dialog-title">Account Security</h2>
+                <p className="tfa-dialog-sub">
+                  Your authenticator app and backup code.
+                </p>
+              </div>
+            </div>
+            <div className="tfa-dialog-body">
+              <SecurityPanel compact />
+              <div className="tfa-actions">
+                <button
+                  type="button"
+                  className="tfa-btn tfa-btn-ghost"
+                  onClick={() => setSecurityOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Column */}
       <main className="admin-main">

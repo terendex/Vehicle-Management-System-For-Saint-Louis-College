@@ -340,6 +340,21 @@ def delete_user_with_owned_records(user):
 
 
 class AuditLog(models.Model):
+    """Administrative accountability trail: what *staff* did to the system.
+
+    Deliberately NOT a record of where vehicle owners went. Routine gate
+    movement (a plate being scanned, entering, or exiting) is personal data
+    about the owner, and re-filing it here turned an admin-only screen into a
+    searchable, exportable movement profile of every registered driver — which
+    the campus privacy notice does not cover. Gate activity already lives in
+    scanning.AccessLog, which is what the guard and operations screens read and
+    what data retention prunes.
+
+    So: never add an action here that records an owner simply arriving or
+    leaving. Exception events that need a named accountable staff member
+    (ENTRY_OVERRIDE, VISITOR_ISSUED) are the deliberate carve-out.
+    """
+
     class Action(models.TextChoices):
         USER_CREATED     = 'user_created',     'User Created'
         USER_UPDATED     = 'user_updated',     'User Updated'
@@ -356,9 +371,10 @@ class AuditLog(models.Model):
         TWOFA_RESET      = 'twofa_reset',      'Two-Factor Reset by Admin'
         TWOFA_FAILED     = 'twofa_failed',     'Two-Factor Verification Failed'
         TWOFA_BACKUP_USED = 'twofa_backup_used', 'Two-Factor Backup Code Used'
-        SCAN             = 'scan',             'Vehicle Scanned'
-        VEHICLE_ENTERED  = 'vehicle_entered',  'Vehicle Entered'
-        VEHICLE_EXITED   = 'vehicle_exited',   'Vehicle Exited'
+        # Guard shift sign-in (QR, credentials, or gate kiosk). This is staff
+        # authentication, not vehicle activity; it used to be filed under the
+        # old 'scan' action, which is why migration 0037 re-points those rows.
+        GUARD_LOGIN      = 'guard_login',      'Guard Shift Login'
         VISITOR_ISSUED   = 'visitor_issued',   'Visitor Pass Issued'
         VISITOR_EXITED   = 'visitor_exited',   'Visitor Exited'
         ENTRY_OVERRIDE   = 'entry_override',   'Entry Override'

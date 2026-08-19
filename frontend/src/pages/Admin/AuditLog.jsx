@@ -8,25 +8,29 @@ import {
 import { reportFileName } from '../../utils/reportName'
 import './AuditLog.css'
 
+// Must stay in step with AuditLog.Action on the backend. Vehicle-owner gate
+// movement (scan / entered / exited) is deliberately absent — the audit log no
+// longer records it; gate history lives on the Entry Management screens.
 const ACTION_LABELS = {
-  scan:            'Vehicle Scanned',
-  vehicle_entered: 'Vehicle Entered',
-  vehicle_exited:  'Vehicle Exited',
-  entry_override:  'Entry Override',
-  visitor_issued:  'Visitor Pass Issued',
-  visitor_exited:  'Visitor Exited',
-  created:         'Record Created',
-  updated:         'Record Updated',
-  deleted:         'Record Deleted',
-  user_created:    'User Created',
-  user_updated:    'User Updated',
-  user_deleted:    'User Deleted',
-  user_disabled:   'User Disabled',
-  user_enabled:    'User Enabled',
-  admin_replaced:  'CDSO Replaced',
-  device_created:  'Device Added',
-  device_updated:  'Device Updated',
-  device_deleted:  'Device Removed',
+  user_created:      'User Created',
+  user_updated:      'User Updated',
+  user_deleted:      'User Deleted',
+  user_disabled:     'User Disabled',
+  user_enabled:      'User Enabled',
+  user_archived:     'Account Auto-Archived',
+  admin_replaced:    'CDSO Replaced',
+  guard_login:       'Guard Shift Login',
+  twofa_enabled:     'Two-Factor Enabled',
+  twofa_disabled:    'Two-Factor Disabled',
+  twofa_reset:       'Two-Factor Reset by CDSO',
+  twofa_failed:      'Two-Factor Failed',
+  twofa_backup_used: 'Two-Factor Backup Code Used',
+  entry_override:    'Entry Override',
+  visitor_issued:    'Visitor Pass Issued',
+  visitor_exited:    'Visitor Exited',
+  created:           'Record Created',
+  updated:           'Record Updated',
+  deleted:           'Record Deleted',
 }
 
 const DATE_PERIODS = [
@@ -202,11 +206,12 @@ export default function AuditLog() {
   const actionBadgeClass = (action) => {
     const map = {
       user_created: 'created', user_updated: 'updated', user_deleted: 'deleted',
-      user_disabled: 'disabled', user_enabled: 'enabled', admin_replaced: 'replaced',
+      user_disabled: 'disabled', user_enabled: 'enabled', user_archived: 'disabled',
+      admin_replaced: 'replaced', guard_login: 'enabled',
+      twofa_enabled: 'enabled', twofa_disabled: 'disabled', twofa_reset: 'replaced',
+      twofa_failed: 'deleted', twofa_backup_used: 'updated',
       created: 'created', updated: 'updated', deleted: 'deleted',
-      scan: 'scan', vehicle_entered: 'enabled', vehicle_exited: 'updated',
       entry_override: 'replaced', visitor_issued: 'scan', visitor_exited: 'updated',
-      device_created: 'device-created', device_updated: 'device-updated', device_deleted: 'device-deleted',
     }
     return map[action] || ''
   }
@@ -217,7 +222,10 @@ export default function AuditLog() {
         <div className="al-header">
           <div>
             <h1 className="al-title">Audit Log</h1>
-            <p className="al-subtitle">Track all user management actions and vehicle scans.</p>
+            <p className="al-subtitle">
+              Administrative actions on accounts and records. Vehicle entry and exit
+              history is on the Entry Management screens, not here.
+            </p>
           </div>
           <div className="al-header-actions">
             <div className="al-stats-badge">
@@ -282,7 +290,7 @@ export default function AuditLog() {
               <input
                 className="al-search-input"
                 type="text"
-                placeholder="Search actor, plate, or details…"
+                placeholder="Search actor or details…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -342,18 +350,11 @@ export default function AuditLog() {
                     <td>{log.actor_name || 'System'}</td>
                     <td>
                       <span className={`al-action-badge ${actionBadgeClass(log.action)}`}>
-                        {log.exited_at ? 'Vehicle Entered → Exited' : (ACTION_LABELS[log.action] || log.action)}
+                        {ACTION_LABELS[log.action] || log.action}
                       </span>
                     </td>
                     <td className="al-details">
                       <span className="al-details-text">{log.details || '—'}</span>
-                      {/* A completed visit is folded into one row by the API, which
-                          attaches the matching exit time and computed duration. */}
-                      {log.exited_at && (
-                        <span className="al-details-text" style={{ display: 'block', color: '#0F7A5A', marginTop: 2 }}>
-                          Exited {formatDate(log.exited_at)} · Duration: {log.duration_minutes} min
-                        </span>
-                      )}
                     </td>
                   </tr>
                 ))}

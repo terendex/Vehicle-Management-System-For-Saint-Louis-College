@@ -60,28 +60,6 @@ def _audit(request, action, details=''):
         pass
 
 
-def _audit_manual_result(request, plate_number, owner_name, gate_id, result):
-    """Audit a manual-entry outcome whose branch already wrote its AccessLog but
-    not an audit entry (unregistered / open-campus / supplier plates). Skips
-    no-op outcomes (duplicate / already_inside) that change no gate state, so
-    every real entry/exit/denial a guard types lands in the audit trail."""
-    status = result.get('status')
-    if status in ('duplicate', 'already_inside'):
-        return
-    if status == 'exited':
-        action = AuditLog.Action.VEHICLE_EXITED
-    elif result.get('allowed'):
-        action = AuditLog.Action.VEHICLE_ENTERED
-    else:
-        action = AuditLog.Action.SCAN
-    dur = result.get('duration_minutes')
-    _audit(
-        request, action,
-        f"Plate: {plate_number} | Owner: {owner_name} | Gate: {_gate_label(gate_id)} | "
-        f"Guard: {getattr(request.user, 'full_name', '')} | Status: {status}"
-        + (f" | Duration: {dur} min" if dur is not None else ""),
-    )
-
 # Auto-violations are issued at most once per type per vehicle per calendar day
 # (see _auto_log_violation); the counter resets at midnight local time.
 GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
@@ -617,6 +595,24 @@ class ScanView(APIView):
                     })
                     continue
 
+                deny_msg = _supplier_rule_denial()
+                if deny_msg:
+                    AccessLog.objects.create(
+                        plate_number=plate, status=AccessLog.Status.DENIED,
+                        denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
+                    )
+                    results.append({
+                        'plate_number':  plate,
+                        'status':        'denied',
+                        'allowed':       False,
+                        'message':       deny_msg,
+                        'is_supplier':   True,
+                        'supplier_name': supplier_name,
+                        'bbox':          bbox,
+                        'sample_id':     ml_sample.get("sample_id") if ml_sample else None,
+                    })
+                    continue
+
                 AccessLog.objects.create(
                     plate_number=plate, status=AccessLog.Status.AUTHORIZED,
                     gate_id=gate_id, scanned_by=request.user,
@@ -676,10 +672,6 @@ class ScanView(APIView):
                 duration_minutes = int(delta.total_seconds() / 60)
 
                 owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
-                guard_name = request.user.full_name
-                _audit(request, AuditLog.Action.VEHICLE_EXITED,
-                       f"Auto-exit (re-scan) | Plate: {plate} | Owner: {owner_name} | "
-                       f"Duration: {duration_minutes} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}")
 
                 resp = {
                     'plate_number':    plate,
@@ -726,22 +718,6 @@ class ScanView(APIView):
                 scanned_by    = request.user,
                 snapshot      = request.FILES.get('image'),
             )
-
-            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
-            guard_name = request.user.full_name
-            if entry['allowed']:
-                action  = AuditLog.Action.VEHICLE_ENTERED
-                details = (
-                    f"Plate: {plate} | Owner: {owner_name} | "
-                    f"Vehicle: {vehicle.vehicle_type or 'N/A'} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}"
-                )
-            else:
-                action  = AuditLog.Action.SCAN
-                details = (
-                    f"Plate: {plate} | Owner: {owner_name} | "
-                    f"Status: {entry['status']} | Reason: {entry['message']} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}"
-                )
-            _audit(request, action, details)
 
             # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
             if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
@@ -1222,15 +1198,6 @@ class DenyEntryView(APIView):
             scanned_by    = request.user,
         )
 
-        guard_name = request.user.full_name
-        owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unregistered'
-        _audit(
-            request,
-            AuditLog.Action.SCAN,
-            f"Entry denied by guard | Plate: {plate_number} | Owner: {owner_name} | "
-            f"Reason: {reason} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
-        )
-
         return Response({
             'plate_number': plate_number,
             'status':       'denied',
@@ -1289,17 +1256,6 @@ class ExitLogView(APIView):
             elif SupplierPlate.objects.filter(plate_number=plate_number, supplier__is_active=True).exists():
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'supplier', duration_minutes, gate_id))
-
-        owner_name = vehicle.user.full_name if vehicle and vehicle.user else 'Unknown'
-        guard_name = request.user.full_name
-        _audit(
-            request,
-            AuditLog.Action.VEHICLE_EXITED,
-            f"Vehicle exited | Plate: {plate_number} | Owner: {owner_name} | "
-            f"Duration: {duration_minutes if duration_minutes is not None else 'N/A'} min | "
-            + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
-            + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
-        )
 
         return Response({
             'plate_number':    plate_number,
@@ -1518,7 +1474,6 @@ class ManualEntryView(APIView):
             if not supplier_plate:
                 if is_open_campus():
                     r = _open_campus_unknown_result(plate_number, gate_id, request.user)
-                    _audit_manual_result(request, plate_number, 'Unregistered', gate_id, r)
                     return Response({**r, 'plate_number': plate_number, 'gate_id': gate_id})
                 AccessLog.objects.create(
                     plate_number=plate_number,
@@ -1526,9 +1481,6 @@ class ManualEntryView(APIView):
                     gate_id=gate_id,
                     scanned_by=request.user,
                 )
-                _audit(request, AuditLog.Action.SCAN,
-                       f"Plate: {plate_number} | Owner: Unknown | Gate: {_gate_label(gate_id)} | "
-                       f"Guard: {request.user.full_name} | Status: unknown")
                 return Response({
                     'plate_number': plate_number,
                     'status':       'unknown',
@@ -1594,11 +1546,6 @@ class ManualEntryView(APIView):
                 duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
                 overstay_minutes = _check_stay_limit(plate_number, None, 'supplier', duration_minutes, gate_id)
                 overstay_note = f' Overstayed by {overstay_minutes} min — violation issued.' if overstay_minutes else ''
-                _audit(request, AuditLog.Action.VEHICLE_EXITED,
-                       f"Exit (re-check) | Plate: {plate_number} | Supplier: {supplier_name} | "
-                       f"Duration: {duration_minutes} min | "
-                       + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
-                       + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}")
                 return Response({
                     'plate_number':      plate_number,
                     'status':            'exited',
@@ -1632,9 +1579,6 @@ class ManualEntryView(APIView):
                     plate_number=plate_number, status=AccessLog.Status.DENIED,
                     denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
                 )
-                _audit(request, AuditLog.Action.SCAN,
-                       f"Plate: {plate_number} | Supplier: {supplier_name} | Gate: {_gate_label(gate_id)} | "
-                       f"Guard: {request.user.full_name} | Status: denied — {deny_msg}")
                 return Response({
                     'plate_number':  plate_number,
                     'status':        'denied',
@@ -1649,9 +1593,6 @@ class ManualEntryView(APIView):
                 plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
                 gate_id=gate_id, scanned_by=request.user,
             )
-            _audit(request, AuditLog.Action.VEHICLE_ENTERED,
-                   f"Plate: {plate_number} | Supplier: {supplier_name} | Gate: {_gate_label(gate_id)} | "
-                   f"Guard: {request.user.full_name} | Status: entered")
             open_campus = is_open_campus()
             return Response({
                 'plate_number':  plate_number,
@@ -1737,12 +1678,6 @@ class ManualEntryView(APIView):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
             overstay_note = f' Overstayed by {overstay_minutes} min.' if overstay_minutes else ''
-            guard_name = request.user.full_name
-            _audit(request, AuditLog.Action.VEHICLE_EXITED,
-                   f"Exit (re-check) | Plate: {plate_number} | Owner: {owner_name} | "
-                   f"Duration: {duration_minutes} min | "
-                   + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
-                   + f"Gate: {_gate_label(gate_id)} | Guard: {guard_name}")
             return Response({
                 'plate_number':    plate_number,
                 'status':          'exited',
@@ -1779,14 +1714,6 @@ class ManualEntryView(APIView):
             gate_id       = gate_id,
             denied_reason = '' if entry['allowed'] else entry['message'],
             scanned_by    = request.user,
-        )
-
-        owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
-        guard_name = request.user.full_name
-        action = AuditLog.Action.VEHICLE_ENTERED if entry['allowed'] else AuditLog.Action.SCAN
-        _audit(
-            request, action,
-            f"Plate: {plate_number} | Owner: {owner_name} | Gate: {_gate_label(gate_id)} | Guard: {guard_name} | Status: {entry['status']}",
         )
 
         # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
@@ -1861,7 +1788,7 @@ class QRLoginView(APIView):
         try:
             AuditLog.objects.create(
                 actor=guard,
-                action=AuditLog.Action.SCAN,
+                action=AuditLog.Action.GUARD_LOGIN,
                 details=f"Guard shift login | {gate_label} | {guard.full_name}",
                 ip_address=_audit_ip,
             )

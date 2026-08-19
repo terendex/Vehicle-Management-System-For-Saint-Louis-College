@@ -609,7 +609,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from .entry_logic import check_entry
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
-        from accounts.models import AuditLog
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
                             _auto_log_violation, _close_active_pass, _gate_label,
                             _check_stay_limit, _log_status, _open_campus_unknown_result,
@@ -640,16 +639,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 result = _open_campus_unknown_result(plate_number, gate_id, self._user)
                 result.setdefault("registration", None)
                 result.setdefault("has_violations", False)
-                if result.get("allowed"):
-                    try:
-                        AuditLog.objects.create(
-                            actor=self._user,
-                            action="scan",
-                            details=f"Open entry (camera) | Plate: {plate_number} | "
-                                    f"Unregistered | Gate: {_gate_label(gate_id)}",
-                        )
-                    except Exception:
-                        pass
                 return result
 
             now = timezone.now()
@@ -757,17 +746,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     evidence_bytes=getattr(self, '_last_frame_jpeg', None)))
             overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
-            try:
-                AuditLog.objects.create(
-                    actor=self._user,
-                    action="scan",
-                    details=f"Auto-exit (camera) | Plate: {plate_number} | Owner: {owner_name} | "
-                            f"Duration: {duration_minutes} min"
-                            + (f" | OVERSTAYED by {overstay_minutes} min" if overstay_minutes else "")
-                            + f" | Gate: {_gate_label(gate_id)}",
-                )
-            except Exception:
-                pass
             return {
                 "status":           "exited",
                 "allowed":          False,
@@ -831,14 +809,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             gate_id=gate_id,
             scanned_by=self._user,
         )
-        try:
-            AuditLog.objects.create(
-                actor=self._user,
-                action="scan",
-                details=f"Plate: {plate_number} | Status: {entry['status']} | Gate: {_gate_label(gate_id)}",
-            )
-        except Exception:
-            pass
 
         # A visitor waiting for a pass ('no_pass'/'unknown') isn't a violation —
         # only genuinely denied/wrong-day entries are auto-fined.
@@ -903,7 +873,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         Mirrors the supplier branch of ManualEntryView so camera and manual paths agree."""
         from django.db import transaction as _tx
         from .models import AccessLog
-        from accounts.models import AuditLog
         from .views import (_inside_state, _in_exit_cooldown, _gate_label,
                             _check_stay_limit, _supplier_rule_denial)
 
@@ -964,17 +933,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 plate_number, None, 'supplier', duration_minutes, gate_id,
                 evidence_bytes=getattr(self, '_last_frame_jpeg', None))
             overstay_note = f" Overstayed by {overstay_minutes} min — violation issued." if overstay_minutes else ""
-            try:
-                AuditLog.objects.create(
-                    actor=self._user,
-                    action="scan",
-                    details=f"Auto-exit (camera) | Supplier plate: {plate_number} | {supplier_name} | "
-                            f"Duration: {duration_minutes} min"
-                            + (f" | OVERSTAYED by {overstay_minutes} min" if overstay_minutes else "")
-                            + f" | Gate: {_gate_label(gate_id)}",
-                )
-            except Exception:
-                pass
             return {
                 "status":           "exited",
                 "allowed":          False,
@@ -1034,14 +992,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             gate_id=gate_id,
             scanned_by=self._user,
         )
-        try:
-            AuditLog.objects.create(
-                actor=self._user,
-                action="scan",
-                details=f"Supplier entry (camera) | Plate: {plate_number} | {supplier_name} | Gate: {_gate_label(gate_id)}",
-            )
-        except Exception:
-            pass
+
         from .entry_logic import is_open_campus
         open_campus = is_open_campus()
         return {

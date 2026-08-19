@@ -621,91 +621,19 @@ def _apply_created_at_range(qs, date_from, date_to):
     return filter_local_date_range(qs, 'created_at', date_from, date_to)
 
 
-_AUDIT_PLATE_RE    = re.compile(r'Plate:\s*([^|]+)')
-_AUDIT_DURATION_RE = re.compile(r'Duration:\s*(\d+)\s*min')
-
-
 class AuditLogListView(generics.ListAPIView):
-    """List audit logs - admin only."""
+    """List audit logs - admin only.
+
+    This lists administrative actions only. Vehicle-owner gate movement is
+    deliberately not recorded here (see AuditLog's docstring); the operational
+    gate history lives in scanning.AccessLog.
+    """
     serializer_class   = AuditLogSerializer
     permission_classes = [IsAdminRole]
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = AuditLog.objects.select_related('actor', 'target_user').all()
-
-        action = self.request.query_params.get('action', '').strip()
-        if action:
-            qs = qs.filter(action=action)
-
-        date_from = self.request.query_params.get('date_from', '').strip()
-        date_to   = self.request.query_params.get('date_to', '').strip()
-        qs = _apply_created_at_range(qs, date_from, date_to)
-
-        # Search matches the actor (code / name / email) or the details text
-        search = self.request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                Q(actor__user_code__icontains=search) |
-                Q(actor__full_name__icontains=search) |
-                Q(actor__email__icontains=search) |
-                Q(details__icontains=search)
-            )
-
-        return qs.order_by('-created_at')
-
-    def list(self, request, *args, **kwargs):
-        """Fold a 'Vehicle Exited' row into its matching 'Vehicle Entered' row
-        (same plate, same page) so a completed visit reads as one line with a
-        computed duration, instead of two separate entry/exit log rows."""
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        objects = list(page) if page is not None else list(queryset)
-
-        entries_by_plate = {}
-        for log in objects:
-            if log.action == AuditLog.Action.VEHICLE_ENTERED:
-                m = _AUDIT_PLATE_RE.search(log.details or '')
-                if m:
-                    entries_by_plate.setdefault(m.group(1).strip(), []).append(log)
-
-        exit_info = {}       # entry_log.pk -> {exited_at, duration_minutes}
-        merged_exit_pks   = set()
-        claimed_entry_pks = set()
-        for log in objects:
-            if log.action != AuditLog.Action.VEHICLE_EXITED:
-                continue
-            m = _AUDIT_PLATE_RE.search(log.details or '')
-            if not m:
-                continue
-            plate = m.group(1).strip()
-            candidates = entries_by_plate.get(plate) or []
-            match = next(
-                (e for e in candidates if e.created_at < log.created_at and e.pk not in claimed_entry_pks),
-                None,
-            )
-            if match is None:
-                continue
-            claimed_entry_pks.add(match.pk)
-            merged_exit_pks.add(log.pk)
-            dur_m = _AUDIT_DURATION_RE.search(log.details or '')
-            duration = (
-                int(dur_m.group(1)) if dur_m
-                else max(0, round((log.created_at - match.created_at).total_seconds() / 60))
-            )
-            exit_info[match.pk] = {'exited_at': log.created_at, 'duration_minutes': duration}
-
-        visible = [log for log in objects if log.pk not in merged_exit_pks]
-        data = self.get_serializer(visible, many=True).data
-        for row in data:
-            info = exit_info.get(row['id'])
-            if info:
-                row['exited_at'] = info['exited_at']
-                row['duration_minutes'] = info['duration_minutes']
-
-        if page is not None:
-            return self.get_paginated_response(data)
-        return Response(data)
+        return _filter_audit_logs(self.request)[0]
 
 
 def _filter_audit_logs(request):
@@ -1246,7 +1174,7 @@ class GuardQrLoginView(APIView):
 
         AuditLog.objects.create(
             actor=user,
-            action=AuditLog.Action.SCAN,
+            action=AuditLog.Action.GUARD_LOGIN,
             details=f'Guard QR login: {user.full_name} ({user.user_code})',
             ip_address=get_client_ip(request),
         )
@@ -1620,7 +1548,7 @@ class GuardCredentialLoginView(APIView):
 
         AuditLog.objects.create(
             actor=guard,
-            action=AuditLog.Action.SCAN,
+            action=AuditLog.Action.GUARD_LOGIN,
             details=f'Guard credential login: {guard.full_name} ({guard.user_code}) at {gate}',
             ip_address=get_client_ip(request),
         )

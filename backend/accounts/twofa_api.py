@@ -273,24 +273,6 @@ def _issue_backup_codes(user):
     return codes
 
 
-def _replenish_backup_codes(user):
-    """Issue a fresh set if spending a code left the account with none.
-
-    Deliberately "top up when empty" rather than "replace on every use": with
-    BACKUP_CODE_COUNT at 1 that fires each time, which is the point — a single
-    code that is spent leaves nothing behind. Were the count raised to ten,
-    replacing on every use would destroy the nine unused ones, so the emptiness
-    check is what keeps this correct at any count.
-
-    Returns the new plain-text codes, or None when the account still has some.
-    The caller must SHOW whatever comes back: a code issued and never displayed
-    is the exact failure this whole path exists to avoid.
-    """
-    if TwoFactorBackupCode.objects.filter(user=user, used_at__isnull=True).exists():
-        return None
-    return _issue_backup_codes(user)
-
-
 # ── Enrollment ──────────────────────────────────────────────────────────────
 
 class TwoFactorSetupView(APIView):
@@ -408,7 +390,14 @@ class TwoFactorConfirmView(APIView):
 # ── Login verification ──────────────────────────────────────────────────────
 
 class TwoFactorVerifyView(APIView):
-    """Second half of a paused login: challenge token + code, out come tokens."""
+    """Second half of a paused login.
+
+    A TOTP code finishes the login and returns tokens. A backup code does not:
+    it voids the authenticator that failed to answer and hands back a `setup`
+    challenge instead, so the only way out is pairing a new device. The
+    replacement backup code is issued by that enrollment, not by this call —
+    proving the new phone works is what earns it.
+    """
 
     permission_classes = [permissions.AllowAny]
 
@@ -438,44 +427,56 @@ class TwoFactorVerifyView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if used_backup:
+            # A backup code is only ever spent because the authenticator did not
+            # answer — the phone is lost, wiped, or the entry was deleted. So the
+            # code does not buy a session; it buys the right to pair a new one,
+            # and the old pairing is voided on the spot.
+            #
+            # Clearing confirmed_at is what carries that decision. It voids the
+            # missing phone's secret immediately, and it is also the resume path:
+            # if this enrollment is abandoned, the next login finds no confirmed
+            # device and offers setup again, so a spent code cannot strand
+            # anybody. No session exists in the meantime, so the half-enrolled
+            # state is never one an attacker can act from.
+            device.confirmed_at = None
+            device.save(update_fields=['confirmed_at'])
+
+            return Response({
+                'twofa_required': True,
+                'twofa_action': 'setup',
+                'challenge': twofa.issue_challenge(user, 'setup'),
+                'used_backup_code': True,
+                'email': user.email,
+                'full_name': user.full_name,
+                'detail': 'Set up your authenticator again to finish signing in.',
+            })
+
         data = build_login_response(user, request)
 
-        # A code was just entered, so the next few minutes of sensitive work
-        # need no second one. This is what makes re-pairing reachable after a
-        # lost phone: the QR is step-up protected, and without this the only way
-        # to it is a backup code — the very thing someone in that position is
-        # short of. They would spend one to get in and another to open the QR.
-        #
-        # Note this is granted only on THIS endpoint, where a code was actually
-        # typed. A trusted-device login enters nothing and gets nothing, so a
-        # sensitive action there is still challenged — which is the common case
-        # and the one the rule was written for.
+        # A code was just entered, so the next few minutes of sensitive work need
+        # no second one. Granted only on THIS endpoint, where a code was actually
+        # typed: a trusted-device login enters nothing and gets nothing, so a
+        # sensitive action there is still challenged.
         data['step_up_token'] = twofa.issue_step_up(user)
         data['step_up_expires_in'] = twofa.STEP_UP_MINUTES * 60
-
-        if used_backup:
-            data['used_backup_code'] = True
-            # Signing in with the last backup code hands back a replacement in
-            # the same response, so nobody is left with no way in but the CDSO.
-            # The client shows it before letting them onto their dashboard.
-            replacement = _replenish_backup_codes(user)
-            if replacement:
-                data['backup_codes'] = replacement
-                data['backup_codes_replaced'] = True
-            data['backup_codes_remaining'] = TwoFactorBackupCode.objects.filter(
-                user=user, used_at__isnull=True,
-            ).count()
         return Response(data)
 
 
 # ── Step-up ("sudo mode") ───────────────────────────────────────────────────
 
 class TwoFactorStepUpView(APIView):
-    """Exchange a current code for a short-lived grant to do sensitive things.
+    """Exchange a current authenticator code for a short-lived grant.
 
     Without this, every save on the System Settings screen would demand its own
     code. With it, one code covers ten minutes of admin work — the same shape
     as the "sudo mode" GitHub uses for repository settings.
+
+    Authenticator codes only; backup codes are refused here by design. A backup
+    code exists to get someone back in when the phone is gone, and that path
+    ends in re-pairing — so anyone holding a session already has a working app
+    to read a code from. Accepting them here would also turn a single recovery
+    code into a way to keep operating indefinitely without ever re-pairing.
     """
 
     permission_classes = [permissions.IsAuthenticated]
@@ -495,29 +496,25 @@ class TwoFactorStepUpView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if (request.data.get('backup_code') or '').strip():
+            return Response(
+                {'error': 'A backup code only works when signing in. Use the '
+                          '6-digit code from your authenticator app.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         code = (request.data.get('code') or '').strip()
-        backup = (request.data.get('backup_code') or '').strip()
-        ok, used_backup = _check_code(user, device, code, backup, request)
+        ok, _ = _check_code(user, device, code, None, request)
         if ok is None:
             return _lockout_response()
         if not ok:
             return Response({'error': _code_error(request)},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        payload = {
+        return Response({
             'step_up_token': twofa.issue_step_up(user),
             'expires_in': twofa.STEP_UP_MINUTES * 60,
-            'used_backup_code': used_backup,
-        }
-        # Same rule as the login path. A backup code spent here would otherwise
-        # leave the account empty just as surely, only without the login screen
-        # to notice it.
-        if used_backup:
-            replacement = _replenish_backup_codes(user)
-            if replacement:
-                payload['backup_codes'] = replacement
-                payload['backup_codes_replaced'] = True
-        return Response(payload)
+        })
 
 
 # ── Status / management ─────────────────────────────────────────────────────
