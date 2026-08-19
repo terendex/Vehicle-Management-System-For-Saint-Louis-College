@@ -275,12 +275,21 @@ class AdminReplaceView(APIView):
     permission_classes = [IsAdminRole]
 
     def post(self, request):
+        from django.db import transaction
+
         serializer = AdminReplaceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         old_admin = request.user
-        new_admin = serializer.save()
-        log_action(request, AuditLog.Action.ADMIN_REPLACED, target_user=new_admin, details=f"Replaced admin: {old_admin.email}")
-        old_admin.delete()
+        # Create, log and delete are one unit: a failure partway through used to
+        # leave the system with two admin accounts (new one created, old one
+        # never removed). The credentials email is sent inside save() and cannot
+        # be recalled on a rollback, but credentials for an account that no
+        # longer exists are unusable — a stray mail beats a split admin state.
+        with transaction.atomic():
+            new_admin = serializer.save()
+            log_action(request, AuditLog.Action.ADMIN_REPLACED, target_user=new_admin,
+                       details=f"Replaced admin: {old_admin.email}")
+            old_admin.delete()
         return Response(
             {
                 'detail': 'Admin replaced successfully.',

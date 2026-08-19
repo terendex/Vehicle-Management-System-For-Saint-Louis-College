@@ -274,3 +274,44 @@ class SystemBackupTests(TestCase):
         client = APIClient()
         client.force_authenticate(guard)
         self.assertEqual(client.get('/api/accounts/system/backup/').status_code, 403)
+
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+class AdminReplaceAtomicityTests(TestCase):
+    """Replacing the CDSO must be all-or-nothing.
+
+    The view creates the new admin, writes the audit entry, then deletes the
+    outgoing one. Unwrapped, a failure between those steps left the system with
+    two admin accounts — or a deleted admin whose replacement never landed.
+    """
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.old = User.objects.create_user(
+            email='old.cdso@slc.edu.ph', full_name='OLD CDSO',
+            password='SecurePassword123!', role='admin',
+            is_staff=True, is_superuser=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.old)
+
+    def test_replace_swaps_the_admin(self):
+        resp = self.client.post('/api/accounts/replace-admin/', {
+            'full_name': 'NEW CDSO', 'email': 'new.cdso@slc.edu.ph'}, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(User.objects.filter(email='new.cdso@slc.edu.ph', role='admin').exists())
+        self.assertFalse(User.objects.filter(pk=self.old.pk).exists())
+
+    def test_failure_midway_leaves_the_old_admin_in_place(self):
+        from unittest.mock import patch
+
+        before = User.objects.count()
+        with patch('accounts.views.log_action', side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                self.client.post('/api/accounts/replace-admin/', {
+                    'full_name': 'NEW CDSO', 'email': 'new.cdso@slc.edu.ph'}, format='json')
+
+        self.assertEqual(User.objects.count(), before)
+        self.assertFalse(User.objects.filter(email='new.cdso@slc.edu.ph').exists())
+        self.assertTrue(User.objects.filter(pk=self.old.pk).exists())
