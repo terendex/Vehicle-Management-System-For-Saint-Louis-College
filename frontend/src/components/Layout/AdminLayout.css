@@ -229,7 +229,7 @@
   flex-shrink: 0;
   padding: 0.8rem 0.85rem 0.95rem;
   border-top: 1px solid #D3E1EC;
-  background: linear-gradient(180deg, #FAFCFE 0%, #F2F8FC 100%);
+  background: #FFFFFF; /* same white as the sidebar above — no seam */
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -265,7 +265,7 @@
   font-weight: 700;
   font-size: 14px;
   letter-spacing: 0.3px;
-  box-shadow: 0 0 0 3px #F1F7FC, 0 2px 5px rgba(3, 57, 108, 0.2);
+  box-shadow: 0 2px 5px rgba(3, 57, 108, 0.2);
 }
 
 /* Security guards can have a profile photo in place of the initial */
@@ -275,7 +275,7 @@
   flex-shrink: 0;
   border-radius: 50%;
   object-fit: cover;
-  box-shadow: 0 0 0 3px #F1F7FC, 0 2px 5px rgba(3, 57, 108, 0.2);
+  box-shadow: 0 2px 5px rgba(3, 57, 108, 0.2);
 }
 
 .user-info {
@@ -320,7 +320,6 @@
   gap: 2px;
   padding: 4px;
   border-top: 1px solid #EEF4F9;
-  background: #FCFDFE;
 }
 
 /* Two-shortcut variant (security sidebar) */
