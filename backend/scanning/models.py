@@ -2,12 +2,10 @@ from django.db import models
 from django.utils import timezone
 from vehicles.models import Vehicle
 
-# Days each schedule covers
-SCHEDULE_DAYS = {
-    'MWF':  [0, 2, 4],   # Mon=0, Wed=2, Fri=4
-    'TTHS': [1, 3, 5],   # Tue=1, Thu=3, Sat=5
-    'ANY':  [0, 1, 2, 3, 4, 5, 6],
-}
+# Which days a schedule covers lives in entry_logic (_SCHEDULE_DAYS_FALLBACK),
+# and the rotations themselves in vehicles/campus_days.py. An unused copy sat
+# here through the TTHS → TTHF change still claiming Saturday, which is how
+# three disagreeing definitions of a campus day happened the first time.
 
 class Gate(models.Model):
     """A campus entry gate. Seeded with gate1/gate4; admins can add more from

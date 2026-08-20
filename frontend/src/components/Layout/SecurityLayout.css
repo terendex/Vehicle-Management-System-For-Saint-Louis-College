@@ -57,32 +57,16 @@
 }
 
 .security-layout .sidebar-footer {
-  padding: 1rem;
-  gap: 10px;
+  padding: 0.85rem;
 }
 
-/* ── Change Shift trigger button (in sidebar footer) ── */
-.cs-trigger-btn {
-  display: flex;
+/* On-duty state reads as a live green chip instead of the neutral role chip */
+.security-layout .user-role--on-duty {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 10px;
-  background: #EFF9F5;
+  gap: 4px;
+  background: #E8F7F0;
   color: #0A5C43;
-  border: 1.5px solid #C4E8D9;
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: inherit;
-}
-
-.cs-trigger-btn:hover {
-  background: #D6F0E6;
-  border-color: #A8DCC8;
 }
 
 /* ── Change Shift overlay ── */

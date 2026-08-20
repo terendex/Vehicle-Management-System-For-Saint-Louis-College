@@ -7,6 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 import cv2
+from django.db import transaction
 from django.db.models import Q, Value
 from django.db.models.functions import Lower, Replace, Upper
 from django.http import StreamingHttpResponse, HttpResponse
@@ -21,6 +22,7 @@ from . import parking_camera
 
 logger = logging.getLogger(__name__)
 from accounts.audit import audit, AuditedViewSetMixin
+from accounts.twofa_api import HasRecentTwoFactor
 from time_utils import filter_local_date_range
 from accounts.models import AuditLog
 
@@ -69,10 +71,24 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         })
 
 class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
+    """Campus schedule rules. Read by any signed-in role; changed only by the
+    CDSO, and only with a fresh two-factor step-up.
+
+    These rules decide who may enter campus and when, so editing one is a
+    change to the access-control policy itself rather than to a record. The
+    admin-only write check is not redundant with the step-up: guards carry no
+    second factor by design, so a step-up alone would have waved a guard token
+    straight through to the policy every gate reads.
+    """
+
     queryset           = RuleConstraint.objects.all()
     serializer_class   = RuleConstraintSerializer
-    permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Schedule Rule'
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated()]
+        return [IsAdminOrCdso(), HasRecentTwoFactor()]
 
 class ReferenceItemViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ReferenceItem.objects.all()
@@ -129,6 +145,11 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
+        # Build the category capacity/occupancy map once for the whole response.
+        # Without this each zone would fetch it itself, turning a two-query page
+        # into two queries per zone.
+        from .capacity import category_state
+        ctx['category_state'] = category_state()
         return ctx
 
     @action(detail=True, methods=['post'], url_path='upload-image')
@@ -170,6 +191,73 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             result.append(space)
 
         return Response(ParkingSpaceSerializer(result, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='set-baseline')
+    def set_baseline(self, request, pk=None):
+        """Capture the current frame as this zone's empty-lot baseline.
+
+        Taken from the live feed rather than uploaded, because the baseline is
+        only meaningful from the exact camera position the bays were drawn
+        against. Refuses when the camera is not running: a baseline captured
+        from a dead feed is worse than none — it would silently score every bay
+        against a blank frame.
+
+        Whoever presses this is responsible for the lot actually being empty. A
+        car sitting in a bay at capture time bakes that car into the bay's
+        'empty' reference, and the bay then reads free while it is occupied.
+        """
+        import cv2 as _cv2
+        from django.core.files.base import ContentFile
+
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None or not thread.running:
+            return Response(
+                {'error': 'Start this zone\'s camera first — the baseline is captured from the live feed.'},
+                status=400)
+
+        frame = thread.get_frame()
+        if frame is None:
+            return Response({'error': 'No frame received from the camera yet. Try again in a moment.'},
+                            status=400)
+
+        ok, buf = _cv2.imencode('.jpg', frame, [_cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            return Response({'error': 'Could not encode the captured frame.'}, status=500)
+
+        zone.baseline_image.save(f'zone_{zone.id}_baseline.jpg',
+                                 ContentFile(buf.tobytes()), save=False)
+        zone.baseline_captured_at = timezone.now()
+        zone.save(update_fields=['baseline_image', 'baseline_captured_at'])
+
+        return Response(self.get_serializer(zone).data)
+
+    @action(detail=True, methods=['get'], url_path='signals')
+    def signals(self, request, pk=None):
+        """Raw per-bay scores from the classic scorer — the tuning readout.
+
+        Thresholds this cheap are only tunable if the numbers behind them are
+        visible; without this the alternative is adjusting constants blind.
+        """
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None:
+            return Response({})
+        return Response(thread.get_signals())
+
+    @action(detail=True, methods=['get'], url_path='tracked-vehicles')
+    def tracked_vehicles(self, request, pk=None):
+        """Vehicles this zone is following and how long each has been still.
+
+        The companion to `signals` for the dwell thresholds: occupancy and
+        double parking now wait for a vehicle to stop, and without this
+        "why is that bay still free" has no answer but guesswork.
+        """
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None:
+            return Response([])
+        return Response(thread.get_tracked_vehicles())
 
     @action(detail=True, methods=['patch'], url_path='set-capacity')
     def set_capacity(self, request, pk=None):
@@ -699,6 +787,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
+from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
+                          SCHEDULE_GROUP_DAYS, clean_campus_days,
+                          resolve_student_schedule, schedule_group)
 from accounts.models import User
 from .email_utils import send_acceptance_email, send_rejection_email, send_pending_email
 
@@ -870,8 +961,14 @@ def _plate_conflict(plate_number, qs):
     ).filter(_plate_norm=plate_norm).exists():
         return "This plate number already has an active registration."
     # Unowned Vehicle rows are adopted by update_or_create at accept time,
-    # so only plates already tied to an account are conflicts
-    if Vehicle.objects.filter(plate_number__iexact=plate_norm, user__isnull=False).exists():
+    # so only plates already tied to an account are conflicts.
+    #
+    # Exact, not __iexact: Vehicle plates are always stored normalised (see
+    # _upsert_vehicle_for_registration and Vehicle.resolve, which both look them
+    # up with an exact match). __iexact wrapped the column in UPPER() and made
+    # this a sequential scan of tbl_vehicle on every submission and every
+    # keystroke of the availability check, ignoring uniq_vehicle_plate_number.
+    if Vehicle.objects.filter(plate_number=plate_norm, user__isnull=False).exists():
         return "This plate number is already registered to an existing vehicle pass."
     return None
 
@@ -987,21 +1084,34 @@ def _registration_ban(plate_number, email, student_id, employee_id, conduction_n
     student_id = (student_id or '').strip()
     employee_id = (employee_id or '').strip()
 
+    # Match on the *normalised* columns, never __iexact. Every __iexact here
+    # wrapped its column in UPPER(), so none of the registration indexes applied
+    # and this ban check — which runs on every public submission and on every
+    # keystroke of the availability endpoint — degraded into a full scan of
+    # tbl_vehicle_registration. plate/conduction are stored upper-with-no-spaces
+    # and email lower-cased by VehicleRegistration.save(), and the annotations
+    # below match the vehreg_plate_norm / vehreg_email_norm expression indexes,
+    # so the same question is now answered from an index.
+    qs = VehicleRegistration.objects.annotate(
+        _plate_norm=Upper(Replace('plate_number', Value(' '), Value(''))),
+        _email_norm=Lower('email'),
+    )
+
     conds = Q()
     if email_norm:
-        conds |= Q(email__iexact=email_norm)
+        conds |= Q(_email_norm=email_norm)
     if plate_norm:
-        conds |= Q(plate_number__iexact=plate_norm)
+        conds |= Q(_plate_norm=plate_norm)
     if conduction_norm:
-        conds |= Q(conduction_number__iexact=conduction_norm)
+        conds |= Q(conduction_number=conduction_norm)
     if student_id:
-        conds |= Q(student_id__iexact=student_id)
+        conds |= Q(student_id=student_id)
     if employee_id:
-        conds |= Q(employee_id__iexact=employee_id)
+        conds |= Q(employee_id=employee_id)
     if not conds:
         return None
 
-    if VehicleRegistration.objects.filter(conds, user__registration_banned=True).exists():
+    if qs.filter(conds, user__registration_banned=True).exists():
         return ("This applicant reached the maximum number of traffic violations and is no "
                 "longer eligible to register a vehicle pass. Please contact the CDSO office.")
     return None
@@ -1021,12 +1131,18 @@ def _license_db_conflict(drivers_license):
     """
     if isinstance(drivers_license, list):
         drivers_license = drivers_license[0] if drivers_license else ''
-    license_clean = (drivers_license or '').strip()
+    # Upper-cased, then matched exactly — save() stores this stripped and
+    # upper-cased, so case-folding buys nothing while __iexact wrapped the
+    # column in UPPER() and stopped Postgres using
+    # uniq_active_registration_drivers_license. That turned the pre-check into
+    # a scan of every active registration on each submission; same anti-pattern
+    # _id_conflict documents above.
+    license_clean = (drivers_license or '').strip().upper()
     if not license_clean:
         return None
     active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
     if VehicleRegistration.objects.filter(
-        status__in=active, drivers_license__iexact=license_clean
+        status__in=active, drivers_license=license_clean
     ).exists():
         return (f"Driver's license {license_clean} is already on an active registration. "
                 "Each license may only be tied to one registered vehicle — please contact "
@@ -1089,11 +1205,30 @@ class AcceptRegistrationView(APIView):
             registration.student_id,
             registration.employee_id,
             drivers_license=registration.drivers_license,
+            # A brand-new car is identified by its conduction sticker; leaving
+            # it out meant the one identifier a plate-less registration actually
+            # has went unchecked at approval time.
+            conduction_number=registration.conduction_number,
             statuses=[VehicleRegistration.Status.ACCEPTED],
             exclude_pk=registration.pk,
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Re-checked here, not just at submission: approval can happen days or
+        # weeks after the form was filled in, and the applicant may have hit the
+        # violation ceiling in between. Without this the hard block was only
+        # ever as fresh as the moment they submitted.
+        ban = _registration_ban(
+            registration.plate_number,
+            registration.email,
+            registration.student_id,
+            registration.employee_id,
+            conduction_number=registration.conduction_number,
+        )
+        if ban:
+            return Response({"error": ban, "registration_banned": True},
+                            status=status.HTTP_403_FORBIDDEN)
 
         or_number = request.data.get('or_number', '').strip()
         if not or_number:
@@ -1132,123 +1267,131 @@ class AcceptRegistrationView(APIView):
         # Early validation: up to 3 campus days is the normal allowance — granting
         # more than 3 makes it a special case that requires a reason.
         if campus_days_override is not None and isinstance(campus_days_override, list):
-            valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
-            _cleaned_check = [d for d in campus_days_override if d in valid_days]
-            if len(_cleaned_check) > 3 and not special_case_reason:
+            _cleaned_check, _ = clean_campus_days(campus_days_override)
+            if len(_cleaned_check) > MAX_CAMPUS_DAYS and not special_case_reason:
                 return Response(
-                    {"error": "A reason is required when granting more than 3 campus days."},
+                    {"error": f"A reason is required when granting more than "
+                              f"{MAX_CAMPUS_DAYS} campus days."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if User.objects.filter(email=registration.email, is_archived=False).exists():
+        # __iexact, not an exact match: BaseUserManager.normalize_email only
+        # lower-cases the *domain*, so a live account may be stored as
+        # `Juan@slc.edu.ph` while the registration holds the fully-lowercased
+        # `juan@slc.edu.ph`. An exact match missed that pair and let the flow run
+        # on into create_user(), where uniq_active_user_email turned it into a
+        # 500 instead of this readable 400.
+        if User.objects.filter(email__iexact=registration.email, is_archived=False).exists():
              return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create user with a secure temporary password
-        temp_password = _generate_temp_password()
-        owner_type  = {
-            'student':  User.OwnerType.STUDENT,
-            'employee': User.OwnerType.EMPLOYEE,
-            'fetcher':  User.OwnerType.FETCHER,
-        }.get(registration.registrant_type, User.OwnerType.EMPLOYEE)
-        schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
-        campus_days = registration.campus_days or []
-        user = User.objects.create_user(
-            email=registration.email,
-            full_name=registration.full_name,
-            password=temp_password,
-            role='vehicle_owner',
-            must_change_password=True,
-            owner_type=owner_type,
-            schedule=schedule,
-            campus_days=campus_days,
-            contact=registration.contact_number,
-            address=registration.address,
-        )
+        # One transaction: without it a failure part-way through (most likely the
+        # Vehicle upsert hitting uniq_vehicle_plate_number) left the just-created
+        # User committed but orphaned — no registration, no vehicle. That account
+        # then held the applicant's email under uniq_active_user_email, so the
+        # registration stayed pending and every retry was rejected with "already
+        # tied to an existing account". The acceptance email is deliberately sent
+        # after this block commits, never inside it.
+        with transaction.atomic():
+            # Create user with a secure temporary password
+            temp_password = _generate_temp_password()
+            owner_type  = {
+                'student':  User.OwnerType.STUDENT,
+                'employee': User.OwnerType.EMPLOYEE,
+                'fetcher':  User.OwnerType.FETCHER,
+            }.get(registration.registrant_type, User.OwnerType.EMPLOYEE)
+            schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
+            campus_days = registration.campus_days or []
+            user = User.objects.create_user(
+                email=registration.email,
+                full_name=registration.full_name,
+                password=temp_password,
+                role='vehicle_owner',
+                must_change_password=True,
+                owner_type=owner_type,
+                schedule=schedule,
+                campus_days=campus_days,
+                contact=registration.contact_number,
+                address=registration.address,
+            )
 
-        # Record that CDSO knowingly accepted a flagged plate (audit trail)
-        if block_count:
-            try:
-                AuditLog.objects.create(
-                    actor=request.user,
-                    action=AuditLog.Action.USER_CREATED,
-                    target_user=user,
-                    details=(
-                        f"Registration accepted despite registration block | "
-                        f"Plate: {registration.plate_number} | "
-                        f"Prior flagged violations: {block_count} | Reviewed by: {request.user.full_name}"
-                    ),
-                )
-            except Exception:
-                pass
+            # Record that CDSO knowingly accepted a flagged plate (audit trail)
+            if block_count:
+                try:
+                    AuditLog.objects.create(
+                        actor=request.user,
+                        action=AuditLog.Action.USER_CREATED,
+                        target_user=user,
+                        details=(
+                            f"Registration accepted despite registration block | "
+                            f"Plate: {registration.plate_number} | "
+                            f"Prior flagged violations: {block_count} | Reviewed by: {request.user.full_name}"
+                        ),
+                    )
+                except Exception:
+                    pass
 
-        # Create or update Vehicle linked directly to User, keyed on the
-        # registration's plate or conduction number (brand-new car).
-        vehicle_obj = _upsert_vehicle_for_registration(registration, user)
+            # Create or update Vehicle linked directly to User, keyed on the
+            # registration's plate or conduction number (brand-new car).
+            vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
-        # Auto-generate unique system ID
-        padded_id = str(registration.pk).zfill(6)
-        if registration.registrant_type == 'student':
-            registration.system_student_id = f"SLC-STU-{padded_id}"
-        else:
-            registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            # Auto-generate unique system ID
+            padded_id = str(registration.pk).zfill(6)
+            if registration.registrant_type == 'student':
+                registration.system_student_id = f"SLC-STU-{padded_id}"
+            else:
+                registration.system_employee_id = f"SLC-EMP-{padded_id}"
 
-        registration.or_number = or_number
-        registration.user = user        # direct FK to account
-        registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
+            registration.or_number = or_number
+            registration.user = user        # direct FK to account
+            registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
 
-        # Apply campus_days / schedule overrides
-        if campus_days_override is not None and isinstance(campus_days_override, list):
-            valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
-            cleaned = [d for d in campus_days_override if d in valid_days]
+            # Apply campus_days / schedule overrides
+            if campus_days_override is not None and isinstance(campus_days_override, list):
+                cleaned, _ = clean_campus_days(campus_days_override)
 
-            # More than 3 campus days is a special case (validated above)
-            if len(cleaned) > 3:
-                registration.is_special_case     = True
-                registration.special_case_reason = special_case_reason
+                # More than the allowance is a special case (validated above)
+                if len(cleaned) > MAX_CAMPUS_DAYS:
+                    registration.is_special_case     = True
+                    registration.special_case_reason = special_case_reason
 
-            registration.campus_days = cleaned
-            # Re-derive schedule group from the new days
-            mwf_days  = {'Monday', 'Wednesday', 'Friday'}
-            tths_days = {'Tuesday', 'Thursday', 'Saturday'}
-            days_set  = set(cleaned)
-            mwf_n  = len(days_set & mwf_days)
-            tths_n = len(days_set & tths_days)
-            if mwf_n > 0 and tths_n == 0:
-                registration.schedule = 'MWF'
-            elif tths_n > 0 and mwf_n == 0:
-                registration.schedule = 'TTHS'
-            elif mwf_n > 0 and tths_n > 0:
-                registration.schedule = 'MIXED'
-        elif schedule_override:
-            registration.schedule = schedule_override
-        registration.status = VehicleRegistration.Status.ACCEPTED
-        registration.reviewed_at = timezone.now()
-        registration.save()
+                registration.campus_days = cleaned
+                # Re-derive the schedule group from the new days, by the same
+                # rule the public form uses (see vehicles/campus_days.py).
+                registration.schedule = schedule_group(cleaned)
+            elif schedule_override:
+                registration.schedule = schedule_override
+            registration.status = VehicleRegistration.Status.ACCEPTED
+            registration.reviewed_at = timezone.now()
+            registration.save()
 
-        # Sync final campus_days / schedule onto the user account so entry_logic
-        # can check actual days rather than a fixed MWF/TTHS group.
-        user.campus_days = registration.campus_days or []
-        user.schedule    = registration.schedule or user.schedule
-        user.save(update_fields=['campus_days', 'schedule'])
+            # Sync final campus_days / schedule onto the user account so entry_logic
+            # can check actual days rather than a fixed MWF/TTHF group.
+            user.campus_days = registration.campus_days or []
+            user.schedule    = registration.schedule or user.schedule
+            user.save(update_fields=['campus_days', 'schedule'])
 
-        # Refresh user to get generated user_code
-        user.refresh_from_db()
-        audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Registration accepted | Plate: {registration.plate_number} | "
-              f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
-              f"OR: {or_number} | By: {request.user.full_name}",
-              target_user=user)
+            # Refresh user to get generated user_code
+            user.refresh_from_db()
+            audit(request, AuditLog.Action.RECORD_UPDATED,
+                  f"Registration accepted | Plate: {registration.plate_number} | "
+                  f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
+                  f"OR: {or_number} | By: {request.user.full_name}",
+                  target_user=user)
         system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
-        # Send acceptance email with QR code and credentials
+        # Send acceptance email with QR code and credentials. Sent after the
+        # transaction above has committed, so a dead SMTP server costs the
+        # applicant their email but never their account.
         try:
             send_acceptance_email(registration, temp_password, user.user_code)
             email_status = 'sent'
-        except Exception as e:
+        except Exception:
             # Log the failure but don't crash the acceptance
-            import traceback
-            print(f"[EMAIL ERROR] Failed to send acceptance email to {registration.email}: {e}")
-            traceback.print_exc()
+            logger.exception(
+                "Failed to send acceptance email to %s (registration %s) — the "
+                "account was still created; the owner has no credentials until "
+                "this is resent.", registration.email, registration.pk,
+            )
             email_status = 'failed'
 
         return Response({
@@ -1304,12 +1447,16 @@ class RejectRegistrationView(APIView):
         # Send rejection email
         try:
             send_rejection_email(registration, reason)
-        except Exception as e:
-            import traceback
-            print(f"[EMAIL ERROR] Failed to send rejection email to {registration.email}: {e}")
-            traceback.print_exc()
+            email_status = 'sent'
+        except Exception:
+            logger.exception(
+                "Failed to send rejection email to %s (registration %s) — the "
+                "registration is still rejected; the applicant was not told.",
+                registration.email, registration.pk,
+            )
+            email_status = 'failed'
 
-        return Response({"message": "Registration rejected."})
+        return Response({"message": "Registration rejected.", "email_status": email_status})
 
 
 # ──────────────────────────────────────────────
@@ -1355,62 +1502,92 @@ class CdsoDirectRegisterView(APIView):
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = VehicleRegistrationSerializer(data=request.data)
+        data = dict(request.data)
+
+        # Walk-ins go through the same campus-day rules as the online form.
+        # This path validated none of them: day names were stored unchecked, and
+        # because `schedule` was only ever read back off the row, a caller who
+        # supplied campus_days without a schedule got the blanket 'MWF' default
+        # no matter which days those actually were.
+        if registrant_type in ('employee', 'fetcher'):
+            data['campus_days'] = []
+            data['schedule'] = 'ANY'
+        else:
+            campus_days, rejected = clean_campus_days(data.get('campus_days', []))
+            if rejected:
+                return Response(
+                    {"error": f"Not a campus day: {', '.join(str(d) for d in rejected)}. "
+                              f"Choose from {', '.join(ALL_DAYS)}."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not campus_days:
+                return Response({"error": "Students must have at least one campus day."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            data['campus_days'] = campus_days
+            data['schedule'] = schedule_group(campus_days)
+
+        serializer = VehicleRegistrationSerializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        registration = serializer.save(
-            registrant_type=registrant_type,
-            source=VehicleRegistration.Source.DIRECT,
-            status=VehicleRegistration.Status.ACCEPTED,
-            or_number=or_number,
-            reviewed_at=timezone.now(),
-        )
+        # Same all-or-nothing rule as AcceptRegistrationView: the registration,
+        # the account and the vehicle are created together or not at all, so a
+        # failure half-way cannot strand an account holding the walk-in's email.
+        with transaction.atomic():
+            registration = serializer.save(
+                registrant_type=registrant_type,
+                source=VehicleRegistration.Source.DIRECT,
+                status=VehicleRegistration.Status.ACCEPTED,
+                or_number=or_number,
+                reviewed_at=timezone.now(),
+            )
 
-        # Build user profile fields
-        temp_password = _generate_temp_password()
-        owner_type  = {
-            'student':  User.OwnerType.STUDENT,
-            'employee': User.OwnerType.EMPLOYEE,
-            'fetcher':  User.OwnerType.FETCHER,
-        }.get(registrant_type, User.OwnerType.EMPLOYEE)
-        schedule    = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
-        campus_days = registration.campus_days or []
+            # Build user profile fields
+            temp_password = _generate_temp_password()
+            owner_type  = {
+                'student':  User.OwnerType.STUDENT,
+                'employee': User.OwnerType.EMPLOYEE,
+                'fetcher':  User.OwnerType.FETCHER,
+            }.get(registrant_type, User.OwnerType.EMPLOYEE)
+            schedule    = registration.schedule or ('MWF' if registrant_type == 'student' else 'ANY')
+            campus_days = registration.campus_days or []
 
-        user = User.objects.create_user(
-            email=registration.email,
-            full_name=registration.full_name,
-            password=temp_password,
-            role='vehicle_owner',
-            must_change_password=True,
-            owner_type=owner_type,
-            schedule=schedule,
-            campus_days=campus_days,
-            contact=registration.contact_number,
-            address=registration.address,
-        )
+            user = User.objects.create_user(
+                email=registration.email,
+                full_name=registration.full_name,
+                password=temp_password,
+                role='vehicle_owner',
+                must_change_password=True,
+                owner_type=owner_type,
+                schedule=schedule,
+                campus_days=campus_days,
+                contact=registration.contact_number,
+                address=registration.address,
+            )
 
-        vehicle_obj = _upsert_vehicle_for_registration(registration, user)
+            vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
-        padded_id = str(registration.pk).zfill(6)
-        if registrant_type == 'student':
-            registration.system_student_id = f"SLC-STU-{padded_id}"
-        else:
-            registration.system_employee_id = f"SLC-EMP-{padded_id}"
-        registration.user = user
-        registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
-        registration.save()
+            padded_id = str(registration.pk).zfill(6)
+            if registrant_type == 'student':
+                registration.system_student_id = f"SLC-STU-{padded_id}"
+            else:
+                registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            registration.user = user
+            registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
+            registration.save()
 
-        user.refresh_from_db()
+            user.refresh_from_db()
         system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
 
         try:
             send_acceptance_email(registration, temp_password, user.user_code)
             email_status = 'sent'
-        except Exception as e:
-            import traceback
-            print(f"[EMAIL ERROR] {e}")
-            traceback.print_exc()
+        except Exception:
+            logger.exception(
+                "Failed to send acceptance email to %s (walk-in registration %s) "
+                "— the account was still created.",
+                registration.email, registration.pk,
+            )
             email_status = 'failed'
 
         return Response({
@@ -1479,7 +1656,8 @@ class RegistrationStatusView(APIView):
         return Response(_registration_window())
 
 
-ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+# ALL_DAYS now comes from .campus_days — the same list the validators use, so
+# the slot grid and the accepted day names cannot drift apart.
 
 
 class ScheduleSlotsView(APIView):
@@ -1497,6 +1675,25 @@ class ScheduleSlotsView(APIView):
                 "limit": limit,
                 "available": max(0, limit - used),
             }
+
+        # The public form books a whole rotation, so what it needs is the
+        # rotation's headroom: its tightest day, since one full day closes the
+        # schedule. The per-day grid stays for the CDSO day picker, which still
+        # assigns days one at a time.
+        #
+        # Friday is on both rotations, so its count is MWF students + TTHF
+        # students and it is normally the tightest day of the two — meaning
+        # `used` here is the rotation's busiest day, not its headcount.
+        result['groups'] = {
+            code: {
+                "days": days,
+                "label": SCHEDULE_DAY_LABELS[code],
+                "used": max(result[d]['used'] for d in days),
+                "limit": limit,
+                "available": min(result[d]['available'] for d in days),
+            }
+            for code, days in SCHEDULE_GROUP_DAYS.items()
+        }
         return Response(result)
 
 
@@ -1662,10 +1859,21 @@ class PublicOpenRegistrationView(APIView):
             data['schedule'] = 'ANY'
             data['campus_days'] = []
         else:
-            # Validate per-day slot limits for students
-            campus_days = data.get('campus_days', [])
-            if not campus_days:
-                return Response({"error": "Students must select at least one campus day."}, status=status.HTTP_400_BAD_REQUEST)
+            # campus_days lands in a JSONField, so whatever arrives is what gets
+            # stored — the day names were never checked here, only in the React
+            # form. A direct POST could file a registration for 'Funday' (a day
+            # entry_logic can never match, leaving a pass valid on no day) or
+            # for all six days, silently taking more than the 3-day allowance
+            # that CDSO otherwise has to approve as a special case.
+            #
+            # An applicant now picks a rotation rather than loose days, so the
+            # resolution lives in campus_days.resolve_student_schedule and both
+            # `schedule` (what the form sends) and `campus_days` (older clients,
+            # direct callers) arrive at the same whole week.
+            campus_days, schedule_code, day_error = resolve_student_schedule(
+                data.get('schedule'), data.get('campus_days', []), data.get('student_level'))
+            if day_error:
+                return Response({"error": day_error}, status=status.HTTP_400_BAD_REQUEST)
 
             active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
             base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
@@ -1675,21 +1883,19 @@ class PublicOpenRegistrationView(APIView):
                 if used >= SCHEDULE_SLOT_LIMIT:
                     full_days.append(day)
             if full_days:
+                # A rotation is taken as a whole, so one full day closes the
+                # whole schedule — saying "Friday is full, pick another day"
+                # would offer a choice the form no longer has.
+                label = SCHEDULE_DAY_LABELS.get(schedule_code, schedule_code)
                 return Response(
-                    {"error": f"The following day(s) are full: {', '.join(full_days)}. Please choose other days."},
+                    {"error": f"The {label} schedule is full "
+                              f"({', '.join(full_days)} at capacity). "
+                              f"Please choose the other schedule."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Derive schedule group from selected days
-            mwf_days  = {'Monday', 'Wednesday', 'Friday'}
-            tths_days = {'Tuesday', 'Thursday', 'Saturday'}
-            days_set  = set(campus_days)
-            if days_set == mwf_days:
-                data['schedule'] = 'MWF'
-            elif days_set == tths_days:
-                data['schedule'] = 'TTHS'
-            elif days_set:
-                data['schedule'] = 'MIXED'
+            data['campus_days'] = campus_days
+            data['schedule'] = schedule_code
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
@@ -1697,12 +1903,25 @@ class PublicOpenRegistrationView(APIView):
                 registrant_type=registrant_type,
                 source=VehicleRegistration.Source.PUBLIC,
             )
+            # The submission itself stands whether or not the acknowledgement
+            # email gets out — but the failure is logged rather than swallowed.
+            # A bare `except: pass` here meant an expired SMTP credential looked
+            # exactly like a healthy system: applicants were told "submitted
+            # successfully", no email ever arrived, and nothing was recorded.
             try:
                 send_pending_email(registration)
+                email_status = 'sent'
             except Exception:
-                pass  # don't fail the submission if email errors
+                logger.exception(
+                    "Failed to send the pending-registration email to %s "
+                    "(registration %s) — the submission was still saved.",
+                    registration.email, registration.pk,
+                )
+                email_status = 'failed'
             return Response(
-                {"message": "Registration submitted successfully. Please wait for CDSO review.", "id": registration.id},
+                {"message": "Registration submitted successfully. Please wait for CDSO review.",
+                 "id": registration.id,
+                 "email_status": email_status},
                 status=status.HTTP_201_CREATED,
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1781,50 +2000,96 @@ class ParkingAvailabilityView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        """Live availability for the owner portal.
+
+        `summary` is the number that matters — capacity and occupancy per
+        category, counted from the gate ledger, so it reflects vehicles actually
+        on campus rather than how many bays a camera happens to have resolved.
+
+        `zones` and `spaces` are the bay map: which specific slots look free, so
+        an owner can see where to head. Those stay camera-derived, and a zone
+        with no camera simply reports its bays as free.
+
+        Three queries flat, whatever the number of zones, bays or vehicles: the
+        spaces page, the declared-capacity aggregate, and the ledger count. The
+        per-zone name lookup used to run inside the aggregation loop, one SELECT
+        per zone; it now reads the `select_related` row already in hand.
+        """
+        from .capacity import category_state
+
         category = request.query_params.get('category', '')
         qs = ParkingSpace.objects.select_related('zone').all()
         if category in ['motorcycle', 'car']:
             qs = qs.filter(zone__vehicle_category=category)
-        spaces = ParkingSpaceSerializer(qs, many=True).data
+
+        # Materialise once, then serialize from the same rows. Aggregating over
+        # the model objects (whose `zone` is already joined) is what removes the
+        # per-zone query.
+        space_rows = list(qs)
+        spaces = ParkingSpaceSerializer(space_rows, many=True).data
+
+        state = category_state()
         summary = {}
-        zone_agg = {}  # zone_id -> {name, category, total, occupied}
-        for s in spaces:
-            cat = s['vehicle_category']
-            if cat not in summary:
-                summary[cat] = {'total': 0, 'occupied': 0, 'available': 0}
-            summary[cat]['total'] += 1
-            if s['is_occupied']:
-                summary[cat]['occupied'] += 1
-            else:
-                summary[cat]['available'] += 1
-            # per-zone aggregation
-            zid = s['zone']
-            if zid not in zone_agg:
-                zone_obj = ParkingZone.objects.filter(pk=zid).first()
-                zone_agg[zid] = {
-                    'zone_id':   zid,
-                    'zone_name': zone_obj.name if zone_obj else str(zid),
-                    'category':  cat,
+        for cat in ('car', 'motorcycle'):
+            if category in ('car', 'motorcycle') and cat != category:
+                continue
+            cat_state = state.get(cat, {})
+            summary[cat] = {
+                'total':     cat_state.get('capacity', 0),
+                'occupied':  cat_state.get('occupied', 0),
+                'available': cat_state.get('available', 0),
+                'is_full':   cat_state.get('is_full', False),
+                'source':    'gate_ledger',
+            }
+
+        zone_agg = {}  # zone_id -> bay tallies for that zone
+        for space in space_rows:
+            zone = space.zone
+            if zone is None:
+                continue
+            entry = zone_agg.get(zone.id)
+            if entry is None:
+                entry = zone_agg[zone.id] = {
+                    'zone_id':   zone.id,
+                    'zone_name': zone.name,
+                    'category':  zone.vehicle_category,
                     'total':     0,
                     'occupied':  0,
                 }
-            zone_agg[zid]['total'] += 1
-            if s['is_occupied']:
-                zone_agg[zid]['occupied'] += 1
+            entry['total'] += 1
+            if space.is_occupied:
+                entry['occupied'] += 1
 
         zones = []
         for z in zone_agg.values():
             fill_pct = round(z['occupied'] / z['total'] * 100) if z['total'] > 0 else 0
-            zones.append({**z, 'available': z['total'] - z['occupied'], 'fill_pct': fill_pct})
+            zones.append({**z, 'available': z['total'] - z['occupied'],
+                          'fill_pct': fill_pct, 'source': 'camera_bays'})
 
-        return Response({"spaces": spaces, "summary": summary, "zones": zones})
+        return Response({
+            "spaces":  spaces,
+            "summary": summary,
+            "zones":   zones,
+            # Missed exit scans today — surfaced so a gate that stopped scanning
+            # exits is visible rather than quietly inflating the count.
+            "stale_excluded": state.get('stale_excluded', 0),
+        })
 
 
 class SystemSettingsView(APIView):
+    """System-wide configuration. Readable by any signed-in role — screens all
+    over the app need the retention, fee and event-mode values — but writable
+    only by the CDSO with a fresh two-factor step-up.
+
+    A write here can silently turn off account expiry, shorten the retention
+    window that deletes archived accounts, or open the campus, so it is exactly
+    the kind of quiet change a stolen session would be used for.
+    """
+
     def get_permissions(self):
         if self.request.method == 'GET':
             return [permissions.IsAuthenticated()]
-        return [IsAdminOrCdso()]
+        return [IsAdminOrCdso(), HasRecentTwoFactor()]
 
     def _serialize(self, obj):
         return {
@@ -1840,6 +2105,10 @@ class SystemSettingsView(APIView):
             "account_expiry_enabled": obj.account_expiry_enabled,
             "account_expiry_months":  obj.account_expiry_months,
             "account_expiry_days":    obj.account_expiry_days,
+            "parked_after_seconds":      obj.parked_after_seconds,
+            "double_park_after_seconds": obj.double_park_after_seconds,
+            "auto_backup_frequency": obj.auto_backup_frequency,
+            "auto_backup_keep":      obj.auto_backup_keep,
         }
 
     def get(self, request):
@@ -1863,6 +2132,10 @@ class SystemSettingsView(APIView):
         account_expiry_enabled    = request.data.get("account_expiry_enabled", obj.account_expiry_enabled)
         account_expiry_months     = request.data.get("account_expiry_months",  obj.account_expiry_months)
         account_expiry_days       = request.data.get("account_expiry_days",    obj.account_expiry_days)
+        parked_after_seconds      = request.data.get("parked_after_seconds",      obj.parked_after_seconds)
+        double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
+        auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
+        auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
 
         try:
             retention_years = int(retention_years)
@@ -1913,7 +2186,10 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError, InvalidOperation):
             errors["vehicle_pass_fee_employee"] = "Must be a number."
 
-        account_expiry_enabled = bool(account_expiry_enabled)
+        # Expiration is not optional — the period is the only control. Whatever
+        # the client sends for the flag is ignored, so no request can turn owner
+        # accounts into accounts that live forever.
+        account_expiry_enabled = True
         try:
             account_expiry_months = int(account_expiry_months)
             if not (0 <= account_expiry_months <= 120):
@@ -1926,9 +2202,46 @@ class SystemSettingsView(APIView):
                 errors["account_expiry_days"] = "Must be between 0 and 365 days."
         except (TypeError, ValueError):
             errors["account_expiry_days"] = "Must be an integer."
-        if (account_expiry_enabled and not errors
-                and account_expiry_months == 0 and account_expiry_days == 0):
-            errors["account_expiry_months"] = "Set at least 1 month or day when expiration is enabled."
+        if not errors and account_expiry_months == 0 and account_expiry_days == 0:
+            errors["account_expiry_months"] = (
+                "Account expiration cannot be switched off. Set at least 1 month or 1 day."
+            )
+
+        try:
+            parked_after_seconds = int(parked_after_seconds)
+            if not (1 <= parked_after_seconds <= 120):
+                errors["parked_after_seconds"] = "Must be between 1 and 120 seconds."
+        except (TypeError, ValueError):
+            errors["parked_after_seconds"] = "Must be an integer."
+        try:
+            double_park_after_seconds = int(double_park_after_seconds)
+            if not (1 <= double_park_after_seconds <= 300):
+                errors["double_park_after_seconds"] = "Must be between 1 and 300 seconds."
+        except (TypeError, ValueError):
+            errors["double_park_after_seconds"] = "Must be an integer."
+        # A car cannot be badly parked before it counts as parked at all. Without
+        # this the camera could issue a double-parking fine against a vehicle its
+        # own occupancy logic still considers to be manoeuvring.
+        if ("parked_after_seconds" not in errors
+                and "double_park_after_seconds" not in errors
+                and double_park_after_seconds < parked_after_seconds):
+            errors["double_park_after_seconds"] = (
+                "Must be at least as long as the parked threshold "
+                f"({parked_after_seconds}s)."
+            )
+
+        # "off" is a real frequency, not a missing value — it is how automatic
+        # backups are switched off, so it is accepted like any other choice.
+        valid_freqs = {'off', 'hourly', 'daily', 'weekly', 'monthly'}
+        auto_backup_frequency = str(auto_backup_frequency or 'off').lower()
+        if auto_backup_frequency not in valid_freqs:
+            errors["auto_backup_frequency"] = "Must be one of: off, hourly, daily, weekly, monthly."
+        try:
+            auto_backup_keep = int(auto_backup_keep)
+            if not (1 <= auto_backup_keep <= 90):
+                errors["auto_backup_keep"] = "Must be between 1 and 90 backups."
+        except (TypeError, ValueError):
+            errors["auto_backup_keep"] = "Must be an integer."
 
         if errors:
             return Response(errors, status=400)
@@ -1943,28 +2256,52 @@ class SystemSettingsView(APIView):
         obj.vehicle_pass_fee          = vehicle_pass_fee
         obj.vehicle_pass_fee_employee = vehicle_pass_fee_employee
 
-        was_expiry_enabled = obj.account_expiry_enabled
         obj.account_expiry_enabled = account_expiry_enabled
         obj.account_expiry_months  = account_expiry_months
         obj.account_expiry_days    = account_expiry_days
+
+        obj.parked_after_seconds      = parked_after_seconds
+        obj.double_park_after_seconds = double_park_after_seconds
+
+        obj.auto_backup_frequency = auto_backup_frequency
+        obj.auto_backup_keep      = auto_backup_keep
         obj.save()
 
-        # Backfill existing owners the first time expiry is turned on, using the
-        # duration the admin just chose. Frozen-at-creation semantics: only owners
-        # that don't already have an expires_at are touched.
-        if account_expiry_enabled and not was_expiry_enabled and (account_expiry_months or account_expiry_days):
-            from datetime import timedelta
-            from dateutil.relativedelta import relativedelta
-            from accounts.models import User as _User
-            owners = list(_User.objects.filter(
-                role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
-            ))
-            for owner in owners:
-                owner.expires_at = (owner.date_joined.date()
-                                    + relativedelta(months=account_expiry_months)
-                                    + timedelta(days=account_expiry_days))
-            if owners:
-                _User.objects.bulk_update(owners, ['expires_at'])
+        # Running zones share one cached copy of the thresholds; dropping it
+        # makes the change land on the next frame in this process rather than up
+        # to a TTL later. No restart, and no reaching into the threads.
+        parking_camera.invalidate_dwell_settings()
+
+        # Apply a lowered keep-count now rather than at the next scheduled run.
+        # An admin who reduces it is usually looking at a disk that is filling
+        # up, and "it will tidy itself tomorrow" is not the answer they came for.
+        if before["auto_backup_keep"] != auto_backup_keep:
+            from accounts.backup_utils import prune_backups
+            prune_backups(auto_backup_keep)
+
+        # Give an expiry date to any owner still missing one, using the duration
+        # the admin just chose and counting from their join date. Owners that
+        # already have a date keep it — frozen-at-creation semantics, so changing
+        # the period never moves the goalposts on an existing account.
+        #
+        # Runs on every save, not just the first: an owner with no expires_at is
+        # an account that would live forever, which is the state expiration is
+        # meant to make impossible.
+        from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
+        from accounts.models import User as _User
+        owners = list(_User.objects.filter(
+            role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
+        ))
+        for owner in owners:
+            owner.expires_at = (owner.date_joined.date()
+                                + relativedelta(months=account_expiry_months)
+                                + timedelta(days=account_expiry_days))
+        if owners:
+            # batch_size matters here: Postgres' default is one CASE statement
+            # covering every row, which stops being a query at a few thousand
+            # owners. This is the one place a settings save touches many rows.
+            _User.objects.bulk_update(owners, ['expires_at'], batch_size=500)
 
         after   = self._serialize(obj)
         changed = [f"{k}: {before[k]} -> {after[k]}" for k in after if before[k] != after[k]]
@@ -2153,7 +2490,7 @@ class ParkingNoticeView(APIView):
                     <p style="color:#374151;font-size:14px;line-height:1.6;margin:0 0 24px;white-space:pre-line;">{notice.body}</p>
                   </div>
                   <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:14px 32px;text-align:center;">
-                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
                     <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
                   </div>
                 </div>

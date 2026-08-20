@@ -8,9 +8,8 @@ import { format } from 'date-fns'
 import { toast } from 'sonner'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getGuardMonitor } from '../../api/scanning'
+import { useGates } from '../../hooks/useGates'
 import './GateActivityMonitor.css'
-
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 const STATUS_META = {
   authorized: { label: 'Approved',  cls: 'authorized', Icon: CheckCircle  },
@@ -35,8 +34,9 @@ function fmtFull(ts) {
 // ─── GuardDailyCard ──────────────────────────────────────────────────────────
 function GuardDailyCard({ guard }) {
   const { full_name, user_code, gate_assignment, is_active, stats, recent_logs, shifts_today } = guard
+  const { gateLabel: labelFor } = useGates()
 
-  const gateLabel = GATE_LABELS[gate_assignment] ?? gate_assignment ?? '—'
+  const gateLabel = labelFor(gate_assignment) || '—'
   const hasShifts = shifts_today?.length > 0
   const hasScans  = recent_logs?.length > 0
 
@@ -81,7 +81,7 @@ function GuardDailyCard({ guard }) {
           <div className="gam-shifts-inline">
             {shifts_today.map((s, i) => (
               <span key={s.id ?? i} className="gam-shift-chip">
-                <span className="gam-shift-chip-gate">{GATE_LABELS[s.gate] ?? s.gate}</span>
+                <span className="gam-shift-chip-gate">{labelFor(s.gate)}</span>
                 {fmt(s.clocked_in_at)}
                 {' → '}
                 {s.clocked_out_at ? fmt(s.clocked_out_at) : <span style={{ color: '#14A374' }}>Now</span>}
@@ -121,7 +121,7 @@ function GuardDailyCard({ guard }) {
                   <span className="gam-log-plate">{log.plate_number || '—'}</span>
                   <span className="gam-scan-owner">{log.vehicle_owner_name || '—'}</span>
                   <span className={`gam-log-badge ${cls}`}>{label}</span>
-                  <span className="gam-scan-gate">{GATE_LABELS[log.gate_id] ?? log.gate_id ?? '—'}</span>
+                  <span className="gam-scan-gate">{labelFor(log.gate_id) || '—'}</span>
                   <span className="gam-log-time">{fmtFull(log.scanned_at)}</span>
                 </div>
               )
@@ -135,6 +135,7 @@ function GuardDailyCard({ guard }) {
 
 // ─── CrossGateFlags ───────────────────────────────────────────────────────────
 function CrossGateFlags({ flags }) {
+  const { gateLabel } = useGates()
   if (!flags?.length) return (
     <div className="gam-card gam-flags-empty">
       <CheckCircle size={20} style={{ color: '#14A374' }} />
@@ -158,7 +159,7 @@ function CrossGateFlags({ flags }) {
                 <span style={{ fontSize: 11, color: '#5C7B92', marginLeft: 6 }}>{f.owner_name}</span>
               )}
               <span style={{ fontSize: 11, color: '#7A5C00', marginLeft: 6 }}>
-                Entered {GATE_LABELS[f.entry_gate] ?? f.entry_gate} → Exited {GATE_LABELS[f.exit_gate] ?? f.exit_gate}
+                Entered {gateLabel(f.entry_gate)} → Exited {gateLabel(f.exit_gate)}
               </span>
               <div style={{ fontSize: 10, color: '#8A6B00', marginTop: 1 }}>
                 In: {fmtFull(f.entered_at)} · Out: {fmtFull(f.exited_at)}

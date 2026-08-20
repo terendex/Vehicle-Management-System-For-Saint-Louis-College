@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Shield, FileText, ChevronRight } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
+import { registrationApi } from '../../api/registration'
 import './PolicyPage.css'
 
 const TABS = [
@@ -12,6 +13,26 @@ const TABS = [
 export default function PolicyPage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('privacy')
+
+  // The terms quote the Vehicle Pass fee, so it has to come from the same
+  // settings the registration form charges from. It used to be a hardcoded
+  // ₱350.00 here, which contradicted the amount an applicant was actually
+  // told to pay. Falls back to the model defaults if the call fails.
+  // The fee-exempt departments are deliberately not named here, for the same
+  // reason the registration form hides them: advertising a free option invites
+  // people outside that department to claim it.
+  const [fees, setFees] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    registrationApi.getRegistrationStatus()
+      .then(status => { if (!cancelled) setFees(status) })
+      .catch(() => {})   // non-critical — defaults below still render a figure
+    return () => { cancelled = true }
+  }, [])
+
+  const studentFee  = fees?.vehicle_pass_fee ?? 300
+  const employeeFee = fees?.vehicle_pass_fee_employee ?? 150
 
   return (
     <div className="policy-page">
@@ -345,8 +366,9 @@ export default function PolicyPage() {
                   <div className="policy-term-item">
                     <span className="policy-term-bullet">•</span>
                     <p>
-                      To pay the Vehicle Pass fee of <strong>₱350.00</strong> at the{' '}
-                      <strong>Accounting Office.</strong>
+                      To pay the Vehicle Pass fee — <strong>₱{studentFee.toFixed(2)}</strong> for
+                      students and fetchers, <strong>₱{employeeFee.toFixed(2)}</strong> for
+                      employees — at the <strong>Accounting Office.</strong>
                     </p>
                   </div>
                 </div>

@@ -1,0 +1,437 @@
+/* Two-factor UI — shared by the login challenge and the step-up dialog.
+   Palette follows the rest of the system:
+   - Primary:  #03396C (SLC Navy)
+   - Text:     #0B2340 / #4A6B85
+   - Danger:   #B3261E   Success: #0F7A5A                                    */
+
+/* ── Code entry ───────────────────────────────────────────────────────────
+   One wide input rather than six boxes. Six boxes look the part but fight
+   paste, password managers and the iOS/Android SMS-style autofill that
+   `autocomplete="one-time-code"` triggers; a single field gets all three for
+   free and still reads as a code with the letter-spacing below.            */
+
+.tfa-code-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  /* The tracking is applied to the right of each glyph, including the last
+     one, which visually shoves the whole string left. Half of it back as
+     padding re-centres it. */
+  text-indent: 0.42em;
+  text-align: center;
+  color: #0B2340;
+  background: #F7FAFC;
+  border: 1.5px solid #C7D5E0;
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tfa-code-input:focus {
+  border-color: #03396C;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.12);
+}
+
+.tfa-code-input.tfa-invalid {
+  border-color: #B3261E;
+  box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.10);
+}
+
+.tfa-code-input.tfa-backup {
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+}
+
+.tfa-field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0B2340;
+}
+
+.tfa-hint {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4A6B85;
+}
+
+/* ── Alerts ──────────────────────────────────────────────────────────────── */
+
+.tfa-error,
+.tfa-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: 8px;
+}
+
+.tfa-error {
+  color: #8C1D18;
+  background: #FCEEEE;
+  border: 1px solid #F3C9C6;
+}
+
+.tfa-success {
+  color: #0B5138;
+  background: #E9F7F1;
+  border: 1px solid #BFE5D5;
+}
+
+.tfa-error svg,
+.tfa-success svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.tfa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* Rows whose labels are long ("New backup codes", "Pair a new phone") need more
+   room before they are worth sitting side by side. */
+.tfa-actions-wide .tfa-btn { flex-basis: 165px; }
+
+.tfa-btn {
+  /* Share the row when each button can hold its label, stack when they cannot.
+     A flex-basis does this at whatever width the container happens to be —
+     inside a 420px dialog, a 720px page, or a phone in portrait. */
+  flex: 1 1 120px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 9px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tfa-btn-primary {
+  color: #fff;
+  background: #03396C;
+  border-color: #03396C;
+}
+
+.tfa-btn-primary:hover:not(:disabled) { background: #032C55; border-color: #032C55; }
+
+.tfa-btn-ghost {
+  color: #03396C;
+  background: #fff;
+  border-color: #C7D5E0;
+}
+
+.tfa-btn-ghost:hover:not(:disabled) { border-color: #03396C; background: #F2F7FB; }
+
+.tfa-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.tfa-link-btn {
+  margin-top: 14px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #03396C;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tfa-link-btn:hover { color: #0B5C9C; }
+
+/* ── Step-up dialog ──────────────────────────────────────────────────────── */
+
+.tfa-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above EVERY other layer in the app. This dialog interrupts whatever the
+     user was doing — including the owner dashboard's own modals, which sit at
+     9000. At a lower value the code prompt raised from inside one of those
+     renders behind it: invisible, unclickable, and the action never completes. */
+  z-index: 9500;
+  display: flex;
+  /* flex-start + margin:auto on the child, rather than align-items:center.
+     Centring alone has no way to scroll to content taller than the viewport —
+     the top gets cut off and cannot be reached, which is exactly what happens
+     to this dialog on a phone held sideways. */
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tfa-dialog {
+  width: 100%;
+  max-width: 420px;
+  margin: auto;   /* centres when there is room, scrolls when there is not */
+  padding: 26px 26px 24px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(3, 35, 64, 0.28);
+}
+
+.tfa-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.tfa-dialog-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  color: #03396C;
+  background: #E8F0F7;
+  border-radius: 10px;
+}
+
+.tfa-dialog-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-dialog-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4A6B85;
+}
+
+.tfa-dialog-body { margin-top: 18px; }
+
+/* ── Login challenge card ────────────────────────────────────────────────── */
+
+.tfa-card { text-align: left; }
+
+.tfa-card-head { margin-bottom: 20px; text-align: center; }
+
+.tfa-card-title {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-card-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #4A6B85;
+}
+
+/* Enrollment steps */
+
+.tfa-steps {
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  counter-reset: tfa-step;
+}
+
+.tfa-steps li {
+  position: relative;
+  counter-increment: tfa-step;
+  padding: 0 0 12px 34px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #0B2340;
+}
+
+.tfa-steps li::before {
+  content: counter(tfa-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #03396C;
+  border-radius: 50%;
+}
+
+.tfa-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+  background: #F7FAFC;
+  border: 1px solid #DCE7EF;
+  border-radius: 12px;
+}
+
+.tfa-qr-wrap img {
+  width: 190px;
+  height: 190px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+/* ── Backup codes ────────────────────────────────────────────────────────── */
+
+.tfa-codes-grid {
+  display: grid;
+  /* auto-fit rather than a fixed column count: it lays out whatever number of
+     codes the server issues, at whatever width the container happens to be.
+     One code fills the box on its own; ten fall into two or three columns
+     depending on the space, with no breakpoint doing the arithmetic. */
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+  padding: 16px;
+  background: #F7FAFC;
+  border: 1px solid #DCE7EF;
+  border-radius: 10px;
+}
+
+.tfa-codes-grid span {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #0B2340;
+  text-align: center;
+}
+
+/* A lone code is the whole recovery plan, so it is set like a thing to be
+   copied down rather than one row of a list. :only-child means this applies
+   itself when the server issues one, and stops when it issues more. */
+.tfa-codes-grid span:only-child {
+  padding: 6px 0;
+  font-size: 21px;
+  letter-spacing: 0.12em;
+}
+
+.tfa-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7A4B00;
+  background: #FFF6E5;
+  border: 1px solid #F3DFB4;
+  border-radius: 8px;
+}
+
+.tfa-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Small screens ───────────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .tfa-dialog { padding: 22px 18px 20px; }
+  .tfa-code-input { font-size: 22px; letter-spacing: 0.3em; text-indent: 0.3em; }
+  .tfa-qr-wrap img { width: 160px; height: 160px; }
+  /* The codes stay in two columns deliberately. A single column turns ten
+     codes into a ten-row list, and vertical space is the scarce resource on a
+     phone — "00000-00000" is only ~92px of monospace, so two fit side by side
+     even at 320px. Shrinking the type buys far more than stacking would. */
+  .tfa-codes-grid { gap: 6px; padding: 13px; }
+  .tfa-codes-grid span { font-size: 13px; }
+  .tfa-codes-grid span:only-child { font-size: 19px; }
+}
+
+@media (max-width: 360px) {
+  .tfa-code-input { font-size: 19px; letter-spacing: 0.24em; text-indent: 0.24em; }
+  .tfa-codes-grid span { font-size: 12px; letter-spacing: 0; }
+  .tfa-codes-grid span:only-child { font-size: 18px; letter-spacing: 0.08em; }
+  .tfa-steps li { padding-left: 30px; font-size: 13px; }
+}
+
+/* A phone held sideways leaves ~340px of height. Without this the dialog is
+   taller than the screen; the overlay scrolls (see .tfa-overlay), but trimming
+   it to fit is better than making someone scroll to reach the buttons. */
+@media (max-height: 640px) and (orientation: landscape) {
+  .tfa-dialog { padding: 18px 20px 16px; }
+  .tfa-dialog-body { margin-top: 14px; }
+  .tfa-code-input { font-size: 20px; padding: 10px 14px; }
+  .tfa-qr-wrap { padding: 12px; }
+  .tfa-qr-wrap img { width: 128px; height: 128px; }
+  .tfa-actions { margin-top: 12px; }
+  .tfa-btn { padding: 10px 14px; }
+  .tfa-steps li { padding-bottom: 7px; }
+  .tfa-codes-grid { margin: 12px 0; }
+}
+
+/* ── Security panel (CDSO page + owner modal) ────────────────────────────── */
+
+.tfa-sec-title {
+  margin: 0 0 14px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0B2340;
+}
+
+.tfa-sec-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid #E6EDF3;
+}
+
+.tfa-sec-row:first-of-type { border-top: none; padding-top: 0; }
+
+.tfa-sec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  /* Fixed width so the badges stack into a column and the explanations beside
+     them line up, instead of each row starting at its own indent. */
+  min-width: 168px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4A6B85;
+  background: #F1F5F8;
+  border: 1px solid #DCE7EF;
+  border-radius: 8px;
+}
+
+.tfa-sec-badge.on {
+  color: #0B5138;
+  background: #E9F7F1;
+  border-color: #BFE5D5;
+}
+
+.tfa-sec-badge.warn {
+  color: #7A4B00;
+  background: #FFF6E5;
+  border-color: #F3DFB4;
+}
+
+@media (max-width: 560px) {
+  .tfa-sec-row { flex-direction: column; gap: 8px; }
+  .tfa-sec-badge { min-width: 0; }
+}

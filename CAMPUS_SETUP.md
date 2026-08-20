@@ -74,30 +74,66 @@ New-NetFirewallRule -DisplayName "SLC VMS" -Direction Inbound -LocalPort 8000 -P
 
 ---
 
-## Daily maintenance (schedule this — it is not automatic)
+## Daily maintenance
 
-Two jobs are defined as Celery tasks on a beat schedule in `config/celery.py`,
+Three jobs are defined as Celery tasks on a beat schedule in `config/celery.py`,
 so they only run when a Celery worker *and* a beat scheduler are running.
 Neither is deployed, because both would be extra always-on containers:
 
+- **`auto_archive_expired_accounts`** — archives owner accounts past their
+  expiry date. **Runs by itself; no setup needed** (see below).
+- **`purge_old_records`** — applies the retention window from System Settings:
+  deletes AccessLog rows, Violation rows, and **archived accounts** older than
+  it. **Runs by itself; no setup needed** (see below). Only archived accounts
+  are ever deleted — a live account is never touched, and audit history survives.
 - **`auto_manage_events`** — activates events dated today, archives past ones.
-  Without it the events list silently stops rolling over.
-- **`purge_old_records`** — deletes AccessLog/Violation rows past the retention
-  window set in System Settings.
+  Without it the events list silently stops rolling over. *This is the one that
+  still needs the scheduled task below.*
 
-`python manage.py run_maintenance` runs both synchronously, with no broker and
-no worker. Schedule it here rather than in the cloud: both jobs key off
-`date.today()`, which reads the OS clock, and this machine runs on Manila time.
-A UTC container would roll events over about eight hours early.
+### Archiving and retention run themselves
 
-Register it once, as Administrator, from the repository root:
+The server runs both jobs in-process: a daemon thread started with the ASGI app
+checks hourly whether each has already run today, and runs it if not
+(`backend/vehicles/scheduler.py`). This exists because the System Settings cards
+promise expiry and retention happen automatically, and those promises should not
+depend on someone remembering to register a Windows task.
+
+They run archive-first, purge-second on the same pass. Archiving stamps
+`archived_at` and the purge measures the retention window from it, so an account
+archived today gets its full window before anything deletes it.
+
+Because the thread asks *"has this run today?"* rather than *"is it 00:05 now?"*,
+a machine that was switched off overnight catches up on its next boot. A
+`tbl_daily_job_run` row per (job, day) is the lock, so restarts cannot double-run
+a job and starting the server twice is harmless.
+
+Set `DISABLE_DAILY_SCHEDULER=1` to turn the thread off — do that on any second
+machine, and on the cloud instance if the campus box is the one you trust for
+Manila-time dates. **Note this also stops the retention purge**, which is the
+only thing that ever deletes archived accounts.
+
+### Events rollover still needs scheduling
+
+`python manage.py run_maintenance` runs all three synchronously, with no broker
+and no worker, ignoring the daily ledger. Schedule it here rather than in the
+cloud: the jobs key off `date.today()`, which reads the OS clock, and this
+machine runs on Manila time. A UTC container would roll events over about eight
+hours early.
+
+Register it once, from the repository root:
 
 ```powershell
-$py   = "$PWD\backend\venv\Scripts\python.exe"
-$args = "manage.py run_maintenance"
 schtasks /Create /TN "SLC VMS Daily Maintenance" /SC DAILY /ST 00:05 `
-  /TR "cmd /c cd /d `"$PWD\backend`" && `"$py`" $args" /RL HIGHEST /F
+  /TR "`"$PWD\scripts\run-maintenance.cmd`"" /F
 ```
+
+`scripts\run-maintenance.cmd` is the wrapper the task runs. It resolves the repo
+from its own location — so moving the checkout does not break the task — and
+appends output to `backend\maintenance.log`, which is the only record you get of
+a job that runs with no console attached.
+
+Elevation is not required: the job only talks to the database. Adding `/RL
+HIGHEST` needs an Administrator prompt and buys nothing here.
 
 Verify and test it:
 

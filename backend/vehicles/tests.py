@@ -466,3 +466,443 @@ class DoubleParkAttributionTests(TestCase):
         resp = self._post(self.guard, plate_number='CDN 777')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertTrue(Violation.objects.filter(vehicle=v, violation_type='double_parking').exists())
+
+
+class DailySchedulerTests(TestCase):
+    """The in-process scheduler archives expired owners and applies the retention
+    window once a day, on its own."""
+
+    def setUp(self):
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = True
+        cfg.account_expiry_months = 1
+        cfg.account_expiry_days = 0
+        cfg.save()
+
+    def _expired_owner(self, email='sched-owner@example.com'):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email=email, full_name='Sched Owner', password='Passw0rd!23',
+            role='vehicle_owner', owner_type='student',
+        )
+        owner.expires_at = timezone.localdate() - timedelta(days=1)
+        owner.save(update_fields=['expires_at'])
+        return owner
+
+    def test_run_due_jobs_archives_expired_owner(self):
+        from vehicles.scheduler import run_due_jobs
+        owner = self._expired_owner()
+
+        run_due_jobs()
+
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertFalse(owner.is_active)
+
+    def test_ledger_row_records_the_run(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self._expired_owner()
+        run_due_jobs()
+
+        row = DailyJobRun.objects.get(job='auto_archive_expired_accounts',
+                                      run_date=timezone.localdate())
+        self.assertIsNotNone(row.finished_at)
+        self.assertIn('archived', row.result)
+
+    def test_second_pass_same_day_is_skipped(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import DAILY_JOBS, run_due_jobs
+
+        self._expired_owner()
+        first = run_due_jobs()
+        self.assertIn('auto_archive_expired_accounts', first)
+
+        # A second owner expires after the day's run was already claimed.
+        late = self._expired_owner('late-owner@example.com')
+        second = run_due_jobs()
+
+        self.assertEqual(second, {})                      # nothing ran
+        self.assertEqual(DailyJobRun.objects.count(), len(DAILY_JOBS))  # no duplicate rows
+        late.refresh_from_db()
+        self.assertFalse(late.is_archived)                # picked up tomorrow
+
+    def test_new_day_runs_again(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import DAILY_JOBS, run_due_jobs
+
+        self._expired_owner()
+        run_due_jobs()
+
+        # Simulate yesterday's run so today's pass is due again.
+        DailyJobRun.objects.update(run_date=timezone.localdate() - timedelta(days=1))
+        late = self._expired_owner('tomorrow-owner@example.com')
+
+        run_due_jobs()
+
+        late.refresh_from_db()
+        self.assertTrue(late.is_archived)
+        self.assertEqual(DailyJobRun.objects.count(), len(DAILY_JOBS) * 2)
+
+    def test_force_reruns_despite_ledger(self):
+        from vehicles.scheduler import run_due_jobs
+        self._expired_owner()
+        run_due_jobs()
+
+        late = self._expired_owner('forced-owner@example.com')
+        out = run_due_jobs(force=True)
+
+        self.assertIn('auto_archive_expired_accounts', out)
+        late.refresh_from_db()
+        self.assertTrue(late.is_archived)
+
+    def test_job_failure_is_reported_not_raised(self):
+        from unittest.mock import patch
+        from vehicles.scheduler import run_due_jobs
+
+        with patch('vehicles.tasks.auto_archive_expired_accounts', side_effect=RuntimeError('boom')):
+            out = run_due_jobs()
+
+        self.assertIn('failed: boom', out['auto_archive_expired_accounts'])
+
+    def test_failed_job_releases_its_claim_and_retries(self):
+        from unittest.mock import patch
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        owner = self._expired_owner()
+        with patch('vehicles.tasks.auto_archive_expired_accounts', side_effect=RuntimeError('boom')):
+            run_due_jobs()
+
+        # The failed job released its claim, so the day is not written off as
+        # done for it. The jobs that succeeded keep theirs.
+        self.assertFalse(DailyJobRun.objects.filter(
+            job='auto_archive_expired_accounts').exists())
+
+        run_due_jobs()   # next hourly pass
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertTrue(DailyJobRun.objects.filter(
+            job='auto_archive_expired_accounts').exists())
+
+    def test_disabled_expiry_archives_nobody(self):
+        from vehicles.models import SystemSettings
+        from vehicles.scheduler import run_due_jobs
+
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = False
+        cfg.save()
+        owner = self._expired_owner()
+
+        run_due_jobs()
+
+        owner.refresh_from_db()
+        self.assertFalse(owner.is_archived)
+
+    def test_start_does_not_launch_thread_outside_server(self):
+        import threading
+        from vehicles import scheduler
+
+        before = {t.name for t in threading.enumerate()}
+        scheduler.start()   # test runner argv, not a server
+        after = {t.name for t in threading.enumerate()}
+        self.assertNotIn('daily-scheduler', after - before)
+
+    def test_purge_runs_on_the_same_pass(self):
+        """Retention is on the scheduler too — it must not need the Windows task."""
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        run_due_jobs()
+
+        row = DailyJobRun.objects.get(job='purge_old_records',
+                                      run_date=timezone.localdate())
+        self.assertIsNotNone(row.finished_at)
+
+    def test_archiving_and_purge_do_not_collide_on_one_pass(self):
+        """An account archived by this pass has just started its retention window,
+        so the purge in the same pass must not delete it."""
+        from accounts.models import User
+        from vehicles.scheduler import run_due_jobs
+
+        owner = self._expired_owner()
+
+        run_due_jobs()
+
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_archived)
+        self.assertTrue(User.objects.filter(pk=owner.pk).exists())
+
+
+class RetentionPurgeTests(TestCase):
+    """Retention deletes archived accounts once the window passes — and only
+    archived ones."""
+
+    def setUp(self):
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.retention_years = 5
+        cfg.save()
+
+    def _archived_owner(self, email, archived_days_ago):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email=email, full_name='Old Owner', password='Passw0rd!23',
+            role='vehicle_owner', owner_type='student',
+        )
+        owner.is_archived = True
+        owner.is_active = False
+        owner.archived_at = timezone.now() - timedelta(days=archived_days_ago)
+        owner.save(update_fields=['is_archived', 'is_active', 'archived_at'])
+        return owner
+
+    def test_account_past_the_window_is_deleted(self):
+        from accounts.models import User
+        from vehicles.tasks import purge_old_records
+
+        old = self._archived_owner('ancient@example.com', archived_days_ago=6 * 365)
+
+        result = purge_old_records()
+
+        self.assertEqual(result['deleted_accounts'], 1)
+        self.assertFalse(User.objects.filter(pk=old.pk).exists())
+
+    def test_account_inside_the_window_survives(self):
+        from accounts.models import User
+        from vehicles.tasks import purge_old_records
+
+        recent = self._archived_owner('recent@example.com', archived_days_ago=30)
+
+        self.assertEqual(purge_old_records()['deleted_accounts'], 0)
+        self.assertTrue(User.objects.filter(pk=recent.pk).exists())
+
+    def test_live_account_is_never_deleted(self):
+        """Age alone is not grounds for deletion — only archived accounts go."""
+        from accounts.models import User
+        from vehicles.tasks import purge_old_records
+
+        live = User.objects.create_user(
+            email='live@example.com', full_name='Live Owner', password='Passw0rd!23',
+            role='vehicle_owner', owner_type='student',
+        )
+        User.objects.filter(pk=live.pk).update(
+            date_joined=timezone.now() - timedelta(days=10 * 365))
+
+        self.assertEqual(purge_old_records()['deleted_accounts'], 0)
+        self.assertTrue(User.objects.filter(pk=live.pk).exists())
+
+    def test_archived_without_a_timestamp_is_left_alone(self):
+        """No archived_at means no clock to measure — do not delete on a guess."""
+        from accounts.models import User
+        from vehicles.tasks import purge_old_records
+
+        owner = self._archived_owner('noclock@example.com', archived_days_ago=6 * 365)
+        User.objects.filter(pk=owner.pk).update(archived_at=None)
+
+        self.assertEqual(purge_old_records()['deleted_accounts'], 0)
+        self.assertTrue(User.objects.filter(pk=owner.pk).exists())
+
+    def test_admin_is_never_purged(self):
+        from accounts.models import User
+        from vehicles.tasks import purge_old_records
+
+        admin = User.objects.create_user(
+            email='oldadmin@example.com', full_name='Old Admin',
+            password='Passw0rd!23', role='admin')
+        User.objects.filter(pk=admin.pk).update(
+            is_archived=True, archived_at=timezone.now() - timedelta(days=9 * 365))
+
+        self.assertEqual(purge_old_records()['deleted_accounts'], 0)
+        self.assertTrue(User.objects.filter(pk=admin.pk).exists())
+
+    def test_owned_records_go_with_the_account(self):
+        from vehicles.models import Vehicle
+        from vehicles.tasks import purge_old_records
+
+        old = self._archived_owner('withcar@example.com', archived_days_ago=6 * 365)
+        veh = Vehicle.objects.create(plate_number='OLD111', vehicle_type='car', user=old)
+        reg = make_reg(registrant_type='student', full_name='Old Owner',
+                       email='withcar@example.com', plate_number='OLD 111',
+                       student_id='20200001', user=old,
+                       status=VehicleRegistration.Status.EXPIRED)
+
+        purge_old_records()
+
+        self.assertFalse(Vehicle.objects.filter(pk=veh.pk).exists())
+        self.assertFalse(VehicleRegistration.objects.filter(pk=reg.pk).exists())
+
+    def test_audit_history_survives_the_purge(self):
+        from accounts.models import AuditLog
+        from vehicles.tasks import purge_old_records
+
+        old = self._archived_owner('audited@example.com', archived_days_ago=6 * 365)
+        entry = AuditLog.objects.create(
+            actor=None, action=AuditLog.Action.USER_ARCHIVED, target_user=old,
+            details='Account auto-archived on expiry',
+        )
+
+        purge_old_records()
+
+        entry.refresh_from_db()
+        self.assertIsNone(entry.target_user_id)          # SET_NULL, not cascade
+        self.assertEqual(entry.details, 'Account auto-archived on expiry')
+
+
+class DailyJobQueryCountTests(TestCase):
+    """The daily jobs must cost a fixed number of statements, not a walk.
+
+    Both run unattended against a remote Postgres, where a per-account round trip
+    is the whole cost. These assert the count does not move between a small batch
+    and a larger one — if someone reintroduces a query inside a loop, the numbers
+    diverge and these fail.
+
+    Measured flat at 1 and at 12 accounts: archiving 10 statements, the purge 30,
+    a full scheduler pass 48. The purge's 30 is set by how many models hold a FK
+    to User that Django must null out, not by how many accounts are being
+    deleted — adding such a model moves that number, which is expected.
+    """
+
+    def setUp(self):
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.account_expiry_enabled = True
+        cfg.account_expiry_months = 1
+        cfg.retention_years = 5
+        cfg.save()
+
+    def _expired_owners(self, n, prefix):
+        from accounts.models import User
+        for i in range(n):
+            owner = User.objects.create_user(
+                email=f'{prefix}{i}@example.com', full_name=f'Owner {i}',
+                password='Passw0rd!23', role='vehicle_owner', owner_type='student',
+            )
+            User.objects.filter(pk=owner.pk).update(
+                expires_at=timezone.localdate() - timedelta(days=1))
+
+    def _archived_owners(self, n, prefix):
+        from accounts.models import User
+        from vehicles.models import Vehicle
+        for i in range(n):
+            owner = User.objects.create_user(
+                email=f'{prefix}{i}@example.com', full_name=f'Old {i}',
+                password='Passw0rd!23', role='vehicle_owner', owner_type='student',
+            )
+            Vehicle.objects.create(plate_number=f'{prefix.upper()}{i:03d}',
+                                   vehicle_type='car', user=owner)
+            User.objects.filter(pk=owner.pk).update(
+                is_archived=True, is_active=False,
+                archived_at=timezone.now() - timedelta(days=6 * 365))
+
+    def _count(self, fn):
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+        with CaptureQueriesContext(connection) as ctx:
+            fn()
+        return len(ctx)
+
+    def test_archiving_cost_does_not_grow_with_the_batch(self):
+        from vehicles.tasks import auto_archive_expired_accounts
+
+        self._expired_owners(1, 'solo')
+        one = self._count(auto_archive_expired_accounts)
+
+        self._expired_owners(12, 'many')
+        twelve = self._count(auto_archive_expired_accounts)
+
+        self.assertEqual(one, twelve,
+                         f"archiving cost grew with batch size: {one} -> {twelve} queries")
+
+    def test_purge_cost_does_not_grow_with_the_batch(self):
+        from vehicles.tasks import purge_old_records
+
+        self._archived_owners(1, 'solo')
+        one = self._count(purge_old_records)
+
+        self._archived_owners(12, 'many')
+        twelve = self._count(purge_old_records)
+
+        self.assertEqual(one, twelve,
+                         f"purge cost grew with batch size: {one} -> {twelve} queries")
+
+    def test_a_full_scheduler_pass_is_a_fixed_cost(self):
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self._expired_owners(1, 'pass1')
+        self._archived_owners(1, 'purge1')
+        one = self._count(run_due_jobs)
+
+        DailyJobRun.objects.all().delete()
+        self._expired_owners(12, 'pass2')
+        self._archived_owners(12, 'purge2')
+        twelve = self._count(run_due_jobs)
+
+        self.assertEqual(one, twelve,
+                         f"scheduler pass cost grew with batch size: {one} -> {twelve} queries")
+
+
+class ExpiryCannotBeDisabledTests(TestCase):
+    """Account expiration has no off switch — only a period."""
+
+    def setUp(self):
+        from accounts.models import User
+        from rest_framework.test import APIClient
+        self.admin = User.objects.create_user(
+            email='cdso@example.com', full_name='CDSO', password='Passw0rd!23',
+            role='admin')
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def _put(self, **overrides):
+        payload = {
+            'retention_years': 5, 'scan_dedup_seconds': 60,
+            'vehicle_pass_fee': 300, 'vehicle_pass_fee_employee': 150,
+            'account_expiry_months': 12, 'account_expiry_days': 0,
+        }
+        payload.update(overrides)
+        return self.client.put('/api/vehicles/system-settings/', payload, format='json')
+
+    def test_zero_period_is_rejected(self):
+        resp = self._put(account_expiry_months=0, account_expiry_days=0)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('account_expiry_months', resp.data)
+
+    def test_flag_cannot_be_cleared_by_the_client(self):
+        from vehicles.models import SystemSettings
+        resp = self._put(account_expiry_enabled=False)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(SystemSettings.get().account_expiry_enabled)
+        self.assertTrue(resp.data['account_expiry_enabled'])
+
+    def test_days_only_period_is_accepted(self):
+        resp = self._put(account_expiry_months=0, account_expiry_days=30)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['account_expiry_days'], 30)
+
+    def test_owner_without_an_expiry_is_backfilled_on_save(self):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email='noexpiry@example.com', full_name='No Expiry',
+            password='Passw0rd!23', role='vehicle_owner', owner_type='student')
+        User.objects.filter(pk=owner.pk).update(expires_at=None)
+
+        self.assertEqual(self._put(account_expiry_months=6).status_code, 200)
+
+        owner.refresh_from_db()
+        self.assertIsNotNone(owner.expires_at)
+
+    def test_existing_expiry_is_not_moved_by_a_period_change(self):
+        from accounts.models import User
+        owner = User.objects.create_user(
+            email='fixed@example.com', full_name='Fixed', password='Passw0rd!23',
+            role='vehicle_owner', owner_type='student')
+        original = owner.expires_at
+        self.assertIsNotNone(original)
+
+        self.assertEqual(self._put(account_expiry_months=1).status_code, 200)
+
+        owner.refresh_from_db()
+        self.assertEqual(owner.expires_at, original)

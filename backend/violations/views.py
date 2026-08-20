@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
@@ -7,12 +8,17 @@ from rest_framework import status as http_status
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
-from .models import Violation, NEW_STYLE_TYPES, FEE_ESCALATING_TYPES, FEE_THIRD_OFFENSE
+from .models import Violation, NEW_STYLE_TYPES
+from .penalty import apply_penalty, notify_owner, recompute_for_owner
 from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 from accounts.audit import audit
 from accounts.models import AuditLog
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from time_utils import day_range, filter_local_date_range
+
+logger = logging.getLogger(__name__)
 
 
 class IsStaffRole(permissions.BasePermission):
@@ -32,6 +38,93 @@ class IsCDSOOrAdmin(permissions.BasePermission):
             and request.user.is_authenticated
             and request.user.role == 'admin'
         )
+
+
+class _QueryParamJWTAuthentication(JWTAuthentication):
+    """JWT taken from ?token= instead of the Authorization header.
+
+    Only used by the evidence endpoint. Browsers cannot attach headers to an
+    <img> request, so a header-only endpoint can never render a thumbnail.
+    Returns None rather than raising when the parameter is absent, which lets
+    the normal header authenticators run for ordinary API callers.
+    """
+
+    def authenticate(self, request):
+        raw = request.GET.get('token', '')
+        if not raw:
+            return None
+        try:
+            validated = self.get_validated_token(raw)
+        except (InvalidToken, TokenError):
+            return None
+        return self.get_user(validated), validated
+
+
+class ViolationEvidenceView(APIView):
+    """Stream a violation's evidence photo through the API.
+
+    Replaces linking the browser straight at the object-storage URL, for two
+    reasons.
+
+    It works. The stored file is reachable with the app's own credentials — the
+    public bucket URL is a separate thing that has to be enabled, is rate
+    limited, and silently serves nothing when it is not, which is exactly how a
+    thumbnail ends up broken while the file is sitting there intact.
+
+    And it is private. A violation photo shows someone's vehicle at a named
+    place and time, attached to a disciplinary record. On a public bucket URL
+    anyone holding the link can open it, forever, with no login. Here the same
+    permission rules as the rest of the module apply: staff see any evidence,
+    an owner sees only their own.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_authenticators(self):
+        """Also accept ?token=<JWT>, because an <img> tag cannot send an
+        Authorization header.
+
+        The same reason the parking MJPEG stream does it. Without this the
+        endpoint is only reachable by fetch(), and the thumbnail this exists to
+        render would get a 401.
+        """
+        return [_QueryParamJWTAuthentication()] + list(super().get_authenticators())
+
+    def get(self, request, pk):
+        from django.http import FileResponse, Http404
+
+        violation = get_object_or_404(Violation, pk=pk)
+
+        role = getattr(request.user, 'role', None)
+        if role not in ('admin', 'security'):
+            # An owner may see their own. Matched on the identity snapshot as
+            # well as the live FK, so an archived owner (whose vehicle link is
+            # cleared) can still open evidence issued against their plate.
+            owner_id = violation.vehicle.user_id if violation.vehicle_id else None
+            own_plates = set(
+                Vehicle.objects.filter(user=request.user)
+                .values_list('plate_number', flat=True)
+            )
+            own_plates.discard('')
+            is_owner = (owner_id == request.user.id) or (
+                violation.plate_number and violation.plate_number in own_plates)
+            if not is_owner:
+                return Response({'detail': 'Not permitted.'},
+                                status=http_status.HTTP_403_FORBIDDEN)
+
+        if not violation.evidence:
+            raise Http404('No evidence attached to this violation.')
+
+        try:
+            handle = violation.evidence.open('rb')
+        except Exception:
+            # The row references a file the storage backend cannot produce —
+            # a wiped ephemeral disk, a bucket rotation. A 404 lets the UI show
+            # "unavailable"; a 500 would read as the whole page being broken.
+            logger.warning("[violations] evidence unreadable for violation %s (%s)",
+                           violation.pk, violation.evidence.name)
+            raise Http404('Evidence file is no longer available.')
+
+        return FileResponse(handle, content_type='image/jpeg')
 
 
 class ViolationViewSet(viewsets.ModelViewSet):
@@ -69,18 +162,16 @@ class ViolationViewSet(viewsets.ModelViewSet):
         vtype = serializer.validated_data.get('violation_type', '')
 
         if vtype in NEW_STYLE_TYPES:
-            offense_num  = Violation.compute_offense_number(vehicle, vtype)
-            is_fee_event = offense_num == 3 and vtype in FEE_ESCALATING_TYPES
-            fine         = FEE_THIRD_OFFENSE if is_fee_event else Decimal('0.00')
-            viol_status  = Violation.Status.FEE_IMPOSED if is_fee_event else Violation.Status.WARNING
-            reg_blocked  = is_fee_event
+            owner       = vehicle.user
+            offense_num = Violation.compute_offense_number(owner)
 
             instance = serializer.save(
                 vehicle              = vehicle,
+                owner                = owner,
                 offense_number       = offense_num,
-                fine_amount          = fine,
-                status               = viol_status,
-                registration_blocked = reg_blocked,
+                status               = Violation.Status.WARNING,
+                # Only the 3rd strike holds registration.
+                registration_blocked = offense_num >= 3,
                 is_released          = True,   # always visible to owner immediately
                 issued_by            = self.request.user,
             )
@@ -109,14 +200,14 @@ class ViolationViewSet(viewsets.ModelViewSet):
                 pass
 
     def _notify_new_offense(self, instance):
+        """Impose the penalty, then tell the owner. Both are best-effort — the
+        violation is already recorded and must not be rolled back because a mail
+        server is down."""
         try:
-            from .email_utils import send_violation_warning_email, send_fee_imposed_email
-            if instance.offense_number in (1, 2):
-                send_violation_warning_email(instance)
-            elif instance.offense_number == 3 and instance.status == Violation.Status.FEE_IMPOSED:
-                send_fee_imposed_email(instance)
+            penalty = apply_penalty(instance)
+            notify_owner(instance, penalty)
         except Exception:
-            pass
+            logger.exception('Could not apply penalty for violation %s', instance.pk)
 
     def _notify_resolved(self, instance):
         try:
@@ -139,7 +230,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
         if not was_resolved and response.data.get('is_resolved'):
             instance = self.get_object()
             audit(request, AuditLog.Action.RECORD_UPDATED,
-                  f"Violation resolved | Plate: {instance.vehicle.plate_number} | "
+                  f"Violation resolved | Plate: {instance.identifier} | "
                   f"Type: {instance.get_violation_type_display()} | By: {request.user.full_name}")
             self._notify_resolved(instance)
         return response
@@ -176,15 +267,15 @@ class ViolationViewSet(viewsets.ModelViewSet):
     def issue_cdso_report(self, request, pk=None):
         """CDSO marks that they've issued the official violation report to the owner."""
         violation = self.get_object()
-        if violation.status != Violation.Status.FEE_IMPOSED:
+        if violation.status in Violation.INACTIVE_STATUSES:
             return Response(
-                {'detail': 'Report can only be issued for fee-imposed violations.'},
+                {'detail': 'This violation is already settled or lifted.'},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
         violation.cdso_report_issued = True
         violation.save(update_fields=['cdso_report_issued'])
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"CDSO violation report issued | Plate: {violation.vehicle.plate_number} | "
+              f"CDSO violation report issued | Plate: {violation.identifier} | "
               f"Type: {violation.get_violation_type_display()} | By: {request.user.full_name}")
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
@@ -192,31 +283,36 @@ class ViolationViewSet(viewsets.ModelViewSet):
             permission_classes=[IsCDSOOrAdmin])
     def clear_violation(self, request, pk=None):
         """
-        CDSO clears a fee-imposed violation after the owner presents the Official Receipt.
-        Requires `official_receipt` in the request body.
-        Sets status=cleared, is_resolved=True, stores the OR number.
-        The warning cycle resets for this violation type; registration_blocked stays True.
+        CDSO settles an offence — the owner has reported to the office and the
+        matter is closed.
+
+        There is no fee to collect any more, so this no longer demands an
+        Official Receipt; a free-text `note` is accepted instead. Clearing takes
+        the offence out of the ladder, which pulls the account's confiscation
+        back down a rung (or lifts it entirely if nothing is left).
         """
         violation = self.get_object()
-        if violation.status != Violation.Status.FEE_IMPOSED:
+        if violation.status in Violation.INACTIVE_STATUSES:
             return Response(
-                {'detail': 'Only fee-imposed violations can be cleared through this action.'},
+                {'detail': 'This violation is already settled or lifted.'},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
-        or_number = request.data.get('official_receipt', '').strip()
-        if not or_number:
-            return Response(
-                {'detail': 'official_receipt is required to clear this violation.'},
-                status=http_status.HTTP_400_BAD_REQUEST,
-            )
-        violation.official_receipt  = or_number
-        violation.status            = Violation.Status.CLEARED
-        violation.is_resolved       = True
+        note = (request.data.get('note') or request.data.get('official_receipt') or '').strip()
+
+        owner = violation.owner or (violation.vehicle.user if violation.vehicle_id else None)
+        violation.official_receipt = note
+        violation.status           = Violation.Status.CLEARED
+        violation.is_resolved      = True
         violation.save(update_fields=['official_receipt', 'status', 'is_resolved'])
+
+        # The ladder is shorter now — re-derive the penalty from what is left.
+        recompute_for_owner(owner)
+
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Violation cleared | Plate: {violation.vehicle.plate_number} | "
-              f"Type: {violation.get_violation_type_display()} | OR: {or_number} | "
-              f"Entry access restored | By: {request.user.full_name}")
+              f"Violation cleared | Plate: {violation.identifier} | "
+              f"Type: {violation.get_violation_type_display()}"
+              + (f" | Note: {note}" if note else "")
+              + f" | By: {request.user.full_name}")
         self._notify_resolved(violation)
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
@@ -259,17 +355,21 @@ class ViolationViewSet(viewsets.ModelViewSet):
         violation.lifted_reason        = reason
         violation.lifted_at            = timezone.now()
         violation.lifted_by            = request.user
-        violation.fine_amount          = Decimal('0.00')
         violation.registration_blocked = False
         violation.save(update_fields=[
             'status', 'is_resolved', 'lifted_reason', 'lifted_at', 'lifted_by',
-            'fine_amount', 'registration_blocked',
+            'registration_blocked',
         ])
 
-        resequenced = Violation.resequence_offenses(vehicle, vtype)
+        # A lifted offence never happened, so the account's penalty is
+        # re-derived from what remains — dropping from 3 strikes to 2 shortens
+        # the confiscation, and dropping to 0 lifts it.
+        owner = violation.owner or (vehicle.user if vehicle else None)
+        recompute_for_owner(owner)
+        resequenced = Violation.active_for_owner(owner).count() if owner else 0
 
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Violation lifted (false alarm) | Plate: {vehicle.plate_number} | "
+              f"Violation lifted (false alarm) | Plate: {violation.identifier} | "
               f"Type: {violation.get_violation_type_display()} | "
               f"Was offense {prev_offense} | Reason: {reason} | "
               f"{resequenced} remaining renumbered | By: {request.user.full_name}")
@@ -343,8 +443,12 @@ def _filter_violations_report(request):
     if status_f:
         qs = qs.filter(status=status_f)
     if search:
-        qs = qs.filter(Q(vehicle__plate_number__icontains=search) |
-                       Q(vehicle__user__full_name__icontains=search))
+        # Searches the identity snapshot, so a violation whose vehicle or owner
+        # account has since been removed is still findable by the plate and name
+        # it was issued under.
+        qs = qs.filter(Q(plate_number__icontains=search) |
+                       Q(conduction_number__icontains=search) |
+                       Q(owner_name__icontains=search))
 
     status_labels = dict(Violation.Status.choices)
     desc = []
@@ -363,8 +467,9 @@ def _violation_report_rows(qs):
     status_labels = dict(Violation.Status.choices)
     rows = []
     for i, v in enumerate(qs, start=1):
-        plate     = v.vehicle.plate_number if v.vehicle else '—'
-        owner     = v.vehicle.user.full_name if (v.vehicle and v.vehicle.user) else '—'
+        plate     = v.identifier or '—'
+        owner     = v.owner_name or (v.vehicle.user.full_name
+                                     if (v.vehicle and v.vehicle.user) else '') or '—'
         issued_by = v.issued_by.full_name if v.issued_by else 'System'
         rows.append([
             i,
@@ -427,3 +532,89 @@ class ViolationReportPdfView(APIView):
             # empty (27pt used of 146pt). 6mm moves across; total unchanged.
             col_widths_mm=[10, 34, 26, 56, 40, 22, 30, 49],
         )
+
+
+# ── Confiscated accounts ──────────────────────────────────────────────────────
+# Guards need this at the gate and in the parking view: an account serving a
+# violation penalty may not enter and may not park, and a car turning up during
+# the penalty is a fresh offence. The list is read-only for guards and
+# actionable for the CDSO.
+
+def _confiscation_payload(user):
+    plates = list(
+        user.vehicles.values_list('plate_number', flat=True)
+    ) if hasattr(user, 'vehicles') else []
+    return {
+        'id':                  user.id,
+        'user_code':           user.user_code,
+        'full_name':           user.full_name,
+        'email':               user.email,
+        'owner_type':          user.owner_type,
+        'plates':              [p for p in plates if p],
+        'confiscation_level':  user.confiscation_level,
+        'confiscated_at':      user.confiscated_at,
+        'confiscated_until':   user.confiscated_until,
+        'days_left':           user.confiscation_days_left,
+        'reason':              user.confiscation_reason,
+        'registration_banned': user.registration_banned,
+        'is_indefinite':       user.confiscated_until is None,
+    }
+
+
+class ConfiscatedAccountsView(APIView):
+    """Every account currently serving a violation penalty.
+
+    Readable by any signed-in role — a guard cannot act on it if they cannot
+    see it — while the actions below stay admin-only.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .penalty import confiscated_owners
+        owners = confiscated_owners().prefetch_related('vehicles')
+        return Response([_confiscation_payload(u) for u in owners])
+
+
+class LiftConfiscationView(APIView):
+    """CDSO lifts a confiscation early.
+
+    Leaves the violations standing: forgiving the penalty is not the same as
+    saying the offences never happened, and wiping the ladder here would let
+    the next offence start again at strike one. Use the lift action on the
+    violation itself for a genuine false alarm.
+    """
+    permission_classes = [IsCDSOOrAdmin]
+
+    def post(self, request, pk):
+        from accounts.models import User
+        user = get_object_or_404(User, pk=pk)
+        if not user.confiscation_level:
+            return Response({'detail': 'This account is not confiscated.'},
+                            status=http_status.HTTP_400_BAD_REQUEST)
+        was = user.confiscation_level
+        user.clear_confiscation()
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Confiscation lifted | {user.full_name} ({user.user_code}) | "
+              f"Was offence {was} of 3 | By: {request.user.full_name}")
+        return Response(_confiscation_payload(user))
+
+
+class RegistrationPermissionView(APIView):
+    """Let a 3rd-offence owner register again, or withdraw that permission.
+
+    The ladder blocks re-registration on the 3rd strike, but the rule is
+    explicitly at the CDSO's discretion, so this is a deliberate, audited human
+    decision rather than something the system reverses on its own.
+    """
+    permission_classes = [IsCDSOOrAdmin]
+
+    def post(self, request, pk):
+        from accounts.models import User
+        user = get_object_or_404(User, pk=pk)
+        allow = bool(request.data.get('allow', True))
+        user.registration_banned = not allow
+        user.save(update_fields=['registration_banned'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Re-registration {'allowed' if allow else 'blocked'} | "
+              f"{user.full_name} ({user.user_code}) | By: {request.user.full_name}")
+        return Response(_confiscation_payload(user))

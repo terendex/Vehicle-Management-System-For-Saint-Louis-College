@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
+import { twofaApi } from '../../api/twofa'
+import useTwofaStore from '../../stores/twofaStore'
 import useAuthStore from '../../stores/authStore'
+import { useGates } from '../../hooks/useGates'
 import { toUpperName, normalizeEmail } from '../../utils/textFormat'
 import {
-  Search, UserPlus, Eye, Ban, CheckCircle, Trash2, X,
+  Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock,
+  Shield, Info, Lock, Printer, Smartphone,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import './UserManagement.css'
@@ -21,6 +25,7 @@ const EMPTY_ADMIN = { full_name: '', email: '' }
 /* ─── Main Component ───────────────────────────────────────────── */
 export default function UserManagement() {
   const { logout } = useAuthStore()
+  const { gateLabel: gateLabelFor, gateFullLabel } = useGates()
 
   /* ── users state ── */
   const [users, setUsers]             = useState([])
@@ -36,6 +41,7 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [submitting, setSubmitting]   = useState(false)
   const [activeMenu, setActiveMenu]   = useState(null)
+  const [menuAnchor, setMenuAnchor] = useState(null)
   const [addType, setAddType]         = useState('guard')   // 'guard' | 'admin'
   const [formErrors, setFormErrors]   = useState({})
 
@@ -50,16 +56,18 @@ export default function UserManagement() {
   const [editForm, setEditForm]           = useState(null)
   const [editAgencyMode, setEditAgencyMode] = useState(DEFAULT_AGENCY)
 
+  /* ── registration re-print state ── */
+  const [printingReg, setPrintingReg] = useState(false)
+
   /* ── QR state ── */
   const [qrUser,    setQrUser]    = useState(null)
   const [qrToken,   setQrToken]   = useState(null)
   const [qrLoading, setQrLoading] = useState(false)
   const qrCanvasRef = useRef(null)  // hidden high-res canvas used to embed the QR into the PDF
 
-  const gateLabel = (u) =>
-    u?.gate_assignment === 'gate1' ? 'Gate 1'
-    : u?.gate_assignment === 'gate4' ? 'Gate 4'
-    : 'Gate selected at login'
+  // A guard's gate comes from their last login, so an account that has never
+  // signed in has none yet.
+  const gateLabel = (u) => gateLabelFor(u?.gate_assignment) || 'Gate selected at login'
 
   /* ── Guard badge → PDF download ── */
   const downloadBadgePdf = () => {
@@ -82,7 +90,7 @@ export default function UserManagement() {
     doc.text('SAINT LOUIS COLLEGE', W / 2, 7, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6)
-    doc.text('Vehicle Management System', W / 2, 11.5, { align: 'center' })
+    doc.text('Smart Parking and Vehicle Verification System', W / 2, 11.5, { align: 'center' })
 
     // Badge type
     doc.setTextColor(...navy)
@@ -196,12 +204,62 @@ export default function UserManagement() {
   const activeUsers   = users.filter((u) => u.is_active).length
   const disabledUsers = users.filter((u) => !u.is_active).length
 
-  /* ── close menu on outside click ── */
+  /* ── close menu on outside click, scroll or resize ──
+     The menu is portalled to <body> at fixed coordinates, so any scroll would
+     leave it floating away from its row — close it instead of re-measuring. */
+  const menuRef = useRef(null)
+  const closeMenu = useCallback(() => { setActiveMenu(null); setMenuAnchor(null) }, [])
+
   useEffect(() => {
-    const handleClickOutside = () => setActiveMenu(null)
-    if (activeMenu) window.addEventListener('click', handleClickOutside)
-    return () => window.removeEventListener('click', handleClickOutside)
-  }, [activeMenu])
+    if (!activeMenu) return
+    /* The menu lives outside #root, so guard by node instead of trusting bubbling. */
+    const onDocClick = (e) => { if (!menuRef.current?.contains(e.target)) closeMenu() }
+    window.addEventListener('click', onDocClick)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
+    return () => {
+      window.removeEventListener('click', onDocClick)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
+    }
+  }, [activeMenu, closeMenu])
+
+  /* ── row action menu ──
+     The menu is rendered into <body> at fixed coordinates instead of inside the
+     scrolling table card, which used to clip it and push it outside the card on
+     the last rows. It flips above the button when the viewport runs out below. */
+  const MENU_WIDTH = 160
+  const menuItemCount = (u) => (
+    1                                     /* View Profile */
+    + (u.role === 'security' ? 1 : 0)     /* QR Badge */
+    + (u.role === 'vehicle_owner' ? 1 : 0)/* Print Registration */
+    + (u.role !== 'security' ? 1 : 0)     /* Reset 2FA */
+    + 1                                   /* Disable / Enable */
+  )
+
+  const toggleMenu = (e, u) => {
+    if (activeMenu === u.id) { closeMenu(); return }
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const items = menuItemCount(u)
+    const height = items * 38 + (items - 1) * 4 + 16   /* item + gap + padding */
+    const gap = 8
+
+    const openUp = rect.bottom + gap + height > window.innerHeight - 8
+                   && rect.top - gap - height > 8
+    const left = Math.max(8, Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8))
+
+    setMenuAnchor({
+      style: {
+        position: 'fixed',
+        left: `${left}px`,
+        ...(openUp
+          ? { bottom: `${window.innerHeight - rect.top + gap}px`, transformOrigin: 'bottom right' }
+          : { top: `${rect.bottom + gap}px`, transformOrigin: 'top right' }),
+      },
+    })
+    setActiveMenu(u.id)
+  }
 
   /* ── open modals ── */
   const openAdd = () => {
@@ -214,7 +272,6 @@ export default function UserManagement() {
   }
   const switchAddType = (t) => { setAddType(t); setFormErrors({}) }
   const openView   = (user) => { setSelectedUser(user); setEditMode(false); setModal('view') }
-  const openDelete = (user) => { setSelectedUser(user); setModal('delete') }
   const openToggle = (user) => { setSelectedUser(user); setModal('toggle') }
   const closeModal = () => {
     setModal(null); setSelectedUser(null)
@@ -344,11 +401,41 @@ export default function UserManagement() {
     }
   }
 
-  const handleDelete = async () => {
-    setSubmitting(true)
-    try { await usersApi.deleteUser(selectedUser.id); fetchUsers(); showResult('User deleted successfully!') }
-    catch { showResult('Failed to delete user', 'error') }
-    finally { setSubmitting(false) }
+  /* ── Registration confirmation → PDF re-print ──
+     For an owner who lost the copy emailed to them on approval. The server
+     rebuilds the same document, so the reprint matches the original. */
+  // Takes the user explicitly: the row menu calls this straight after
+  // setSelectedUser, and reading that state back here would still see the
+  // previous value.
+  const printRegistrationFor = async (user) => {
+    if (!user) return
+    setPrintingReg(true)
+    try {
+      const blob = await usersApi.getRegistrationPdf(user.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `SLC Vehicle Registration - ${user.full_name}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Registration PDF downloaded.')
+    } catch (err) {
+      // responseType 'blob' means an error body arrives as a Blob, not JSON —
+      // read it back or the toast would only ever say "failed".
+      let message = 'Failed to generate the registration PDF.'
+      try {
+        const body = err.response?.data
+        if (body instanceof Blob) {
+          const parsed = JSON.parse(await body.text())
+          if (parsed?.detail) message = parsed.detail
+        } else if (body?.detail) {
+          message = body.detail
+        }
+      } catch { /* keep the generic message */ }
+      toast.error(message)
+    } finally {
+      setPrintingReg(false)
+    }
   }
 
   const handleToggle = async () => {
@@ -359,6 +446,33 @@ export default function UserManagement() {
       showResult(`User ${selectedUser.is_active ? 'disabled' : 'enabled'} successfully!`)
     } catch { showResult('Failed to toggle user status', 'error') }
     finally { setSubmitting(false) }
+  }
+
+  /** Clear a user's authenticator so they can pair a new phone.
+   *
+   *  The lost-phone path. Without it the only way back for a locked-out owner
+   *  would be deleting and re-creating the account, which takes their vehicle
+   *  registration with it. This does NOT switch two-factor off — the account
+   *  returns to unenrolled, so their next login walks them through setup again.
+   *
+   *  The CDSO's own step-up is demanded by the server; the axios interceptor
+   *  raises the code prompt and replays this call, so nothing is needed here. */
+  const handleReset2fa = async () => {
+    try {
+      await useTwofaStore.getState().ensureStepUp(
+        'Confirm it’s you before resetting someone’s two-factor.')
+    } catch {
+      return   // prompt dismissed
+    }
+    setSubmitting(true)
+    try {
+      const { message } = await twofaApi.reset(selectedUser.id)
+      closeModal()
+      toast.success(message || 'Authenticator reset.')
+    } catch (err) {
+      if (err.stepUpCancelled) return   // they backed out of the code prompt
+      toast.error(err.response?.data?.error || 'Failed to reset two-factor authentication.')
+    } finally { setSubmitting(false) }
   }
 
   const formatDate    = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
@@ -498,16 +612,21 @@ export default function UserManagement() {
                     </span>
                   </td>
                   {/* QR lives in View Profile — no column here */}
-                  <td style={{ position: 'relative' }}>
+                  <td>
                     <button
                       className="um-action-btn"
-                      onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === u.id ? null : u.id) }}
+                      onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
                     >
                       <MoreVertical size={16} />
                     </button>
-                    {activeMenu === u.id && (
-                      <div className="um-actions-dropdown" onClick={(e) => e.stopPropagation()}>
-                        <button className="um-dropdown-item view" onClick={() => { openView(u); setActiveMenu(null) }}>
+                    {activeMenu === u.id && menuAnchor && createPortal(
+                      <div
+                        ref={menuRef}
+                        className="um-actions-dropdown"
+                        style={menuAnchor.style}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
                           <Eye size={15} /> View Profile
                         </button>
                         {u.role === 'security' && (
@@ -515,21 +634,37 @@ export default function UserManagement() {
                             className="um-dropdown-item view"
                             disabled={badgeLocked(u)}
                             title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                            onClick={() => openQrModal(u)}
+                            onClick={() => { closeMenu(); openQrModal(u) }}
                           >
                             {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
                           </button>
                         )}
+                        {u.role === 'vehicle_owner' && (
+                          <button
+                            className="um-dropdown-item view"
+                            title="Re-download the approved registration PDF emailed to this owner"
+                            onClick={() => { setSelectedUser(u); closeMenu(); printRegistrationFor(u) }}
+                          >
+                            <Printer size={15} /> Print Registration
+                          </button>
+                        )}
+                        {u.role !== 'security' && (
+                          <button
+                            className="um-dropdown-item view"
+                            title="Clear this user's authenticator so they can pair a new phone"
+                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
+                          >
+                            <Smartphone size={15} /> Reset 2FA
+                          </button>
+                        )}
                         <button
                           className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
-                          onClick={() => { openToggle(u); setActiveMenu(null) }}
+                          onClick={() => { openToggle(u); closeMenu() }}
                         >
                           {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
                         </button>
-                        <button className="um-dropdown-item delete" onClick={() => { openDelete(u); setActiveMenu(null) }}>
-                          <Trash2 size={15} /> Delete
-                        </button>
-                      </div>
+                      </div>,
+                      document.body
                     )}
                   </td>
                 </tr>
@@ -703,7 +838,9 @@ export default function UserManagement() {
       {/* VIEW PROFILE */}
       {modal === 'view' && selectedUser && (
         <div className="um-modal-overlay" onClick={closeModal}>
-          <div className="um-modal" onClick={(e) => e.stopPropagation()}>
+          {/* Wider than the confirm dialogs: this one carries a two-column
+              field grid and up to four footer actions. */}
+          <div className="um-modal um-modal--profile" onClick={(e) => e.stopPropagation()}>
             <div className="um-modal-header">
               <h2>User Profile</h2>
               <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
@@ -793,11 +930,10 @@ export default function UserManagement() {
                   )}
                 </>
               ) : (
+                // Field order pairs the short values into columns and gives the
+                // long free-text ones a row of their own, so nothing has to wrap
+                // mid-word to fit a half-width cell.
                 <div className="um-profile-grid">
-                  <div className="um-profile-item">
-                    <span className="um-profile-label">Email</span>
-                    <span className="um-profile-value">{selectedUser.email || '—'}</span>
-                  </div>
                   <div className="um-profile-item">
                     <span className="um-profile-label">Status</span>
                     <span className={`um-status-badge ${selectedUser.is_active ? 'active' : 'disabled'}`}>
@@ -805,14 +941,18 @@ export default function UserManagement() {
                     </span>
                   </div>
                   <div className="um-profile-item">
-                    <span className="um-profile-label">Date Joined</span>
-                    <span className="um-profile-value">{formatDate(selectedUser.date_joined)}</span>
-                  </div>
-                  <div className="um-profile-item">
                     <span className="um-profile-label">User ID</span>
                     <span className="um-profile-value" style={{ fontFamily: 'monospace', fontWeight: 700, color: '#03396C' }}>
                       {selectedUser.user_code || `#${selectedUser.id}`}
                     </span>
+                  </div>
+                  <div className="um-profile-item full-width">
+                    <span className="um-profile-label">Email</span>
+                    <span className="um-profile-value">{selectedUser.email || '—'}</span>
+                  </div>
+                  <div className="um-profile-item">
+                    <span className="um-profile-label">Date Joined</span>
+                    <span className="um-profile-value">{formatDate(selectedUser.date_joined)}</span>
                   </div>
                   {selectedUser.role === 'security' && (
                     <>
@@ -823,9 +963,7 @@ export default function UserManagement() {
                       <div className="um-profile-item">
                         <span className="um-profile-label">Last Gate Login</span>
                         <span className="um-profile-value">
-                          {selectedUser.gate_assignment === 'gate1' ? 'Gate 1 — Main Entrance'
-                            : selectedUser.gate_assignment === 'gate4' ? 'Gate 4 — Side Entrance'
-                            : selectedUser.gate_assignment || 'Not yet logged in'}
+                          {gateFullLabel(selectedUser.gate_assignment) || 'Not yet logged in'}
                         </span>
                       </div>
                     </>
@@ -836,7 +974,9 @@ export default function UserManagement() {
                         <span className="um-profile-label">Contact Number</span>
                         <span className="um-profile-value">{selectedUser.contact || '—'}</span>
                       </div>
-                      <div className="um-profile-item">
+                      {/* Full width: an address is the one free-text field long
+                          enough to wrap and drag the row beside it out of line. */}
+                      <div className="um-profile-item full-width">
                         <span className="um-profile-label">Address</span>
                         <span className="um-profile-value">{selectedUser.address || '—'}</span>
                       </div>
@@ -855,10 +995,20 @@ export default function UserManagement() {
                 </>
               ) : (
                 <>
-                  <button className="um-btn-secondary" onClick={closeModal}>Close</button>
+                  <button className="um-btn-secondary um-footer-spacer" onClick={closeModal}>Close</button>
                   <button className="um-btn-secondary" onClick={startEdit}>
                     <Pencil size={15} /> Edit Details
                   </button>
+                  {selectedUser.role === 'vehicle_owner' && (
+                    <button
+                      className="um-btn-secondary"
+                      disabled={printingReg}
+                      title="Re-download the approved registration PDF that was emailed to this owner"
+                      onClick={() => printRegistrationFor(selectedUser)}
+                    >
+                      <Printer size={15} /> {printingReg ? 'Preparing…' : 'Print Registration'}
+                    </button>
+                  )}
                   <button
                     className="um-btn-primary"
                     disabled={badgeLocked(selectedUser)}
@@ -869,31 +1019,6 @@ export default function UserManagement() {
                   </button>
                 </>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DELETE */}
-      {modal === 'delete' && selectedUser && (
-        <div className="um-modal-overlay" onClick={closeModal}>
-          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
-            <div className="um-modal-header">
-              <h2>Delete User</h2>
-              <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
-            </div>
-            <div className="um-modal-body">
-              <div className="um-confirm-body">
-                <div className="um-confirm-icon danger"><Trash2 size={24} /></div>
-                <h3>Are you sure?</h3>
-                <p>Permanently delete <span className="um-confirm-name">{selectedUser.full_name}</span>. This cannot be undone.</p>
-              </div>
-            </div>
-            <div className="um-modal-footer">
-              <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
-              <button className="um-btn-danger" disabled={submitting} onClick={handleDelete}>
-                <Trash2 size={16} /> {submitting ? 'Deleting…' : 'Delete User'}
-              </button>
             </div>
           </div>
         </div>
@@ -931,6 +1056,39 @@ export default function UserManagement() {
                   <CheckCircle size={16} /> {submitting ? 'Enabling…' : 'Enable User'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESET TWO-FACTOR */}
+      {modal === 'reset2fa' && selectedUser && (
+        <div className="um-modal-overlay" onClick={closeModal}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="um-modal-header">
+              <h2>Reset Two-Factor Authentication</h2>
+              <button className="um-modal-close" onClick={closeModal}><X size={18} /></button>
+            </div>
+            <div className="um-modal-body">
+              <div className="um-confirm-body">
+                <div className="um-confirm-icon warning"><Smartphone size={24} /></div>
+                <h3>Reset this user&rsquo;s authenticator?</h3>
+                <p>
+                  <span className="um-confirm-name">{selectedUser.full_name}</span> will be
+                  asked to set up a new authenticator app the next time they sign in.
+                  Their existing codes and backup codes stop working immediately.
+                </p>
+                <p style={{ marginTop: 10 }}>
+                  Do this only when they have lost access to their phone &mdash; and only
+                  once you are sure it is really them asking.
+                </p>
+              </div>
+            </div>
+            <div className="um-modal-footer">
+              <button className="um-btn-secondary" onClick={closeModal}>Cancel</button>
+              <button className="um-btn-warning" disabled={submitting} onClick={handleReset2fa}>
+                <Smartphone size={16} /> {submitting ? 'Resetting…' : 'Reset 2FA'}
+              </button>
             </div>
           </div>
         </div>
@@ -975,7 +1133,7 @@ export default function UserManagement() {
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: '#5C7B92' }}>
                   {qrUser.user_code}
                   {qrUser.role === 'security' && (
-                    <> · {qrUser.gate_assignment === 'gate1' ? 'Gate 1' : qrUser.gate_assignment === 'gate4' ? 'Gate 4' : 'Gate selected at login'}</>
+                    <> · {gateLabel(qrUser)}</>
                   )}
                   {qrUser.role !== 'security' && <> · Vehicle Owner</>}
                 </p>

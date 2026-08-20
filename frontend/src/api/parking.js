@@ -35,8 +35,13 @@ export const zoneApi = {
     const { data } = await api.get(`/vehicles/parking-zones/${id}/`)
     return data
   },
-  create: async ({ name, vehicle_category }) => {
-    const { data } = await api.post('/vehicles/parking-zones/', { name, vehicle_category })
+  // `camera` is the Device Management camera id (or null). A zone created
+  // without one has no feed to draw against and no detector to run, so the
+  // caller should pass the camera the admin is actually looking at.
+  create: async ({ name, vehicle_category, camera = null }) => {
+    const { data } = await api.post('/vehicles/parking-zones/', {
+      name, vehicle_category, camera,
+    })
     return data
   },
   update: async (id, fields) => {
@@ -76,6 +81,38 @@ export const zoneApi = {
   setCapacity: async (id, capacity_override) => {
     const { data } = await api.patch(`/vehicles/parking-zones/${id}/set-capacity/`, { capacity_override })
     return data
+  },
+
+  // ── Bay scoring method ───────────────────────────────────────────
+  // 'ml'      — the vehicle detector decides which bays are taken
+  // 'classic' — each bay is compared against an empty-lot baseline, no model.
+  // A zone set to 'classic' with no baseline captured keeps running on the
+  // detector, so `has_baseline` is what says which is actually in effect.
+  setOccupancyMethod: async (id, occupancy_method) => {
+    const { data } = await api.patch(`/vehicles/parking-zones/${id}/`, { occupancy_method })
+    return data
+  },
+
+  // Captures the current live frame as the empty-lot baseline. The camera must
+  // be running, and the lot must actually be empty — a car in shot becomes part
+  // of that bay's idea of "empty".
+  setBaseline: async (id) => {
+    const { data } = await api.post(`/vehicles/parking-zones/${id}/set-baseline/`)
+    return data
+  },
+
+  // Raw per-bay scores, for tuning thresholds against a real camera.
+  getSignals: async (id) => {
+    const { data } = await api.get(`/vehicles/parking-zones/${id}/signals/`)
+    return data
+  },
+
+  // Vehicles the zone is following, with how long each has been stationary.
+  // Occupancy and double parking both wait for a vehicle to settle, so this is
+  // what explains a bay that is taken on screen but still reads free.
+  getTrackedVehicles: async (id) => {
+    const { data } = await api.get(`/vehicles/parking-zones/${id}/tracked-vehicles/`)
+    return Array.isArray(data) ? data : []
   },
 
   // ── IP Camera ────────────────────────────────────────────────────

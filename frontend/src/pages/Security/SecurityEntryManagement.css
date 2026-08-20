@@ -232,3 +232,9 @@
 
 .em-open-campus-banner svg { flex-shrink: 0; color: #1072B3; }
 .em-open-campus-banner strong { font-weight: 700; }
+
+/* Confiscated accounts sit under the main gate grid — full width, because the
+   plate list is the part a guard reads at a glance. */
+.em-confiscated {
+  margin-top: 1.5rem;
+}

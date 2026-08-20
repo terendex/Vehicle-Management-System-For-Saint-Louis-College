@@ -162,6 +162,76 @@
 .pm-stat-val { font-size: 1.4rem; font-weight: 800; color: #0B2340; margin: 0; line-height: 1; }
 .pm-stat-lbl { font-size: 12px; color: #4A6B85; margin: 3px 0 0; font-weight: 500; }
 
+/* ── Bay detection method (camera sidebar) ── */
+.pm-method-box {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FBFD;
+}
+
+.pm-method-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2E4C63;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+}
+
+.pm-method-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.pm-method-tab {
+  padding: 6px 8px;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 7px;
+  background: #fff;
+  color: #2E4C63;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pm-method-tab:disabled { opacity: 0.6; cursor: default; }
+.pm-method-tab--active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+}
+
+.pm-method-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5C7B92;
+}
+/* A zone set to baseline scoring with no baseline is still on the detector.
+   That has to read as an unfinished setup, not as a neutral hint. */
+.pm-method-note--warn {
+  color: #8A6B00;
+  background: #FDF0BE;
+  border: 1px solid #F7E08A;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* Sits directly under the stat row: says which numbers come from the gate
+   scans and which come from the camera, so the two never look like a bug. */
+.pm-stat-caption {
+  margin: 8px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #5C7B92;
+}
+.pm-stat-caption strong { color: #2E4C63; font-weight: 700; }
+
 /* ── Zone bar ──
    The tabs carry a label: with one zone the bare pill read as a stray button
    rather than "the zone you are looking at". */
@@ -938,6 +1008,127 @@
   line-height: 1.45;
   color: #6B8CA6;
   text-align: center;
+}
+
+/* ── Camera ↔ zone wiring ─────────────────────────────────────────
+   Every camera can carry its own zone (or several), but nothing on the page
+   used to say which ones already did. These are the surfaces that answer it:
+   a badge on the toolbar, a badge per feed, the camera name on each zone tab,
+   and the notices that stop an admin drawing bays for the wrong camera. */
+
+/* Sits on the Cameras button, so it is legible with the panel shut. */
+.pm-unzoned-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  background: #FDF0BE;
+  color: #8A6B00;
+  border: 1px solid #F7E08A;
+  border-radius: 20px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+/* Camera name carried by each zone tab. */
+.pm-zone-tab-cam {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #6F91AB;
+  background: #EEF5FA;
+  border-radius: 20px;
+  padding: 1px 7px;
+  max-width: 130px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pm-zone-tab-cam--none { color: #8A6B00; background: #FDF0BE; }
+
+/* The active tab is dark navy — the default pill washes out on it. */
+.pm-zone-tab--active .pm-zone-tab-cam {
+  color: #CFE3F2;
+  background: rgba(255,255,255,0.14);
+}
+.pm-zone-tab--active .pm-zone-tab-cam--none {
+  color: #FDF0BE;
+  background: rgba(246, 206, 17,0.22);
+}
+
+/* Per-feed marker in the thumbnail strip (dark sidebar). */
+.pm-cam-strip-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #F6CE11;
+  background: rgba(246, 206, 17,0.13);
+  border: 1px solid rgba(246, 206, 17,0.3);
+  border-radius: 20px;
+  padding: 1px 6px;
+}
+
+/* Sidebar notices. Light cards on the dark sidebar, matching .pm-method-box. */
+.pm-cam-notice {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #D3E1EC;
+  background: #F7FBFD;
+}
+.pm-cam-notice--warn { background: #FDF0BE; border-color: #F7E08A; }
+.pm-cam-notice--info { background: #EAF4FC; border-color: #C4DFF3; }
+
+.pm-cam-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+.pm-cam-notice--warn .pm-cam-notice-head { color: #8A6B00; }
+.pm-cam-notice--info .pm-cam-notice-head { color: #1F5F8B; }
+
+.pm-cam-notice-body {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #3E5A70;
+}
+
+.pm-cam-notice-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* Full-width strip above the drawing canvas. */
+.pm-draw-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #F7E08A;
+  background: #FDF0BE;
+  color: #8A6B00;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.pm-draw-warn span { flex: 1; min-width: 200px; }
+
+/* Note under a modal field (e.g. no cameras registered yet). */
+.pm-modal-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #8A6B00;
 }
 
 /* ── Responsive ──

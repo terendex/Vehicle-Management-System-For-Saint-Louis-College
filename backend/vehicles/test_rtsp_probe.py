@@ -19,11 +19,44 @@ User = get_user_model()
 ENDPOINT = '/api/vehicles/cameras/detect-rtsp/'
 
 
+def control_probes(device_id, password=''):
+    """DESCRIBEs the control stage spends before the first real candidate.
+
+    detect() opens with one nonsense path per credential form, to learn which
+    credential authenticates and whether this firmware's status codes mean
+    anything at all. Counting tests have to allow for them, and deriving the
+    number keeps them honest if the credential list ever changes.
+    """
+    return len(rtsp_probe.credential_prefixes(device_id, password))
+
+
+def honest_camera(match, accepted=200, refused=404):
+    """A `_describe` double that behaves like a camera with real paths.
+
+    The bogus control path gets an honest 404 — the thing that tells detect()
+    the status codes are worth trusting. A double that answers the same code to
+    every URL, control path included, describes firmware that accepts anything
+    and sends detection down a different branch entirely.
+    """
+    def describe(url, *a, **k):
+        if rtsp_probe.BOGUS_PATH in url:
+            return refused
+        return accepted if url == match else refused
+    return describe
+
+
 class CandidateTests(TestCase):
     def test_credentialed_url_is_tried_first_when_a_password_is_given(self):
-        """An IMOU/Dahua unit refuses everything else, and it is the common case."""
+        """An IMOU/Dahua unit refuses everything else, and it is the common case.
+
+        Asserts the credential, not the path: which path leads is a separate
+        decision (see test_vendor_paths_come_before_generic_guesses), and
+        pinning both here made a deliberate reordering of one look like a
+        regression in the other.
+        """
         cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')
-        self.assertEqual(cands[0]['url'], 'rtsp://dev:pw@10.0.0.5/stream1')
+        self.assertTrue(cands[0]['url'].startswith('rtsp://dev:pw@10.0.0.5'),
+                        msg=cands[0]['url'])
 
     def test_open_camera_form_is_still_tried_when_a_password_is_given(self):
         urls = [c['url'] for c in rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')]
@@ -38,8 +71,17 @@ class CandidateTests(TestCase):
         """An open camera answers on rtsp://ip/path — empty credentials in
         front of it make some firmware reject the request outright."""
         cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev')
-        self.assertEqual(cands[0]['url'], 'rtsp://10.0.0.5/stream1')
+        self.assertTrue(cands[0]['url'].startswith('rtsp://10.0.0.5'),
+                        msg=cands[0]['url'])
         self.assertNotIn('@', cands[0]['url'])
+
+    def test_vendor_paths_come_before_generic_guesses(self):
+        """`/stream1` is a guess; `/cam/realmonitor` is a documented URL. Putting
+        the guess first meant firmware that accepts any path answered it before
+        the camera's own path was ever tried — see paths_for()."""
+        paths = [p for _fmt, p in rtsp_probe.paths_for(1)]
+        self.assertLess(paths.index('/cam/realmonitor?channel=1&subtype=0'),
+                        paths.index('/stream1'))
 
     def test_username_with_empty_password_is_tried_after(self):
         urls = [c['url'] for c in rtsp_probe.candidate_urls('10.0.0.5', 'dev')]
@@ -70,7 +112,8 @@ class CandidateTests(TestCase):
     def test_blank_device_id_still_yields_candidates(self):
         cands = rtsp_probe.candidate_urls('10.0.0.5', '')
         self.assertTrue(cands)
-        self.assertEqual(cands[0]['url'], 'rtsp://10.0.0.5/stream1')
+        self.assertTrue(cands[0]['url'].startswith('rtsp://10.0.0.5'),
+                        msg=cands[0]['url'])
 
     def test_redaction_hides_any_credential_that_does_appear(self):
         """Custom URLs may still carry a password — it must not reach a log."""
@@ -127,14 +170,26 @@ class DetectTests(TestCase):
         self.assertTrue(all('/cam/realmonitor' in u for u in opened))
 
     def test_a_url_the_camera_accepts_but_cannot_be_decoded_is_not_returned(self):
-        """Some firmware answers 200 to anything; acceptance is not video."""
+        """Acceptance is not video: a camera that authenticates a path but
+        serves nothing from it must not be reported as detected.
+
+        The camera here is honest about the control path — it 404s a path it
+        does not have — so this exercises the ordinary search. Firmware that
+        answers 200 to the control path too is a different animal and has its
+        own class below.
+        """
+        match = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')[0]['url']
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
-             patch.object(rtsp_probe, '_describe', return_value=200), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=honest_camera(match)), \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
         self.assertFalse(r['ok'])
         self.assertIn('decoded', r['error'])
+        # And the URL that did authenticate is what "Add Anyway" would save.
+        self.assertEqual(r['suggestion'], match)
 
     def test_admin_credentials_are_reached(self):
         """The bug that made an NVR undetectable: candidates were grouped by
@@ -220,19 +275,26 @@ class OnvifFirstTests(TestCase):
             r = rtsp_probe.detect('192.168.1.9', 'dev', 'pw')
         self.assertTrue(r['ok'])
         self.assertEqual(r['format'], 'onvif')
-        # Only the fast path ran before ONVIF was consulted.
-        self.assertEqual(describe.call_count, rtsp_probe.FAST_PATH_CANDIDATES)
+        # Only the control stage and the fast path ran before ONVIF.
+        self.assertEqual(describe.call_count,
+                         control_probes('dev', 'pw') + rtsp_probe.FAST_PATH_CANDIDATES)
 
     def test_a_common_path_is_found_without_touching_onvif(self):
-        match = 'rtsp://admin:pw@10.0.0.5/stream1'
+        # A path inside the fast path — that is the whole point of the stage.
+        # `/stream1` used to sit first in the candidate list and no longer does,
+        # so a match there would be reached only in stage 3, after ONVIF.
+        match = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')[1]['url']
+        self.assertIn('/cam/realmonitor', match)
+
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
              patch.object(rtsp_probe, 'onvif_stream_uri') as onvif, \
-             patch.object(rtsp_probe, '_describe',
-                          side_effect=lambda u, *a, **k: 200 if u == match else 400), \
+             patch.object(rtsp_probe, '_describe', side_effect=honest_camera(match)), \
              patch.object(rtsp_probe, '_opens', side_effect=lambda u, *a, **k: u == match):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
-        self.assertTrue(r['ok'])
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(r['rtsp_url'], match)
         onvif.assert_not_called()
 
     def test_onvif_is_skipped_once_the_camera_has_gone_quiet(self):
@@ -347,30 +409,43 @@ class ConnectionLimitedCameraTests(TestCase):
     """
     MATCH = 'rtsp://admin:pw@10.0.0.5/stream1'
 
-    def _camera(self, budget=3):
-        """DESCRIBE answers `budget` times, then falls silent forever."""
-        state = {'left': budget}
+    def _camera(self):
+        """A camera whose acceptance is the last thing it ever says.
+
+        Counting answers from the start of detection no longer models this
+        device: the control stage spends one per credential form before any
+        real candidate, so a fixed budget of three was exhausted before the
+        sweep began. What matters is not how many answers there are but that
+        the acceptance is *the last one* — which is exactly the pressure the
+        real unit put on detection.
+        """
+        state = {'describes': 0, 'accepted_at': None}
 
         def describe(url, *a, **k):
-            if state['left'] <= 0:
-                return None
-            state['left'] -= 1
-            return 200 if url == self.MATCH else 400
+            state['describes'] += 1
+            if state['accepted_at'] is not None:
+                return None                       # gone quiet for good
+            if url == self.MATCH:
+                state['accepted_at'] = state['describes']
+                return 200
+            return 400
 
         return describe, state
 
     def test_the_accepted_url_is_verified_before_the_camera_gives_out(self):
-        describe, state = self._camera(budget=3)
-        opened = []
+        describe, state = self._camera()
 
         def opens(url, *a, **k):
-            # The camera would refuse this too if it had already gone quiet.
-            opened.append(url)
-            return state['left'] > 0 and url == self.MATCH
+            # The stream only connects while the acceptance is still the most
+            # recent thing that happened. Deferring verification to the end of
+            # the sweep — which is what this test exists to forbid — would put
+            # other DESCRIBEs in between and the camera would refuse.
+            return url == self.MATCH and state['accepted_at'] == state['describes']
 
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
              patch.object(rtsp_probe, '_describe', side_effect=describe), \
              patch.object(rtsp_probe, '_opens', side_effect=opens):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
@@ -419,20 +494,27 @@ class ConnectionLimitedCameraTests(TestCase):
     def test_detection_stops_at_the_first_working_url(self):
         """Every extra candidate is another connection the camera may not have
         to spare, so the sweep must not continue past a confirmed hit."""
+        cands = rtsp_probe.candidate_urls('10.0.0.5', 'dev', 'pw')
+        position = next(i for i, c in enumerate(cands) if c['url'] == self.MATCH)
+        # Control probes, then every candidate up to and including the match —
+        # and nothing at all after it. Derived rather than hard-coded so a
+        # change to the candidate order shows up as the reorder it is, not as a
+        # phantom failure here.
+        expected = control_probes('dev', 'pw') + position + 1
+
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
              patch.object(rtsp_probe, '_describe',
-                          side_effect=lambda u, *a, **k: 200 if u == self.MATCH else 400) as desc, \
+                          side_effect=honest_camera(self.MATCH, refused=400)) as desc, \
              patch.object(rtsp_probe, '_opens',
                           side_effect=lambda u, *a, **k: u == self.MATCH):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
 
-        self.assertTrue(r['ok'])
-        # /stream1 with `admin` is the second candidate; nothing after it should
-        # have been touched.
-        self.assertEqual(desc.call_count, 2)
-        self.assertEqual(len(r['attempts']), 2)
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(desc.call_count, expected)
+        self.assertEqual(len(r['attempts']), expected)
 
     def test_a_quiet_camera_gets_one_pause_before_being_written_off(self):
         RECOVERY = 0.01          # distinct from the zeroed pacing sleeps
@@ -611,7 +693,8 @@ class PacingTests(TestCase):
              patch.object(rtsp_probe, '_describe', return_value=None) as describe, \
              patch.object(rtsp_probe, '_opens', return_value=False):
             r = rtsp_probe.detect('10.0.0.5', 'dev', 'pw')
-        self.assertEqual(describe.call_count, rtsp_probe.DEAD_STREAK_LIMIT)
+        self.assertEqual(describe.call_count,
+                         control_probes('dev', 'pw') + rtsp_probe.DEAD_STREAK_LIMIT)
         self.assertIn('stopped answering', r['error'])
 
 

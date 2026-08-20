@@ -118,9 +118,11 @@ class VehicleRegistration(models.Model):
 
     class Schedule(models.TextChoices):
         MWF   = 'MWF',   'Monday-Wednesday-Friday'
-        TTHS  = 'TTHS',  'Tuesday-Thursday-Saturday'
+        TTHF  = 'TTHF',  'Tuesday-Thursday-Friday'
         MIXED = 'MIXED', 'Mixed / Custom Days'
-        ANY   = 'ANY',   'Any Day'
+        # Spelled out rather than "Any Day": the campus is closed on Sunday, so
+        # an unqualified "any day" overstates what the pass actually admits.
+        ANY   = 'ANY',   'Any Campus Day (Monday-Saturday)'
 
     class Source(models.TextChoices):
         PUBLIC = 'public', 'Online/Public Form'
@@ -385,10 +387,25 @@ class ParkingZone(models.Model):
         MOTORCYCLE = 'motorcycle', 'Motorcycle'
         CAR        = 'car',        'Car'
 
+    class OccupancyMethod(models.TextChoices):
+        ML      = 'ml',      'Vehicle detector (YOLO)'
+        CLASSIC = 'classic', 'Baseline comparison (no ML)'
+
     id                = models.BigAutoField(primary_key=True, db_column='parking_zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
+    # The empty-lot reference the classic scorer measures against. Separate from
+    # reference_image, which is the picture the admin draws bays on and may well
+    # have cars in it.
+    baseline_image       = models.ImageField(upload_to='parking_baselines/', blank=True, null=True)
+    baseline_captured_at = models.DateTimeField(null=True, blank=True)
+    occupancy_method     = models.CharField(
+        max_length=20, choices=OccupancyMethod.choices, default=OccupancyMethod.ML,
+        help_text="How this zone decides a bay is taken. 'classic' compares each bay "
+                  "against an empty baseline and needs no detector; it falls back to "
+                  "the detector until a baseline is captured.",
+    )
     camera            = models.ForeignKey(
         'Camera', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='parking_zones',
@@ -449,12 +466,18 @@ class SystemSettings(models.Model):
         validators=[MinValueValidator(0)],
         help_text="Vehicle Pass registration fee (₱) for employees.",
     )
-    # Vehicle-owner account expiration. When enabled, each owner account gets an
-    # expires_at = creation date + (months, days), and the daily maintenance job
-    # archives accounts once that date passes. Admin/security accounts never expire.
+    # Vehicle-owner account expiration. Every owner account gets an
+    # expires_at = creation date + (months, days), and the daily job archives
+    # accounts once that date passes. Admin/security accounts never expire.
+    #
+    # Expiration cannot be switched off: the period may be shortened or extended,
+    # but a zero period is rejected by the API. The flag is kept only so a
+    # deployment can be frozen from the Django admin in an emergency; nothing in
+    # the app can clear it, and the jobs treat False as "do nothing".
     account_expiry_enabled = models.BooleanField(
-        default=False,
-        help_text="When enabled, vehicle-owner accounts auto-archive after the set duration.",
+        default=True,
+        help_text="Vehicle-owner accounts auto-archive after the set duration. "
+                  "Not clearable from System Settings — the period is the control.",
     )
     account_expiry_months  = models.IntegerField(
         default=12,
@@ -464,7 +487,50 @@ class SystemSettings(models.Model):
     account_expiry_days    = models.IntegerField(
         default=0,
         validators=[MinValueValidator(0), MaxValueValidator(365)],
-        help_text="Extra days (on top of months) before an owner account expires.",
+        help_text="Extra days (on top of months) before an owner account expires. "
+                  "Months + days must total at least 1.",
+    )
+    # Parking dwell thresholds. The camera follows each vehicle's box and times
+    # how long it has been still; these say how long "still" has to last before
+    # the zone commits. They are here rather than hard-coded because the right
+    # values depend on the lot — a busy aisle needs longer than a quiet bay.
+    parked_after_seconds      = models.IntegerField(
+        default=8,
+        validators=[MinValueValidator(1), MaxValueValidator(120)],
+        help_text="Seconds a vehicle must sit still before the camera counts it "
+                  "as parked and claims the bays it covers.",
+    )
+    double_park_after_seconds = models.IntegerField(
+        default=12,
+        validators=[MinValueValidator(1), MaxValueValidator(300)],
+        help_text="Seconds a vehicle must sit still across two or more bays "
+                  "before it is reported as double parking. Cannot be shorter "
+                  "than the parked threshold — a car cannot be badly parked "
+                  "before it counts as parked at all.",
+    )
+    # Automatic backups. The frequency doubles as the on/off switch — "off" is a
+    # real choice rather than a separate boolean, so there is no way to end up
+    # with a schedule that is enabled but has no interval.
+    #
+    # Files land in BASE_DIR/backups alongside the pre-restore snapshots, and
+    # `auto_backup_keep` rotates the automatic ones so a daily schedule cannot
+    # fill the disk over a semester.
+    auto_backup_frequency = models.CharField(
+        max_length=10, default='off',
+        choices=[
+            ('off',     'Off'),
+            ('hourly',  'Hourly'),
+            ('daily',   'Daily'),
+            ('weekly',  'Weekly'),
+            ('monthly', 'Monthly'),
+        ],
+        help_text="How often the server takes a backup of system data by itself.",
+    )
+    auto_backup_keep = models.IntegerField(
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(90)],
+        help_text="How many automatic backups to keep before the oldest is deleted. "
+                  "Pre-restore snapshots are never rotated away.",
     )
 
     class Meta:
@@ -479,6 +545,37 @@ class SystemSettings(models.Model):
 
     def __str__(self):
         return "System Settings"
+
+
+class DailyJobRun(models.Model):
+    """One row per (job, day) — the ledger the in-process scheduler runs against.
+
+    The unique constraint is the lock: a process claims a day's run by inserting
+    the row, and whoever loses the race gets IntegrityError and skips. That makes
+    the scheduler safe to start in every server process, and it means a restart
+    loop cannot re-run a job that already ran today.
+
+    It doubles as the catch-up record. The scheduler asks "did this run today?",
+    not "is it 00:05 now?", so a campus machine that was switched off overnight
+    runs the job when it next boots instead of skipping the day.
+    """
+    id         = models.BigAutoField(primary_key=True, db_column='daily_job_run_id')
+    job        = models.CharField(max_length=64)
+    run_date   = models.DateField()
+    started_at = models.DateTimeField(auto_now_add=True)
+    # Null while in flight; a row that stays null is a job that crashed midway.
+    finished_at = models.DateTimeField(null=True, blank=True)
+    result      = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        db_table = 'tbl_daily_job_run'
+        ordering = ['-run_date', 'job']
+        constraints = [
+            models.UniqueConstraint(fields=['job', 'run_date'], name='uniq_daily_job_per_day'),
+        ]
+
+    def __str__(self):
+        return f"{self.job} @ {self.run_date}"
 
 
 class RegistrationPeriod(models.Model):

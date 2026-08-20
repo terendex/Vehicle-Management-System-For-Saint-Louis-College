@@ -29,9 +29,20 @@ const TOOLTIP_STYLE = {
 //
 // STATUS hues carry meaning and are reused consistently across charts —
 // Authorized is always green, Denied always red, Pending always amber.
+//
+// Pending was #fab219, which failed the validator's lightness band (L 0.811,
+// outside 0.43–0.77) and sat at 1.79:1 against a white card — a pale amber bar
+// that was genuinely hard to see. #b87d00 passes lightness, chroma, contrast
+// (≥3:1) and the normal-vision floor.
+//
+// The green↔amber↔red triad cannot pass adjacent-pair CVD separation at any
+// step — that collision IS red-green colour blindness, and re-stepping only
+// moves it (green↔red scores worse still). Per the skill's rule for reserved
+// status colours, identity never rests on hue here: every status row carries
+// its own icon and a written label and count.
 const STATUS = {
   good:     '#0ca30c',   // authorized / accepted
-  warning:  '#fab219',   // pending
+  warning:  '#b87d00',   // pending
   critical: '#d03b3b',   // denied / rejected
 }
 // CAT hues are identity keys only, assigned per entity in a fixed order (never
@@ -47,54 +58,78 @@ const CAT = {
   muted:   '#898781',
 }
 
-// ── Donut Chart ───────────────────────────────────────────────────────────────
+// ── Breakdown (part-to-whole) ─────────────────────────────────────────────────
+// Replaces the donuts this page used to draw. A donut costs ~200px of height to
+// say what one 10px bar says. A small one sitting BESIDE its legend rather than
+// above it costs about the same height as the bar did, so the layout stays
+// short.
+//
+// The ring carries the share, so the rows carry only the name and the count.
+// Printing "40%" and "6" side by side gave every row two competing right-aligned
+// number columns, which is what made the numbers look busy — the exact
+// percentage is on hover, where a precise figure is actually wanted.
+//
+// Every row is labelled and numbered, so identity never depends on the colour —
+// which is also the relief the palette validator requires for the few hues that
+// sit under 3:1 against a white card.
 
-function DonutChart({ slices, centerValue, centerLabel }) {
-  const total = slices.reduce((s, d) => s + d.value, 0)
-  if (total === 0) {
-    return <div className="ad-chart-empty">No data available</div>
+function Breakdown({ slices, total, emptyMessage }) {
+  const sum = slices.reduce((s, d) => s + d.value, 0)
+  const whole = total ?? sum
+
+  if (sum === 0) {
+    return <p className="ad-breakdown-empty">{emptyMessage}</p>
   }
+
+  const pct = (v) => (whole > 0 ? Math.round((v / whole) * 100) : 0)
+
+  // A total larger than the slices means there is an unclassified remainder.
+  // Draw it as a neutral gap so the ring stays a true part-to-whole instead of
+  // silently rescaling the slices to fill the circle.
+  const remainder = Math.max(0, whole - sum)
+  const ringData = remainder > 0
+    ? [...slices, { name: 'Unclassified', value: remainder, color: '#E3ECF4' }]
+    : slices
+
   return (
-    <div className="ad-donut-wrap">
-      <div className="ad-donut-container">
-        <ResponsiveContainer width="100%" height={200}>
-          <PieChart>
-            <Pie
-              data={slices}
-              cx="50%"
-              cy="50%"
-              innerRadius={58}
-              outerRadius={85}
-              paddingAngle={3}
-              dataKey="value"
-              stroke="#fff"
-              strokeWidth={2}
-            >
-              {slices.map((s, i) => (
-                <Cell key={i} fill={s.color} />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={TOOLTIP_STYLE}
-              formatter={(val, name) => [val, name]}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="ad-donut-center">
-          <span className="ad-donut-center-val">{centerValue ?? total}</span>
-          <span className="ad-donut-center-label">{centerLabel ?? 'Total'}</span>
+    <div className="ad-breakdown">
+      <div className="ad-breakdown-chart">
+        <PieChart width={104} height={104}>
+          <Pie
+            data={ringData}
+            cx="50%"
+            cy="50%"
+            innerRadius={31}
+            outerRadius={50}
+            paddingAngle={ringData.length > 1 ? 2 : 0}
+            dataKey="value"
+            stroke="#fff"
+            strokeWidth={2}
+            isAnimationActive={false}
+          >
+            {ringData.map((s, i) => <Cell key={i} fill={s.color} />)}
+          </Pie>
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(val, name) => [`${val} (${pct(val)}%)`, name]}
+          />
+        </PieChart>
+        <div className="ad-breakdown-center">
+          <span className="ad-breakdown-center-val">{whole}</span>
         </div>
       </div>
 
-      <div className="ad-donut-legend">
+      <ul className="ad-breakdown-rows">
         {slices.map((s, i) => (
-          <div key={i} className="ad-donut-legend-item">
-            <span className="ad-donut-legend-dot" style={{ background: s.color }} />
-            <span className="ad-donut-legend-label">{s.name}</span>
-            <span className="ad-donut-legend-val">{s.value}</span>
-          </div>
+          <li key={i} className="ad-breakdown-row" title={`${s.name}: ${s.value} (${pct(s.value)}%)`}>
+            {s.Icon
+              ? <s.Icon size={13} style={{ color: s.color, flexShrink: 0 }} />
+              : <span className="ad-breakdown-dot" style={{ background: s.color }} />}
+            <span className="ad-breakdown-name">{s.name}</span>
+            <span className="ad-breakdown-val">{s.value}</span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   )
 }
@@ -103,19 +138,21 @@ function DonutChart({ slices, centerValue, centerLabel }) {
 
 function DayBarChart({ data, weekTotal }) {
   if (!data || data.length === 0) {
-    return <div className="ad-chart-empty">No scan data this week</div>
+    return <p className="ad-breakdown-empty">No entries recorded this week.</p>
   }
   return (
     <div className="ad-bar-wrap">
       {weekTotal != null && (
         <div className="ad-bar-summary">
           <span className="ad-bar-summary-val">{weekTotal}</span>
-          <span className="ad-bar-summary-label">entries this week</span>
+          <span className="ad-bar-summary-label">vehicles let in this week</span>
         </div>
       )}
-      <ResponsiveContainer width="100%" height={200}>
+      <ResponsiveContainer width="100%" height={150}>
         <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#EEF4F9" vertical={false} />
+          {/* Solid hairline: a dashed grid reads as a threshold line when it is
+              only a grid. */}
+          <CartesianGrid stroke="#EEF4F9" vertical={false} />
           <XAxis
             dataKey="day"
             tick={{ fontSize: 11.5, fill: '#5C7B92', fontWeight: 600 }}
@@ -151,19 +188,25 @@ const DAY_ABBREV = {
 
 function DayRegistrationChart({ data }) {
   if (!data || data.length === 0) {
-    return <div className="ad-chart-empty">No registration data</div>
+    return <p className="ad-breakdown-empty">No registrations to show yet.</p>
   }
   const capacity = data[0]?.capacity ?? 0
   const rows = data.map(d => ({ ...d, label: DAY_ABBREV[d.day] || d.day }))
+  const busiest = rows.reduce((a, b) => (a.accepted + a.pending >= b.accepted + b.pending ? a : b), rows[0])
+  const busiestUsed = busiest.accepted + busiest.pending
   return (
     <div className="ad-bar-wrap">
       <div className="ad-bar-summary">
-        <span className="ad-bar-summary-val">{capacity}</span>
-        <span className="ad-bar-summary-label">slots per day</span>
+        <span className="ad-bar-summary-val">{busiestUsed}</span>
+        <span className="ad-bar-summary-label">
+          of {capacity} used on {busiest.day}, the busiest day
+        </span>
       </div>
-      <ResponsiveContainer width="100%" height={200}>
+      <ResponsiveContainer width="100%" height={150}>
         <BarChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#EEF4F9" vertical={false} />
+          {/* Solid hairline grid; only the capacity line below is dashed, because
+              that one really is a threshold. */}
+          <CartesianGrid stroke="#EEF4F9" vertical={false} />
           <XAxis
             dataKey="label"
             tick={{ fontSize: 11.5, fill: '#5C7B92', fontWeight: 600 }}
@@ -191,19 +234,20 @@ function DayRegistrationChart({ data }) {
           <ReferenceLine y={capacity} stroke={STATUS.critical} strokeDasharray="4 4" />
         </BarChart>
       </ResponsiveContainer>
-      <div className="ad-donut-legend" style={{ marginTop: 8 }}>
-        <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: STATUS.good }} />
-          <span className="ad-donut-legend-label">Accepted</span>
-        </div>
-        <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: STATUS.warning }} />
-          <span className="ad-donut-legend-label">Pending</span>
-        </div>
-        <div className="ad-donut-legend-item">
-          <span className="ad-donut-legend-dot" style={{ background: STATUS.critical }} />
-          <span className="ad-donut-legend-label">Capacity ({capacity})</span>
-        </div>
+      {/* Inline, one line — a stacked legend cost 72px under a 150px chart. */}
+      <div className="ad-chart-legend">
+        <span className="ad-chart-legend-item">
+          <span className="ad-breakdown-dot" style={{ background: STATUS.good }} />
+          Approved
+        </span>
+        <span className="ad-chart-legend-item">
+          <span className="ad-breakdown-dot" style={{ background: STATUS.warning }} />
+          Waiting
+        </span>
+        <span className="ad-chart-legend-item">
+          <span className="ad-chart-legend-rule" style={{ borderColor: STATUS.critical }} />
+          Daily limit ({capacity})
+        </span>
       </div>
     </div>
   )
@@ -352,11 +396,13 @@ export default function AdminDashboard() {
 
   // ── Derived chart data ───────────────────────────────────────────────────────
 
-  // Registration outcome breakdown — status semantics (green/amber/red).
+  // Application outcomes — reserved status hues. Each row also carries its own
+  // icon, because green/amber/red cannot be told apart by hue under red-green
+  // colour blindness at any step.
   const vehicleSlices = stats ? [
-    { name: 'Authorized', value: stats.registrations?.accepted ?? 0, color: STATUS.good },
-    { name: 'Pending',    value: stats.registrations?.pending  ?? 0, color: STATUS.warning },
-    { name: 'Denied',     value: stats.registrations?.rejected ?? 0, color: STATUS.critical },
+    { name: 'Approved',        value: stats.registrations?.accepted ?? 0, color: STATUS.good,     Icon: CheckCircle },
+    { name: 'Waiting for you', value: stats.registrations?.pending  ?? 0, color: STATUS.warning,  Icon: ClipboardList },
+    { name: 'Rejected',        value: stats.registrations?.rejected ?? 0, color: STATUS.critical, Icon: XCircle },
   ].filter(s => s.value > 0) : []
 
   // Registered categories — one distinct hue per type; disabled uses the muted
@@ -387,16 +433,36 @@ export default function AdminDashboard() {
   })() : []
 
   const VEHICLE_TYPE_LABELS = { car: 'Car', motorcycle: 'Motorcycle', ebike: 'E-Bike', van: 'Van', truck: 'Truck', bus: 'Bus' }
-  // Fleet mix — six distinct hues in validated order.
-  const vehicleTypeSlices = stats ? [
-    { key: 'car',        color: CAT.blue },
-    { key: 'motorcycle', color: CAT.orange },
-    { key: 'ebike',      color: CAT.aqua },
-    { key: 'van',        color: CAT.yellow },
-    { key: 'truck',      color: CAT.magenta },
-    { key: 'bus',        color: CAT.green },
-  ].map(t => ({ name: VEHICLE_TYPE_LABELS[t.key], value: stats.vehicles?.by_type?.[t.key] ?? 0, color: t.color }))
-    .filter(s => s.value > 0) : []
+  // Vehicle types — six distinct hues in validated order, plus the reserved
+  // neutral for everything else.
+  //
+  // The tail bucket is not cosmetic. vehicle_type is free text, so values
+  // outside this list exist in the data ("SUV"). Matching only the known keys
+  // dropped them, and the card claimed a total it was not drawing — 9 vehicles
+  // above a bar built from 4. Anything unrecognised now lands in "Other", so
+  // the slices always reconcile with the total.
+  const vehicleTypeSlices = stats ? (() => {
+    const byType = stats.vehicles?.by_type ?? {}
+    const known = [
+      { key: 'car',        color: CAT.blue },
+      { key: 'motorcycle', color: CAT.orange },
+      { key: 'ebike',      color: CAT.aqua },
+      { key: 'van',        color: CAT.yellow },
+      { key: 'truck',      color: CAT.magenta },
+      { key: 'bus',        color: CAT.green },
+    ]
+    const slices = known
+      .map(t => ({ name: VEHICLE_TYPE_LABELS[t.key], value: byType[t.key] ?? 0, color: t.color }))
+      .filter(s => s.value > 0)
+
+    const knownKeys = new Set(known.map(t => t.key))
+    const other = Object.entries(byType)
+      .filter(([k]) => !knownKeys.has(k))
+      .reduce((sum, [, v]) => sum + v, 0)
+    if (other > 0) slices.push({ name: 'Other', value: other, color: CAT.muted })
+
+    return slices
+  })() : []
 
   const VIOLATION_TYPE_LABELS = {
     unauthorized_entry: 'Unauthorized Entry', double_parking: 'Double Parking',
@@ -417,13 +483,17 @@ export default function AdminDashboard() {
   ].map(t => ({ name: VIOLATION_TYPE_LABELS[t.key], value: stats.violations?.by_type?.[t.key] ?? 0, color: t.color }))
     .filter(s => s.value > 0) : []
 
+  // Labels are written as a plain answer to "what is this number?", because the
+  // people reading this dashboard are not all CDSO staff. Every tile is styled
+  // identically — the icon chip carries the only colour, so the six read as one
+  // strip rather than as two groups.
   const kpiItems = stats ? [
-    { icon: Users,        label: 'Total Users',      value: stats.users?.total,            color: '#03396C', sub: `${stats.users?.active ?? 0} active` },
-    { icon: CarIcon,      label: 'Registered Vehicles', value: stats.vehicles?.total,       color: '#0F7A5A', sub: `${stats.vehicles?.authorized ?? 0} authorized` },
-    { icon: ClipboardList, label: 'Pending Reviews', value: stats.registrations?.pending,  color: '#8A6B00', sub: 'awaiting approval' },
-    { icon: AlertTriangle, label: 'Open Violations', value: stats.violations?.open,         color: '#C62828', sub: `${stats.violations?.fee_imposed ?? 0} with fee imposed` },
-    { icon: ShieldCheck,  label: 'Visitor Passes',   value: stats.visitor_passes?.active_today, color: '#1072B3', sub: 'active today' },
-    { icon: Activity,     label: "Today's Scans",    value: stats.scans?.today,             color: '#1072B3', sub: `${stats.scans?.week ?? 0} this week` },
+    { icon: Users,         label: 'People with accounts', value: stats.users?.total,                 color: '#03396C', sub: `${stats.users?.active ?? 0} can sign in` },
+    { icon: CarIcon,       label: 'Vehicles registered',  value: stats.vehicles?.total,              color: '#0F7A5A', sub: `${stats.vehicles?.authorized ?? 0} cleared for entry` },
+    { icon: ClipboardList, label: 'Applications to review', value: stats.registrations?.pending,     color: '#8A6B00', sub: 'waiting for approval' },
+    { icon: AlertTriangle, label: 'Violations unresolved', value: stats.violations?.open,            color: '#C62828', sub: `${stats.violations?.fee_imposed ?? 0} have a fine to pay` },
+    { icon: ShieldCheck,   label: 'Visitor passes today', value: stats.visitor_passes?.active_today, color: '#1072B3', sub: 'currently valid' },
+    { icon: Activity,      label: 'Gate scans today',     value: stats.scans?.today,                 color: '#1072B3', sub: `${stats.scans?.week ?? 0} so far this week` },
   ] : []
 
   return (
@@ -453,49 +523,75 @@ export default function AdminDashboard() {
             {/* ── Compact KPI strip ──────────────────────────────────── */}
             {kpiItems.length > 0 && <KpiStrip items={kpiItems} />}
 
-            {/* ── Charts ─────────────────────────────────────────────── */}
-            <SectionLabel>Analytics</SectionLabel>
+            {/* ── Breakdowns & charts ────────────────────────────────── */}
+            {/* Two bands: five short part-to-whole cards on top, then the two
+                real time/day charts. Each subtitle says what the card means in
+                a sentence rather than naming the metric. */}
+            <SectionLabel>The numbers, broken down</SectionLabel>
             <div className="ad-charts-grid">
 
               <ChartCard
                 icon={PieIcon}
-                title="Vehicle Registration Status"
-                subtitle={`${stats?.registrations?.pending ?? 0} pending review`}
+                title="Vehicle pass applications"
+                subtitle={`${stats?.registrations?.total ?? 0} received in total`}
               >
-                <DonutChart
+                <Breakdown
                   slices={vehicleSlices}
-                  centerValue={stats?.registrations?.total}
-                  centerLabel="Registrations"
+                  total={stats?.registrations?.total}
+                  emptyMessage="No applications have been submitted yet."
                 />
               </ChartCard>
 
               <ChartCard
                 icon={Users}
-                title="Registered Categories"
-                subtitle={`${stats?.owners?.total ?? 0} owners · ${stats?.suppliers?.active ?? 0} supplier plates`
-                  + ((stats?.owners?.archived ?? 0) > 0 ? ` · ${stats.owners.archived} archived` : '')}
+                title="Who is registered"
+                subtitle={`${stats?.owners?.total ?? 0} vehicle owners and ${stats?.suppliers?.active ?? 0} supplier${(stats?.suppliers?.active ?? 0) === 1 ? '' : 's'}`}
               >
-                <DonutChart
+                <Breakdown
                   slices={userSlices}
-                  centerLabel="Registered"
+                  emptyMessage="Nobody is registered yet."
+                />
+              </ChartCard>
+
+              <ChartCard
+                icon={CarIcon}
+                title="Kinds of vehicle"
+                subtitle={`${stats?.vehicles?.total ?? 0} registered in total`}
+              >
+                <Breakdown
+                  slices={vehicleTypeSlices}
+                  total={stats?.vehicles?.total}
+                  emptyMessage="No vehicles registered yet."
                 />
               </ChartCard>
 
               <ChartCard
                 icon={Activity}
-                title="Today's Entry Outcome"
-                subtitle={`${stats?.scans?.authorized_today ?? 0} authorized · ${stats?.scans?.denied_today ?? 0} denied`}
+                title="What happened at the gate today"
+                subtitle={`${stats?.scans?.today ?? 0} scan${(stats?.scans?.today ?? 0) === 1 ? '' : 's'} so far`}
               >
-                <DonutChart
+                <Breakdown
                   slices={scanSlices}
-                  centerValue={stats?.scans?.today}
-                  centerLabel="Today"
+                  total={stats?.scans?.today}
+                  emptyMessage="No vehicles have been scanned today."
+                />
+              </ChartCard>
+
+              <ChartCard
+                icon={AlertTriangle}
+                title="Violations in the last 30 days"
+                subtitle={`${stats?.violations?.open ?? 0} still unresolved`}
+              >
+                <Breakdown
+                  slices={violationTypeSlices}
+                  emptyMessage="No violations in the last 30 days."
                 />
               </ChartCard>
 
               <ChartCard
                 icon={BarChart2}
-                title="Authorized Entries by Day"
+                title="Vehicles let in each day this week"
+                subtitle="Monday to Saturday"
               >
                 <DayBarChart
                   data={stats?.day_distribution}
@@ -505,62 +601,39 @@ export default function AdminDashboard() {
 
               <ChartCard
                 icon={BarChart2}
-                title="Registrations by Campus Day"
-                subtitle="Accepted + pending vs daily capacity"
+                title="How full each campus day is"
+                subtitle="Approved and waiting applications against the daily limit"
               >
                 <DayRegistrationChart data={stats?.day_registrations} />
-              </ChartCard>
-
-              <ChartCard
-                icon={CarIcon}
-                title="Fleet Mix"
-                subtitle={`${stats?.vehicles?.total ?? 0} registered vehicles`}
-              >
-                <DonutChart
-                  slices={vehicleTypeSlices}
-                  centerValue={stats?.vehicles?.total}
-                  centerLabel="Vehicles"
-                />
-              </ChartCard>
-
-              <ChartCard
-                icon={AlertTriangle}
-                title="Violations by Type"
-                subtitle="Last 30 days"
-              >
-                <DonutChart
-                  slices={violationTypeSlices}
-                  centerLabel="Violations"
-                />
               </ChartCard>
 
             </div>
 
             {/* ── Recent Activity ────────────────────────────────────── */}
-            <SectionLabel>Recent Activity</SectionLabel>
+            <SectionLabel>What people have been doing</SectionLabel>
             <div className="ad-activity-section">
               <div className="ad-activity-grid">
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
                     <Shield size={13} />
-                    <span>CDSO Actions</span>
+                    <span>Office staff</span>
                   </div>
                   <div className="ad-activity-list">
                     {stats?.recent_activity?.admin?.length > 0
                       ? stats.recent_activity.admin.map(log => <ActivityItem key={log.id} log={log} />)
-                      : <EmptyActivity message="No recent CDSO activity." />}
+                      : <EmptyActivity message="Nothing from the office yet." />}
                   </div>
                 </div>
 
                 <div className="ad-activity-card">
                   <div className="ad-activity-card-head">
                     <ShieldCheck size={13} />
-                    <span>Security Personnel Actions</span>
+                    <span>Guards at the gate</span>
                   </div>
                   <div className="ad-activity-list">
                     {stats?.recent_activity?.security?.length > 0
                       ? stats.recent_activity.security.map(log => <ActivityItem key={log.id} log={log} />)
-                      : <EmptyActivity message="No recent security activity." />}
+                      : <EmptyActivity message="Nothing from the gates yet." />}
                   </div>
                 </div>
               </div>

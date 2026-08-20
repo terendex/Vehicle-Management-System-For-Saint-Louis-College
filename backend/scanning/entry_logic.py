@@ -14,9 +14,13 @@ DAY_NAME_TO_WEEKDAY = {
     'Friday': 4, 'Saturday': 5, 'Sunday': 6,
 }
 
-# Legacy fallback: schedule code → weekday numbers, used only when user.campus_days is empty
+# Legacy fallback: schedule code → weekday numbers, used only when user.campus_days is empty.
+# 'TTHS' (Tue/Thu/Sat) was the second rotation before it became TTHF (Tue/Thu/Fri);
+# the migration renames stored codes, but an unknown code here would mean "allowed
+# on no day at all", so the old one keeps its original meaning.
 _SCHEDULE_DAYS_FALLBACK = {
     'MWF':  [0, 2, 4],
+    'TTHF': [1, 3, 4],
     'TTHS': [1, 3, 5],
     'ANY':  [0, 1, 2, 3, 4, 5, 6],
     'ALL':  [0, 1, 2, 3, 4, 5, 6],
@@ -26,6 +30,7 @@ _SCHEDULE_DAYS_FALLBACK = {
 
 _SCHEDULE_TO_DAY_NAMES = {
     'MWF':  ['Monday', 'Wednesday', 'Friday'],
+    'TTHF': ['Tuesday', 'Thursday', 'Friday'],
     'TTHS': ['Tuesday', 'Thursday', 'Saturday'],
 }
 
@@ -35,8 +40,12 @@ def _allowed_weekdays(user) -> list[int]:
     campus_days = user.campus_days or []
     if campus_days:
         return [DAY_NAME_TO_WEEKDAY[d] for d in campus_days if d in DAY_NAME_TO_WEEKDAY]
-    # Legacy: user created before campus_days was stored; fall back to schedule code
-    return _SCHEDULE_DAYS_FALLBACK.get(user.schedule or 'ANY', [])
+    # Legacy: user created before campus_days was stored; fall back to schedule code.
+    # An unrecognised code means we cannot say which days this owner registered
+    # for, so it falls back to every day and lets the RuleConstraint do the
+    # limiting — returning [] here read as "no personal restriction" to the
+    # callers anyway, just without saying so.
+    return _SCHEDULE_DAYS_FALLBACK.get(user.schedule or 'ANY', _SCHEDULE_DAYS_FALLBACK['ANY'])
 
 
 def _registered_days_display(user) -> str:
@@ -68,7 +77,12 @@ def _is_within_window(rule, now=None):
     current_minutes = now.hour * 60 + now.minute
     start_minutes = _time_to_minutes(rule.start_time)
     end_minutes = _time_to_minutes(rule.end_time)
-    return start_minutes <= current_minutes <= end_minutes
+    if start_minutes <= end_minutes:
+        return start_minutes <= current_minutes <= end_minutes
+    # Window wraps past midnight (e.g. 20:00–06:00 for a night shift). Read
+    # straight through, this compared as start <= now <= end and was true for
+    # no minute of the day, so the rule denied entry around the clock.
+    return current_minutes >= start_minutes or current_minutes <= end_minutes
 
 def _is_within_days(rule, today_weekday=None):
     if today_weekday is None:
@@ -78,6 +92,28 @@ def _is_within_days(rule, today_weekday=None):
     if not today_key:
         return False
     return today_key in rule.days
+
+
+def _day_denial(rule, user, today_weekday) -> str | None:
+    """Day check for owner types that carry their own campus days.
+
+    Two things have to agree before an owner may enter today: the rule's
+    Allowed Days, which is the campus-wide ceiling the CDSO sets, and the
+    owner's own registered days. The rule is checked first because "the campus
+    is closed today" is a different fact from "you did not register for today",
+    and a guard reading the wrong one of those would send the owner to the
+    wrong office. Returns a denial message, or None when the day is allowed.
+    """
+    day_name = timezone.localdate().strftime('%A')
+    if rule and not _is_within_days(rule, today_weekday):
+        return (f'Campus closed to this entry type today ({day_name}) '
+                f'per rule: {rule.name}.')
+    allowed_days = _allowed_weekdays(user)
+    if allowed_days and today_weekday not in allowed_days:
+        return (f'Not allowed on campus today ({day_name}). '
+                f'Registered days: {_registered_days_display(user)}.')
+    return None
+
 
 def get_organizer_event(plate_number: str):
     """Return the first active event listing this plate as an organizer, or None."""
@@ -105,17 +141,27 @@ def check_entry(vehicle) -> dict:
         owner_name = vehicle.user.full_name if vehicle.user else vehicle.plate_number
         return _result('open_entry', True, f'Open Campus Mode active — {owner_name}. Open entry granted.', None)
 
-    # Block entry if there is an active fee-imposed violation (3rd offense, unpaid)
-    from violations.models import Violation
-    if Violation.objects.filter(vehicle=vehicle, status=Violation.Status.FEE_IMPOSED).exists():
+    user = vehicle.user
+
+    # A confiscated account may not enter. Checked before every other rule —
+    # including the schedule ones — because the penalty is not "you came on the
+    # wrong day", and a guard reading "wrong day" would have no idea the account
+    # is serving a violation penalty.
+    #
+    # The caller turns this status into a fresh offence (see
+    # scanning/views.py): being detected during a confiscation is itself a
+    # violation, which is what stops the penalty from being ignorable.
+    if user is not None and user.is_confiscated:
+        days = user.confiscation_days_left
+        when = (f'{days} day(s) left' if days is not None
+                else 'until the CDSO lifts it')
         return _result(
-            'denied', False,
-            'Entry denied — outstanding violation fee (₱150). '
-            'Please report to the CDSO office to settle.',
+            'confiscated', False,
+            f'Entry denied — account confiscated ({when}). '
+            f'Offence {user.confiscation_level} of 3. '
+            'Report to the CDSO office.',
             None,
         )
-
-    user = vehicle.user
 
     # ── VISITOR / gate-issued vehicle (pass-based entry) ──────────────
     # Covers vehicles created at the gate when a pass is issued (no owner
@@ -168,15 +214,10 @@ def check_entry(vehicle) -> dict:
 
     # ── STUDENT ───────────────────────────────────────────────────────
     if owner_type == User.OwnerType.STUDENT:
-        rule         = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
-        allowed_days = _allowed_weekdays(user)
-        if allowed_days and today_weekday not in allowed_days:
-            day_name = timezone.localdate().strftime('%A')
-            day_list = _registered_days_display(user)
-            return _result('wrong_day', False,
-                f'Not allowed on campus today ({day_name}). '
-                f'Registered days: {day_list}.',
-                rule.name if rule else None)
+        rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
+        denial = _day_denial(rule, user, today_weekday)
+        if denial:
+            return _result('wrong_day', False, denial, rule.name if rule else None)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
                 f'Student access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
@@ -185,15 +226,10 @@ def check_entry(vehicle) -> dict:
 
     # ── FETCHER ───────────────────────────────────────────────────────
     if owner_type == User.OwnerType.FETCHER:
-        rule         = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
-        allowed_days = _allowed_weekdays(user)
-        if allowed_days and today_weekday not in allowed_days:
-            day_name = timezone.localdate().strftime('%A')
-            day_list = _registered_days_display(user)
-            return _result('wrong_day', False,
-                f'Not allowed on campus today ({day_name}). '
-                f'Registered days: {day_list}.',
-                rule.name if rule else None)
+        rule = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
+        denial = _day_denial(rule, user, today_weekday)
+        if denial:
+            return _result('wrong_day', False, denial, rule.name if rule else None)
         # Standby fetchers are allowed to park inside campus while waiting, so
         # the drop-off/pick-up time window only restricts Drop & Go fetchers.
         is_standby = user.registrations.filter(

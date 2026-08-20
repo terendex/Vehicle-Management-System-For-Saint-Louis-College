@@ -48,6 +48,10 @@
   height: 200px;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 50%;
+  /* Decoration only. Being absolutely positioned, it paints above the in-flow
+     buttons beside it and was swallowing their clicks — the action buttons sit
+     in exactly the top-right corner this circle covers. */
+  pointer-events: none;
 }
 
 .od-welcome-avatar {
@@ -79,8 +83,18 @@
   margin: 0;
 }
 
-.od-change-pw-btn {
+/* Holds the banner's action buttons together. The push to the right lives here
+   rather than on the buttons: with `margin-left: auto` on each of them, every
+   button after the first got its own auto margin and they drifted apart. */
+.od-welcome-actions {
   margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.od-change-pw-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1358,8 +1372,13 @@
     font-size: 12px;
   }
 
-  .od-change-pw-btn {
+  .od-welcome-actions {
     width: 100%;
+    margin-left: 0;
+  }
+
+  .od-change-pw-btn {
+    flex: 1 1 140px;
     justify-content: center;
   }
 
@@ -1680,3 +1699,10 @@
 }
 .od-btn-ghost:hover { background: #E2E8F0; }
 .od-btn-ghost:disabled, .od-btn-primary:disabled { opacity: 0.6; cursor: default; }
+
+/* The security modal carries a QR and a two-column code grid, so it needs more
+   room than the confirm-style dialogs the base .od-modal was sized for. */
+.od-modal.od-modal-wide {
+  max-width: 520px;
+  text-align: left;
+}

@@ -1,6 +1,6 @@
 """Run the daily maintenance jobs without Celery.
 
-These two jobs are defined as Celery tasks and scheduled in
+These jobs are defined as Celery tasks and scheduled in
 `config/celery.py`'s beat_schedule, which means they only run when a Celery
 worker AND a beat scheduler are running. The Railway deployment has neither —
 both would be extra always-on containers — so without this command the events
@@ -30,13 +30,23 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from vehicles.tasks import auto_manage_events, auto_archive_expired_accounts, purge_old_records
+        from vehicles.tasks import (auto_backup, auto_manage_events,
+                                    auto_archive_expired_accounts, purge_old_records)
 
         # Events first: it is the job with visible consequences, and it should
         # still run even if the purge fails.
         result = auto_manage_events()
         self.stdout.write(self.style.SUCCESS(
             f"auto_manage_events: activated {result['activated']}, archived {result['archived']}"
+        ))
+
+        # Before anything that deletes: the day's snapshot should still hold
+        # the rows the purge below is about to remove. Respects the configured
+        # frequency, so this is a no-op when automatic backups are off or the
+        # last one is still recent.
+        result = auto_backup()
+        self.stdout.write(self.style.SUCCESS(
+            f"auto_backup: {result.get('created') or result.get('skipped')}"
         ))
 
         result = auto_archive_expired_accounts()
@@ -51,5 +61,6 @@ class Command(BaseCommand):
         result = purge_old_records()
         self.stdout.write(self.style.SUCCESS(
             f"purge_old_records: deleted {result['deleted_logs']} access logs, "
-            f"{result['deleted_violations']} violations"
+            f"{result['deleted_violations']} violations, "
+            f"{result['deleted_accounts']} archived accounts"
         ))

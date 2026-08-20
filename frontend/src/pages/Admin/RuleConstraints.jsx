@@ -12,9 +12,29 @@ import {
   activateRegistrationPeriod, deactivateRegistrationPeriod,
 } from '../../api/vehicles'
 import api from '../../api/axios'
+import useTwofaStore from '../../stores/twofaStore'
 import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+/* Registration windows are always named for a school year and a term, so the
+   label is picked rather than typed. Typing it produced four different names
+   for the same thing — 'test', 'test 2', 'S.Y 26-27' and 'SY 26-27' — which is
+   no help at all when you are looking down the archived list a year later. */
+const PERIOD_TERMS = ['First Semester', 'Second Semester', 'Summer']
+
+function periodLabelOptions(today = new Date()) {
+  // The school year rolls over in June: register in April and you are still
+  // finishing the year that began the previous June, so the label has to be
+  // that year's, not the calendar year's.
+  const startYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1
+  const options = []
+  for (const offset of [0, 1]) {
+    const from = startYear + offset
+    for (const term of PERIOD_TERMS) options.push(`S.Y. ${from}–${from + 1} ${term}`)
+  }
+  return options
+}
 
 const DAY_LABELS = [
   { key: 'mon', label: 'Mon' },
@@ -32,6 +52,7 @@ const ENTRY_TYPES = [
     title: 'Student — Vehicle',
     desc: 'Registered SLC student with a car or motorcycle',
     Icon: User,
+    hasOwnDays: true,
   },
   {
     key: 'employee',
@@ -45,6 +66,7 @@ const ENTRY_TYPES = [
     desc: 'Parent or guardian fetching a student',
     Icon: Users,
     hasStayLimit: true,
+    hasOwnDays: true,
   },
   {
     key: 'supplier',
@@ -112,6 +134,12 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                   </button>
                 ))}
               </div>
+              {entryType.hasOwnDays && (
+                <span style={{ fontSize: 11.5, color: '#64839C', marginTop: 4, display: 'block' }}>
+                  Campus-wide ceiling. An owner still needs the day on their own
+                  registered campus days to be let in.
+                </span>
+              )}
             </div>
 
             <div className="rc-field-row">
@@ -164,7 +192,9 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                 <span style={{ fontSize: '13px', color: '#3E5B72', fontWeight: 500 }}>
                   {enabled
                     ? 'Enabled — day & time restrictions apply at the gate'
-                    : 'Disabled — no schedule restriction (entry not limited by this rule)'}
+                    : entryType.hasOwnDays
+                      ? 'Disabled — this rule adds no restriction, but each owner’s own registered campus days still apply'
+                      : 'Disabled — no schedule restriction (entry not limited by this rule)'}
                 </span>
               </label>
             </div>
@@ -277,8 +307,18 @@ export default function RuleConstraints() {
   }
   useLiveUpdates(reloadRuleData, ['ruleconstraint', 'systemsettings', 'registrationperiod'])
 
+  // Asked for before the change goes anywhere, rather than after the server
+  // bounces it — these rules decide who may enter campus, and the prompt should
+  // read as part of the decision, not as an error.
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
   const handleSave = async (data) => {
     const rule = rules[editingType.key]
+    try {
+      await ensureStepUp('Confirm it’s you before changing a campus rule.')
+    } catch {
+      return
+    }
     try {
       // A fresh database may not have a row for this type yet — create it on first save
       const { data: saved } = rule?.id
@@ -294,6 +334,11 @@ export default function RuleConstraints() {
   const toggleMode = async (field) => {
     const next = !ss[field]
     try {
+      await ensureStepUp('Confirm it’s you before changing this mode.')
+    } catch {
+      return
+    }
+    try {
       const { data } = await api.patch('/vehicles/system-settings/', { [field]: next })
       setSs(f => ({ ...f, [field]: data[field] }))
       const labels = {
@@ -307,7 +352,7 @@ export default function RuleConstraints() {
 
   const handleAddPeriod = async () => {
     const errors = {}
-    if (!periodForm.label.trim())      errors.label      = 'Label is required.'
+    if (!periodForm.label.trim())      errors.label      = 'Select a school year and term.'
     if (!periodForm.start_date)        errors.start_date = 'Start date is required.'
     if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
@@ -430,12 +475,16 @@ export default function RuleConstraints() {
                 <div className="rc-period-form-fields">
                   <div className="rc-reg-field" style={{ flex: 2 }}>
                     <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
-                    <input
-                      className={`rc-field-input ${periodErrors.label ? 'rc-input-error' : ''}`}
-                      placeholder="e.g. S.Y. 2025–2026 First Semester"
+                    <select
+                      className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
                       value={periodForm.label}
                       onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
-                    />
+                    >
+                      <option value="">Select a school year and term…</option>
+                      {periodLabelOptions().map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
                     {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
                   </div>
                   <div className="rc-reg-field">

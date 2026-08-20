@@ -31,7 +31,7 @@ const OFFENSE_LABELS = { 1: '1st', 2: '2nd', 3: '3rd' }
 const FILTER_OPTIONS = [
   { value: 'all',        label: 'All' },
   { value: 'warning',    label: 'Warnings' },
-  { value: 'fee',        label: 'Fee Imposed' },
+  { value: 'fee',        label: 'Confiscated (3rd)' },
   { value: 'resolved',   label: 'Cleared / Resolved' },
 ]
 
@@ -63,16 +63,20 @@ function fmtDate(ts) {
   try { return format(parseISO(ts), 'MMM d, yyyy') } catch { return '—' }
 }
 
-function FineTag({ amount }) {
-  const n = parseFloat(amount)
-  if (!n) return <span className="vm-fine-tag vm-fine-zero">₱0</span>
-  return <span className="vm-fine-tag">₱{n.toFixed(2)}</span>
-}
 
 function OffenseBadge({ num }) {
   if (!num) return null
   const cls = num === 3 ? 'vm-offense-3' : num === 2 ? 'vm-offense-2' : 'vm-offense-1'
   return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`}</span>
+}
+
+// Evidence is served by the API, not by a public storage URL, so the request
+// has to carry a token. An <img> cannot send an Authorization header — the
+// parking camera stream solves it the same way.
+function evidenceSrc(url) {
+  if (!url) return null
+  const token = localStorage.getItem('access_token') || ''
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
 }
 
 // ─── Evidence Lightbox ─────────────────────────────────────────────────────────
@@ -180,6 +184,11 @@ export default function ViolationsManagement() {
   const [datePeriod, setDatePeriod]       = useState('all')
   const [actionLoading, setActionLoading] = useState(null)
   const [lightboxSrc, setLightboxSrc]     = useState(null)
+  // Evidence URLs the browser could not load. A violation photo lives in object
+  // storage, and the row must stay readable when that fetch fails — a broken
+  // image glyph looks like the app is broken rather than like the file is
+  // unreachable.
+  const [badEvidence, setBadEvidence]     = useState(() => new Set())
   const [confirmAction, setConfirmAction] = useState(null)
   const [orModal, setOrModal]             = useState(null)   // violation waiting for OR
   const [resultModal, setResultModal]     = useState(null)
@@ -330,8 +339,8 @@ export default function ViolationsManagement() {
     if (v.status === 'cleared' || (v.is_resolved && !v.offense_number))
       return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Cleared</span>
     if (v.status === 'fee_imposed') {
-      const sub = v.cdso_report_issued ? '· Report Issued' : '· Awaiting Report'
-      return <span className="vm-status vm-status-fee"><ShieldOff size={12} /> Fee Imposed <em>{sub}</em></span>
+      // Legacy rows issued under the old fine system. Nothing sets this now.
+      return <span className="vm-status vm-status-fee"><ShieldOff size={12} /> Legacy fee</span>
     }
     if (v.status === 'warning')
       return <span className="vm-status vm-status-warning"><AlertTriangle size={12} /> Warning</span>
@@ -421,15 +430,17 @@ export default function ViolationsManagement() {
           <div>
             <h1 className="vm-title">Violations</h1>
             <p className="vm-subtitle">
-              3-offense escalation: Warning → Warning → Fee (₱150) + Entry Denied.
-              CDSO issues report, owner pays at Accounting, CDSO enters OR to clear.
+              3-offence escalation: the account is confiscated for 1 week, then
+              2 weeks, then the rest of the registration period. A confiscated
+              owner cannot enter or park, and being detected counts as a further
+              offence.
             </p>
           </div>
           {(feeCount > 0 || warningCount > 0) && (
             <div className="vm-header-stats">
               {feeCount > 0 && (
                 <span className="vm-stat-chip vm-stat-fee">
-                  <ShieldOff size={13} /> {feeCount} Fee Imposed
+                  <ShieldOff size={13} /> {feeCount} 3rd offence
                 </span>
               )}
               {warningCount > 0 && (
@@ -519,12 +530,22 @@ export default function ViolationsManagement() {
             <div className="vm-empty">No violations found.</div>
           ) : (
             <table className="vm-table">
+              <colgroup>
+                <col className="vm-col-plate" />
+                <col className="vm-col-owner" />
+                <col className="vm-col-type" />
+                <col className="vm-col-fine" />
+                <col className="vm-col-notes" />
+                <col className="vm-col-evidence" />
+                <col className="vm-col-issued" />
+                <col className="vm-col-status" />
+                <col className="vm-col-actions" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Plate</th>
                   <th>Owner</th>
                   <th>Type / Offense</th>
-                  <th>Fine</th>
                   <th>Notes</th>
                   <th>Evidence</th>
                   <th>Issued</th>
@@ -536,11 +557,13 @@ export default function ViolationsManagement() {
                 {paginated.map((v) => (
                   <tr key={v.id} className={rowClass(v)}>
                     <td className="vm-plate">{v.plate_number}</td>
-                    <td className="vm-owner">
-                      <span>{v.owner_name || '—'}</span>
-                      {v.owner_email && (
-                        <span className="vm-owner-email">{v.owner_email}</span>
-                      )}
+                    <td>
+                      <div className="vm-owner">
+                        <span className="vm-owner-name">{v.owner_name || '—'}</span>
+                        {v.owner_email && (
+                          <span className="vm-owner-email">{v.owner_email}</span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="vm-type-cell">
@@ -550,18 +573,37 @@ export default function ViolationsManagement() {
                         <OffenseBadge num={v.offense_number} />
                       </div>
                     </td>
-                    <td><FineTag amount={v.fine_amount} /></td>
-                    <td><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
+                                        <td><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
                     <td>
-                      {v.evidence_url ? (
+                      {v.evidence_url && !badEvidence.has(v.evidence_url) ? (
                         <button
                           className="vm-evidence-thumb-btn"
-                          onClick={() => setLightboxSrc(v.evidence_url)}
+                          onClick={() => setLightboxSrc(evidenceSrc(v.evidence_url))}
                           title="View evidence"
                         >
-                          <img src={v.evidence_url} alt="evidence" className="vm-evidence-thumb" />
+                          <img
+                            src={evidenceSrc(v.evidence_url)}
+                            alt="evidence"
+                            className="vm-evidence-thumb"
+                            onError={() => setBadEvidence(prev => {
+                              const next = new Set(prev)
+                              next.add(v.evidence_url)
+                              return next
+                            })}
+                          />
                           <ZoomIn size={12} className="vm-evidence-zoom" />
                         </button>
+                      ) : v.evidence_url ? (
+                        // The record says a photo was captured but it will not
+                        // load. Distinct from "None" on purpose: one means no
+                        // evidence was ever taken, the other means it exists and
+                        // cannot be reached — only the second is worth chasing.
+                        <span
+                          className="vm-no-evidence vm-evidence-broken"
+                          title={`Evidence could not be loaded from storage:\n${v.evidence_url}`}
+                        >
+                          <AlertTriangle size={13} /> Unavailable
+                        </span>
                       ) : (
                         <span className="vm-no-evidence"><Image size={13} /> None</span>
                       )}
@@ -633,7 +675,7 @@ export default function ViolationsManagement() {
           },
           issue_report: {
             title: 'Issue CDSO Report?',
-            body: `This marks that you have issued the official violation report to ${v.plate_number}. The owner may then proceed to Accounting to pay the ₱150 fee.`,
+            body: `This marks that you have issued the official violation report to ${v.plate_number}. There is no fee to pay — the penalty is the confiscation already applied to the account.`,
             confirm: 'Issue Report', cls: 'vm-modal-btn-primary',
           },
         }[type]

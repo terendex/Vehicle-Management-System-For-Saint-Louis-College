@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from 'react'
+import { useEffect, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import useAuthStore from './stores/authStore'
@@ -6,6 +6,11 @@ import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
 import LoginPage from './pages/Login/LoginPage'
 import ProtectedRoute from './components/Auth/ProtectedRoute'
+import StepUpGate from './components/TwoFactor/StepUpGate'
+import RouteErrorBoundary from './components/RouteErrorBoundary'
+// Every page below goes through lazyWithRetry rather than React's lazy: a
+// chunk left behind by an older deploy must not blank the route.
+import lazy from './utils/lazyWithRetry'
 // Layouts are mounted by the shell routes below, never by the pages themselves,
 // so the sidebar survives navigation instead of being torn down and rebuilt.
 import AdminLayout from './components/Layout/AdminLayout'
@@ -78,7 +83,12 @@ function RoleShell() {
   const fillHeight = Layout === SecurityLayout && pathname.endsWith('/entries')
   return (
     <Layout fillHeight={fillHeight}>
-      <Suspense fallback={<RouteFallback />}><Outlet /></Suspense>
+      {/* Keyed on the path so recovering from a broken page is a navigation
+          away — without the key the boundary would latch and every later
+          route would keep showing the error. */}
+      <RouteErrorBoundary key={pathname}>
+        <Suspense fallback={<RouteFallback />}><Outlet /></Suspense>
+      </RouteErrorBoundary>
     </Layout>
   )
 }
@@ -101,9 +111,13 @@ export default function App() {
     <CameraProvider>
     <BrowserRouter>
       <Toaster richColors position="top-right" />
+      {/* Renders nothing until a sensitive request is held for a code. Mounted
+          at the root so every screen is covered without knowing it exists. */}
+      <StepUpGate />
       {/* Outer Suspense covers only the routes that render no layout (login,
           register, 404). Layout routes have their own boundary inside the
           shell so the sidebar is never unmounted by a chunk load. */}
+      <RouteErrorBoundary>
       <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
@@ -173,6 +187,7 @@ export default function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       </Suspense>
+      </RouteErrorBoundary>
     </BrowserRouter>
     </CameraProvider>
     </LiveUpdatesProvider>

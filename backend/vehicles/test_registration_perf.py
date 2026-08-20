@@ -192,3 +192,104 @@ class LookupIndexTests(TestCase):
                 cur.execute('SET enable_seqscan = on')
         self.assertIn('upper', plan.lower(),
                       'expected __iexact to force an UPPER() filter')
+
+    def test_drivers_license_lookup_has_an_index(self):
+        """_license_db_conflict ran __iexact against a column save() already
+        stores upper-cased, so uniq_active_registration_drivers_license never
+        applied and the pre-check scanned every active registration."""
+        qs = self._active().filter(drivers_license='N01-20-123456')
+        self.assertHasIndexPath(qs, "drivers_license lookup")
+
+    def test_vehicle_plate_lookup_has_an_index(self):
+        """_plate_conflict's second check, against already-owned vehicles."""
+        qs = Vehicle.objects.filter(plate_number='PRF00007', user__isnull=False)
+        self.assertHasIndexPath(qs, 'owned-vehicle plate lookup')
+
+    def test_user_email_lookup_has_an_index(self):
+        """Every account lookup by address uses email__iexact, which compiles to
+        UPPER(email) = UPPER(%s); user_email_upper indexes that expression."""
+        qs = User.objects.filter(email__iexact='perf7@slc.edu.ph', is_archived=False)
+        self.assertHasIndexPath(qs, 'user email lookup')
+
+    def test_ban_check_lookups_have_an_index(self):
+        """_registration_ban ORs five identifiers together. Each disjunct has to
+        be answerable from an index or the whole check degrades to a scan — it
+        runs on every submission *and* every availability keystroke."""
+        qs = (VehicleRegistration.objects
+              .annotate(_plate_norm=Upper(Replace('plate_number', Value(' '), Value(''))),
+                        _email_norm=Lower('email'))
+              .filter(_plate_norm='PRF00007', user__registration_banned=True))
+        self.assertHasIndexPath(qs, 'ban check by normalised plate')
+
+        qs = (VehicleRegistration.objects
+              .annotate(_email_norm=Lower('email'))
+              .filter(_email_norm='perf7@slc.edu.ph', user__registration_banned=True))
+        self.assertHasIndexPath(qs, 'ban check by normalised email')
+
+
+class ConflictHelperComplexityTests(TestCase):
+    """The helpers behind the submit path, measured directly.
+
+    The endpoint-level tests above count queries, which catches a per-row loop
+    but not a single query that happens to scan the whole table. These call the
+    helpers against a seeded table and assert the plan uses an index — the only
+    thing that keeps the cost flat as registrations accumulate.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        seed_registrations(300)
+
+    def _plan(self, fn):
+        with CaptureQueriesContext(connection) as ctx:
+            fn()
+        return [q['sql'] for q in ctx.captured_queries]
+
+    def test_license_precheck_does_not_upper_the_column(self):
+        from vehicles.views import _license_db_conflict
+        sqls = self._plan(lambda: _license_db_conflict('n01-20-123456'))
+        self.assertTrue(sqls, 'expected the pre-check to run a query')
+        joined = ' '.join(sqls).lower()
+        self.assertNotIn('upper("tbl_vehicle_registration"."drivers_license")', joined,
+                         'the licence pre-check is UPPER()-wrapping its column again '
+                         '— uniq_active_registration_drivers_license cannot be used')
+
+    def test_license_precheck_still_matches_case_insensitively(self):
+        """Dropping __iexact must not weaken the check: the input is upper-cased
+        before matching, exactly as save() stores it."""
+        from vehicles.views import _license_db_conflict
+        VehicleRegistration.objects.create(
+            registrant_type='student', full_name='LICENCE, HOLDER',
+            email='lic@slc.edu.ph', plate_number='LIC0001', vehicle_type='car',
+            drivers_license='N01-20-777777', status=VehicleRegistration.Status.PENDING)
+        self.assertIsNotNone(_license_db_conflict('n01-20-777777'))
+        self.assertIsNotNone(_license_db_conflict('  N01-20-777777  '))
+        self.assertIsNone(_license_db_conflict('N01-20-888888'))
+
+    def test_ban_check_does_not_upper_its_columns(self):
+        from vehicles.views import _registration_ban
+        sqls = self._plan(lambda: _registration_ban(
+            'PRF00007', 'perf7@slc.edu.ph', '20000007', '', conduction_number='CN1'))
+        joined = ' '.join(sqls).lower()
+        for column in ('conduction_number', 'student_id', 'employee_id'):
+            self.assertNotIn(f'upper("tbl_vehicle_registration"."{column}")', joined,
+                             f'the ban check is UPPER()-wrapping {column} again')
+
+    def test_ban_check_still_finds_a_banned_applicant(self):
+        from vehicles.views import _registration_ban
+        banned = User.objects.create_user(
+            email='banned@slc.edu.ph', full_name='BANNED, ONE',
+            password='pw', role='vehicle_owner')
+        banned.registration_banned = True
+        banned.save(update_fields=['registration_banned'])
+        VehicleRegistration.objects.create(
+            registrant_type='student', full_name='BANNED, ONE',
+            email='banned@slc.edu.ph', plate_number='BAN0001', vehicle_type='car',
+            student_id='99887766', user=banned,
+            status=VehicleRegistration.Status.EXPIRED)
+
+        # Matched on each identifier, in the same spacing/case a form would send
+        self.assertIsNotNone(_registration_ban('ban 0001', '', '', ''))
+        self.assertIsNotNone(_registration_ban('', 'BANNED@slc.edu.ph', '', ''))
+        self.assertIsNotNone(_registration_ban('', '', '99887766', ''))
+        self.assertIsNone(_registration_ban('ZZZ9999', 'nobody@slc.edu.ph', '', ''))

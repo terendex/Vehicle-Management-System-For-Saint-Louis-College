@@ -1,18 +1,103 @@
 import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
+import { invalidateGates } from '../../hooks/useGates'
 import { usersApi } from '../../api/users'
+import useTwofaStore from '../../stores/twofaStore'
+import { pickSaveLocation, saveBlobTo, discardSaveLocation } from '../../utils/saveFile'
 import './SystemSettings.css'
 
+// Expiration cannot be switched off — only shortened or extended. The period
+// must total at least 1 (the server rejects 0/0), so there is no on/off control
+// and no "never expires" state to render.
+const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
+  account_expiry_months: 12, account_expiry_days: 0,
+  parked_after_seconds: 8, double_park_after_seconds: 12,
+  auto_backup_frequency: 'off', auto_backup_keep: 10 }
+
+const hasExpiryPeriod = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
+
+// A car cannot be badly parked before it counts as parked at all. The server
+// rejects this pair too; checking here shows it as the admin types rather than
+// as a toast after the round trip.
+const dwellOrderValid = (f) => f.double_park_after_seconds >= f.parked_after_seconds
+
+function normalizeSettings(data) {
+  return {
+    retention_years:    data.retention_years    ?? 5,
+    scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
+    vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
+    vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
+    account_expiry_months: data.account_expiry_months ?? 12,
+    account_expiry_days:   data.account_expiry_days   ?? 0,
+    parked_after_seconds:      data.parked_after_seconds      ?? 8,
+    double_park_after_seconds: data.double_park_after_seconds ?? 12,
+    auto_backup_frequency: data.auto_backup_frequency ?? 'off',
+    auto_backup_keep:      data.auto_backup_keep      ?? 10,
+  }
+}
+
+// "Off" is one of the frequencies rather than a separate switch, so there is no
+// way to leave the schedule on with nothing set.
+const BACKUP_FREQUENCIES = [
+  ['off',     'Off'],
+  ['hourly',  'Hourly'],
+  ['daily',   'Daily'],
+  ['weekly',  'Weekly'],
+  ['monthly', 'Monthly'],
+]
+
+const FREQ_HINT = {
+  off:     'The server takes no backups on its own — only the ones you download here.',
+  hourly:  'The server saves a backup every hour, around the clock.',
+  daily:   'The server saves a backup once a day, before old records are purged.',
+  weekly:  'The server saves a backup once every seven days.',
+  monthly: 'The server saves a backup once a month.',
+}
+
+// How far back the saved backups actually reach. Worth spelling out because the
+// keep count means something very different at each frequency: ten of them is
+// most of a day on hourly and the better part of a year on monthly, and an
+// admin switching to hourly should see that their history just got shorter.
+const FREQ_UNIT = { hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month' }
+
+function backupSpanText(freq, keep) {
+  const unit = FREQ_UNIT[freq]
+  if (!unit) return ''
+  return `That is about ${keep} ${unit}${keep !== 1 ? 's' : ''} of history.`
+}
+
+// What wrote the file. Pre-restore snapshots are the automatic copy taken right
+// before someone restored, which is usually the file you want after a mistake.
+const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', other: 'File' }
+
+const formatBytes = (n) =>
+  n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`
+
+const formatStamp = (iso) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+/** e.g. '12 months', '30 days', '1 month and 15 days' */
+function expiryPeriodText(f) {
+  const parts = []
+  if (f.account_expiry_months > 0) parts.push(`${f.account_expiry_months} month${f.account_expiry_months !== 1 ? 's' : ''}`)
+  if (f.account_expiry_days   > 0) parts.push(`${f.account_expiry_days} day${f.account_expiry_days !== 1 ? 's' : ''}`)
+  return parts.join(' and ')
+}
+
 export default function SystemSettings() {
-  const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
-    account_expiry_enabled: false, account_expiry_months: 12, account_expiry_days: 0 }
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
+  const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
+  const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
 
   // Notices state
   const [notices, setNotices]               = useState([])
@@ -32,8 +117,14 @@ export default function SystemSettings() {
   // Backup & Restore state
   const [downloading, setDownloading] = useState(false)
   const [restoring, setRestoring]     = useState(false)
-  const [restoreFile, setRestoreFile] = useState(null) // File pending confirmation
+  // Pending confirmation — { label, file } for an upload, { label, name } for a
+  // backup already on the server. One modal covers both.
+  const [restoreTarget, setRestoreTarget] = useState(null)
   const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
+  const [backups, setBackups]                 = useState([])
+  const [backupsLoading, setBackupsLoading]   = useState(true)
+  const [backupBusy, setBackupBusy]           = useState(null) // filename being acted on
+  const [confirmDeleteBackup, setConfirmDeleteBackup] = useState(null)
 
   // Tick an elapsed-seconds counter while a backup/restore is in progress so the
   // long-running restore visibly shows progression.
@@ -47,15 +138,7 @@ export default function SystemSettings() {
   useEffect(() => {
     getSystemSettings()
       .then(({ data }) => {
-        const normalized = {
-          retention_years:    data.retention_years    ?? 5,
-          scan_dedup_seconds: data.scan_dedup_seconds ?? 60,
-          vehicle_pass_fee:          data.vehicle_pass_fee          ?? 300,
-          vehicle_pass_fee_employee: data.vehicle_pass_fee_employee ?? 150,
-          account_expiry_enabled: data.account_expiry_enabled ?? false,
-          account_expiry_months:  data.account_expiry_months  ?? 12,
-          account_expiry_days:    data.account_expiry_days    ?? 0,
-        }
+        const normalized = normalizeSettings(data)
         setForm(normalized)
         setSaved(normalized)
       })
@@ -63,6 +146,7 @@ export default function SystemSettings() {
       .finally(() => setLoading(false))
     fetchNotices()
     fetchGates()
+    fetchBackups()
   }, [])
 
   const fetchGates = () => {
@@ -71,6 +155,14 @@ export default function SystemSettings() {
       .then(({ data }) => setGates(data))
       .catch(() => toast.error('Failed to load gates.'))
       .finally(() => setGatesLoading(false))
+  }
+
+  const fetchBackups = () => {
+    setBackupsLoading(true)
+    usersApi.listBackups()
+      .then((data) => setBackups(data.backups || []))
+      .catch(() => setBackups([]))
+      .finally(() => setBackupsLoading(false))
   }
 
   const handleAddGate = async (e) => {
@@ -86,6 +178,7 @@ export default function SystemSettings() {
       const { data } = await createGate({ gate_id: `gate${num}`, label: gateForm.label.trim() })
       setGates((prev) => [...prev, data].sort((a, b) => a.gate_id.localeCompare(b.gate_id, undefined, { numeric: true })))
       setGateForm({ number: '', label: '' })
+      invalidateGates()   // Operations Center, camera assignment, gate labels
       toast.success(`${data.label} created. It is now available on the guard gate-login page.`)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create gate.')
@@ -99,6 +192,7 @@ export default function SystemSettings() {
     try {
       const { data } = await updateGate(gate.id, { is_active: !gate.is_active })
       setGates((prev) => prev.map((g) => (g.id === data.id ? data : g)))
+      invalidateGates()
       toast.success(`${data.label} ${data.is_active ? 'activated' : 'deactivated'}.`)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update gate.')
@@ -150,25 +244,89 @@ export default function SystemSettings() {
     }
   }
 
-  const handleDownloadBackup = async () => {
+  // Verify before the work, not after. The server demands a code either way,
+  // but being asked up front beats being interrupted once a file is already
+  // chosen or a form already filled. Cancelling just abandons the action.
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
+  /** Fetch a backup and put it where the person chose.
+   *
+   * The save dialog is opened first, before the two-factor prompt and before
+   * the download: the browser only offers it while the click is still a live
+   * user gesture, and awaiting anything spends that gesture. Asking first also
+   * matches what the person is doing — decide where this file goes, then get
+   * it — rather than having it land in the downloads folder and be moved after.
+   */
+  const runBackupDownload = async (suggestedName, fetchBlob, reason) => {
+    const target = await pickSaveLocation(suggestedName)
+    if (target === null) return   // dialog dismissed — nothing was downloaded
+
+    try {
+      await ensureStepUp(reason)
+    } catch {
+      // The picker already created an empty file at the chosen path; drop it so
+      // a cancelled code prompt does not leave a 0-byte backup behind.
+      await discardSaveLocation(target)
+      return
+    }
+
     setDownloading(true)
     try {
-      const blob = await usersApi.downloadBackup()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `slc-vms-backup-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success('Backup downloaded successfully.')
+      const blob = await fetchBlob()
+      const chosen = await saveBlobTo(target, blob, suggestedName)
+      toast.success(chosen
+        ? `Backup saved as ${suggestedName}.`
+        : 'Backup downloaded successfully.')
+      return true
     } catch {
+      await discardSaveLocation(target)
       toast.error('Failed to generate backup.')
     } finally {
       setDownloading(false)
     }
   }
 
-  const handleRestorePick = (e) => {
+  const handleDownloadBackup = async () => {
+    const ok = await runBackupDownload(
+      `slc-vms-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      () => usersApi.downloadBackup(),
+      'Confirm it’s you before downloading a full backup.',
+    )
+    // The server keeps its own copy of every manual backup, so the list on this
+    // page has a new row to show.
+    if (ok) fetchBackups()
+  }
+
+  const handleDownloadSaved = async (item) => {
+    setBackupBusy(item.name)
+    try {
+      await runBackupDownload(
+        item.name,
+        () => usersApi.downloadSavedBackup(item.name),
+        'Confirm it’s you before downloading a saved backup.',
+      )
+    } finally {
+      setBackupBusy(null)
+    }
+  }
+
+  const handleDeleteSaved = async () => {
+    const item = confirmDeleteBackup
+    setConfirmDeleteBackup(null)
+    if (!item) return
+    setBackupBusy(item.name)
+    try {
+      await usersApi.deleteSavedBackup(item.name)
+      setBackups((prev) => prev.filter((b) => b.name !== item.name))
+      toast.success(`${item.name} deleted.`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not delete that backup.')
+    } finally {
+      setBackupBusy(null)
+    }
+  }
+
+  const handleRestorePick = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = '' // reset so picking the same file again re-triggers
     if (!file) return
@@ -176,19 +334,36 @@ export default function SystemSettings() {
       toast.error('Please choose a .json backup file.')
       return
     }
-    setRestoreFile(file) // opens the confirmation modal
+    try {
+      await ensureStepUp('Confirm it’s you before restoring over live data.')
+    } catch {
+      return
+    }
+    setRestoreTarget({ label: file.name, file }) // opens the confirmation modal
+  }
+
+  const handleRestoreSavedPick = async (item) => {
+    try {
+      await ensureStepUp('Confirm it’s you before restoring over live data.')
+    } catch {
+      return
+    }
+    setRestoreTarget({ label: item.name, name: item.name })
   }
 
   const handleRestoreConfirm = async () => {
-    const file = restoreFile
-    setRestoreFile(null)
-    if (!file) return
+    const target = restoreTarget
+    setRestoreTarget(null)
+    if (!target) return
     setRestoring(true)
     try {
-      const res = await usersApi.restoreBackup(file)
+      const res = target.file
+        ? await usersApi.restoreBackup(target.file)
+        : await usersApi.restoreSavedBackup(target.name)
       toast.success(`Restore complete — ${res.restored} records loaded. A safety snapshot was saved first.`)
       fetchNotices()
       fetchGates()
+      fetchBackups()   // the safety snapshot the restore just took
     } catch (err) {
       toast.error(err.response?.data?.error || 'Restore failed. No changes were applied.')
     } finally {
@@ -196,24 +371,52 @@ export default function SystemSettings() {
     }
   }
 
+  const isDwellDirty = form.parked_after_seconds !== saved.parked_after_seconds
+    || form.double_park_after_seconds !== saved.double_park_after_seconds
   const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
     || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
-    || form.account_expiry_enabled !== saved.account_expiry_enabled || form.account_expiry_months !== saved.account_expiry_months
+    || form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
+    || form.auto_backup_frequency !== saved.auto_backup_frequency
+    || form.auto_backup_keep !== saved.auto_backup_keep
+    || isDwellDirty
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
+  const expiryChanged = form.account_expiry_months !== saved.account_expiry_months
+    || form.account_expiry_days !== saved.account_expiry_days
+  // The server rejects a zero period; block the save here too so the admin sees
+  // it as they type rather than as a toast after the round trip.
+  const expiryInvalid = !hasExpiryPeriod(form)
+  const dwellInvalid  = !dwellOrderValid(form)
+  // Only meaningful while a schedule is on — with backups off the box is hidden
+  // and whatever number it holds is never used.
+  const keepInvalid   = form.auto_backup_frequency !== 'off'
+    && (form.auto_backup_keep < 1 || form.auto_backup_keep > 90)
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
-    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? Number(value) : value }))
+    // No field on this form accepts a negative. Clearing a box gives '' → 0,
+    // which for the expiry pair is caught by expiryInvalid rather than sent.
+    const num = (v) => Math.max(0, Number(v) || 0)
+    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? num(value) : value }))
   }
 
   const handleSave = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing system settings.')
+    } catch {
+      return
+    }
+    setConfirmSave(false)
     setSaving(true)
     try {
       const { data } = await updateSystemSettings(form)
-      setForm(data)
-      setSaved(data)
-      toast.success('System settings saved.')
+      const normalized = normalizeSettings(data)
+      setForm(normalized)
+      setSaved(normalized)
+      setSaveSummary({
+        expiryPeriod:   expiryPeriodText(normalized),
+        expiryChanged,
+      })
     } catch (err) {
       const msg = err.response?.data
         ? Object.values(err.response.data).join(' ')
@@ -240,475 +443,682 @@ export default function SystemSettings() {
           </span>
         </div>
 
-        {loading ? (
-          <div className="ss-loading">
-            <Loader2 size={28} className="ss-spinner" />
-            <span>Loading settings…</span>
-          </div>
-        ) : (
-          <div className="ss-cards">
+        <div className="ss-panel">
 
-            {/* ── Data Retention ────────────────────────────────────────── */}
-            <div className="ss-card">
-              <div className="ss-card-head">
-                <div className="ss-card-icon ss-icon-red">
-                  <Trash2 size={16} />
-                </div>
-                <div>
-                  <h2 className="ss-card-title">Data Retention Policy</h2>
-                  <p className="ss-card-desc">
-                    Access logs and violation records older than the threshold are automatically
-                    deleted at 2:00 AM every day.
-                  </p>
-                </div>
-              </div>
-
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="retention_years">
-                  Retention period
-                </label>
-                <div className="ss-input-row">
-                  <input
-                    id="retention_years"
-                    name="retention_years"
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={form.retention_years}
-                    onChange={handleChange}
-                    className="ss-input"
-                  />
-                  <span className="ss-unit">years</span>
-                </div>
-                <p className="ss-hint">Allowed range: 1 – 10 years.</p>
-              </div>
-
-              <div className="ss-info-row">
-                <ShieldAlert size={13} />
-                Records older than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> will be permanently deleted and cannot be recovered.
+          {loading ? (
+            <div className="ss-section">
+              <div className="ss-loading">
+                <Loader2 size={28} className="ss-spinner" />
+                <span>Loading settings…</span>
               </div>
             </div>
-
-            {/* ── Vehicle Pass Fee ──────────────────────────────────────── */}
-            <div className="ss-card">
-              <div className="ss-card-head">
-                <div className="ss-card-icon ss-icon-blue">
-                  <Receipt size={16} />
-                </div>
-                <div>
-                  <h2 className="ss-card-title">Vehicle Pass Fee</h2>
-                  <p className="ss-card-desc">
-                    Amount registrants are asked to pay at the Accounting Office. Shown on the
-                    public registration form.
-                  </p>
-                </div>
-              </div>
-
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="vehicle_pass_fee">
-                  Student / Fetcher fee
-                </label>
-                <div className="ss-input-row">
-                  <span className="ss-unit">₱</span>
-                  <input
-                    id="vehicle_pass_fee"
-                    name="vehicle_pass_fee"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={form.vehicle_pass_fee}
-                    onChange={handleChange}
-                    className="ss-input"
-                  />
-                </div>
-              </div>
-
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="vehicle_pass_fee_employee">
-                  Employee fee
-                </label>
-                <div className="ss-input-row">
-                  <span className="ss-unit">₱</span>
-                  <input
-                    id="vehicle_pass_fee_employee"
-                    name="vehicle_pass_fee_employee"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={form.vehicle_pass_fee_employee}
-                    onChange={handleChange}
-                    className="ss-input"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* ── Account Expiration ────────────────────────────────────── */}
-            <div className="ss-card">
-              <div className="ss-card-head">
-                <div className="ss-card-icon ss-icon-red">
-                  <CalendarClock size={16} />
-                </div>
-                <div>
-                  <h2 className="ss-card-title">Vehicle-Owner Account Expiration</h2>
-                  <p className="ss-card-desc">
-                    When enabled, each new vehicle-owner account expires this long after it is created
-                    and is automatically archived. The owner is emailed and can register again — their
-                    email, ID and plate are freed for reuse.
-                  </p>
-                </div>
-              </div>
-
-              <label className="ss-field" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input
-                  id="account_expiry_enabled"
-                  name="account_expiry_enabled"
-                  type="checkbox"
-                  checked={form.account_expiry_enabled}
-                  onChange={handleChange}
-                  style={{ width: 16, height: 16 }}
-                />
-                <span className="ss-label" style={{ margin: 0 }}>Automatically archive expired owner accounts</span>
-              </label>
-
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', opacity: form.account_expiry_enabled ? 1 : 0.5 }}>
-                <div className="ss-field" style={{ flex: '1 1 140px' }}>
-                  <label className="ss-label" htmlFor="account_expiry_months">Months</label>
-                  <div className="ss-input-row">
-                    <input
-                      id="account_expiry_months"
-                      name="account_expiry_months"
-                      type="number"
-                      min={0}
-                      max={120}
-                      value={form.account_expiry_months}
-                      onChange={handleChange}
-                      disabled={!form.account_expiry_enabled}
-                      className="ss-input"
-                    />
-                    <span className="ss-unit">months</span>
+          ) : (
+            <>
+              {/* ── Data Retention ──────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-red">
+                    <Trash2 size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Data Retention</h2>
+                    <p className="ss-section-desc">
+                      Gate access logs, violation records, and archived accounts older than the
+                      threshold are deleted automatically each day. Only <em>archived</em> accounts
+                      are deleted — an account has to expire and be archived first, which is set
+                      under Account Expiration. Active accounts are never touched.
+                    </p>
                   </div>
                 </div>
-                <div className="ss-field" style={{ flex: '1 1 140px' }}>
-                  <label className="ss-label" htmlFor="account_expiry_days">Days</label>
-                  <div className="ss-input-row">
-                    <input
-                      id="account_expiry_days"
-                      name="account_expiry_days"
-                      type="number"
-                      min={0}
-                      max={365}
-                      value={form.account_expiry_days}
-                      onChange={handleChange}
-                      disabled={!form.account_expiry_enabled}
-                      className="ss-input"
-                    />
-                    <span className="ss-unit">days</span>
+
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="retention_years">Retention period</label>
+                      <span className="ss-row-hint">Allowed range: 1 – 10 years.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="retention_years"
+                        name="retention_years"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={form.retention_years}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">years</span>
+                    </div>
+                  </div>
+
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      Access logs, violations, and accounts archived more than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> ago
+                      will be permanently deleted and cannot be recovered. Audit log history is kept.
+                    </span>
                   </div>
                 </div>
-              </div>
-              <p className="ss-hint">Set at least 1 month or day. Turning this on backfills existing owners using their join date.</p>
+              </section>
 
-              {form.account_expiry_enabled && (
-                <div className="ss-info-row">
-                  <ShieldAlert size={13} />
-                  Owner accounts will archive <strong>{form.account_expiry_months} month{form.account_expiry_months !== 1 ? 's' : ''}
-                  {form.account_expiry_days > 0 ? ` and ${form.account_expiry_days} day${form.account_expiry_days !== 1 ? 's' : ''}` : ''}</strong> after creation.
+              {/* ── Vehicle Pass Fee ────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <Receipt size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Vehicle Pass Fee</h2>
+                    <p className="ss-section-desc">
+                      Amount registrants are asked to pay at the Accounting Office. Shown on the
+                      public registration form and in the Vehicle Pass Terms. Registration only —
+                      violation fees are set separately.
+                    </p>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* ── Backup & Restore ──────────────────────────────────────── */}
-            <div className="ss-card">
-              <div className="ss-card-head">
-                <div className="ss-card-icon ss-icon-blue">
-                  <Database size={16} />
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="vehicle_pass_fee">Student / Fetcher fee</label>
+                      <span className="ss-row-hint">Charged to student and fetcher registrations.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <span className="ss-unit">₱</span>
+                      <input
+                        id="vehicle_pass_fee"
+                        name="vehicle_pass_fee"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={form.vehicle_pass_fee}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="vehicle_pass_fee_employee">Employee fee</label>
+                      <span className="ss-row-hint">Charged to faculty and staff registrations.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <span className="ss-unit">₱</span>
+                      <input
+                        id="vehicle_pass_fee_employee"
+                        name="vehicle_pass_fee_employee"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={form.vehicle_pass_fee_employee}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="ss-card-title">Backup &amp; Restore</h2>
-                  <p className="ss-card-desc">
-                    Download a full snapshot of all system data — users, vehicles, registrations,
-                    violations and scan logs — as a JSON file you can save anywhere, or restore the
-                    system from a previously downloaded backup.
-                  </p>
+              </section>
+
+              {/* ── Account Expiration ──────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-red">
+                    <CalendarClock size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Vehicle-Owner Account Expiration</h2>
+                    <p className="ss-section-desc">
+                      Each vehicle-owner account expires this long after it is created and is then
+                      archived automatically. The owner is emailed and can register again — their
+                      email, ID and plate are freed for reuse. Expiration cannot be switched off;
+                      the period below is the only control.
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="ss-backup-actions">
-                <button
-                  type="button"
-                  className="ss-broadcast-btn"
-                  onClick={handleDownloadBackup}
-                  disabled={downloading || restoring}
-                >
-                  {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
-                  {downloading ? 'Preparing…' : 'Download Backup'}
-                </button>
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="account_expiry_months">Expiry period</label>
+                      <span className="ss-row-hint">
+                        Months and days must total at least 1 — 0 and 0 is not accepted. Existing
+                        owners keep the expiry date they already have; changing the period applies
+                        to accounts created from now on.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="account_expiry_months"
+                        name="account_expiry_months"
+                        type="number"
+                        min={0}
+                        max={120}
+                        value={form.account_expiry_months}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">months</span>
+                      <input
+                        id="account_expiry_days"
+                        name="account_expiry_days"
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={form.account_expiry_days}
+                        onChange={handleChange}
+                        className="ss-input"
+                        aria-label="Expiry period — days"
+                      />
+                      <span className="ss-unit">days</span>
+                    </div>
+                  </div>
 
-                <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
-                  {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
-                  {restoring ? 'Restoring…' : 'Restore from Backup'}
-                  <input
-                    type="file"
-                    accept="application/json,.json"
-                    hidden
-                    disabled={downloading || restoring}
-                    onChange={handleRestorePick}
-                  />
-                </label>
-              </div>
-
-              <div className="ss-info-row">
-                <ShieldAlert size={13} />
-                Restoring overwrites current records with those in the backup. A safety snapshot of the
-                current data is saved automatically before any restore, and the load is rolled back if it fails.
-              </div>
-            </div>
-
-            {/* ── Scan Grace Period ─────────────────────────────────────── */}
-            <div className="ss-card">
-              <div className="ss-card-head">
-                <div className="ss-card-icon ss-icon-blue">
-                  <Clock size={16} />
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      {expiryInvalid
+                        ? <>Enter at least 1 month or 1 day. Expiration cannot be switched off.</>
+                        : <>Owner accounts archive <strong>{expiryPeriodText(form)}</strong> after creation,
+                           then are deleted {form.retention_years} year{form.retention_years !== 1 ? 's' : ''} later
+                           under the retention policy.</>}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="ss-card-title">Scan Deduplication Window</h2>
-                  <p className="ss-card-desc">
-                    If the same plate is read again within this window the second scan is suppressed,
-                    preventing duplicate entries in the access log.
-                  </p>
+              </section>
+
+              {/* ── Scan Grace Period ───────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <Clock size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Scan Deduplication</h2>
+                    <p className="ss-section-desc">
+                      If the same plate is read again within this window the second scan is suppressed,
+                      preventing duplicate entries in the access log.
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="scan_dedup_seconds">
-                  Grace period
-                </label>
-                <div className="ss-input-row">
-                  <input
-                    id="scan_dedup_seconds"
-                    name="scan_dedup_seconds"
-                    type="number"
-                    min={5}
-                    max={300}
-                    value={form.scan_dedup_seconds}
-                    onChange={handleChange}
-                    className="ss-input"
-                  />
-                  <span className="ss-unit">seconds</span>
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="scan_dedup_seconds">Grace period</label>
+                      <span className="ss-row-hint">
+                        Allowed range: 5 – 300 seconds. Takes effect for new WebSocket connections.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="scan_dedup_seconds"
+                        name="scan_dedup_seconds"
+                        type="number"
+                        min={5}
+                        max={300}
+                        value={form.scan_dedup_seconds}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">seconds</span>
+                    </div>
+                  </div>
                 </div>
-                <p className="ss-hint">Allowed range: 5 – 300 seconds. Takes effect for new WebSocket connections.</p>
-              </div>
+              </section>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  className="ss-save-btn"
-                  style={{ opacity: isDedupDirty ? 1 : 0.45, cursor: isDedupDirty ? 'pointer' : 'default' }}
-                  onClick={handleSave}
-                  disabled={saving || !isDedupDirty}
-                >
-                  {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
-                  {saving ? 'Saving…' : 'Save Changes'}
-                </button>
-              </div>
-            </div>
+              {/* ── Parking Detection Delays ────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <Timer size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Parking Detection Delays</h2>
+                    <p className="ss-section-desc">
+                      Parking cameras follow each vehicle and time how long it has stayed still. These
+                      say how long a vehicle must be stopped before the camera commits — long enough
+                      that a car driving past a bay, or reversing into one, is not mistaken for a
+                      parked one.
+                    </p>
+                  </div>
+                </div>
 
-          </div>
-        )}
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="parked_after_seconds">Counts as parked after</label>
+                      <span className="ss-row-hint">
+                        Allowed range: 1 – 120 seconds. Until this elapses the bay stays free, so
+                        someone else can still be directed to it.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="parked_after_seconds"
+                        name="parked_after_seconds"
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={form.parked_after_seconds}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">seconds</span>
+                    </div>
+                  </div>
 
-        {/* ── Campus Gates ──────────────────────────────────────────── */}
-        <div className="ss-notice-section">
-          <div className="ss-card">
-            <div className="ss-card-head">
-              <div className="ss-card-icon ss-icon-blue">
-                <DoorOpen size={16} />
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="double_park_after_seconds">Reports double parking after</label>
+                      <span className="ss-row-hint">
+                        Allowed range: 1 – 300 seconds, and never shorter than the parked delay. This
+                        one issues a violation, so it is worth leaving longer.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="double_park_after_seconds"
+                        name="double_park_after_seconds"
+                        type="number"
+                        min={1}
+                        max={300}
+                        value={form.double_park_after_seconds}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">seconds</span>
+                    </div>
+                  </div>
+
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      {dwellInvalid
+                        ? <>The double-parking delay cannot be shorter than the parked delay — a car
+                           cannot be badly parked before it counts as parked at all.</>
+                        : <>A vehicle across two bays is reported once it has been still
+                           for <strong>{form.double_park_after_seconds} seconds</strong>. Running zones
+                           pick up a change within a few seconds; no restart needed.</>}
+                    </span>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {/* ── Campus Gates ──────────────────────────────────────────── */}
+          <section className="ss-section">
+            <div className="ss-section-head">
+              <div className="ss-section-icon ss-icon-blue">
+                <DoorOpen size={15} />
               </div>
               <div>
-                <h2 className="ss-card-title">Campus Gates</h2>
-                <p className="ss-card-desc">
+                <h2 className="ss-section-title">Campus Gates</h2>
+                <p className="ss-section-desc">
                   Add new gates as the school expands. Active gates immediately appear on the guard
                   gate-login page and can be assigned entry cameras in Device Management.
                 </p>
               </div>
             </div>
 
-            <form className="ss-notice-form" onSubmit={handleAddGate}>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <div className="ss-field" style={{ flex: '0 0 140px' }}>
-                  <label className="ss-label" htmlFor="gate-number">Gate Number</label>
-                  <input
-                    id="gate-number"
-                    className="ss-text-input"
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="e.g. 2"
-                    maxLength={3}
-                    value={gateForm.number}
-                    onChange={(e) => setGateForm((p) => ({ ...p, number: e.target.value }))}
-                    required
-                  />
-                </div>
-                <div className="ss-field" style={{ flex: 1, minWidth: 220 }}>
-                  <label className="ss-label" htmlFor="gate-label">Display Label</label>
-                  <input
-                    id="gate-label"
-                    className="ss-text-input"
-                    type="text"
-                    placeholder="e.g. Gate 2 — North Entrance"
-                    maxLength={100}
-                    value={gateForm.label}
-                    onChange={(e) => setGateForm((p) => ({ ...p, label: e.target.value }))}
-                    required
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="ss-broadcast-btn"
-                disabled={addingGate || !gateForm.number.trim() || !gateForm.label.trim()}
-              >
-                {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
-                {addingGate ? 'Adding…' : 'Add Gate'}
-              </button>
-            </form>
-
-            <div className="ss-notices-list-head">
-              <span>Gates ({gatesLoading ? '…' : gates.length})</span>
-            </div>
-            {gatesLoading ? (
-              <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading gates…</span></div>
-            ) : gates.length === 0 ? (
-              <p className="ss-no-notices">No gates configured.</p>
-            ) : (
-              <div className="ss-notices-list">
-                {gates.map((g) => (
-                  <div
-                    key={g.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '10px 14px', border: '1px solid #D3E1EC', borderRadius: 10, marginBottom: 8,
-                      background: g.is_active ? '#fff' : '#F7FAFC',
-                    }}
-                  >
-                    <div>
-                      <strong style={{ fontSize: 13.5, color: '#0B2340' }}>{g.label}</strong>
-                      <span style={{ marginLeft: 8, fontSize: 12, color: '#64839C', fontFamily: 'monospace' }}>{g.gate_id}</span>
-                      {!g.is_active && (
-                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#8A6B00', background: '#FDF0BE', padding: '2px 8px', borderRadius: 6 }}>
-                          Inactive
-                        </span>
-                      )}
+            <div className="ss-rows">
+              <div className="ss-row ss-row--stacked">
+                <form className="ss-inline-form" onSubmit={handleAddGate}>
+                  <div className="ss-form-grid">
+                    <div className="ss-field" style={{ flex: '0 0 140px' }}>
+                      <label className="ss-label" htmlFor="gate-number">Gate Number</label>
+                      <input
+                        id="gate-number"
+                        className="ss-text-input"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="e.g. 2"
+                        maxLength={3}
+                        value={gateForm.number}
+                        onChange={(e) => setGateForm((p) => ({ ...p, number: e.target.value }))}
+                        required
+                      />
                     </div>
-                    <button
-                      type="button"
-                      className="ss-save-btn"
-                      style={{ padding: '6px 12px', fontSize: 12 }}
-                      disabled={togglingGateId === g.id}
-                      onClick={() => handleToggleGate(g)}
-                    >
-                      {togglingGateId === g.id ? 'Saving…' : g.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
+                    <div className="ss-field" style={{ flex: 1, minWidth: 220 }}>
+                      <label className="ss-label" htmlFor="gate-label">Display Label</label>
+                      <input
+                        id="gate-label"
+                        className="ss-text-input"
+                        type="text"
+                        placeholder="e.g. Gate 2 — North Entrance"
+                        maxLength={100}
+                        value={gateForm.label}
+                        onChange={(e) => setGateForm((p) => ({ ...p, label: e.target.value }))}
+                        required
+                      />
+                    </div>
                   </div>
-                ))}
+                  <button
+                    type="submit"
+                    className="ss-broadcast-btn"
+                    disabled={addingGate || !gateForm.number.trim() || !gateForm.label.trim()}
+                  >
+                    {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
+                    {addingGate ? 'Adding…' : 'Add Gate'}
+                  </button>
+                </form>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* ── Parking Notices ────────────────────────────────────────── */}
-        <div className="ss-notice-section">
-          <div className="ss-card ss-notice-card">
-            <div className="ss-card-head">
-              <div className="ss-card-icon ss-icon-purple">
-                <Megaphone size={16} />
+              <div className="ss-row ss-row--stacked">
+                <div className="ss-list-head">
+                  <span>Gates ({gatesLoading ? '…' : gates.length})</span>
+                </div>
+                {gatesLoading ? (
+                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading gates…</span></div>
+                ) : gates.length === 0 ? (
+                  <p className="ss-no-notices">No gates configured.</p>
+                ) : (
+                  <div className="ss-notices-list">
+                    {gates.map((g) => (
+                      <div key={g.id} className={`ss-gate-item${g.is_active ? '' : ' is-inactive'}`}>
+                        <div>
+                          <strong className="ss-gate-label">{g.label}</strong>
+                          <span className="ss-gate-id">{g.gate_id}</span>
+                          {!g.is_active && <span className="ss-gate-tag">Inactive</span>}
+                        </div>
+                        <button
+                          type="button"
+                          className="ss-gate-btn"
+                          disabled={togglingGateId === g.id}
+                          onClick={() => handleToggleGate(g)}
+                        >
+                          {togglingGateId === g.id ? 'Saving…' : g.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* ── Parking Notices ───────────────────────────────────────── */}
+          <section className="ss-section">
+            <div className="ss-section-head">
+              <div className="ss-section-icon ss-icon-purple">
+                <Megaphone size={15} />
               </div>
               <div>
-                <h2 className="ss-card-title">Broadcast Parking Notice</h2>
-                <p className="ss-card-desc">
+                <h2 className="ss-section-title">Broadcast Parking Notice</h2>
+                <p className="ss-section-desc">
                   Send an announcement to all registered vehicle owners via email and the owner portal.
                 </p>
               </div>
             </div>
 
-            <form className="ss-notice-form" onSubmit={handleBroadcast}>
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="notice-title">Subject / Title</label>
-                <input
-                  id="notice-title"
-                  className="ss-text-input"
-                  type="text"
-                  placeholder="e.g. Parking suspension on June 28"
-                  maxLength={200}
-                  value={noticeForm.title}
-                  onChange={(e) => setNoticeForm((p) => ({ ...p, title: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="ss-field">
-                <label className="ss-label" htmlFor="notice-body">Message</label>
-                <textarea
-                  id="notice-body"
-                  className="ss-textarea"
-                  rows={4}
-                  placeholder="Write the full notice text here…"
-                  value={noticeForm.body}
-                  onChange={(e) => setNoticeForm((p) => ({ ...p, body: e.target.value }))}
-                  required
-                />
-              </div>
-              <button
-                type="submit"
-                className="ss-broadcast-btn"
-                disabled={broadcasting || !noticeForm.title.trim() || !noticeForm.body.trim()}
-              >
-                {broadcasting ? <Loader2 size={15} className="ss-spinner" /> : <Send size={15} />}
-                {broadcasting ? 'Sending…' : 'Broadcast to All Owners'}
-              </button>
-            </form>
-
-            {/* Active notices list */}
-            <div className="ss-notices-list-head">
-              <span>Active Notices ({noticesLoading ? '…' : notices.length})</span>
-            </div>
-            {noticesLoading ? (
-              <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading notices…</span></div>
-            ) : notices.length === 0 ? (
-              <p className="ss-no-notices">No active notices.</p>
-            ) : (
-              <div className="ss-notices-list">
-                {notices.map((n) => (
-                  <div key={n.id} className="ss-notice-item">
-                    <div className="ss-notice-item-body">
-                      <span className="ss-notice-title">{n.title}</span>
-                      <span className="ss-notice-meta">
-                        {new Date(n.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}
-                        {n.created_by_name && <> · by {n.created_by_name}</>}
-                      </span>
-                      <p className="ss-notice-body">{n.body}</p>
-                    </div>
-                    <button
-                      className="ss-notice-remove"
-                      title="Deactivate notice"
-                      disabled={removingId === n.id}
-                      onClick={() => setConfirmDeactivate({ id: n.id, title: n.title })}
-                    >
-                      {removingId === n.id ? <Loader2 size={14} className="ss-spinner" /> : <X size={14} />}
-                    </button>
+            <div className="ss-rows">
+              <div className="ss-row ss-row--stacked">
+                <form className="ss-inline-form" onSubmit={handleBroadcast}>
+                  <div className="ss-field">
+                    <label className="ss-label" htmlFor="notice-title">Subject / Title</label>
+                    <input
+                      id="notice-title"
+                      className="ss-text-input"
+                      type="text"
+                      placeholder="e.g. Parking suspension on June 28"
+                      maxLength={200}
+                      value={noticeForm.title}
+                      onChange={(e) => setNoticeForm((p) => ({ ...p, title: e.target.value }))}
+                      required
+                    />
                   </div>
-                ))}
+                  <div className="ss-field">
+                    <label className="ss-label" htmlFor="notice-body">Message</label>
+                    <textarea
+                      id="notice-body"
+                      className="ss-textarea"
+                      rows={4}
+                      placeholder="Write the full notice text here…"
+                      value={noticeForm.body}
+                      onChange={(e) => setNoticeForm((p) => ({ ...p, body: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="ss-broadcast-btn"
+                    disabled={broadcasting || !noticeForm.title.trim() || !noticeForm.body.trim()}
+                  >
+                    {broadcasting ? <Loader2 size={15} className="ss-spinner" /> : <Send size={15} />}
+                    {broadcasting ? 'Sending…' : 'Broadcast to All Owners'}
+                  </button>
+                </form>
               </div>
-            )}
-          </div>
+
+              {/* Active notices list */}
+              <div className="ss-row ss-row--stacked">
+                <div className="ss-list-head">
+                  <span>Active Notices ({noticesLoading ? '…' : notices.length})</span>
+                </div>
+                {noticesLoading ? (
+                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading notices…</span></div>
+                ) : notices.length === 0 ? (
+                  <p className="ss-no-notices">No active notices.</p>
+                ) : (
+                  <div className="ss-notices-list">
+                    {notices.map((n) => (
+                      <div key={n.id} className="ss-notice-item">
+                        <div className="ss-notice-item-body">
+                          <span className="ss-notice-title">{n.title}</span>
+                          <span className="ss-notice-meta">
+                            {new Date(n.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}
+                            {n.created_by_name && <> · by {n.created_by_name}</>}
+                          </span>
+                          <p className="ss-notice-body">{n.body}</p>
+                        </div>
+                        <button
+                          className="ss-notice-remove"
+                          title="Deactivate notice"
+                          disabled={removingId === n.id}
+                          onClick={() => setConfirmDeactivate({ id: n.id, title: n.title })}
+                        >
+                          {removingId === n.id ? <Loader2 size={14} className="ss-spinner" /> : <X size={14} />}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* ── Backup & Restore ──────────────────────────────────────── */}
+          <section className="ss-section">
+            <div className="ss-section-head">
+              <div className="ss-section-icon ss-icon-blue">
+                <Database size={15} />
+              </div>
+              <div>
+                <h2 className="ss-section-title">Backup &amp; Restore</h2>
+                <p className="ss-section-desc">
+                  Download a snapshot of system data — users, vehicles, registrations,
+                  violations and scan logs — to a folder you choose, let the server take one on a
+                  schedule, or restore the system from any backup you still have.
+                </p>
+              </div>
+            </div>
+
+            <div className="ss-rows">
+              <div className="ss-row">
+                <div className="ss-row-text">
+                  <span className="ss-row-label">Full system snapshot</span>
+                  <span className="ss-row-hint">
+                    You pick the folder and filename before the download starts — keep it somewhere safe, it holds
+                    every account and plate in the system. Uploaded images (owner photos,
+                    licence scans, snapshots) are <strong>not</strong> included — only their
+                    filenames — so back those up separately. Authenticator pairings are also
+                    left out, so a restore never breaks anyone&rsquo;s 2FA.
+                  </span>
+                </div>
+                <div className="ss-backup-actions">
+                  <button
+                    type="button"
+                    className="ss-broadcast-btn"
+                    onClick={handleDownloadBackup}
+                    disabled={downloading || restoring}
+                  >
+                    {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
+                    {downloading ? 'Preparing…' : 'Download Backup'}
+                  </button>
+
+                  <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
+                    {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
+                    {restoring ? 'Restoring…' : 'Restore from Backup'}
+                    <input
+                      type="file"
+                      accept="application/json,.json"
+                      hidden
+                      disabled={downloading || restoring}
+                      onChange={handleRestorePick}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="ss-row">
+                <div className="ss-row-text">
+                  <label className="ss-row-label" htmlFor="auto_backup_frequency">Automatic backups</label>
+                  <span className="ss-row-hint">
+                    {FREQ_HINT[form.auto_backup_frequency]} Automatic backups are kept on the server
+                    and listed below, where you can download or restore any of them.
+                  </span>
+                </div>
+                <div className="ss-row-control">
+                  <select
+                    id="auto_backup_frequency"
+                    name="auto_backup_frequency"
+                    className="ss-select"
+                    value={form.auto_backup_frequency}
+                    onChange={handleChange}
+                  >
+                    {BACKUP_FREQUENCIES.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {form.auto_backup_frequency !== 'off' && (
+                <div className="ss-row">
+                  <div className="ss-row-text">
+                    <label className="ss-row-label" htmlFor="auto_backup_keep">Automatic backups to keep</label>
+                    <span className="ss-row-hint">
+                      Once there are more than this, the oldest is deleted so backups cannot fill
+                      the disk. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)} Applies
+                      to the automatic ones and to the server&rsquo;s copy of each download
+                      &mdash; pre-restore snapshots are never rotated away. Allowed range: 1 &ndash; 90.
+                    </span>
+                  </div>
+                  <div className="ss-row-control">
+                    <input
+                      id="auto_backup_keep"
+                      name="auto_backup_keep"
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={form.auto_backup_keep}
+                      onChange={handleChange}
+                      className="ss-input"
+                    />
+                    <span className="ss-unit">backups</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="ss-row ss-row--stacked">
+                <div className="ss-list-head">
+                  <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
+                </div>
+                {backupsLoading ? (
+                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading backups…</span></div>
+                ) : backups.length === 0 ? (
+                  <p className="ss-no-notices">
+                    No backups saved on the server yet. Download one, or switch automatic backups on above.
+                  </p>
+                ) : (
+                  <div className="ss-notices-list">
+                    {backups.map((item) => (
+                      <div key={item.name} className="ss-backup-item">
+                        <div className="ss-backup-info">
+                          <span className="ss-backup-name">{item.name}</span>
+                          <span className="ss-backup-meta">
+                            <History size={11} />
+                            {formatStamp(item.created_at)} &middot; {formatBytes(item.size)}
+                            <span className={`ss-backup-tag ss-backup-tag--${item.kind}`}>
+                              {KIND_LABEL[item.kind] || KIND_LABEL.other}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="ss-backup-item-actions">
+                          <button
+                            type="button"
+                            className="ss-gate-btn"
+                            title="Choose where to save this file"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => handleDownloadSaved(item)}
+                          >
+                            <Download size={12} /> Save As…
+                          </button>
+                          <button
+                            type="button"
+                            className="ss-gate-btn"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => handleRestoreSavedPick(item)}
+                          >
+                            <RotateCcw size={12} /> Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="ss-gate-btn ss-gate-btn--danger"
+                            disabled={backupBusy === item.name || downloading || restoring}
+                            onClick={() => setConfirmDeleteBackup(item)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="ss-note">
+                <ShieldAlert size={13} />
+                <span>
+                  Restoring overwrites current records with those in the backup. A safety snapshot of the
+                  current data is saved automatically before any restore, and the load is rolled back if it fails.
+                  Backups held on the server live with the app &mdash; keep your own downloaded copy of
+                  anything you would not want to lose with it.
+                </span>
+              </div>
+            </div>
+          </section>
+
         </div>
 
         {/* ── Save Bar ───────────────────────────────────────────────── */}
         {!loading && (
           <div className={`ss-save-bar ${isDirty ? 'ss-save-bar--visible' : ''}`}>
-            <span className="ss-unsaved-label">Unsaved changes</span>
+            <span className="ss-unsaved-label">
+              {expiryInvalid
+                ? 'Account expiration needs at least 1 month or 1 day'
+                : dwellInvalid
+                  ? 'Double-parking delay cannot be shorter than the parked delay'
+                  : keepInvalid
+                    ? 'Automatic backups to keep must be between 1 and 90'
+                    : 'Unsaved changes'}
+            </span>
             <button
               className="ss-save-btn"
-              onClick={handleSave}
-              disabled={saving || !isDirty}
+              onClick={() => setConfirmSave(true)}
+              disabled={saving || !isDirty || expiryInvalid || dwellInvalid || keepInvalid}
             >
               {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
               {saving ? 'Saving…' : 'Save Changes'}
@@ -717,6 +1127,108 @@ export default function SystemSettings() {
         )}
 
       </div>
+
+      {/* ── Confirm Save Modal ─── */}
+      {confirmSave && (
+        <div className="ss-overlay" onClick={() => setConfirmSave(false)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setConfirmSave(false)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Save System Settings?</h2>
+            <p className="ss-modal-body">
+              These settings apply system-wide and take effect immediately.
+            </p>
+
+            <ul className="ss-confirm-list">
+              {form.retention_years !== saved.retention_years && (
+                <li>
+                  Records are kept for <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong>.
+                  Access logs, violations, and accounts archived longer ago than that are
+                  permanently deleted on the next daily purge.
+                  {form.retention_years < saved.retention_years && (
+                    <> Shortening the window means the next purge deletes more than the last one did.</>
+                  )}
+                </li>
+              )}
+              {isDedupDirty && (
+                <li>Repeat scans of the same plate are ignored for <strong>{form.scan_dedup_seconds} second{form.scan_dedup_seconds !== 1 ? 's' : ''}</strong>.</li>
+              )}
+              {form.vehicle_pass_fee !== saved.vehicle_pass_fee && (
+                <li>Student vehicle-pass fee becomes <strong>₱{form.vehicle_pass_fee}</strong>.</li>
+              )}
+              {form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee && (
+                <li>Employee vehicle-pass fee becomes <strong>₱{form.vehicle_pass_fee_employee}</strong>.</li>
+              )}
+              {expiryChanged && (
+                <li>
+                  Owner-account expiry period changes to <strong>{expiryPeriodText(form)}</strong> for
+                  newly created accounts. Owners that already have an expiry date keep it.
+                </li>
+              )}
+              {form.parked_after_seconds !== saved.parked_after_seconds && (
+                <li>
+                  A vehicle must stand still for <strong>{form.parked_after_seconds} second{form.parked_after_seconds !== 1 ? 's' : ''}</strong> before
+                  a parking camera claims its bay.
+                </li>
+              )}
+              {form.double_park_after_seconds !== saved.double_park_after_seconds && (
+                <li>
+                  A vehicle across two bays is reported as double parking after
+                  standing still for <strong>{form.double_park_after_seconds} second{form.double_park_after_seconds !== 1 ? 's' : ''}</strong>.
+                  {form.double_park_after_seconds < saved.double_park_after_seconds && (
+                    <> Shortening this makes violations more likely to be issued while a driver is
+                       still manoeuvring.</>
+                  )}
+                </li>
+              )}
+              {form.auto_backup_frequency !== saved.auto_backup_frequency && (
+                <li>
+                  {form.auto_backup_frequency === 'off'
+                    ? <>The server <strong>stops</strong> taking backups on its own. Existing backups are kept.</>
+                    : <>The server saves a backup by itself <strong>{form.auto_backup_frequency}</strong>, keeping
+                       the newest {form.auto_backup_keep}. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}</>}
+                </li>
+              )}
+              {form.auto_backup_frequency !== 'off'
+                && form.auto_backup_frequency === saved.auto_backup_frequency
+                && form.auto_backup_keep !== saved.auto_backup_keep && (
+                <li>
+                  <strong>{form.auto_backup_keep}</strong> automatic backup{form.auto_backup_keep !== 1 ? 's are' : ' is'} kept.
+                  {' '}{backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}
+                  {form.auto_backup_keep < saved.auto_backup_keep && (
+                    <> Older automatic backups beyond that are deleted as soon as you save.</>
+                  )}
+                </li>
+              )}
+            </ul>
+
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setConfirmSave(false)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-primary" onClick={handleSave}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Save Success Modal ─── */}
+      {saveSummary && (
+        <div className="ss-overlay" onClick={() => setSaveSummary(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setSaveSummary(null)}><X size={16} /></button>
+            <CheckCircle2 size={32} className="ss-modal-icon-ok" />
+            <h2 className="ss-modal-title">Settings Saved</h2>
+            <p className="ss-modal-body">
+              Your changes are live.
+              {saveSummary.expiryChanged
+                ? ` New owner accounts now expire ${saveSummary.expiryPeriod} after creation, and expired ones are archived automatically.`
+                : ''}
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-primary" onClick={() => setSaveSummary(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Backup / Restore progress overlay ─── */}
       {(downloading || restoring) && (
@@ -739,20 +1251,46 @@ export default function SystemSettings() {
       )}
 
       {/* ── Confirm Restore Modal ─── */}
-      {restoreFile && (
-        <div className="ss-overlay" onClick={() => setRestoreFile(null)}>
+      {restoreTarget && (
+        <div className="ss-overlay" onClick={() => setRestoreTarget(null)}>
           <div className="ss-modal" onClick={e => e.stopPropagation()}>
-            <button className="ss-modal-close" onClick={() => setRestoreFile(null)}><X size={16} /></button>
+            <button className="ss-modal-close" onClick={() => setRestoreTarget(null)}><X size={16} /></button>
             <AlertTriangle size={32} className="ss-modal-icon-warn" />
             <h2 className="ss-modal-title">Restore from Backup?</h2>
             <p className="ss-modal-body">
-              This will overwrite current system data with the contents of{' '}
-              <strong>{restoreFile.name}</strong>. A safety snapshot of the current data is saved
-              first, and the restore is rolled back automatically if anything goes wrong. Continue?
+              This loads <strong>{restoreTarget.label}</strong> over your current data. Records in
+              the file replace the matching ones, but anything created since the backup was
+              taken <strong>stays</strong> &mdash; this is a merge, not a rewind to that date.
+            </p>
+            <p className="ss-modal-body">
+              Passwords are part of the file, so anyone who has changed theirs since will need
+              the older one. Authenticator pairings are not touched. A safety snapshot of the
+              current data is saved first, and the whole restore is rolled back automatically if
+              anything fails. Continue?
             </p>
             <div className="ss-modal-actions">
-              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreFile(null)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setRestoreTarget(null)}>Cancel</button>
               <button className="ss-modal-btn ss-modal-btn-danger" onClick={handleRestoreConfirm}>Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Delete Saved Backup Modal ─── */}
+      {confirmDeleteBackup && (
+        <div className="ss-overlay" onClick={() => setConfirmDeleteBackup(null)}>
+          <div className="ss-modal" onClick={e => e.stopPropagation()}>
+            <button className="ss-modal-close" onClick={() => setConfirmDeleteBackup(null)}><X size={16} /></button>
+            <AlertTriangle size={32} className="ss-modal-icon-warn" />
+            <h2 className="ss-modal-title">Delete This Backup?</h2>
+            <p className="ss-modal-body">
+              <strong>{confirmDeleteBackup.name}</strong> will be removed from the server. If you have
+              no downloaded copy, the data as it stood on {formatStamp(confirmDeleteBackup.created_at)} is
+              gone with it. Live data is not affected.
+            </p>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-btn ss-modal-btn-ghost" onClick={() => setConfirmDeleteBackup(null)}>Cancel</button>
+              <button className="ss-modal-btn ss-modal-btn-danger" onClick={handleDeleteSaved}>Delete</button>
             </div>
           </div>
         </div>

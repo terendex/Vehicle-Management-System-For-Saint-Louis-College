@@ -7,8 +7,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { camerasApi } from '../../api/cameras'
-import { getGates } from '../../api/scanning'
 import { useCameraContext } from '../../context/CameraContext'
+import { useGates } from '../../hooks/useGates'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,13 +27,12 @@ function channelOf(rtspUrl) {
   return 1
 }
 
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
-
 function AssignmentBadge({ value, gateId }) {
+  const { gateLabel } = useGates()
   if (value === 'entry') {
     return (
       <span className="dm-badge dm-badge-entry">
-        <ShieldCheck size={11} /> {gateId ? GATE_LABELS[gateId] ?? gateId : 'Entry'}
+        <ShieldCheck size={11} /> {gateId ? gateLabel(gateId) : 'Entry'}
       </span>
     )
   }
@@ -45,12 +44,6 @@ function AssignmentBadge({ value, gateId }) {
 }
 
 // ── Camera Form Modal ─────────────────────────────────────────────────────────
-
-// Fallback until the dynamic gate list loads — gates are managed in System Settings
-const GATE_OPTIONS = [
-  { value: 'gate1', label: 'Gate 1' },
-  { value: 'gate4', label: 'Gate 4' },
-]
 
 const IP_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 
@@ -96,20 +89,15 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
   // default, but a camera that plainly works and still will not detect is
   // undiagnosable without it.
   const [detectAttempts, setDetectAttempts] = useState([])
+  const { gates, gateLabel } = useGates()
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
-  const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
+  const [pickedGate, setPickedGate] = useState(camera?.gate_id ?? '')
   const [saving,     setSaving]     = useState(false)
-  const [gateOptions, setGateOptions] = useState(GATE_OPTIONS)
 
-  useEffect(() => {
-    getGates()
-      .then(({ data }) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setGateOptions(data.map(g => ({ value: g.gate_id, label: g.label.split('—')[0].trim() })))
-        }
-      })
-      .catch(() => {})
-  }, [])
+  const gateOptions = gates.map(g => ({ value: g.gate_id, label: gateLabel(g.gate_id) }))
+  // A new camera defaults to the first gate — derived, not a hardcoded 'gate1',
+  // which a school that renamed or retired its founding gates would not have.
+  const gateId = pickedGate || gates[0]?.gate_id || ''
 
   // Another camera on the same IP is normal for an NVR, so this is a note, not
   // a block. Only a duplicate *stream* is rejected, and the backend does that.
@@ -313,7 +301,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
               <button
                 type="button"
                 className={`dm-assign-btn ${assignment === 'parking' ? 'dm-assign-btn-active-parking' : ''}`}
-                onClick={() => { setAssignment('parking'); setGateId(null) }}
+                onClick={() => { setAssignment('parking'); setPickedGate('') }}
               >
                 <ParkingCircle size={15} /> Parking Area
               </button>
@@ -328,7 +316,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                       key={value}
                       type="button"
                       className={`dm-gate-btn ${gateId === value ? 'dm-gate-btn-active' : ''}`}
-                      onClick={() => setGateId(value)}
+                      onClick={() => setPickedGate(value)}
                     >
                       {label}
                     </button>

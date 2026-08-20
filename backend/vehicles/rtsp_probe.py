@@ -813,6 +813,14 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
         # camera's own documented URL.
         good_prefixes, status_meaningful = [], True
         for prefix in credential_prefixes(device_id, password):
+            # The budget is a ceiling on the *whole* probe, and the control
+            # stage is part of it. Without this check a spent budget still
+            # bought one connection per credential form before the first
+            # deadline test in sweep() — on a camera that only grants three at a
+            # time, that is the entire allowance handed over after the clock
+            # already said stop.
+            if time.monotonic() >= deadline:
+                break
             code = _describe(f'rtsp://{prefix}{ip}{BOGUS_PATH}', session=session)
             attempts.append(f'rtsp://{_redact_prefix(prefix)}{ip}{BOGUS_PATH} '
                             f'-> {code if code else "no reply"}  (control)')
@@ -884,7 +892,7 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
         # exhausted. Skipped entirely if the camera has already gone quiet:
         # piling HTTP requests onto a device that stopped answering RTSP only
         # pushes it under.
-        if state['dead'] < RECOVERY_AFTER_SILENT:
+        if state['dead'] < RECOVERY_AFTER_SILENT and time.monotonic() < deadline:
             onvif_uri = None
             try:
                 onvif_uri = onvif_stream_uri(ip, ['admin', device_id],

@@ -81,8 +81,9 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 | `R2_BUCKET_NAME` | | |
 | `R2_ACCOUNT_ID` | | |
 | `R2_PUBLIC_URL` | e.g. `pub-xxxx.r2.dev` | Public bucket host |
-| `EMAIL_HOST_USER` | | Gmail address |
-| `EMAIL_HOST_PASSWORD` | | Gmail **app password**, not the account password |
+| `EMAIL_BACKEND` | `config.email_backends.BrevoEmailBackend` | **Required on Railway** — see the email note below |
+| `BREVO_API_KEY` | `xkeysib-…` | From the Brevo dashboard |
+| `DEFAULT_FROM_EMAIL` | `SLC CDSO <the-gmail-address>` | The address must be a **verified sender** in Brevo |
 | `FRONTEND_URL` | `https://<your>.up.railway.app` | Used in emailed links |
 | `BACKEND_URL` | `https://<your>.up.railway.app` | Same value — one origin |
 | `DJANGO_ADMIN_URL` | `django-admin` | Change to something unguessable |
@@ -91,6 +92,68 @@ and is picked up automatically for both `ALLOWED_HOSTS` and
 > ephemeral: with local storage, every licence photo and violation evidence
 > image is destroyed on each redeploy. The app prints a warning at boot if this
 > is left off.
+
+### Email: Gmail works on campus and cannot work on Railway
+
+Railway blocks outbound SMTP on ports 25, 465 and 587 to deter spam, and blocks
+it by **dropping** the packets rather than refusing them. Gmail on port 587 is
+therefore correct on the campus machine and impossible here: the connection
+hangs until `EMAIL_TIMEOUT` and the send fails with nothing in the logs to
+distinguish it from a dead mail server. No port, password or SMTP provider
+fixes this — mail has to leave over HTTPS on 443, which the platform allows.
+
+So the two halves use different transports against the same application code:
+
+| | Campus | Railway |
+|---|---|---|
+| Transport | Gmail SMTP, port 587 | Brevo HTTPS API |
+| Variables | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | `EMAIL_BACKEND`, `BREVO_API_KEY`, `DEFAULT_FROM_EMAIL` |
+
+Setting `EMAIL_BACKEND` is the whole switch; nothing in `email_utils.py`
+changes and the approval PDF still goes out as an attachment.
+
+**Why Brevo and not Resend.** Both backends exist in `config/email_backends.py`
+and both send over HTTPS. They differ in what they make you prove:
+
+- **Brevo verifies a single sender _address_.** Authorise the project's Gmail
+  address in the Brevo dashboard and it can email arbitrary students at once —
+  no domain, nothing needed from SLC IT, 300 emails/day free. Both halves then
+  send from the same address, so recipients see one consistent sender.
+- **Resend verifies a sending _domain_.** Better deliverability, but until
+  `spvvs.slc-sflu.edu.ph` is verified it delivers **only to the Resend account
+  owner** — fine as a transport test, useless for students. Switch to it once
+  the domain exists by changing `EMAIL_BACKEND` and `RESEND_API_KEY`.
+
+**Evidence photos.** Brevo's API has no Content-ID field, so an inline `cid:`
+image cannot render in the body. Violation emails therefore reference the
+evidence photo by its public R2 URL whenever one exists, which works on both
+transports — this is another reason `USE_R2=true` is required in production.
+With local storage there is no public URL and the photo falls back to a `cid:`
+attachment, which renders on campus SMTP but not through Brevo.
+
+**Verify the sender address in Brevo before go-live.** Brevo will not send from
+an unverified address. In the dashboard: **Senders & IPs → Senders → Add a
+sender**, enter the Gmail address, and click the confirmation link Brevo emails
+to it. Until that is done every send is rejected; after it, mail to any
+recipient works.
+
+`DEFAULT_FROM_EMAIL` may carry a display name — `SLC CDSO <address@gmail.com>` —
+and recipients see **SLC CDSO** as the sender. The address inside the angle
+brackets is the part that must be verified.
+
+**Testing note:** send the test to an address that is *not* your own provider
+account. Sending to yourself can succeed while sending to a student still fails,
+which is exactly the failure this setup is prone to.
+
+**Verify a deployment** — this reports which of the four distinct failures you
+have (no credentials / blocked port / rejected key / unverified sender) rather
+than a generic send error:
+
+```
+railway run python backend/manage.py check_email --to you@example.com
+```
+
+Run it on the campus machine too; there it probes Gmail on 587 instead.
 
 ## 5. Deploy
 
@@ -184,11 +247,16 @@ hosting cost.
   codebase. Restoring it needs a worker service (start command
   `cd backend && celery -A config worker --loglevel=info --pool=solo`, same
   variables) plus Redis as a broker — two extra always-on containers.
-- The **daily maintenance jobs** (`auto_manage_events`, `purge_old_records`) are
-  on a beat schedule that nothing is running. These matter more: without them
-  the events list stops rolling over. Fix them for free with
+- **`auto_manage_events`** is on a beat schedule that nothing is running, so the
+  events list stops rolling over. Fix it for free with
   `python manage.py run_maintenance` on a schedule — see
   **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No broker, no worker, no cost.
+  `auto_archive_expired_accounts` and `purge_old_records` are the exceptions: the
+  server runs both itself on a daily in-process thread, so owner-account expiry
+  and the retention window work with no scheduling. Set
+  `DISABLE_DAILY_SCHEDULER=1` here if you would rather the campus machine own
+  them — its clock is Manila time, and these jobs are date-keyed. Note that
+  disabling it also stops retention, which is what deletes archived accounts.
 
 **Keep this service at a single replica.** The YOLO/Paddle models are loaded per
 process and the parking-camera threads hold per-process state, so scaling out

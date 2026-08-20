@@ -24,58 +24,66 @@ def _make_vehicle(plate, email=None):
 
 
 class OffenseNumberTests(TestCase):
-    """Violation.compute_offense_number() counts active new-style violations."""
+    """compute_offense_number() counts active violations PER ACCOUNT.
+
+    The ladder used to be per (vehicle, type). It is now per owner across every
+    tracked type, so three different kinds of offence still reach strike 3 and
+    swapping cars no longer resets the count.
+    """
 
     def setUp(self):
         self.vehicle = _make_vehicle('OFF001')
+        self.owner   = self.vehicle.user
+
+    def _issue(self, vtype='unauthorized_entry', n=1, status=None):
+        return Violation.objects.create(
+            vehicle=self.vehicle, owner=self.owner, violation_type=vtype,
+            offense_number=n, status=status or Violation.Status.WARNING,
+        )
 
     def test_first_offense_is_1(self):
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 1)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 1)
 
     def test_second_offense_is_2(self):
-        Violation.objects.create(
-            vehicle=self.vehicle, violation_type='unauthorized_entry',
-            offense_number=1, status=Violation.Status.WARNING,
-        )
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 2)
+        self._issue(n=1)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 2)
 
     def test_third_offense_caps_at_3(self):
         for i in range(1, 4):
-            Violation.objects.create(
-                vehicle=self.vehicle, violation_type='unauthorized_entry',
-                offense_number=i, status=Violation.Status.WARNING,
-            )
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 3)
+            self._issue(n=i)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 3)
 
     def test_cleared_violation_not_counted(self):
-        Violation.objects.create(
-            vehicle=self.vehicle, violation_type='unauthorized_entry',
-            offense_number=1, status=Violation.Status.CLEARED,
-        )
-        # Cleared → should not count; next offense is still 1
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 1)
+        self._issue(n=1, status=Violation.Status.CLEARED)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 1)
 
-    def test_different_type_not_counted(self):
-        Violation.objects.create(
-            vehicle=self.vehicle, violation_type='double_parking',
-            offense_number=1, status=Violation.Status.WARNING,
-        )
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 1)
+    def test_lifted_violation_not_counted(self):
+        self._issue(n=1, status=Violation.Status.LIFTED)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 1)
 
-    def test_fee_imposed_violation_counts(self):
-        # FEE_IMPOSED is not CLEARED, so two of them push the next offense to 3
-        for i in range(1, 3):
-            Violation.objects.create(
-                vehicle=self.vehicle, violation_type='unauthorized_entry',
-                offense_number=i, status=Violation.Status.FEE_IMPOSED,
-            )
-        n = Violation.compute_offense_number(self.vehicle, 'unauthorized_entry')
-        self.assertEqual(n, 3)
+    def test_different_types_share_one_ladder(self):
+        """The rule the change exists for: mixed offence types still escalate."""
+        self._issue('unauthorized_entry', n=1)
+        self._issue('double_parking',     n=2)
+        self.assertEqual(Violation.compute_offense_number(self.owner), 3)
+
+    def test_counts_across_vehicles(self):
+        """Swapping cars must not reset the ladder."""
+        self._issue(n=1)
+        second = Vehicle.objects.create(
+            plate_number='OFF002', vehicle_type=Vehicle.Type.CAR,
+            is_authorized=True, user=self.owner,
+        )
+        Violation.objects.create(
+            vehicle=second, owner=self.owner,
+            violation_type='time_exceed', offense_number=2,
+        )
+        self.assertEqual(Violation.compute_offense_number(self.owner), 3)
+
+    def test_another_owner_has_their_own_ladder(self):
+        self._issue(n=1)
+        other = _make_vehicle('OFF003')
+        self.assertEqual(Violation.compute_offense_number(other.user), 1)
 
 
 class LegacyFineTests(TestCase):

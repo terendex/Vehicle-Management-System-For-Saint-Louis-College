@@ -1,8 +1,22 @@
 import api from './axios'
+import { deviceToken } from './twofa'
 
 export const authApi = {
+  /**
+   * Sign in with email + password.
+   *
+   * May resolve WITHOUT tokens: when the account carries two-factor and this
+   * browser is untrusted (or the account has been quiet for a week), the server
+   * answers `{ twofa_required: true, twofa_action, challenge }` and the login is
+   * finished by TwoFactorChallenge. The stored device token is what lets a
+   * browser already trusted inside the window skip that step.
+   */
   login: async (email, password) => {
-    const { data } = await api.post('/auth/login/', { email, password })
+    const { data } = await api.post(
+      '/auth/login/',
+      { email, password },
+      { headers: { 'X-Device-Token': deviceToken.get() } },
+    )
     return data
   },
 

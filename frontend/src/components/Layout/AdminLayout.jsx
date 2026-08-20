@@ -19,9 +19,14 @@ import {
   Menu,
   X,
   Shield,
+  ShieldCheck,
+  KeyRound,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
+import useTwofaStore from '../../stores/twofaStore'
+import SecurityPanel from '../TwoFactor/SecurityPanel'
+import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
@@ -83,10 +88,38 @@ function getGroupForPath(groups, pathname) {
 
 export default function AdminLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
+  // A pop-up rather than a route: this is about the signed-in person's own
+  // phone, not a screen of the system, and it is reached from the same footer
+  // as Help and Policy on every page instead of navigating away from work.
+  const [securityOpen, setSecurityOpen] = useState(false)
+  // A CDSO created from User Management signs in with the temporary password
+  // that was emailed to them; the card below blocks the dashboard until it is
+  // replaced. Opening it from the footer is the same card without the block.
+  const [pwOpen, setPwOpen] = useState(false)
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
+  /** Prove it's you, then open the form — not the other way round.
+   *
+   *  The server asks for a code on submit anyway (ChangePasswordView is step-up
+   *  protected), but being stopped after typing three password fields is a poor
+   *  way to find that out. Cancelling the prompt just leaves the card closed.
+   *
+   *  The forced first-time change is exempt: that CDSO enrolled seconds ago and
+   *  is already carrying a step-up, so this returns without prompting — and if
+   *  it ever did prompt, they have nowhere else to go. */
+  const openPasswordModal = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing your password.')
+      setPwOpen(true)
+    } catch {
+      /* prompt dismissed — leave the card closed */
+    }
+  }
   const navigate = useNavigate()
   const location = useLocation()
 
   const isAdmin = user?.role === 'admin'
+  const mustChangePassword = user?.must_change_password === true
 
   const navGroups = buildNavGroups(isAdmin)
 
@@ -194,29 +227,94 @@ export default function AdminLayout({ children, fillHeight = false }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="user-avatar">
-              {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
+          {/* Identity, the icon shortcuts and Log Out are one card divided by
+              hairlines, so the footer reads as a single object. */}
+          <div className="footer-card">
+            <div className="user-profile">
+              <div className="user-avatar">
+                {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'A'}
+              </div>
+              <div className="user-info">
+                <span className="user-name" title={user?.full_name || 'CDSO'}>
+                  {user?.full_name || 'CDSO'}
+                </span>
+                <span className="user-role">CDSO</span>
+              </div>
             </div>
-            <div className="user-info">
-              <span className="user-name">{user?.full_name || 'CDSO'}</span>
-              <span className="user-role">CDSO</span>
+            <div className="footer-actions">
+              <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
+                <HelpCircle size={17} />
+                <span className="action-btn-label">Help</span>
+              </button>
+              <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
+                <Shield size={17} />
+                <span className="action-btn-label">Policy</span>
+              </button>
+              <button
+                className="action-btn"
+                title="Account Security — authenticator app and backup code"
+                onClick={() => setSecurityOpen(true)}
+              >
+                <ShieldCheck size={17} />
+                <span className="action-btn-label">Security</span>
+              </button>
             </div>
-          </div>
-          <div className="footer-actions">
-            <button className="action-btn" title="Help & User Manual" onClick={() => navigate('/help')}>
-              <HelpCircle size={18} />
+            <button
+              className="footer-row-btn footer-row-btn--password"
+              onClick={openPasswordModal}
+              title="Change your account password"
+            >
+              <KeyRound size={14} />
+              <span>Change Password</span>
             </button>
-            <button className="action-btn" title="Privacy Policy & Terms" onClick={() => navigate('/policy')}>
-              <Shield size={18} />
-            </button>
-            <button className="logout-btn" onClick={handleLogout}>
-              <LogOut size={16} />
+            <button className="footer-row-btn footer-row-btn--logout" onClick={handleLogout}>
+              <LogOut size={15} />
               <span>Log Out</span>
             </button>
           </div>
         </div>
       </aside>
+
+      {(mustChangePassword || pwOpen) && (
+        <ChangePasswordModal
+          forced={mustChangePassword}
+          subtitle={mustChangePassword
+            ? 'You are signed in with the temporary password emailed to you. Set a new one to continue.'
+            : undefined}
+          onCancel={mustChangePassword ? handleLogout : () => setPwOpen(false)}
+          onDone={handleLogout}
+        />
+      )}
+
+      {securityOpen && (
+        <div className="tfa-overlay" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setSecurityOpen(false)
+        }}>
+          <div className="tfa-dialog" style={{ maxWidth: 520 }}>
+            <div className="tfa-dialog-head">
+              <div className="tfa-dialog-icon"><ShieldCheck size={21} /></div>
+              <div>
+                <h2 className="tfa-dialog-title">Account Security</h2>
+                <p className="tfa-dialog-sub">
+                  Your authenticator app and backup code.
+                </p>
+              </div>
+            </div>
+            <div className="tfa-dialog-body">
+              <SecurityPanel compact />
+              <div className="tfa-actions">
+                <button
+                  type="button"
+                  className="tfa-btn tfa-btn-ghost"
+                  onClick={() => setSecurityOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Column */}
       <main className="admin-main">

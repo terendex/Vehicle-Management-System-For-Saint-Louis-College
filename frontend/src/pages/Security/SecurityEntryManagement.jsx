@@ -10,6 +10,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import QrScanModal from '../../components/QrScanModal'
+import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
@@ -20,6 +21,7 @@ import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
+import { useGates } from '../../hooks/useGates'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './SecurityEntryManagement.css'
 
@@ -40,7 +42,6 @@ const STATUS_META = {
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
-const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
 
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
@@ -95,7 +96,7 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
 </style></head><body>
 <h2>SAINT LOUIS COLLEGE</h2>
-<div class="sub">Vehicle Management System</div>
+<div class="sub">Smart Parking and Vehicle Verification System</div>
 <div class="sub">--- VISITOR SLIP ---</div>
 <div class="plate">${plate}</div>
 <hr/>
@@ -541,7 +542,8 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function SecurityEntryManagement() {
   const { user } = useAuthStore()
-  const gateLabel = GATE_LABELS[user?.gate_assignment] || user?.gate_assignment || 'Main Gate'
+  const { gateLabel: labelFor } = useGates()
+  const gateLabel = labelFor(user?.gate_assignment) || 'Main Gate'
 
   const [plateInput, setPlateInput]   = useState('')
   const [loading, setLoading]         = useState(false)
@@ -1174,6 +1176,13 @@ export default function SecurityEntryManagement() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Confiscated owners may not enter. The guard meeting the car at the
+            barrier is the person who has to know, and a car turning up during
+            the penalty is itself a further offence. */}
+        <div className="em-confiscated">
+          <ConfiscatedAccounts />
         </div>
 
         {showExitScanner && (

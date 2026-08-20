@@ -428,18 +428,17 @@
   50% { opacity: 0.4; }
 }
 
-/* --- Action Dropdown --- */
+/* --- Action Dropdown ---
+   Portalled to <body> and positioned with fixed coordinates by the component,
+   so the scrolling table card can never clip it. */
 .um-actions-dropdown {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 8px;
+  position: fixed;
   background: #FFFFFF;
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(3, 57, 108, 0.12), 0 0 0 1px rgba(3, 57, 108, 0.05);
   padding: 8px;
   width: 160px;
-  z-index: 50;
+  z-index: 90;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -506,11 +505,6 @@
 .um-dropdown-item.enable:hover {
   background: #E6F5EF;
   color: #0F7A5A;
-}
-
-.um-dropdown-item.delete:hover {
-  background: #FCEDED;
-  color: #C62828;
 }
 
 .um-action-btn {
@@ -662,6 +656,13 @@
   overflow-y: auto;
 }
 
+/* The profile carries a two-column grid and up to four footer actions (Close,
+   Edit, Print Registration, View QR). Those need 555px of row; the shared
+   500px modal left 452, so the last button was pushed onto its own line. */
+.um-modal--profile {
+  max-width: 660px;
+}
+
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(20px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -707,10 +708,20 @@
 
 .um-modal-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  /* The profile footer carries up to four actions in a 500px modal. Without
+     wrapping they compress until their icon and label sit on separate lines —
+     which is what made "Edit Details" look broken. */
+  flex-wrap: wrap;
   gap: 10px;
   padding: 16px 24px;
   border-top: 1px solid #D3E1EC;
+}
+
+/* Dismissal sits apart from the actions that do something. */
+.um-modal-footer .um-footer-spacer {
+  margin-right: auto;
 }
 
 /* --- Form Fields --- */
@@ -882,13 +893,17 @@
 
 /* --- Buttons --- */
 .um-btn-primary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  white-space: nowrap;
   padding: 10px 20px;
   background: #03396C;
   color: #FFFFFF;
-  border: none;
+  /* Transparent border matching um-btn-secondary's 1.5px, so a primary and a
+     secondary button side by side in a footer are exactly the same height. */
+  border: 1.5px solid transparent;
   border-radius: 10px;
   font-size: 14px;
   font-weight: 600;
@@ -908,6 +923,13 @@
 }
 
 .um-btn-secondary {
+  /* Matches um-btn-primary: without inline-flex the icon and the label are
+     separate inline boxes and wrap independently when the footer is tight. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
   padding: 10px 20px;
   background: #FFFFFF;
   color: #4A6B85;
@@ -920,9 +942,14 @@
   transition: all 0.2s ease;
 }
 
-.um-btn-secondary:hover {
+.um-btn-secondary:hover:not(:disabled) {
   background: #F4F8FB;
   border-color: #BDD4E5;
+}
+
+.um-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .um-btn-danger {
@@ -976,12 +1003,21 @@
 .um-profile-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  /* Column gap wider than row gap: the two columns need a clear gutter, while
+     rows read as one list. Rows size to their own content so a two-line
+     address no longer stretches the field beside it. */
+  column-gap: 24px;
+  row-gap: 16px;
+  align-items: start;
 }
 
 .um-profile-item {
   display: flex;
   flex-direction: column;
+  /* Stops a pill-shaped child (the status badge) from being stretched to the
+     full column width by the default align-items: stretch. */
+  align-items: flex-start;
+  min-width: 0;
 }
 
 .um-profile-item.full-width {
@@ -994,13 +1030,17 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #64839C;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 }
 
 .um-profile-value {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   color: #0B2340;
+  line-height: 1.45;
+  /* Only break a word when it genuinely cannot fit — long emails now get a
+     full-width row, so this should almost never trigger. */
+  overflow-wrap: break-word;
 }
 
 /* --- Confirm Dialog --- */

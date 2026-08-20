@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+import sys
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -128,7 +129,15 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS':  True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # The two-factor dormancy rule ("challenge an account that has not signed
+    # in for a week") reads User.last_login, and SimpleJWT leaves that column
+    # NULL unless this is on. Nothing read it before, so nothing noticed.
+    'UPDATE_LAST_LOGIN': True,
 }
+
+# Shown as the account issuer inside Google Authenticator, so a phone holding
+# codes for several systems labels this one recognisably.
+TWO_FACTOR_ISSUER = os.getenv('TWO_FACTOR_ISSUER', 'SLC Vehicle Management')
 
 TEMPLATES = [
     {
@@ -295,8 +304,29 @@ FRONTEND_BUILD_DIR = BASE_DIR / 'frontend_build'
 WHITENOISE_ROOT = FRONTEND_BUILD_DIR if FRONTEND_BUILD_DIR.exists() else None
 # index.html must stay uncached or browsers pin a stale bundle across deploys;
 # the hashed files under /assets/ are safe to cache forever.
+#
+# WHITENOISE_MAX_AGE alone does NOT achieve that. It is applied to every file
+# under WHITENOISE_ROOT, index.html included, and because WHITENOISE_INDEX_FILE
+# makes WhiteNoise answer "/" itself, the middleware returns the shell long
+# before the no-cache view in config/urls.py is ever reached. The result was
+# `Cache-Control: max-age=31536000` on the one file that must never be cached:
+# a browser that opened the app once kept its copy of index.html for a year,
+# then went on requesting that deploy's hashed chunk names. Chunks whose
+# content had not changed kept their hash and still resolved, so the app
+# booted and most pages worked — but any page edited since (its chunk renamed)
+# 404'd, and that route alone came up blank. Force revalidation on HTML so the
+# shell is re-fetched and the current hashes are picked up.
 WHITENOISE_INDEX_FILE = True
 WHITENOISE_MAX_AGE = 31536000
+
+
+def _whitenoise_headers(headers, path, url):
+    """Never let the SPA shell be cached; hashed assets keep the long max-age."""
+    if path.endswith('.html'):
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+
+
+WHITENOISE_ADD_HEADERS_FUNCTION = _whitenoise_headers
 WHITENOISE_SKIP_COMPRESS_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'zip',
                                        'gz', 'tgz', 'bz2', 'tbz', 'xz', 'br', 'pt']
 
@@ -309,7 +339,14 @@ _STATIC_BACKEND = (
     else 'django.contrib.staticfiles.storage.StaticFilesStorage'
 )
 
-if os.getenv('USE_R2', 'false').lower() == 'true':
+# Tests run against the developer's real .env — the same Neon database and the
+# same R2 credentials as production. Reading from the bucket is harmless, but
+# writing to it is not: every test that approves a registration or files a
+# violation would leave a real object behind, in the bucket the live system
+# serves from. Force local storage under test so the suite cannot litter it.
+_TESTING = 'test' in sys.argv or bool(os.getenv('PYTEST_CURRENT_TEST'))
+
+if os.getenv('USE_R2', 'false').lower() == 'true' and not _TESTING:
     STORAGES = {
         "default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"},
         "staticfiles": {"BACKEND": _STATIC_BACKEND},
@@ -333,7 +370,7 @@ else:
         "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
         "staticfiles": {"BACKEND": _STATIC_BACKEND},
     }
-    if not DEBUG:
+    if not DEBUG and not _TESTING:
         # Railway containers have an ephemeral filesystem: every redeploy wipes
         # MEDIA_ROOT, taking licence photos and violation evidence with it.
         print('[settings] WARNING: USE_R2=false in production - uploaded files '
@@ -341,17 +378,72 @@ else:
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Email Configuration
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
+# ── Email Configuration ───────────────────────────────────────────────────
+# The transport is configurable because the host it runs on decides whether it
+# works at all. Gmail on port 587 is right for the on-campus server, but many
+# cloud platforms (Railway included) block outbound SMTP to deter spam — the
+# connection simply hangs until EMAIL_TIMEOUT, which is indistinguishable from
+# a dead mail server unless you time it. Hard-coding host/port/TLS meant the
+# only way to try another port, or move to a provider that sends over HTTPS,
+# was a code change and a redeploy.
+#
+# Every default below is the previous hard-coded value, so an environment that
+# sets none of these behaves exactly as before.
+def _env_flag(name, default):
+    """Read a boolean env var. Railway/dotenv give strings, so 'false' must not
+    come back truthy the way bool('false') does."""
+    raw = os.getenv(name)
+    if raw is None or raw == '':
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+# TLS (STARTTLS, usually 587) and SSL (implicit, usually 465) are mutually
+# exclusive — Django raises if both are on. Setting EMAIL_USE_SSL therefore
+# turns TLS off unless TLS was asked for explicitly.
+EMAIL_USE_SSL = _env_flag('EMAIL_USE_SSL', False)
+EMAIL_USE_TLS = _env_flag('EMAIL_USE_TLS', not EMAIL_USE_SSL)
+if EMAIL_USE_SSL and EMAIL_USE_TLS:
+    EMAIL_USE_TLS = False
+
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER')
-EMAIL_TIMEOUT = 10  # seconds — a hung SMTP server must not stall the scan pipeline
+# Falls back to the login address, which is what Gmail requires anyway. Set it
+# explicitly when the sending identity differs from the SMTP username — every
+# provider other than Gmail works that way (e.g. user 'resend', from
+# 'noreply@yourdomain').
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or os.getenv('EMAIL_HOST_USER')
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))  # seconds — a hung SMTP server must not stall the scan pipeline
+
+# Read by the HTTPS backends in config.email_backends, which is how the Railway
+# half sends mail: SMTP cannot leave that container at all, so it goes over
+# HTTPS instead. Both are unset on campus, where Gmail on 587 works and the SMTP
+# backend above is used as-is.
+#
+# Brevo is the one in use: it verifies a single sender *address*, so the
+# project's Gmail address can email arbitrary students. Resend needs a verified
+# sending *domain* and is kept ready for when spvvs.slc-sflu.edu.ph exists.
+BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
+RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+# Every link and image inside an email must use this, never FRONTEND_URL.
+#
+# FRONTEND_URL is per-host by design: on the campus machine it is a LAN address
+# so guards can reach it from the gate. That address is meaningless to a student
+# reading their approval email on mobile data — a QR image sourced from it never
+# loads, and a "reset your password" link goes nowhere. Mail is the one thing
+# both halves send to people who are not on the campus network, so it needs the
+# one address that always resolves: the public Railway domain.
+#
+# Defaults to FRONTEND_URL so Railway and local development need not set it —
+# there the two are the same. The campus .env is where it matters: set it to the
+# Railway URL there.
+PUBLIC_SITE_URL = (os.getenv('PUBLIC_SITE_URL') or FRONTEND_URL).rstrip('/')
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')

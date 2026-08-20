@@ -7,6 +7,7 @@ import {
 import { formatDistanceToNow } from 'date-fns'
 import { getAccessLogs } from '../../api/scanning'
 import useAuthStore from '../../stores/authStore'
+import { useGates } from '../../hooks/useGates'
 import './SecurityAuditLogPage.css'
 
 const STATUS_META = {
@@ -54,7 +55,8 @@ function localDateStr(d = new Date()) {
 export default function SecurityAuditLogPage() {
   const { user } = useAuthStore()
   const today = localDateStr()
-  const gateLabel = { gate1: 'Gate 1', gate4: 'Gate 4' }[user?.gate_assignment] || 'Gate'
+  const { gateLabel: labelFor } = useGates()
+  const gateLabel = labelFor(user?.gate_assignment) || 'Gate'
 
   const [logs, setLogs]           = useState([])
   const [loading, setLoading]     = useState(true)

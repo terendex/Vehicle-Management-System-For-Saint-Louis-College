@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from django.conf import settings
@@ -10,7 +11,9 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
 from time_utils import day_range, day_start, day_end, filter_local_date_range
+from .email_utils import notify_password_set
 from .models import User, AuditLog, Notification
+from .twofa_api import HasRecentTwoFactor
 from .serializers import (
     UserSerializer,
     UserUpdateSerializer,
@@ -22,6 +25,8 @@ from .serializers import (
     AuditLogSerializer,
     NotificationSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_client_ip(request):
@@ -185,7 +190,7 @@ class UserDeleteView(generics.DestroyAPIView):
     permission_classes = [IsAdminRole]
 
     def destroy(self, request, *args, **kwargs):
-        from vehicles.models import Vehicle, VehicleRegistration
+        from .models import delete_user_with_owned_records
 
         user = self.get_object()
         if user.role == 'admin':
@@ -193,11 +198,57 @@ class UserDeleteView(generics.DestroyAPIView):
                 {'detail': 'Cannot delete an admin from this endpoint.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Logged before the delete: log_action reads the user it is pointed at.
         log_action(request, AuditLog.Action.USER_DELETED, target_user=user)
-        Vehicle.objects.filter(user=user).delete()
-        VehicleRegistration.objects.filter(user=user).delete()
-        user.delete()
+        delete_user_with_owned_records(user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class UserRegistrationPdfView(APIView):
+    """Re-issue the approved-registration PDF for a vehicle owner.
+
+    Owners are emailed this document when their registration is approved, but
+    a lost email or a lost printout leaves them with nothing to present at the
+    gate. This serves a byte-identical copy on demand from the CDSO's desk, so
+    a reprint is never a different document from the original.
+
+    Deliberately the same builder the approval email uses — not a second
+    layout that could drift away from it.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+        from vehicles.models import VehicleRegistration
+        from registration_pdf import (registration_confirmation_pdf,
+                                      registration_pdf_filename)
+
+        user = get_object_or_404(User, pk=pk)
+        # Matches MyRegistrationView: registrations created before the account
+        # existed are linked by email, not FK.
+        registration = (
+            VehicleRegistration.objects
+            .filter(Q(user=user) | Q(email=user.email), status='accepted')
+            .order_by('-reviewed_at')
+            .first()
+        )
+        if not registration:
+            return Response(
+                {'detail': 'This account has no approved vehicle registration to print.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pdf = registration_confirmation_pdf(registration)
+        log_action(
+            request, AuditLog.Action.RECORD_CREATED, target_user=user,
+            details=f'Registration PDF re-issued | REG-{registration.id:06d} '
+                    f'({registration.plate_number}) | For: {user.full_name}',
+        )
+        resp = HttpResponse(pdf, content_type='application/pdf')
+        resp['Content-Disposition'] = (
+            f'attachment; filename="{registration_pdf_filename(registration)}"'
+        )
+        return resp
 
 
 class UserToggleStatusView(APIView):
@@ -224,12 +275,21 @@ class AdminReplaceView(APIView):
     permission_classes = [IsAdminRole]
 
     def post(self, request):
+        from django.db import transaction
+
         serializer = AdminReplaceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         old_admin = request.user
-        new_admin = serializer.save()
-        log_action(request, AuditLog.Action.ADMIN_REPLACED, target_user=new_admin, details=f"Replaced admin: {old_admin.email}")
-        old_admin.delete()
+        # Create, log and delete are one unit: a failure partway through used to
+        # leave the system with two admin accounts (new one created, old one
+        # never removed). The credentials email is sent inside save() and cannot
+        # be recalled on a rollback, but credentials for an account that no
+        # longer exists are unusable — a stray mail beats a split admin state.
+        with transaction.atomic():
+            new_admin = serializer.save()
+            log_action(request, AuditLog.Action.ADMIN_REPLACED, target_user=new_admin,
+                       details=f"Replaced admin: {old_admin.email}")
+            old_admin.delete()
         return Response(
             {
                 'detail': 'Admin replaced successfully.',
@@ -338,11 +398,20 @@ class DashboardStatsView(APIView):
             authorized_vehicles   = v_agg['authorized']
             unauthorized_vehicles = total_vehicles - authorized_vehicles
 
-            # Vehicle-type breakdown (car/motorcycle/van/truck/bus) for the fleet-mix chart
-            vehicles_by_type = {
-                row['vehicle_type']: row['count']
-                for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id'))
-            }
+            # Vehicle-type breakdown for the vehicle-types chart.
+            #
+            # vehicle_type is free text and has been written with inconsistent
+            # casing ("Motorcycle" and "motorcycle" both exist, plus values like
+            # "SUV" that are not in any fixed list). Grouping on the raw column
+            # therefore returned split buckets, and the dashboard — which matched
+            # a hardcoded lowercase set — silently dropped everything it did not
+            # recognise. The chart showed 4 of 9 vehicles while its centre label
+            # read the true total. Fold to lowercase here so each type is counted
+            # once and the slices always add up to `total`.
+            vehicles_by_type = {}
+            for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id')):
+                key = (row['vehicle_type'] or '').strip().lower() or 'unknown'
+                vehicles_by_type[key] = vehicles_by_type.get(key, 0) + row['count']
 
             # Suppliers are their own model (not User owners) but form a registered
             # vehicle category alongside students/employees/fetchers. Counted by
@@ -561,91 +630,19 @@ def _apply_created_at_range(qs, date_from, date_to):
     return filter_local_date_range(qs, 'created_at', date_from, date_to)
 
 
-_AUDIT_PLATE_RE    = re.compile(r'Plate:\s*([^|]+)')
-_AUDIT_DURATION_RE = re.compile(r'Duration:\s*(\d+)\s*min')
-
-
 class AuditLogListView(generics.ListAPIView):
-    """List audit logs - admin only."""
+    """List audit logs - admin only.
+
+    This lists administrative actions only. Vehicle-owner gate movement is
+    deliberately not recorded here (see AuditLog's docstring); the operational
+    gate history lives in scanning.AccessLog.
+    """
     serializer_class   = AuditLogSerializer
     permission_classes = [IsAdminRole]
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = AuditLog.objects.select_related('actor', 'target_user').all()
-
-        action = self.request.query_params.get('action', '').strip()
-        if action:
-            qs = qs.filter(action=action)
-
-        date_from = self.request.query_params.get('date_from', '').strip()
-        date_to   = self.request.query_params.get('date_to', '').strip()
-        qs = _apply_created_at_range(qs, date_from, date_to)
-
-        # Search matches the actor (code / name / email) or the details text
-        search = self.request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                Q(actor__user_code__icontains=search) |
-                Q(actor__full_name__icontains=search) |
-                Q(actor__email__icontains=search) |
-                Q(details__icontains=search)
-            )
-
-        return qs.order_by('-created_at')
-
-    def list(self, request, *args, **kwargs):
-        """Fold a 'Vehicle Exited' row into its matching 'Vehicle Entered' row
-        (same plate, same page) so a completed visit reads as one line with a
-        computed duration, instead of two separate entry/exit log rows."""
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        objects = list(page) if page is not None else list(queryset)
-
-        entries_by_plate = {}
-        for log in objects:
-            if log.action == AuditLog.Action.VEHICLE_ENTERED:
-                m = _AUDIT_PLATE_RE.search(log.details or '')
-                if m:
-                    entries_by_plate.setdefault(m.group(1).strip(), []).append(log)
-
-        exit_info = {}       # entry_log.pk -> {exited_at, duration_minutes}
-        merged_exit_pks   = set()
-        claimed_entry_pks = set()
-        for log in objects:
-            if log.action != AuditLog.Action.VEHICLE_EXITED:
-                continue
-            m = _AUDIT_PLATE_RE.search(log.details or '')
-            if not m:
-                continue
-            plate = m.group(1).strip()
-            candidates = entries_by_plate.get(plate) or []
-            match = next(
-                (e for e in candidates if e.created_at < log.created_at and e.pk not in claimed_entry_pks),
-                None,
-            )
-            if match is None:
-                continue
-            claimed_entry_pks.add(match.pk)
-            merged_exit_pks.add(log.pk)
-            dur_m = _AUDIT_DURATION_RE.search(log.details or '')
-            duration = (
-                int(dur_m.group(1)) if dur_m
-                else max(0, round((log.created_at - match.created_at).total_seconds() / 60))
-            )
-            exit_info[match.pk] = {'exited_at': log.created_at, 'duration_minutes': duration}
-
-        visible = [log for log in objects if log.pk not in merged_exit_pks]
-        data = self.get_serializer(visible, many=True).data
-        for row in data:
-            info = exit_info.get(row['id'])
-            if info:
-                row['exited_at'] = info['exited_at']
-                row['duration_minutes'] = info['duration_minutes']
-
-        if page is not None:
-            return self.get_paginated_response(data)
-        return Response(data)
+        return _filter_audit_logs(self.request)[0]
 
 
 def _filter_audit_logs(request):
@@ -751,62 +748,173 @@ class AuditLogPdfExportView(APIView):
         )
 
 
-# ── System Backup & Restore ─────────────────────────────────────────────────
-# App labels whose data is captured in a backup. Excludes contenttypes,
-# permissions, sessions, admin log entries and token blacklists (volatile /
-# rebuildable) — the schema itself is versioned by migrations.
-BACKUP_APPS = ['accounts', 'vehicles', 'scanning', 'violations', 'realtime']
-
-# High-volume ML artefacts (plate-recognition crops and training samples) are
-# rebuildable and would bloat every backup by ~20k rows / many MB, making
-# restore impractically slow. Business data — including the access log — is kept.
-BACKUP_EXCLUDE = ['scanning.platerecognitionrecord', 'scanning.mltrainingsample']
+# ── System Backup & Restore ─────────────────────────────
+# The app list, the exclusions and the on-disk layout live in backup_utils so
+# the scheduled job (vehicles.tasks.auto_backup) and the buttons on this page
+# produce exactly the same kind of file. Re-exported here because tests and
+# other modules have imported these names from this module since before that
+# helper existed.
+from .backup_utils import (                                        # noqa: E402
+    AUTO_PREFIX, BACKUP_APPS, BACKUP_EXCLUDE, MANUAL_PREFIX, SAFETY_PREFIX,
+    dump_backup, list_backups, prune_backups, safe_path, stamp, write_backup,
+)
 
 
 class SystemBackupView(APIView):
-    """Download a JSON snapshot of all application data — admin (CDSO) only."""
-    permission_classes = [IsAdminRole]
+    """Download a JSON snapshot of all application data — admin (CDSO) only.
+
+    Step-up protected: the file contains every account, plate and registration
+    in the system, so one click on a borrowed session is a full data breach.
+    `step_up_on_read` opts this GET into the check, which otherwise exempts
+    safe methods.
+    """
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    step_up_on_read = True
 
     def get(self, request):
-        import io
-        from django.core.management import call_command
         from django.http import HttpResponse
-        from django.utils import timezone as tz
+        from vehicles.models import SystemSettings
 
-        buf = io.StringIO()
-        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=buf)
+        payload = dump_backup()
 
-        response = HttpResponse(buf.getvalue(), content_type='application/json')
-        stamp = tz.localtime().strftime('%Y%m%d-%H%M')
-        response['Content-Disposition'] = f'attachment; filename="slc-vms-backup-{stamp}.json"'
+        # Keep a copy on the server as well. A manual download is the moment the
+        # data was known-good enough for someone to want it saved, and keeping
+        # it means the restore list is not empty on a system where the automatic
+        # schedule has only just been switched on. Rotated by the same keep count
+        # as the automatic ones, so repeated downloads cannot fill the disk. A
+        # disk problem here must not cost the admin the download they asked for.
+        try:
+            write_backup(MANUAL_PREFIX, payload)
+            prune_backups(SystemSettings.get().auto_backup_keep)
+        except OSError:
+            logger.warning("Could not keep a server-side copy of the manual backup", exc_info=True)
+
+        response = HttpResponse(payload, content_type='application/json')
+        response['Content-Disposition'] = (
+            f'attachment; filename="slc-vms-backup-{stamp(seconds=False)}.json"')
         log_action(request, AuditLog.Action.RECORD_UPDATED, details='System backup downloaded')
         return response
 
 
-class SystemRestoreView(APIView):
-    """Restore application data from an uploaded JSON backup — admin (CDSO) only.
+class SystemBackupListView(APIView):
+    """The backup files sitting on the server — admin (CDSO) only.
 
-    Safety measures: admin-only, file validated as a JSON fixture, an automatic
-    pre-restore snapshot of current data is saved to disk, and the load runs in
-    a single transaction that rolls back completely on any error.
+    Covers the automatic backups, the copy kept on each manual download, and the
+    pre-restore safety snapshots. This reads filenames and sizes, not the data
+    inside them, so it needs admin but no step-up; downloading one of them does.
     """
     permission_classes = [IsAdminRole]
 
+    def get(self, request):
+        from vehicles.models import SystemSettings
+
+        cfg = SystemSettings.get()
+        return Response({
+            'backups': list_backups(),
+            'auto_backup_frequency': cfg.auto_backup_frequency,
+            'auto_backup_keep': cfg.auto_backup_keep,
+        })
+
+
+class SystemBackupFileView(APIView):
+    """Download or delete one saved backup file — admin (CDSO) only.
+
+    Same step-up as taking a fresh backup, and for the same reason: the file
+    holds every account and plate in the system whether it was written a minute
+    ago or last term.
+    """
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    step_up_on_read = True
+
+    def get(self, request, name):
+        from django.http import FileResponse
+
+        path = safe_path(name)
+        if not path:
+            return Response({'error': 'Backup file not found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        log_action(request, AuditLog.Action.RECORD_UPDATED,
+                   details=f'Saved backup downloaded ({name})')
+        return FileResponse(open(path, 'rb'), as_attachment=True,
+                            filename=name, content_type='application/json')
+
+    def delete(self, request, name):
+        import os
+
+        path = safe_path(name)
+        if not path:
+            return Response({'error': 'Backup file not found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        try:
+            os.remove(path)
+        except OSError as exc:
+            return Response({'error': f'Could not delete the file. ({exc})'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        log_action(request, AuditLog.Action.RECORD_UPDATED,
+                   details=f'Saved backup deleted ({name})')
+        return Response({'deleted': name}, status=status.HTTP_200_OK)
+
+
+class SystemRestoreView(APIView):
+    """Merge a JSON backup into the live data — admin (CDSO) only.
+
+    Takes either an uploaded file (`file`) or the name of a backup already on
+    the server (`filename`) — an automatic one, or a pre-restore snapshot from
+    an earlier attempt. Both paths run the same validation, the same safety
+    snapshot and the same atomic load; a saved file simply skips the download /
+    re-upload round trip.
+
+    "Restore" overstates it, and the difference matters. `loaddata` writes each
+    record by primary key: rows in the file overwrite the matching live rows and
+    missing ones are inserted, but nothing is ever deleted. An account or
+    vehicle created after the backup was taken therefore survives the restore
+    untouched. This is a merge, not a rewind to the backup's date, and the
+    confirmation dialog says so in those words.
+
+    Making it a true rewind would mean emptying every backed-up table first.
+    That is technically possible — the excluded ML tables carry no foreign keys
+    into these, so nothing would cascade unnoticed — but it turns a recoverable
+    operation into one that destroys everything created since the file was
+    written, including the row of the admin performing it. It is not a change to
+    make quietly; the honest description above is the safer half of the trade.
+
+    Safety measures: admin-only, a fresh two-factor step-up, file validated as a
+    JSON fixture, an automatic pre-restore snapshot of current data saved to
+    disk, and a load that runs in a single transaction and rolls back completely
+    on any error.
+
+    The step-up is the one that matters most on this endpoint: a restore
+    overwrites live data wholesale, and a crafted fixture can rewrite the admin
+    account itself.
+    """
+    permission_classes = [IsAdminRole, HasRecentTwoFactor]
+
     def post(self, request):
-        import io, json, os, tempfile
+        import json, os, tempfile
         from django.core.management import call_command
         from django.db import transaction
-        from django.utils import timezone as tz
 
         upload = request.FILES.get('file')
-        if not upload:
+        filename = (request.data.get('filename') or '').strip()
+
+        if upload:
+            source = upload.name
+            if upload.size > 50 * 1024 * 1024:
+                return Response({'error': 'Backup file is too large (max 50 MB).'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            raw = upload.read()
+        elif filename:
+            path = safe_path(filename)
+            if not path:
+                return Response({'error': 'Saved backup not found.'},
+                                status=status.HTTP_404_NOT_FOUND)
+            source = filename
+            with open(path, 'rb') as fh:
+                raw = fh.read()
+        else:
             return Response({'error': 'No backup file provided.'},
                             status=status.HTTP_400_BAD_REQUEST)
-        if upload.size > 50 * 1024 * 1024:
-            return Response({'error': 'Backup file is too large (max 50 MB).'},
-                            status=status.HTTP_400_BAD_REQUEST)
 
-        raw = upload.read()
         try:
             parsed = json.loads(raw.decode('utf-8'))
             if not isinstance(parsed, list):
@@ -816,15 +924,9 @@ class SystemRestoreView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         # 1) Auto safety snapshot of current data before overwriting anything.
-        safety = io.StringIO()
-        call_command('dumpdata', *BACKUP_APPS, exclude=BACKUP_EXCLUDE, indent=2, stdout=safety)
-        safety_dir = os.path.join(settings.BASE_DIR, 'backups')
-        os.makedirs(safety_dir, exist_ok=True)
-        safety_name = f"pre-restore-{tz.localtime().strftime('%Y%m%d-%H%M%S')}.json"
-        with open(os.path.join(safety_dir, safety_name), 'w', encoding='utf-8') as fh:
-            fh.write(safety.getvalue())
+        safety_name, _ = write_backup(SAFETY_PREFIX)
 
-        # 2) Load the uploaded fixture atomically (rolls back on any error).
+        # 2) Load the fixture atomically (rolls back on any error).
         tmp = tempfile.NamedTemporaryFile('wb', suffix='.json', delete=False)
         try:
             tmp.write(raw)
@@ -844,7 +946,7 @@ class SystemRestoreView(APIView):
                 pass
 
         log_action(request, AuditLog.Action.RECORD_UPDATED,
-                   details=f'System restore from backup ({len(parsed)} records)')
+                   details=f'System restore from backup ({len(parsed)} records, source: {source})')
         return Response({'restored': len(parsed), 'safety_backup': safety_name},
                         status=status.HTTP_200_OK)
 
@@ -886,8 +988,15 @@ class AuditLogStatsView(APIView):
 
 class ChangePasswordView(APIView):
     """Allow any authenticated user to change their own password.
-    Clears the must_change_password flag after a successful change."""
-    permission_classes = [permissions.IsAuthenticated]
+    Clears the must_change_password flag after a successful change.
+
+    Step-up protected for accounts that carry two-factor: the current password
+    alone is not enough, because a session left open on an unlocked machine
+    already has it. Guards, who carry no second factor, are unaffected — and so
+    is anyone still completing their first-login enrollment, since a confirmed
+    device is what arms the check.
+    """
+    permission_classes = [permissions.IsAuthenticated, HasRecentTwoFactor]
 
     def post(self, request):
         user = request.user
@@ -922,9 +1031,17 @@ class ChangePasswordView(APIView):
         if errors:
             return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Read before the flag is cleared: a user still carrying
+        # must_change_password is replacing the temporary password they were
+        # issued, which is the moment the account becomes theirs — that gets the
+        # welcome. Every later change gets the security notice instead.
+        was_first_change = user.must_change_password
+
         user.set_password(new_password)
         user.must_change_password = False
         user.save(update_fields=['password', 'must_change_password'])
+
+        notify_password_set(user, was_first_change)
         return Response({'message': 'Password changed successfully.'})
 
 
@@ -1066,7 +1183,7 @@ class GuardQrLoginView(APIView):
 
         AuditLog.objects.create(
             actor=user,
-            action=AuditLog.Action.SCAN,
+            action=AuditLog.Action.GUARD_LOGIN,
             details=f'Guard QR login: {user.full_name} ({user.user_code})',
             ip_address=get_client_ip(request),
         )
@@ -1148,7 +1265,9 @@ class PasswordResetRequestView(APIView):
 
         token = default_token_generator.make_token(user)
         uid   = urlsafe_base64_encode(force_bytes(user.pk))
-        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:5173')
+        # PUBLIC_SITE_URL: a reset link built from the campus half's LAN address
+        # is unreachable for anyone resetting their password from off campus.
+        frontend_url = getattr(django_settings, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
         reset_link   = f"{frontend_url}/reset-password?uid={uid}&token={token}"
 
         html_message = f"""
@@ -1158,7 +1277,7 @@ class PasswordResetRequestView(APIView):
               <div style="padding:28px 32px 24px;">
                 <h2 style="color:#2A2B61;margin:0 0 8px;">Password Reset Request</h2>
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-                  We received a request to reset the password for your SLC Vehicle Management System account.
+                  We received a request to reset the password for your SLC Smart Parking and Vehicle Verification System account.
                 </p>
                 <p style="margin:0 0 8px;">Hello, <strong>{user.full_name or user.email}</strong>,</p>
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
@@ -1181,7 +1300,7 @@ class PasswordResetRequestView(APIView):
                 </p>
               </div>
               <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:14px 32px;text-align:center;">
-                <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Vehicle Management System</p>
+                <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
                 <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply.</p>
               </div>
             </div>
@@ -1189,19 +1308,31 @@ class PasswordResetRequestView(APIView):
         </html>
         """
         
-        send_mail(
-            subject='SLC Vehicle Management — Password Reset',
-            message=(
-                f"Hello {user.full_name or user.email},\n\n"
-                f"Reset your password by visiting:\n{reset_link}\n\n"
-                f"This link expires in 1 hour.\n\n"
-                f"If you did not request this, ignore this email."
-            ),
-            from_email=django_settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=True,
-        )
+        # fail_silently=False + an explicit log. The response stays SAFE_MSG
+        # either way — it must not reveal whether the address exists — but the
+        # send itself must not fail invisibly: with fail_silently=True an
+        # expired SMTP credential produced a cheerful "a reset link has been
+        # sent" for every request while nothing was delivered and nothing was
+        # written to the log, so there was no way to tell the two apart.
+        try:
+            send_mail(
+                subject='SPVVS — Password Reset',
+                message=(
+                    f"Hello {user.full_name or user.email},\n\n"
+                    f"Reset your password by visiting:\n{reset_link}\n\n"
+                    f"This link expires in 1 hour.\n\n"
+                    f"If you did not request this, ignore this email."
+                ),
+                from_email=django_settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send the password-reset email to user %s — they were "
+                "told a link was sent, but none was delivered.", user.pk,
+            )
 
         return Response({'message': SAFE_MSG})
 
@@ -1261,13 +1392,27 @@ class PasswordResetConfirmView(APIView):
         if errors:
             return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Same split as ChangePasswordView. A brand-new user who never logged in
+        # with their temporary password and used "forgot password" instead still
+        # arrives here for their first change, so they get the welcome too.
+        was_first_change = user.must_change_password
+
         user.set_password(new_password)
         user.must_change_password = False
-        user.save(update_fields=['password', 'must_change_password'])
+        # Demand the second factor on the next login. A reset proves control of
+        # the mailbox, nothing more — and the mailbox is exactly what an attacker
+        # takes first. Guards are skipped because they carry no second factor to
+        # ask for; the flag would sit unread and never be cleared.
+        from . import twofa
+        user.must_verify_2fa = twofa.requires_2fa(user)
+        user.save(update_fields=['password', 'must_change_password', 'must_verify_2fa'])
+
+        notify_password_set(user, was_first_change)
 
         return Response({
             'message': 'Password reset successfully. You can now log in with your new password.',
             'role': user.role,
+            'twofa_required_next_login': user.must_verify_2fa,
         })
 
 
@@ -1412,7 +1557,7 @@ class GuardCredentialLoginView(APIView):
 
         AuditLog.objects.create(
             actor=guard,
-            action=AuditLog.Action.SCAN,
+            action=AuditLog.Action.GUARD_LOGIN,
             details=f'Guard credential login: {guard.full_name} ({guard.user_code}) at {gate}',
             ip_address=get_client_ip(request),
         )

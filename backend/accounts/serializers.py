@@ -1,8 +1,11 @@
+import logging
 import re
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, AuditLog, Notification
+
+logger = logging.getLogger(__name__)
 
 
 def validate_password_strength(password):
@@ -110,12 +113,17 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
     changed on first login (must_change_password is set by the caller)."""
     from django.core.mail import send_mail
     from django.conf import settings as _cfg
+    from vehicles.email_utils import esc
 
-    frontend_url = getattr(_cfg, 'FRONTEND_URL', 'http://localhost:5173')
+    # PUBLIC_SITE_URL, not FRONTEND_URL — see settings. A new guard or owner may
+    # open this mail anywhere, and the campus LAN address only works on campus.
+    frontend_url = getattr(_cfg, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
     extra_rows = extra_rows or []
+    # esc(): this template is an f-string, so an admin-entered name or a gate
+    # label containing markup would otherwise land in the HTML body verbatim.
     extra_html = ''.join(
-        f'<tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">{label}</td>'
-        f'<td style="padding:8px 12px;">{value}</td></tr>'
+        f'<tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">{esc(label)}</td>'
+        f'<td style="padding:8px 12px;">{esc(value)}</td></tr>'
         for label, value in extra_rows
     )
     extra_text = ''.join(f"{label:<10}: {value}\n" for label, value in extra_rows)
@@ -127,23 +135,23 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
         <div style="padding:28px 32px 24px;">
           <h2 style="color:#2A2B61;margin:0 0 8px;">Your SLC Account is Ready</h2>
           <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
-            Hello <strong>{full_name}</strong>, the administrator has created your account.
+            Hello <strong>{esc(full_name)}</strong>, the administrator has created your account.
           </p>
           <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;width:40%;">Login URL</td>
                 <td style="padding:8px 12px;">{frontend_url}/login</td></tr>
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Email</td>
-                <td style="padding:8px 12px;">{email}</td></tr>
+                <td style="padding:8px 12px;">{esc(email)}</td></tr>
             {extra_html}
             <tr><td style="padding:8px 12px;background:#F0F2F7;font-weight:600;">Temp Password</td>
-                <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{password}</td></tr>
+                <td style="padding:8px 12px;font-family:monospace;font-size:15px;">{esc(password)}</td></tr>
           </table>
           <p style="color:#DC2626;font-size:13px;background:#FEF2F2;border:1px solid #FECACA;
                      border-radius:8px;padding:10px 14px;margin:0 0 20px;">
             Please log in and <strong>change your password immediately</strong>.
           </p>
           <p style="color:#9CA3B0;font-size:12px;margin:0;">
-            This is an automated message from the Saint Louis College Vehicle Management System.
+            This is an automated message from the Saint Louis College Smart Parking and Vehicle Verification System.
             Do not reply to this email.
           </p>
         </div>
@@ -152,7 +160,7 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
     """
     try:
         send_mail(
-            subject='SLC Vehicle Management — Your Account Has Been Created',
+            subject='SPVVS — Your Account Has Been Created',
             message=(
                 f"Hello {full_name},\n\n"
                 f"Your account has been created by the administrator.\n\n"
@@ -161,15 +169,21 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
                 f"{extra_text}"
                 f"Password  : {password}\n\n"
                 f"Please log in and change your password immediately.\n\n"
-                f"Saint Louis College Vehicle Management System"
+                f"Saint Louis College Smart Parking and Vehicle Verification System"
             ),
             from_email=_cfg.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
             html_message=html,
-            fail_silently=True,
+            fail_silently=False,
         )
     except Exception:
-        pass
+        # Account creation still succeeds — but a swallowed failure here meant a
+        # new guard or owner simply never received their temporary password and
+        # nobody found out until they tried to log in.
+        logger.exception(
+            "Failed to send the account-created email to %s — the account exists "
+            "but its temporary password was never delivered.", email,
+        )
 
 
 class GuardCreateSerializer(serializers.Serializer):
@@ -330,17 +344,10 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             user=user,
         )
 
-        days_set  = set(campus_days)
-        mwf_days  = {'Monday', 'Wednesday', 'Friday'}
-        tths_days = {'Tuesday', 'Thursday', 'Saturday'}
-        if days_set == mwf_days:
-            schedule = 'MWF'
-        elif days_set == tths_days:
-            schedule = 'TTHS'
-        elif days_set:
-            schedule = 'MIXED'
-        else:
-            schedule = 'ANY'
+        # Same rule as the public form and the CDSO override — see
+        # vehicles/campus_days.py for why this is no longer inlined.
+        from vehicles.campus_days import schedule_group
+        schedule = schedule_group(campus_days)
 
         VehicleRegistration.objects.create(
             user=user,
@@ -425,6 +432,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         from rest_framework.exceptions import AuthenticationFailed
+        from . import twofa
 
         email = attrs.get(self.username_field, '')
         password = attrs.get('password', '')
@@ -443,6 +451,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     raise AuthenticationFailed(
                         'Security personnel must log in at the guard gate login page.'
                     )
+
+                # Second factor, decided here rather than in the view because
+                # this is the one point where the password is known to be right
+                # and no token has been minted yet. Returning early matters:
+                # the blacklist app records every refresh token that is created,
+                # so minting a pair and throwing it away would leave a row
+                # behind for a login that never completed.
+                challenge = twofa.login_challenge(user, self.context.get('request'))
+                if challenge is not None:
+                    return challenge
         except User.DoesNotExist:
             pass
 
@@ -465,6 +483,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'photo_url': photo_url,
             'gate_assignment': self.user.gate_assignment,
         }
+        # Refreshes the trust window on every successful login, so an account
+        # in regular use is never asked for a code twice in the same week.
+        if twofa.requires_2fa(self.user):
+            data['device_token'] = twofa.issue_device_token(self.user)
+            data['device_trust_days'] = twofa.DEVICE_TRUST_DAYS
         return data
 
 

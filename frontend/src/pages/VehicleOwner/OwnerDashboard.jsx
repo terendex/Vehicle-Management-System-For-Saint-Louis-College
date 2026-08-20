@@ -7,32 +7,34 @@ import {
   ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
+import useTwofaStore from '../../stores/twofaStore'
 import { usersApi } from '../../api/users'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
+import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
 
-/* ── password strength rules ── */
-const PW_RULES = [
-  { key: 'length',  label: 'At least 8 characters',         test: (p) => p.length >= 8 },
-  { key: 'upper',   label: 'One uppercase letter',          test: (p) => /[A-Z]/.test(p) },
-  { key: 'lower',   label: 'One lowercase letter',          test: (p) => /[a-z]/.test(p) },
-  { key: 'number',  label: 'One number',                    test: (p) => /[0-9]/.test(p) },
-  { key: 'special', label: 'One special character (!@#$…)', test: (p) => /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(p) },
-]
-
-function pwStrength(pw) {
-  if (!pw) return { level: '', score: 0 }
-  const passed = PW_RULES.filter(r => r.test(pw)).length
-  if (passed <= 1) return { level: 'weak',      score: 1 }
-  if (passed === 2) return { level: 'fair',      score: 2 }
-  if (passed === 3) return { level: 'good',      score: 3 }
-  if (passed === 4) return { level: 'strong',    score: 4 }
-  return               { level: 'excellent',  score: 5 }
+/* What each schedule code admits, spelled out — a bare 'ANY' told the owner
+   nothing, and "any day" would overstate it (the campus is closed on Sunday). */
+const SCHEDULE_LABELS = {
+  MWF:   'Mon · Wed · Fri',
+  TTHF:  'Tue · Thu · Fri',
+  TTHS:  'Tue · Thu · Sat',   // pre-rename rotation
+  MIXED: 'Mon – Sat',
+  ANY:   'Mon – Sat',
+  ALL:   'Mon – Sat',
 }
 
-const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
+
+// Evidence is served by the API rather than a public storage URL, so the
+// request must carry a token — an <img> cannot send an Authorization header.
+function evidenceSrc(url) {
+  if (!url) return null
+  const token = localStorage.getItem('access_token') || ''
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
+}
 
 const VIOLATION_TYPE_LABELS = {
   unauthorized_entry:   'Unauthorized Entry',
@@ -51,6 +53,26 @@ const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().
 
 export default function OwnerDashboard() {
   const { user, logout, clearMustChangePassword } = useAuthStore()
+  const [securityModal, setSecurityModal] = useState(false)
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
+  /** Prove it's you, then open the form — not the other way round.
+   *
+   *  The server would ask anyway when the form is submitted, but being stopped
+   *  after typing a password three times is a poor way to find out. Cancelling
+   *  the prompt simply leaves the modal closed.
+   *
+   *  The forced first-time change is exempt: that user enrolled seconds ago and
+   *  is already carrying a step-up, so `ensureStepUp` returns it without a
+   *  prompt — and if it ever did prompt, they have nowhere else to go. */
+  const openPasswordModal = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing your password.')
+      setPwModal(true)
+    } catch {
+      /* prompt dismissed — leave the form closed */
+    }
+  }
 
   /* ── registration data ── */
   const [reg, setReg] = useState(null)
@@ -354,6 +376,22 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* ── Security (two-factor) ── */}
+      {securityModal && (
+        <div className="od-modal-overlay" onClick={() => setSecurityModal(false)}>
+          <div className="od-modal od-modal-wide" onClick={e => e.stopPropagation()}>
+            <h2 className="od-modal-title">Account Security</h2>
+            <p className="od-modal-subtitle">
+              Manage your authenticator app and backup codes.
+            </p>
+            <SecurityPanel compact />
+            <div className="od-modal-actions" style={{ marginTop: 18 }}>
+              <button className="od-btn-ghost" onClick={() => setSecurityModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main dashboard ── */}
       <div className="od-page">
 
@@ -366,10 +404,16 @@ export default function OwnerDashboard() {
             <h1>Welcome, {user?.full_name || 'Vehicle Owner'}!</h1>
             <p>Here is your registration summary and vehicle access details.</p>
           </div>
-          <button className="od-change-pw-btn" onClick={() => setPwModal(true)} title="Change Password">
-            <KeyRound size={15} />
-            Change Password
-          </button>
+          <div className="od-welcome-actions">
+            <button className="od-change-pw-btn" onClick={() => setSecurityModal(true)} title="Two-factor authentication and backup codes">
+              <ShieldCheck size={15} />
+              Security
+            </button>
+            <button className="od-change-pw-btn" onClick={openPasswordModal} title="Change Password">
+              <KeyRound size={15} />
+              Change Password
+            </button>
+          </div>
         </div>
 
         {/* ID Cards */}
@@ -435,7 +479,10 @@ export default function OwnerDashboard() {
                           </div>
                         ) : (
                           <div className="od-day-badges">
-                            <span className="od-day-badge">{reg.schedule}</span>
+                            {/* No stored days — an employee or fetcher pass.
+                                Showing the bare code ('ANY') told the owner
+                                nothing about which days they may come in. */}
+                            <span className="od-day-badge">{SCHEDULE_LABELS[reg.schedule] || reg.schedule}</span>
                           </div>
                         )}
                       </div>
@@ -595,8 +642,8 @@ export default function OwnerDashboard() {
                                     </td>
                                     <td>
                                       {v.evidence_url ? (
-                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
-                                          <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
+                                          <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
                                           <ZoomIn size={11} className="od-evidence-zoom" />
                                         </button>
                                       ) : (
@@ -651,8 +698,8 @@ export default function OwnerDashboard() {
                                   <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
                                   <td>
                                     {v.evidence_url ? (
-                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(v.evidence_url)} title="View evidence">
-                                        <img src={v.evidence_url} alt="evidence" className="od-evidence-thumb" />
+                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
+                                        <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
                                         <ZoomIn size={11} className="od-evidence-zoom" />
                                       </button>
                                     ) : (

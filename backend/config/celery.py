@@ -34,4 +34,12 @@ app.conf.beat_schedule = {
         "task":     "vehicles.auto_archive_expired_accounts",
         "schedule": crontab(hour=0, minute=5),
     },
+    # Take a scheduled backup of system data. Checked every hour on the half
+    # hour; the task itself applies the configured frequency (off / hourly /
+    # daily / weekly / monthly), so it never runs more often than asked. On the
+    # half hour so an hourly schedule never collides with the 02:00 purge.
+    "auto-backup-hourly": {
+        "task":     "vehicles.auto_backup",
+        "schedule": crontab(minute=30),
+    },
 }

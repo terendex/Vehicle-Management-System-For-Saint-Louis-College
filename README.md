@@ -34,8 +34,8 @@ This system automates vehicle entry and parking monitoring at Saint Louis Colleg
 - **Device Management** — centralized admin panel to add, edit, and remove IP cameras; auto-named Cam 1, Cam 2, … with gap-filling; cameras auto-connect when visiting Entry or Parking pages
 - **Smart parking occupancy** — AI detects vehicles inside parking space bounding boxes and marks spaces red/green in real time
 - **Philippine plate validation** — supports all standard PH plate formats
-- **Schedule-based entry** — MWF and TTHS schedules for students and fetchers
-- **Employee open access** — employees allowed entry any day
+- **Schedule-based entry** — students register for one whole rotation, MWF (Mon/Wed/Fri) or TTHF (Tue/Thu/Fri); SpEd gets every campus day, and CDSO can still assign specific days when accepting an application
+- **Employee open access** — employees allowed entry on any campus day (Mon–Sat)
 - **Visitor pass system** — visitors declare office destination, office confirms entry
 - **Violation tracking** — flags vehicles with unresolved violations
 - **Mobile web scanner** — guards can scan plates from any device
@@ -477,10 +477,13 @@ when the sources changed, and `npm ci` runs only when the lockfile moved.
 - **Django admin is at `/django-admin/`, not `/admin/`.** On a single origin the
   React app owns `/admin`, `/admin/vehicles`, `/admin/users` — the two collided.
 - **No Celery worker is deployed.** The ML retrain button therefore does
-  nothing, and the two beat-scheduled jobs (`auto_manage_events`,
-  `purge_old_records`) do not run. Schedule
-  `python manage.py run_maintenance` instead — it runs both synchronously with
-  no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
+  nothing, and `auto_manage_events` does not run off its beat schedule —
+  schedule `python manage.py run_maintenance` instead, which runs synchronously
+  with no broker and no worker. See [CAMPUS_SETUP.md](CAMPUS_SETUP.md).
+  The other two jobs, `auto_archive_expired_accounts` and `purge_old_records`,
+  need no scheduling: the server runs them daily on its own thread
+  (`vehicles/scheduler.py`), because the System Settings expiry and retention
+  cards promise they happen automatically.
 - **Redis is not required.** With one replica and no worker, nothing pushes to
   browsers from outside the web process, so the in-memory channel layer is
   enough. `settings.py` picks up `REDIS_URL` automatically if you ever add one.
@@ -540,7 +543,7 @@ land in a pending queue for the CDSO to accept or reject.
 |---|---|---|---|
 | `POST` | `/api/vehicles/register/open/` | Submit a vehicle registration application | No |
 | `GET` | `/api/vehicles/register/status/` | Whether registration is open, plus the current vehicle pass fees | No |
-| `GET` | `/api/vehicles/register/schedule-slots/` | Remaining capacity per schedule day | No |
+| `GET` | `/api/vehicles/register/schedule-slots/` | Remaining capacity per campus day, plus per rotation under `groups` | No |
 | `GET` | `/api/vehicles/register/availability/` | Live duplicate check for plate, email, licence, student/employee ID | No |
 | `POST` | `/api/vehicles/register/license-image/` | Attach a driver's licence photo to a submitted application | No |
 | `POST` | `/api/vehicles/register/direct/` | CDSO walk-in registration (auto-accepted, skips the queue) | Admin |
