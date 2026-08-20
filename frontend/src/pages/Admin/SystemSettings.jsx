@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
@@ -73,6 +73,14 @@ function backupSpanText(freq, keep) {
 // before someone restored, which is usually the file you want after a mistake.
 const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', other: 'File' }
 
+// How often the saved-backup list re-checks the server while the tab is open.
+// Deliberately slow: the fastest schedule writes one file an hour, so a tighter
+// poll would be dozens of requests to notice a single change. What actually
+// keeps the list current is the visibility refresh below — an admin coming back
+// to a tab they left open sees the truth immediately, without a timer running
+// all night on a screen nobody is watching.
+const BACKUP_POLL_MS = 5 * 60 * 1000
+
 const formatBytes = (n) =>
   n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`
 
@@ -123,6 +131,7 @@ export default function SystemSettings() {
   const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
   const [backups, setBackups]                 = useState([])
   const [backupsLoading, setBackupsLoading]   = useState(true)
+  const [backupsCheckedAt, setBackupsCheckedAt] = useState(null)
   const [backupBusy, setBackupBusy]           = useState(null) // filename being acted on
   const [confirmDeleteBackup, setConfirmDeleteBackup] = useState(null)
 
@@ -157,13 +166,47 @@ export default function SystemSettings() {
       .finally(() => setGatesLoading(false))
   }
 
-  const fetchBackups = () => {
-    setBackupsLoading(true)
+  /** Re-read the saved-backup list.
+   *
+   * `quiet` is for the background refreshes: it skips the spinner so the list
+   * does not blink every five minutes, and it leaves the existing rows alone on
+   * a failed request. A dropped poll should show stale data, not an empty list
+   * that reads as "your backups are gone".
+   */
+  const fetchBackups = ({ quiet = false } = {}) => {
+    if (!quiet) setBackupsLoading(true)
     usersApi.listBackups()
-      .then((data) => setBackups(data.backups || []))
-      .catch(() => setBackups([]))
-      .finally(() => setBackupsLoading(false))
+      .then((data) => {
+        setBackups(data.backups || [])
+        setBackupsCheckedAt(new Date())
+      })
+      .catch(() => { if (!quiet) setBackups([]) })
+      .finally(() => { if (!quiet) setBackupsLoading(false) })
   }
+
+  // Keep the list current without the admin reloading. Two triggers, because
+  // they cover different situations: the timer catches a backup landing while
+  // someone watches the page, and the visibility handler catches the far more
+  // common case of a tab left open for hours and returned to.
+  //
+  // Read through a ref rather than a dependency so a download or restore
+  // starting does not tear down and rebuild the timer mid-operation.
+  const backupBusyRef = useRef(false)
+  useEffect(() => { backupBusyRef.current = downloading || restoring }, [downloading, restoring])
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      if (backupBusyRef.current) return   // the handlers refetch when they finish
+      fetchBackups({ quiet: true })
+    }
+    const timer = setInterval(refresh, BACKUP_POLL_MS)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [])
 
   const handleAddGate = async (e) => {
     e.preventDefault()
@@ -1033,8 +1076,25 @@ export default function SystemSettings() {
               )}
 
               <div className="ss-row ss-row--stacked">
-                <div className="ss-list-head">
+                <div className="ss-list-head ss-list-head--split">
                   <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
+                  <span className="ss-list-head-right">
+                    {backupsCheckedAt && (
+                      <span className="ss-checked-at">
+                        Updated {backupsCheckedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="ss-refresh-btn"
+                      title="Check the server for new backups"
+                      disabled={backupsLoading || downloading || restoring}
+                      onClick={() => fetchBackups()}
+                    >
+                      <RefreshCw size={12} className={backupsLoading ? 'ss-spinner' : undefined} />
+                      Refresh
+                    </button>
+                  </span>
                 </div>
                 {backupsLoading ? (
                   <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading backups…</span></div>

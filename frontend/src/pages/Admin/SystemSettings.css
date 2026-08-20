@@ -534,6 +534,52 @@
   border-bottom: 1px solid #EEF4F9;
 }
 
+/* List header carrying a refresh control on the right. The base .ss-list-head
+   stays a plain block for the gates and notices lists that don't have one. */
+.ss-list-head--split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ss-list-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Lower-case and unbolded against the uppercase header it sits in — it is a
+   status, not a heading. */
+.ss-checked-at {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #8AA6BC;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.ss-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #2E4C63;
+  background: #fff;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.ss-refresh-btn:hover:not(:disabled) { background: #EEF4F9; border-color: #BDD4E5; }
+.ss-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .ss-no-notices {
   font-size: 0.83rem;
   color: #64839C;
