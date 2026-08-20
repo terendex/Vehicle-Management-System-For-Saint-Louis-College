@@ -660,7 +660,10 @@ class Camera(models.Model):
     name       = models.CharField(max_length=50)
     ip         = models.CharField(max_length=100)
     device_id  = models.CharField(max_length=100)
-    password   = models.CharField(max_length=100)
+    # Optional, but usually needed: IMOU/Dahua units refuse RTSP without it.
+    # Blank is allowed so a genuinely open camera can still be added without
+    # inventing a credential for it.
+    password   = models.CharField(max_length=100, blank=True, default='')
     rtsp_url   = models.CharField(max_length=500)
     assignment = models.CharField(max_length=20, choices=Assignment.choices)
     # Gate slug (e.g. 'gate1'). No choices constraint — gates are dynamic rows
@@ -675,6 +678,23 @@ class Camera(models.Model):
         db_table = 'tbl_camera'
         ordering = ['cam_number']
 
+    @property
+    def gate_label(self) -> str:
+        """Human name for the gate, or the raw slug for gates added later.
+
+        NOT get_gate_id_display(): Django only generates that for fields that
+        declare `choices`, and gate_id deliberately has none because gates are
+        dynamic rows in scanning.Gate. Calling it raised AttributeError for any
+        camera with a gate set — which broke __str__, and with it every audited
+        write. Deleting such a camera returned a 500 that the UI reported as a
+        flat "Failed to remove camera."
+        """
+        if not self.gate_id:
+            return ''
+        if self.gate_id in self.GateId.values:
+            return self.GateId(self.gate_id).label
+        return self.gate_id
+
     def __str__(self):
-        gate = f' — {self.get_gate_id_display()}' if self.gate_id else ''
+        gate = f' — {self.gate_label}' if self.gate_id else ''
         return f"{self.name} ({self.get_assignment_display()}{gate})"

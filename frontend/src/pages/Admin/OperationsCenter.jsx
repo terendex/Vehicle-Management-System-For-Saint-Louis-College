@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
-  UserCheck, Activity, Video, Wifi, MonitorDot,
+  UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
   ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
@@ -176,85 +176,162 @@ function GuardTable({ guards }) {
 }
 
 // ─── Camera Monitor ───────────────────────────────────────────────────────────
+// Scopes a camera can be filtered by. Gates come first because that is what an
+// operator watches most; parking is one bucket regardless of how many zones
+// share the lot.
+const CAM_SCOPES = [
+  { key: 'all',     label: 'All Cameras', match: () => true },
+  { key: 'gate1',   label: 'Gate 1',      match: c => c.assignment === 'entry' && c.gate_id === 'gate1' },
+  { key: 'gate4',   label: 'Gate 4',      match: c => c.assignment === 'entry' && c.gate_id === 'gate4' },
+  { key: 'parking', label: 'Parking',     match: c => c.assignment === 'parking' },
+]
+
+function camScopeLabel(cam) {
+  if (cam.assignment === 'parking') return 'Parking'
+  return GATE_LABELS[cam.gate_id] ?? cam.gate_id ?? 'Unassigned'
+}
+
 function CameraMonitor() {
-  const { cameras: allCameras, addCamera, registerCanvas } = useCameraContext()
-  const [activeCamId, setActiveCamId] = useState(null)
-  const cameras = allCameras.filter(c => c.assignment === 'entry')
-  const activeCam = cameras.find(c => c.id === activeCamId) ?? cameras[0] ?? null
+  const { cameras: liveCameras, addCamera, disconnectCamera, registerCanvas } = useCameraContext()
+  const [devices,   setDevices]   = useState([])   // registered cameras (from the API)
+  const [scope,     setScope]     = useState('all')
+  const [selectedId, setSelectedId] = useState(null) // Camera.id from the API
+
+  // Only feeds this panel opened may be closed by it. A camera another page is
+  // already streaming — a guard terminal running detection, say — must survive
+  // switching cameras here.
+  const ownedRef = useRef(new Set())
+  const liveRef  = useRef(liveCameras)
+  // Declared above the connect effect so it is already current when that runs.
+  useEffect(() => { liveRef.current = liveCameras }, [liveCameras])
 
   useEffect(() => {
-    if (!activeCamId && cameras.length > 0) setActiveCamId(cameras[0].id)
-  }) // intentionally no deps — runs after every render until activeCamId is set
-
-  useEffect(() => {
-    // View-only (no detect flag) — detection runs on the guard/entry terminals.
-    // The gate is passed so the monitor can label feeds and so a later upgrade
-    // to scan mode tags its logs with the right gate.
-    camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { gate: c.gate_id })))
+    camerasApi.list()
+      .then(cams => setDevices(cams.filter(c => c.is_active !== false && c.rtsp_url)))
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
-  const isLive = cameras.some(c => c.streamConnected)
+  const scopes  = CAM_SCOPES.filter(s => s.key === 'all' || devices.some(s.match))
+  const visible = devices.filter(CAM_SCOPES.find(s => s.key === scope)?.match ?? (() => true))
+
+  // Keep the selection inside the current filter.
+  const selected = visible.find(c => c.id === selectedId) ?? visible[0] ?? null
+
+  // One feed at a time. Opening every registered camera at once meant N RTSP
+  // decoders on the campus PC for one visible picture, which is a large part of
+  // why feeds were stalling.
+  useEffect(() => {
+    if (!selected) return
+    const owned = ownedRef.current          // stable Set, created once
+    const alreadyOpen = liveRef.current.some(c => c.url === selected.rtsp_url)
+    // View-only: no detect flag, so this never downgrades a scanning connection.
+    const camId = addCamera(selected.name, selected.rtsp_url, selected.assignment,
+                            { gate: selected.gate_id })
+    if (camId == null) return
+    if (!alreadyOpen) owned.add(camId)
+
+    return () => {
+      if (owned.has(camId)) {
+        owned.delete(camId)
+        disconnectCamera(camId)
+      }
+    }
+  }, [selected?.id, selected?.rtsp_url]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const feed = liveCameras.find(c => c.url === selected?.rtsp_url) ?? null
+  const isLive = !!feed?.streamConnected
 
   return (
     <div className="oc-cam-panel">
       <div className="oc-cam-head">
         <span className="oc-cam-label"><Video size={14} /> Camera Monitor</span>
         <span className="oc-cam-note">View only — detection is handled by guard terminals</span>
-        <span className={`oc-live-pill ${isLive ? 'live' : cameras.length === 0 ? 'none' : 'connecting'}`}>
+        <span className={`oc-live-pill ${isLive ? 'live' : devices.length === 0 ? 'none' : 'connecting'}`}>
           <span className="oc-live-dot" />
-          {cameras.length === 0 ? 'No Cameras' : isLive ? 'Live' : 'Connecting…'}
+          {devices.length === 0 ? 'No Cameras' : isLive ? 'Live' : 'Connecting…'}
         </span>
       </div>
 
-      <div className="oc-cam-viewport">
-        {cameras.length > 0 ? (
-          <>
-            {cameras.map((cam, idx) => (
-              <div
-                key={cam.id}
-                style={{ display: activeCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx > 0 ? { position: 'absolute', inset: 0 } : {}) }}
+      {devices.length > 0 && (
+        <div className="oc-cam-controls">
+          <div className="oc-cam-scopes" role="group" aria-label="Filter cameras">
+            {scopes.map(s => (
+              <button
+                key={s.key}
+                className={`oc-cam-scope ${scope === s.key ? 'active' : ''}`}
+                onClick={() => setScope(s.key)}
               >
-                <canvas
-                  ref={el => registerCanvas(cam.id, el)}
-                  style={{ width: '100%', display: 'block', background: '#000', minHeight: 260 }}
-                />
-              </div>
+                {s.key === 'parking' ? <ParkingCircle size={12} /> : s.key === 'all' ? null : <Shield size={12} />}
+                {s.label}
+              </button>
             ))}
-            {activeCam && !activeCam.streamConnected && activeCam.wsActive && (
+          </div>
+
+          <label className="oc-cam-picker">
+            <span className="oc-cam-picker-lbl">Camera</span>
+            <select
+              value={selected?.id ?? ''}
+              onChange={e => setSelectedId(Number(e.target.value))}
+              disabled={visible.length === 0}
+            >
+              {visible.length === 0 && <option value="">No cameras in this filter</option>}
+              {visible.map(c => (
+                <option key={c.id} value={c.id}>{c.name} — {camScopeLabel(c)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      <div className="oc-cam-viewport">
+        {selected ? (
+          <>
+            {/* Keyed by stream URL so switching cameras remounts the canvas
+                instead of painting the new feed over the old one's last frame. */}
+            <canvas
+              key={selected.rtsp_url}
+              ref={el => feed && registerCanvas(feed.id, el)}
+              style={{ width: '100%', display: 'block', background: '#000', minHeight: 260 }}
+            />
+            {!isLive && (
               <div className="oc-cam-overlay">
                 <div className="oc-cam-spinner" />
-                <p>{activeCam.statusMsg || 'Connecting…'}</p>
+                <p>{feed?.statusMsg || 'Connecting…'}</p>
               </div>
             )}
             <div className="oc-cam-name-tag">
-              <span className={`oc-cam-dot ${activeCam?.streamConnected ? 'live' : 'wait'}`} />
-              {activeCam?.name || 'Camera'}
-              {activeCam?.gate && ` — ${GATE_LABELS[activeCam.gate] ?? activeCam.gate}`}
+              <span className={`oc-cam-dot ${isLive ? 'live' : 'wait'}`} />
+              {selected.name} — {camScopeLabel(selected)}
             </div>
           </>
         ) : (
           <div className="oc-cam-empty">
             <Wifi size={36} />
-            <p>No entry cameras configured.</p>
-            <span>Add cameras in Device Management.</span>
+            <p>{devices.length === 0
+                  ? 'No cameras configured.'
+                  : 'No cameras match this filter.'}</p>
+            <span>{devices.length === 0
+                     ? 'Add cameras in Device Management.'
+                     : 'Pick another gate, or Parking.'}</span>
           </div>
         )}
       </div>
 
-      {cameras.length > 1 && (
+      {visible.length > 1 && (
         <div className="oc-cam-strip">
-          {cameras.map(cam => (
-            <button
-              key={cam.id}
-              className={`oc-cam-thumb ${activeCamId === cam.id ? 'active' : ''}`}
-              onClick={() => setActiveCamId(cam.id)}
-            >
-              <span className={`oc-cam-dot ${cam.streamConnected ? 'live' : cam.wsActive ? 'wait' : 'off'}`} />
-              {cam.name}{cam.gate && ` · ${GATE_LABELS[cam.gate] ?? cam.gate}`}
-            </button>
-          ))}
+          {visible.map(cam => {
+            const f = liveCameras.find(l => l.url === cam.rtsp_url)
+            return (
+              <button
+                key={cam.id}
+                className={`oc-cam-thumb ${selected?.id === cam.id ? 'active' : ''}`}
+                onClick={() => setSelectedId(cam.id)}
+              >
+                <span className={`oc-cam-dot ${f?.streamConnected ? 'live' : f?.wsActive ? 'wait' : 'off'}`} />
+                {cam.name} · {camScopeLabel(cam)}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>

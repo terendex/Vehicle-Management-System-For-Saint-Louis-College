@@ -146,6 +146,79 @@
 .oc-live-pill.none .oc-live-dot { animation: none; }
 @keyframes oc-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
+/* ── Camera scope filter + picker ── */
+.oc-cam-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  border-bottom: 1px solid #EEF4F9;
+  background: #FBFDFE;
+}
+.oc-cam-scopes {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.oc-cam-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #D3E1EC;
+  border-radius: 20px;
+  background: #fff;
+  color: #4A6B85;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.oc-cam-scope:hover  { border-color: #03396C; color: #03396C; }
+.oc-cam-scope.active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+}
+.oc-cam-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+}
+.oc-cam-picker-lbl {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64839C;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.oc-cam-picker select {
+  max-width: 230px;
+  padding: 5px 9px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 7px;
+  background: #fff;
+  color: #2E4C63;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.oc-cam-picker select:focus { outline: none; border-color: #2E8CCB; }
+.oc-cam-picker select:disabled { background: #F7FAFC; color: #9DB6C9; cursor: default; }
+
+@media (max-width: 560px) {
+  /* The picker sitting on the same line as the chips squeezed both; give it
+     its own row rather than truncating camera names. */
+  .oc-cam-picker { margin-left: 0; width: 100%; }
+  .oc-cam-picker select { flex: 1; max-width: none; }
+}
+
 .oc-cam-viewport {
   position: relative;
   background: #0B2340;

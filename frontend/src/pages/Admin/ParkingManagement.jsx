@@ -96,6 +96,16 @@ export default function ParkingManagement({ embedded = false }) {
     if (!pkActiveCamId && parkingCams.length > 0) setPkActiveCam(parkingCams[0].id)
   }) // intentionally no deps — runs after every render until activeCamId is set
 
+  // Open the feed by itself the first time a parking camera turns up, zone or
+  // no zone. Guarded by a ref so closing the panel keeps it closed.
+  const camPanelAutoOpened = useRef(false)
+  useEffect(() => {
+    if (!camPanelAutoOpened.current && parkingCams.length > 0) {
+      camPanelAutoOpened.current = true
+      setShowCamPanel(true)
+    }
+  }, [parkingCams.length])
+
   const svgEl       = useRef(null)
   const fileRef     = useRef(null)
   const dragStart   = useRef(null)
@@ -534,7 +544,9 @@ export default function ParkingManagement({ embedded = false }) {
             <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
             </button>
-            {mode === 'live' && (
+            {/* Available with no zone selected too: the feed is what you draw
+                the zone from, so it has to be visible before one exists. */}
+            {(mode === 'live' || !selZone) && (
               <button
                 className={`pm-btn ${showCamPanel ? 'pm-btn--camera-on' : 'pm-btn--outline'}`}
                 onClick={() => setShowCamPanel(p => !p)}
@@ -548,14 +560,16 @@ export default function ParkingManagement({ embedded = false }) {
           </div>
         </div>
 
-        {/* Main content row: parking map + optional camera sidebar */}
+        {/* Main content row: parking map + camera sidebar. The sidebar sits
+            outside the zone check — the live feed is how an admin decides where
+            the spaces go, so it must be watchable before any zone exists. */}
+        <div className="pm-content-row">
         {!selZone ? (
-          <div className="pm-canvas-placeholder">
+          <div className="pm-canvas-placeholder" style={{ flex: 1, minWidth: 0 }}>
             <ParkingCircle size={36} />
             <span>{loading ? 'Loading…' : 'Select or create a parking zone.'}</span>
           </div>
         ) : (
-          <div className="pm-content-row">
           <div className="pm-canvas-area" style={{ flex: 1, minWidth: 0 }}>
 
             {/* Toolbar */}
@@ -850,7 +864,8 @@ export default function ParkingManagement({ embedded = false }) {
                     : 'Click-drag to draw · click a box to rename or delete'}
               </span>
             </div>
-          </div>{/* /pm-canvas-area */}
+          </div>
+        )}{/* /pm-canvas-area */}
 
           {/* ── Camera Sidebar ── */}
           {showCamPanel && (
@@ -859,7 +874,7 @@ export default function ParkingManagement({ embedded = false }) {
               {/* Sidebar header */}
               <div className="pm-cam-sidebar-header">
                 <span className="pm-cam-panel-title">
-                  <Video size={14} /> {selZone.name}
+                  <Video size={14} /> {selZone ? selZone.name : 'Parking Cameras'}
                   {parkingCams.length > 0 && (
                     <span className="pm-cam-live-badge">
                       {parkingCams.filter(c => c.streamConnected).length}/{parkingCams.length} live
@@ -914,7 +929,15 @@ export default function ParkingManagement({ embedded = false }) {
                 )}
               </div>
 
-              {parkingCams.length > 0 && (
+              {/* A captured frame becomes a zone's reference image, so it needs
+                  a zone to belong to. */}
+              {parkingCams.length > 0 && !selZone && (
+                <p className="pm-cam-hint">
+                  Create a zone to use this view as its reference image.
+                </p>
+              )}
+
+              {parkingCams.length > 0 && selZone && (
                 <button
                   className="pm-btn pm-btn--primary"
                   style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
@@ -956,8 +979,7 @@ export default function ParkingManagement({ embedded = false }) {
             </div>
           )}
 
-          </div>
-        )}
+        </div>{/* /pm-content-row */}
 
       </div>
 

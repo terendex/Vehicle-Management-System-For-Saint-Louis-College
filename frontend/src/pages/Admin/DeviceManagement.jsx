@@ -13,48 +13,18 @@ import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Different camera vendors expose RTSP on different paths/query strings, and
-// some (Dahua/IMOU in particular) authenticate RTSP as "admin" regardless of
-// the device ID printed on the unit — so the URL can't always be built from
-// just IP + Device ID + password.
-const URL_FORMATS = [
-  {
-    id: 'generic',
-    label: 'Generic',
-    build: ({ ip, deviceId, password }) => `rtsp://${deviceId}:${password}@${ip}/stream1`,
-  },
-  {
-    id: 'dahua',
-    label: 'Dahua / IMOU',
-    build: ({ ip, username, password, subtype }) =>
-      `rtsp://${username}:${password}@${ip}/cam/realmonitor?channel=1&subtype=${subtype}`,
-  },
-  {
-    id: 'hikvision',
-    label: 'Hikvision',
-    build: ({ ip, username, password }) => `rtsp://${username}:${password}@${ip}/Streaming/Channels/101`,
-  },
-  {
-    id: 'custom',
-    label: 'Custom',
-    build: null,
-  },
-]
-
-const DAHUA_RE = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/cam\/realmonitor\?channel=\d+&subtype=(\d+)/
-const HIK_RE   = /^rtsp:\/\/([^:]+):[^@]+@[^/]+\/Streaming\/Channels\/\d+/
-
-// Best-effort match of an existing camera's stored URL to one of the formats
-// above, so the edit modal opens with the right template + extracted username.
-function detectFormat(rtspUrl) {
-  const fallback = { id: 'generic', username: 'admin', subtype: '0' }
-  if (!rtspUrl) return fallback
-  const dahua = DAHUA_RE.exec(rtspUrl)
-  if (dahua) return { id: 'dahua', username: dahua[1], subtype: dahua[2] }
-  const hik = HIK_RE.exec(rtspUrl)
-  if (hik) return { id: 'hikvision', username: hik[1], subtype: '0' }
-  if (/\/stream1$/.test(rtspUrl)) return fallback
-  return { id: 'custom', username: 'admin', subtype: '0' }
+// Channel number encoded in a saved stream URL, so the edit modal opens on the
+// right one. Dahua puts it in a query string, Hikvision folds it into the
+// channel number (201 = channel 2), others use /chNN/ or a trailing digit.
+function channelOf(rtspUrl) {
+  if (!rtspUrl) return 1
+  const dahua = /[?&]channel=(\d+)/.exec(rtspUrl)
+  if (dahua) return Number(dahua[1])
+  const hik = /\/Streaming\/Channels\/(\d)0\d/.exec(rtspUrl)
+  if (hik) return Number(hik[1])
+  const ch = /\/ch(\d+)\//.exec(rtspUrl)
+  if (ch) return Number(ch[1])
+  return 1
 }
 
 const GATE_LABELS = { gate1: 'Gate 1', gate4: 'Gate 4' }
@@ -102,18 +72,32 @@ function apiErrorMessage(err, fallback) {
 
 function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved }) {
   const isEdit = mode === 'edit'
-  const initialFormat = detectFormat(camera?.rtsp_url)
 
   const [ip,         setIp]         = useState(camera?.ip         ?? '')
   const [deviceId,   setDeviceId]   = useState(camera?.device_id  ?? '')
+  // IMOU/Dahua units refuse RTSP without it. Optional, so a genuinely open
+  // camera can still be added without inventing a credential.
   const [password,   setPassword]   = useState(camera?.password   ?? '')
-  const [urlFormat,  setUrlFormat]  = useState(initialFormat.id)
-  const [username,   setUsername]   = useState(initialFormat.username)
-  const [subtype,    setSubtype]    = useState(initialFormat.subtype)
-  const [customUrl,  setCustomUrl]  = useState(initialFormat.id === 'custom' ? (camera?.rtsp_url ?? '') : '')
+  // One IP can host several cameras (an NVR, or a multi-lens unit); the channel
+  // number is what tells them apart inside the RTSP path.
+  const [channel,    setChannel]    = useState(String(channelOf(camera?.rtsp_url) || 1))
+  const [showPw,     setShowPw]     = useState(false)
+  // The vendor picker is gone — the backend probes the camera and finds the
+  // stream path itself. These only come into play when that fails, or when a
+  // camera was already saved with a URL no template produces.
+  const [detecting,      setDetecting]      = useState(false)
+  const [detectError,    setDetectError]    = useState('')
+  const [detectedFormat, setDetectedFormat] = useState('')
+  // Set when probing fails. The next submit saves with this URL, so a camera
+  // the probe cannot identify can still be registered — without ever asking
+  // the admin to hand-write an RTSP URL.
+  const [fallbackUrl,    setFallbackUrl]    = useState('')
+  // Every URL the backend tried and what the camera answered. Hidden by
+  // default, but a camera that plainly works and still will not detect is
+  // undiagnosable without it.
+  const [detectAttempts, setDetectAttempts] = useState([])
   const [assignment, setAssignment] = useState(camera?.assignment ?? 'entry')
   const [gateId,     setGateId]     = useState(camera?.gate_id    ?? 'gate1')
-  const [showPw,     setShowPw]     = useState(false)
   const [saving,     setSaving]     = useState(false)
   const [gateOptions, setGateOptions] = useState(GATE_OPTIONS)
 
@@ -127,9 +111,11 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       .catch(() => {})
   }, [])
 
-  // Live duplicate check — warns as soon as the IP/Device ID matches an existing camera
-  const ipDupe = cameras.find(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
-  const deviceIdDupe = cameras.find(c => c.id !== camera?.id && deviceId.trim() && c.device_id === deviceId.trim())
+  // Another camera on the same IP is normal for an NVR, so this is a note, not
+  // a block. Only a duplicate *stream* is rejected, and the backend does that.
+  const sameDevice = cameras.filter(c => c.id !== camera?.id && ip.trim() && c.ip === ip.trim())
+  const ipDupe = null
+  const deviceIdDupe = null
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -141,38 +127,43 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
       toast.error('Enter a valid IP address (e.g. 192.168.137.86).')
       return
     }
-    if (urlFormat === 'custom' && !customUrl.trim()) {
-      toast.error("Enter the camera's RTSP URL.")
-      return
-    }
-    if ((urlFormat === 'dahua' || urlFormat === 'hikvision') && !username.trim()) {
-      toast.error('Enter the RTSP username.')
-      return
-    }
     if (assignment === 'entry' && !gateId) {
       toast.error('Please select a gate for this entry camera.')
       return
     }
-    // Instant duplicate check against the loaded list (backend re-validates)
-    const others = cameras.filter(c => !isEdit || c.id !== camera.id)
-    const ipDup  = others.find(c => (c.ip || '').trim() === ip.trim())
-    if (ipDup) {
-      toast.error(`${ipDup.name} already uses this IP address.`)
-      return
-    }
-    const idDup = others.find(c => (c.device_id || '').trim() === deviceId.trim())
-    if (idDup) {
-      toast.error(`${idDup.name} already uses this Device ID.`)
-      return
-    }
+    // No IP/Device-ID duplicate check: several cameras legitimately share one
+    // device. The backend rejects a duplicate stream URL, which is the real
+    // identity of a camera.
     setSaving(true)
     try {
-      const rtspUrl = urlFormat === 'custom'
-        ? customUrl.trim()
-        : URL_FORMATS.find(f => f.id === urlFormat).build({
-            ip: ip.trim(), deviceId: deviceId.trim(), username: username.trim(),
-            password: password.trim(), subtype,
+      // Ask the camera which stream path it answers on. The admin is never
+      // asked for an RTSP URL: if probing fails, the first submit reports it
+      // and the second saves with the best-guess URL.
+      let rtspUrl
+      if (fallbackUrl) {
+        rtspUrl = fallbackUrl          // second press: save despite the failure
+      } else {
+        setDetecting(true)
+        try {
+          const found = await camerasApi.detectRtsp({
+            ip: ip.trim(), device_id: deviceId.trim(), password: password.trim(),
+            channel: Number(channel) || 1,
           })
+          rtspUrl = found.rtsp_url
+          setDetectedFormat(found.format)
+        } catch (err) {
+          const data = err?.response?.data
+          setDetectError(data?.error || 'Could not detect the camera stream.')
+          // Keep the camera's existing URL when editing; otherwise fall back to
+          // the backend's best guess so the next press can still save.
+          setFallbackUrl(data?.suggestion || camera?.rtsp_url || '')
+          setDetectAttempts(Array.isArray(data?.attempts) ? data.attempts : [])
+          toast.error('Could not detect the stream.')
+          return
+        } finally {
+          setDetecting(false)
+        }
+      }
       const payload = {
         ip: ip.trim(),
         device_id: deviceId.trim(),
@@ -218,18 +209,38 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
             <div className="dm-field-row">
               <div className="form-group">
                 <label className="form-label">Camera IP <span className="required">*</span></label>
-                <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => setIp(e.target.value)} required />
+                <input className="form-input" placeholder="e.g. 192.168.137.86" value={ip} onChange={(e) => { setIp(e.target.value); setDetectError(''); setFallbackUrl('') }} required />
                 {ipDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{ipDupe.name}".</p>
                 )}
               </div>
               <div className="form-group">
                 <label className="form-label">Device ID <span className="required">*</span></label>
-                <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} required />
+                <input className="form-input" placeholder="e.g. 110384665" value={deviceId} onChange={(e) => { setDeviceId(e.target.value); setDetectError(''); setFallbackUrl('') }} required />
                 {deviceIdDupe && (
                   <p className="dm-hint dm-hint-error">Already used by "{deviceIdDupe.name}".</p>
                 )}
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Channel</label>
+              <input
+                className="form-input"
+                type="number"
+                min="1"
+                max="32"
+                value={channel}
+                onChange={(e) => { setChannel(e.target.value); setDetectError(''); setFallbackUrl('') }}
+              />
+              <p className="dm-gate-hint">
+                1 for a normal camera. Use 2, 3… for extra cameras on the same
+                device (an NVR or multi-lens unit).
+                {sameDevice.length > 0 && (
+                  <> This IP already has {sameDevice.length} camera
+                  {sameDevice.length > 1 ? 's' : ''}: {sameDevice.map(c => c.name).join(', ')}.</>
+                )}
+              </p>
             </div>
 
             <div className="form-group">
@@ -240,7 +251,7 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                   type={showPw ? 'text' : 'password'}
                   placeholder="Camera password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setDetectError(''); setFallbackUrl('') }}
                   required
                 />
                 <button type="button" className="dm-pw-addon" onClick={() => setShowPw(p => !p)}>
@@ -249,72 +260,44 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
               </div>
             </div>
 
-            <p className="dm-section-label" style={{ marginTop: '20px' }}>RTSP URL Format</p>
-            <div className="dm-gate-row">
-              {URL_FORMATS.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`dm-gate-btn ${urlFormat === id ? 'dm-gate-btn-active' : ''}`}
-                  onClick={() => setUrlFormat(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {(urlFormat === 'dahua' || urlFormat === 'hikvision') && (
-              <div className="dm-field-row" style={{ marginTop: '12px' }}>
-                <div className="form-group">
-                  <label className="form-label">RTSP Username <span className="required">*</span></label>
-                  <input className="form-input" placeholder="admin" value={username} onChange={(e) => setUsername(e.target.value)} />
-                </div>
-                {urlFormat === 'dahua' && (
-                  <div className="form-group">
-                    <label className="form-label">Stream</label>
-                    <div className="dm-gate-row">
-                      <button
-                        type="button"
-                        className={`dm-gate-btn ${subtype === '0' ? 'dm-gate-btn-active' : ''}`}
-                        onClick={() => setSubtype('0')}
-                      >
-                        Main
-                      </button>
-                      <button
-                        type="button"
-                        className={`dm-gate-btn ${subtype === '1' ? 'dm-gate-btn-active' : ''}`}
-                        onClick={() => setSubtype('1')}
-                      >
-                        Sub
-                      </button>
-                    </div>
-                  </div>
+            {/* No vendor picker. Which firmware a camera runs is not something
+                the person mounting it should have to know, so the backend probes
+                the device and finds the working stream path itself. When that
+                fails the submit button becomes "Add Anyway" — telling someone to
+                press the same button a second time reads as "it did not work". */}
+            {detectError ? (
+              <div style={{ marginTop: '20px' }}>
+                <p className="dm-gate-hint dm-detect-error">{detectError}</p>
+                <p className="dm-gate-hint">
+                  Correct the details above and retry, or register it anyway with
+                  the most likely stream address — you can edit it later.
+                </p>
+                {detectAttempts.length > 0 && (
+                  <details className="dm-detect-attempts">
+                    <summary>What was tried ({detectAttempts.length})</summary>
+                    <ul>
+                      {detectAttempts.map((a, i) => <li key={i}>{a}</li>)}
+                    </ul>
+                    <p className="dm-detect-legend">
+                      401 = login refused · 404 = no such stream path · 200 = accepted
+                    </p>
+                  </details>
                 )}
-              </div>
-            )}
-
-            {urlFormat === 'custom' ? (
-              <div className="form-group" style={{ marginTop: '12px' }}>
-                <label className="form-label">RTSP URL <span className="required">*</span></label>
-                <input
-                  className="form-input"
-                  placeholder="rtsp://user:pass@192.168.1.x/..."
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                />
+                <button
+                  type="button"
+                  className="dm-detect-retry"
+                  onClick={() => { setDetectError(''); setFallbackUrl(''); setDetectAttempts([]) }}
+                >
+                  Try auto-detect again
+                </button>
               </div>
             ) : (
-              <p className="dm-gate-hint">
-                Will connect to:{' '}
-                <span className="token-link">
-                  {URL_FORMATS.find(f => f.id === urlFormat).build({
-                    ip: ip.trim() || '<ip>',
-                    deviceId: deviceId.trim() || '<device id>',
-                    username: (username || 'admin').trim(),
-                    password: password ? '••••••' : '<password>',
-                    subtype,
-                  })}
-                </span>
+              <p className="dm-gate-hint" style={{ marginTop: '20px' }}>
+                {detecting
+                  ? 'Contacting the camera to find its stream…'
+                  : detectedFormat
+                    ? `Stream detected (${detectedFormat} format).`
+                    : 'The stream URL is detected automatically when you save.'}
               </p>
             )}
 
@@ -359,7 +342,11 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
           <div className="modal-footer">
             <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={saving || !!ipDupe || !!deviceIdDupe}>
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Device'}
+              {saving
+                ? (detecting ? 'Detecting…' : 'Saving…')
+                : fallbackUrl
+                  ? (isEdit ? 'Save Anyway' : 'Add Anyway')
+                  : (isEdit ? 'Save Changes' : 'Add Device')}
             </button>
           </div>
         </form>
@@ -426,7 +413,13 @@ export default function DeviceManagement() {
     removeCamera:   disconnectCamera,
     disconnectAll,
     registerCanvas,
+    paneCounts,
   } = useCameraContext()
+
+  // Viewports on screen, which is not the number of cameras: a dual-lens unit
+  // contributes two. The grid drops to one column only for a genuinely single
+  // tile, so a split camera still gets its two views side by side.
+  const feedTileCount = streamCams.reduce((n, sc) => n + (paneCounts[sc.id] ?? 1), 0)
 
   // Match a DB camera to its stream instance by name
   const getStreamCam    = (dbCam) => streamCams.find(c => c.name === dbCam.name)
@@ -657,38 +650,48 @@ export default function DeviceManagement() {
               <p className="dm-feeds-empty-sub">Click Connect on a camera above to view its live RTSP feed here.</p>
             </div>
           ) : (
-            <div className={`dm-feeds-grid${streamCams.length === 1 ? ' dm-feeds-grid-single' : ''}`}>
-              {streamCams.map(sc => {
+            <div className={`dm-feeds-grid${feedTileCount === 1 ? ' dm-feeds-grid-single' : ''}`}>
+              {streamCams.flatMap(sc => {
                 const dbCam = cameras.find(c => c.name === sc.name)
                 const dotCls = sc.streamConnected ? 'live' : sc.wsActive ? 'connecting' : 'offline'
-                return (
-                  <div key={sc.id} className="dm-feed-card">
+                // A dual-lens camera sends both views inside one frame, so it
+                // gets one viewport per view. The controls below act on the
+                // device, not the view, so they stay on the first tile only —
+                // two Disconnect buttons for one camera would just be a trap.
+                const lenses = paneCounts[sc.id] ?? 1
+                return Array.from({ length: lenses }, (_, pane) => (
+                  <div key={`${sc.id}:${pane}`} className="dm-feed-card">
                     <div className="dm-feed-header">
                       <span className="dm-feed-name">
                         <span className={`dm-feed-dot ${dotCls}`} />
                         {sc.name}
+                        {lenses > 1 && <span className="dm-feed-lens">Lens {pane + 1}</span>}
                       </span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {dbCam && <AssignmentBadge value={dbCam.assignment} gateId={dbCam?.gate_id} />}
-                        <button
-                          className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
-                          onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
-                          title="PTZ Controls"
-                        >
-                          <Move size={13} />
-                        </button>
-                        <button
-                          className="dm-feed-disconnect"
-                          onClick={() => disconnectCamera(sc.id)}
-                          title="Disconnect"
-                        >
-                          <WifiOff size={13} />
-                        </button>
+                        {pane === 0 && (
+                          <>
+                            <button
+                              className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
+                              onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
+                              title="PTZ Controls"
+                            >
+                              <Move size={13} />
+                            </button>
+                            <button
+                              className="dm-feed-disconnect"
+                              onClick={() => disconnectCamera(sc.id)}
+                              title="Disconnect"
+                            >
+                              <WifiOff size={13} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="dm-feed-viewport">
                       <canvas
-                        ref={el => registerCanvas(sc.id, el)}
+                        ref={el => registerCanvas(sc.id, el, pane)}
                         className="dm-feed-canvas"
                       />
                       {!sc.streamConnected && (
@@ -706,7 +709,7 @@ export default function DeviceManagement() {
                           )}
                         </div>
                       )}
-                      {ptzActive[sc.id] && (
+                      {pane === 0 && ptzActive[sc.id] && (
                         <div className="dm-ptz-overlay">
                           <div className="dm-ptz-panel">
                             <span className="dm-ptz-label">PTZ</span>
@@ -752,7 +755,7 @@ export default function DeviceManagement() {
                       )}
                     </div>
                   </div>
-                )
+                ))
               })}
             </div>
           )}

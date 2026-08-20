@@ -286,16 +286,22 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
     )
     data = envelope.encode('utf-8')
     # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras
+    # Same reasoning as _try_cgi_ptz: try the credentials we have, then no
+    # credentials at all, so a camera without auth still answers.
+    auths = ([(username, password)] if username else []) + [None]
     for ct in (content_types or ['application/soap+xml; charset=utf-8',
                                  'text/xml; charset=utf-8']):
-        try:
-            r = _rq.post(endpoint, data=data,
-                         headers={'Content-Type': ct},
-                         timeout=5, auth=(username, password))
-            if r.status_code < 500:
-                return r, ct
-        except Exception:
-            pass
+        for auth in auths:
+            try:
+                r = _rq.post(endpoint, data=data,
+                             headers={'Content-Type': ct},
+                             timeout=5, auth=auth)
+                if r.status_code in (401, 403):
+                    continue
+                if r.status_code < 500:
+                    return r, ct
+            except Exception:
+                break
     raise Exception(f'SOAP request failed for {endpoint}')
 
 
@@ -370,6 +376,33 @@ def _ptz_home(base_url, username, password, token, **route):
     )
 
 
+def camera_http_credentials(cam):
+    """(username, password) to use for this camera's HTTP/ONVIF calls.
+
+    Order: the camera's own password if it has one, then any credentials
+    embedded in its rtsp_url (a hand-written URL may carry a different account),
+    then the device ID with an empty password for genuinely open units.
+    """
+    from urllib.parse import unquote
+
+    stored = (getattr(cam, 'password', '') or '').strip()
+    if stored:
+        return (getattr(cam, 'device_id', '') or ''), stored
+
+    url = (getattr(cam, 'rtsp_url', '') or '')
+    if '://' in url and '@' in url:
+        rest = url.split('://', 1)[1]
+        creds = rest.rsplit('@', 1)[0]          # rsplit: passwords may contain '@'
+        if ':' in creds:
+            user, pw = creds.split(':', 1)
+        else:
+            user, pw = creds, ''
+        if user:
+            return unquote(user), unquote(pw)
+
+    return (getattr(cam, 'device_id', '') or ''), ''
+
+
 def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None):
     """CGI fallback for cameras that use HTTP but not ONVIF (Dahua/Hi3510 style).
 
@@ -391,16 +424,28 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None
     ]
     candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None
                   else list(enumerate(forms)))
+    # Auth attempts, in order. An open camera can reject a Basic header it did
+    # not ask for, so a plain unauthenticated request is tried as well —
+    # without it, removing the stored password broke PTZ on exactly the
+    # cameras that never needed one.
+    auths = [(username, password)] if username else []
+    auths.append(None)
+
     errors = []
     for idx, url in candidates:
-        try:
-            r = _rq.get(url, auth=(username, password), timeout=3)
-            if r.status_code < 400:
-                return idx
-            errors.append(f'{r.status_code}')
-        except Exception as e:
-            errors.append(str(e))
-    raise Exception('CGI PTZ failed: ' + '; '.join(errors))
+        for auth in auths:
+            try:
+                r = _rq.get(url, auth=auth, timeout=3)
+                if r.status_code < 400:
+                    return idx
+                if r.status_code in (401, 403):
+                    continue          # try the next credential form
+                errors.append(f'{r.status_code}')
+                break
+            except Exception as e:
+                errors.append(str(e))
+                break
+    raise Exception('CGI PTZ failed: ' + '; '.join(errors) or 'CGI PTZ failed')
 
 
 class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
@@ -442,6 +487,30 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         n = self._next_cam_number()
         return Response({'cam_number': n, 'name': f'Cam {n}'})
 
+    @action(detail=False, methods=['post'], url_path='detect-rtsp')
+    def detect_rtsp(self, request):
+        """Ask the camera which stream path it answers on.
+
+        Replaces the vendor picker in the add-camera form: which firmware a unit
+        runs is not something the person mounting it should have to know, and
+        the camera can be asked directly.
+        """
+        from . import rtsp_probe
+
+        try:
+            channel = int(request.data.get('channel') or 1)
+        except (TypeError, ValueError):
+            channel = 1
+
+        result = rtsp_probe.detect(
+            ip=request.data.get('ip', ''),
+            device_id=request.data.get('device_id', ''),
+            password=request.data.get('password', ''),
+            channel=channel,
+        )
+        return Response(result, status=(status.HTTP_200_OK if result['ok']
+                                        else status.HTTP_400_BAD_REQUEST))
+
     @action(detail=True, methods=['post'], url_path='ping')
     def ping(self, request, pk=None):
         import socket
@@ -470,10 +539,14 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 
         speed_int = max(1, round(speed * 10))  # CGI uses integer speeds 1-10
 
+        # Resolved once per request: from the rtsp_url if it carries them,
+        # otherwise the device ID with no password.
+        cam_user, cam_pw = camera_http_credentials(cam)
+
         def _send(base, route):
             """Run `command` against `base`. Returns the route that worked."""
             if route.get('method') == 'cgi':
-                idx = _try_cgi_ptz(base, cam.device_id, cam.password, command,
+                idx = _try_cgi_ptz(base, cam_user, cam_pw, command,
                                    speed_int, route.get('cgi_form'))
                 return {**route, 'method': 'cgi', 'cgi_form': idx}
 
@@ -485,16 +558,16 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                 # yet. A revoked token surfaces as a failed command below,
                 # which clears the cache and triggers rediscovery.
                 token, media_path, media_ct = _ptz_get_token(
-                    base, cam.device_id, cam.password, media_path, media_ct,
+                    base, cam_user, cam_pw, media_path, media_ct,
                 )
             kw = {'ptz_path': route.get('ptz_path'), 'content_type': route.get('ptz_ct')}
             if command == 'stop':
-                ptz_path, ptz_ct = _ptz_stop(base, cam.device_id, cam.password, token, **kw)
+                ptz_path, ptz_ct = _ptz_stop(base, cam_user, cam_pw, token, **kw)
             elif command == 'home':
-                ptz_path, ptz_ct = _ptz_home(base, cam.device_id, cam.password, token, **kw)
+                ptz_path, ptz_ct = _ptz_home(base, cam_user, cam_pw, token, **kw)
             elif command in vel_map:
                 pan, tilt, zoom = vel_map[command]
-                ptz_path, ptz_ct = _ptz_move(base, cam.device_id, cam.password,
+                ptz_path, ptz_ct = _ptz_move(base, cam_user, cam_pw,
                                              token, pan, tilt, zoom, **kw)
             else:
                 raise Exception(f'Unknown PTZ command: {command}')

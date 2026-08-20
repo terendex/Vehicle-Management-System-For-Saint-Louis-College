@@ -174,19 +174,21 @@ class CameraSerializer(serializers.ModelSerializer):
         assignment = attrs.get('assignment', getattr(self.instance, 'assignment', '')) or ''
         gate_id    = attrs.get('gate_id',    getattr(self.instance, 'gate_id', None))
 
-        # No duplicate devices — one row per physical camera
+        # One row per *stream*, not per IP. A single address can host several
+        # cameras — an NVR, or a multi-lens unit — distinguished only by the
+        # channel number inside the RTSP path. Rejecting a repeated IP made
+        # those impossible to register at all.
+        #
+        # The stream URL is what actually identifies a camera, and it still has
+        # to be unique: that is what stops the same view being added twice.
         others = Camera.objects.all()
         if self.instance:
             others = others.exclude(pk=self.instance.pk)
-        if ip and others.filter(ip__iexact=ip).exists():
-            raise serializers.ValidationError(
-                {'ip': 'A camera with this IP address already exists.'})
-        if device_id and others.filter(device_id__iexact=device_id).exists():
-            raise serializers.ValidationError(
-                {'device_id': 'A camera with this Device ID already exists.'})
         if rtsp_url and others.filter(rtsp_url__iexact=rtsp_url).exists():
             raise serializers.ValidationError(
-                {'rtsp_url': 'A camera with this stream URL already exists.'})
+                {'rtsp_url': 'A camera with this stream URL already exists. '
+                             'For a second camera on the same device, use its '
+                             'channel number.'})
 
         # Entry cameras must know which gate they cover (drives log tagging)
         if assignment == 'entry' and not gate_id:

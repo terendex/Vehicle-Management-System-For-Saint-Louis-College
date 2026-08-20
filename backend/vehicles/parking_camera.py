@@ -21,8 +21,6 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-_OPEN_CAP_LOCK = threading.Lock()
-
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 FREE_THR   = 20  # consecutive frames without vehicle    → mark free
 
@@ -255,23 +253,19 @@ class ParkingCameraThread(threading.Thread):
         cap.release()
         log.info("[ParkingCam] Stopped zone %d", self.zone_id)
 
-    def _open_cap(self) -> cv2.VideoCapture:
-        import os
-        with _OPEN_CAP_LOCK:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                "rtsp_transport;tcp"
-                "|buffer_size;2097152"
-                "|stimeout;5000000"
-                "|timeout;5000000"
-                "|threads;1"
-                "|err_detect;ignore_err"
-                "|fflags;discardcorrupt"
-            )
-            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-        return cap
+    def _open_cap(self):
+        """Open the zone camera with whichever backend can decode it.
+
+        This pinned `rtsp_transport;tcp`, which is the one transport a fair
+        number of cameras refuse outright — they answer a TCP SETUP with a UDP
+        transport and FFmpeg gives up with "Nonmatching transport in server
+        reply", leaving the zone permanently black. `open_capture` lets FFmpeg
+        negotiate instead, and falls back to the system FFmpeg when OpenCV's
+        bundled 4.4 cannot decode the stream at all.
+        """
+        from vehicles.ffmpeg_capture import open_capture
+
+        return open_capture(self.rtsp_url)
 
     def _load_spaces(self):
         """The zone's placed spaces, re-read from the DB at most every TTL.
@@ -304,8 +298,15 @@ class ParkingCameraThread(threading.Thread):
         # plate detector on every frame of every zone and then let plate boxes
         # decide occupancy — see detect_vehicles() for why that was wrong.
         from scanning.ml.detection import detect_vehicles
+        from vehicles.lens_layout import detect_across_lenses
 
-        detections = detect_vehicles(frame)
+        # Per lens, not per frame. A dual-lens camera stacks two views into one
+        # picture, and running the detector across the join asked the model to
+        # read a scene no camera ever produced. The boxes come back in
+        # full-frame coordinates, so the space geometry below — placed against
+        # the whole frame — needs no adjustment. Single-lens cameras are passed
+        # straight through and pay nothing.
+        detections = detect_across_lenses(frame, detect_vehicles)
 
         spaces = self._load_spaces()
         if not spaces:

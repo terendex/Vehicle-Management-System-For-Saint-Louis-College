@@ -1420,31 +1420,39 @@ class TestRtspView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        import cv2, os, concurrent.futures
+        import concurrent.futures
         rtsp_url = (request.data.get('rtsp_url') or '').strip()
         if not rtsp_url.lower().startswith('rtsp://'):
             return Response({'ok': False, 'message': 'URL must start with rtsp://'}, status=400)
 
         def _probe():
-            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
-                'rtsp_transport;tcp|buffer_size;0|max_delay;0|stimeout;5000000'
-            )
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-            if not cap.isOpened():
+            # Both backends, exactly as the live feed opens it — otherwise this
+            # test can pass on a camera the feed cannot show, or fail on one it
+            # can. open_capture() only reports open once a frame has actually
+            # decoded, so reaching this point is proof of video.
+            from vehicles.ffmpeg_capture import open_capture
+
+            cap = open_capture(rtsp_url)
+            try:
+                if not cap.isOpened():
+                    return False, ('Cannot connect — verify the URL, credentials, and '
+                                   'that the camera is on the same network as this '
+                                   'server. If another app is watching this camera, '
+                                   'close it: many units serve only one stream at a time.')
+                ret, _ = cap.read()
+                if ret:
+                    return True, 'Camera connected and streaming successfully.'
+                return False, ('Reached the camera but received no frames — check '
+                               'stream path or encoding settings.')
+            finally:
                 cap.release()
-                return False, 'Cannot connect — verify the URL, credentials, and that the camera is on the same network as this server.'
-            ret, _ = cap.read()
-            cap.release()
-            if ret:
-                return True, 'Camera connected and streaming successfully.'
-            return False, 'Reached the camera but received no frames — check stream path or encoding settings.'
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(_probe)
             try:
-                ok, msg = future.result(timeout=15)
+                ok, msg = future.result(timeout=45)
             except concurrent.futures.TimeoutError:
-                ok, msg = False, 'Connection timed out (15 s) — camera is unreachable from this server.'
+                ok, msg = False, 'Connection timed out (45 s) — camera is unreachable from this server.'
             except Exception as e:
                 ok, msg = False, f'Error: {e}'
 

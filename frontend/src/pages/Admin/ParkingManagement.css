@@ -931,11 +931,25 @@
 }
 .pm-cam-add-col .pm-modal-input::placeholder { color: #2E4C63; }
 
+/* Shown in place of "Use as Reference Image" while no zone is selected. */
+.pm-cam-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6B8CA6;
+  text-align: center;
+}
+
 /* ── Responsive ──
    The page had no breakpoints at all: the four-up stats grid and the toolbar
    both need to fold before they start overflowing on a laptop or tablet. */
 @media (max-width: 1100px) {
   .pm-stats-row { grid-template-columns: repeat(2, 1fr); }
+
+  /* A fixed 360px camera column beside the map runs off the screen well before
+     phone widths — stack it under the map instead of shrinking the map. */
+  .pm-content-row  { flex-direction: column; }
+  .pm-cam-sidebar  { width: 100%; }
 }
 
 @media (max-width: 720px) {
@@ -958,6 +972,15 @@
     padding: 0 0 8px;
     width: 100%;
   }
+
+  /* flex-shrink:0 kept this group at its full three-button width, so the last
+     button was cut off at the card edge instead of wrapping under. */
+  .pm-zone-bar-actions {
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  .pm-zone-bar-actions .pm-btn { flex: 1 1 auto; justify-content: center; }
 }
 
 @media (max-width: 520px) {

@@ -42,6 +42,11 @@ fonttools==4.59.2
 fsspec==2026.4.0
 idna==3.16
 ImageIO==2.37.3
+# Ships an ffmpeg binary. The Docker image installs a system ffmpeg, but a
+# Windows campus PC generally has none, and without one the cameras OpenCV's
+# bundled FFmpeg 4.4 cannot decode have no working backend at all — see
+# vehicles/ffmpeg_capture.py. This is the last resort that keeps them working.
+imageio-ffmpeg==0.6.0
 Jinja2==3.1.6
 kiwisolver==1.5.0
 kombu==5.6.2
