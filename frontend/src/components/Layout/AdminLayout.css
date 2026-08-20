@@ -221,10 +221,11 @@
 }
 
 /* --- Sidebar Footer ---
-   Two bands: one identity card that holds the profile row and the shortcut
-   tiles under a hairline, then Log Out on its own full-width row so the label
-   can never wrap. The footer never shrinks — a short viewport scrolls the nav
-   above it instead of squashing the tiles. */
+   One card: identity on top, then the shortcut tiles, then the full-width
+   action rows (Change Shift, Log Out), each separated by a hairline. Keeping
+   everything inside a single bordered object stops the footer from reading as
+   a stack of loose coloured blocks. The footer never shrinks — a short
+   viewport scrolls the nav above it instead of squashing the card. */
 .sidebar-footer {
   flex-shrink: 0;
   padding: 0.8rem 0.85rem 0.95rem;
@@ -367,11 +368,75 @@
 }
 
 .action-btn:focus-visible,
+.footer-row-btn:focus-visible,
 .logout-btn:focus-visible {
   outline: 2px solid #03396C;
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
+/* Full-width action rows inside the footer card. They are quiet by default —
+   a tinted label on the card's own white — and only take colour on hover, so
+   they never out-shout the navigation above them. */
+.footer-row-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid #EEF4F9;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.footer-row-btn--shift {
+  color: #0A5C43;
+}
+
+.footer-row-btn--shift:hover {
+  background: #EFF9F5;
+}
+
+.footer-row-btn--shift:active {
+  background: #DDF1E8;
+}
+
+.footer-row-btn--password {
+  color: #40628A;
+}
+
+.footer-row-btn--password:hover {
+  background: #EFF6FC;
+  color: #03396C;
+}
+
+.footer-row-btn--password:active {
+  background: #E4EFF8;
+}
+
+.footer-row-btn--logout {
+  color: #C62828;
+}
+
+.footer-row-btn--logout:hover {
+  background: #FDF1F1;
+  color: #A81E1E;
+}
+
+.footer-row-btn--logout:active {
+  background: #F8E2E2;
+}
+
+/* Owner-layout topbar only: the admin and security sidebars now use the quiet
+   .footer-row-btn rows above. */
 .logout-btn {
   display: flex;
   width: 100%;

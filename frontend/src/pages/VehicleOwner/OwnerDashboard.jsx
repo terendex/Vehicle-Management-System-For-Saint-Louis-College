@@ -14,6 +14,7 @@ import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
+import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
 
 /* What each schedule code admits, spelled out — a bare 'ANY' told the owner
    nothing, and "any day" would overstate it (the campus is closed on Sunday). */
@@ -26,26 +27,6 @@ const SCHEDULE_LABELS = {
   ALL:   'Mon – Sat',
 }
 
-/* ── password strength rules ── */
-const PW_RULES = [
-  { key: 'length',  label: 'At least 8 characters',         test: (p) => p.length >= 8 },
-  { key: 'upper',   label: 'One uppercase letter',          test: (p) => /[A-Z]/.test(p) },
-  { key: 'lower',   label: 'One lowercase letter',          test: (p) => /[a-z]/.test(p) },
-  { key: 'number',  label: 'One number',                    test: (p) => /[0-9]/.test(p) },
-  { key: 'special', label: 'One special character (!@#$…)', test: (p) => /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(p) },
-]
-
-function pwStrength(pw) {
-  if (!pw) return { level: '', score: 0 }
-  const passed = PW_RULES.filter(r => r.test(pw)).length
-  if (passed <= 1) return { level: 'weak',      score: 1 }
-  if (passed === 2) return { level: 'fair',      score: 2 }
-  if (passed === 3) return { level: 'good',      score: 3 }
-  if (passed === 4) return { level: 'strong',    score: 4 }
-  return               { level: 'excellent',  score: 5 }
-}
-
-const STRENGTH_LABELS = { weak: 'Weak', fair: 'Fair', good: 'Good', strong: 'Strong', excellent: 'Excellent' }
 
 // Evidence is served by the API rather than a public storage URL, so the
 // request must carry a token — an <img> cannot send an Authorization header.

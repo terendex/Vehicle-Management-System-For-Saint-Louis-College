@@ -51,10 +51,17 @@ _ROLE_INTRO = {
 }
 
 
-def _login_url():
+def _login_url(user=None):
     # PUBLIC_SITE_URL, not FRONTEND_URL: the campus half's FRONTEND_URL is a LAN
     # address that a recipient reading this on mobile data cannot reach.
-    return getattr(settings, 'PUBLIC_SITE_URL', '') or ''
+    base = getattr(settings, 'PUBLIC_SITE_URL', '') or ''
+    if not base:
+        return ''
+    # Guards land on the guard login, not the generic form: their sign-in starts
+    # with picking a gate, and that choice is what a scan is later attributed to.
+    if getattr(user, 'role', None) == 'security':
+        return f'{base}/security/guard-login'
+    return base
 
 
 def _button(url, label):
@@ -72,7 +79,7 @@ def _button(url, label):
 def send_welcome_email(user):
     """Sent the first time a user replaces the temporary password they were issued."""
     intro = _ROLE_INTRO.get(user.role, 'Your account is now fully active.')
-    url = _login_url()
+    url = _login_url(user)
     name = esc(user.full_name or user.email)
 
     code_row = ''
@@ -136,7 +143,7 @@ def send_password_changed_email(user):
     password already knows. This exists so that a user who did *not* finds out.
     """
     changed_at = timezone.localtime(timezone.now()).strftime('%B %d, %Y at %I:%M %p')
-    url = _login_url()
+    url = _login_url(user)
     name = esc(user.full_name or user.email)
 
     html_message = f"""
@@ -208,7 +215,7 @@ def send_twofa_lockout_alert(user, ip_address=None, attempts=None):
     request it describes would be worse than one that quietly failed to send.
     """
     when = timezone.localtime(timezone.now()).strftime('%B %d, %Y at %I:%M %p')
-    url = _login_url()
+    url = _login_url(user)
     name = esc(user.full_name or user.email)
     where = esc(ip_address or 'an unknown location')
     tries = attempts or 'Several'

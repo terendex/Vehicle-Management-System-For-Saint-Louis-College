@@ -14,7 +14,6 @@ import {
   LogIn,
   Eye,
   EyeOff,
-  KeyRound,
   Menu,
   HelpCircle,
   Shield,
@@ -24,9 +23,9 @@ import jsQR from 'jsqr'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
-import { usersApi } from '../../api/users'
 import { authApi } from '../../api/auth'
 import { useGates } from '../../hooks/useGates'
+import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import './AdminLayout.css'
 import './SecurityLayout.css'
 
@@ -323,155 +322,6 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
   )
 }
 
-// ── Forced Password Change ────────────────────────────────────────────────────
-// Shown on a guard's first credentials login (must_change_password is set).
-// The guard cannot use the dashboard — and their QR badge stays locked — until
-// the temporary password is replaced.
-function ForcePasswordModal({ onLogout }) {
-  const { clearMustChangePassword } = useAuthStore()
-
-  const [form, setForm]             = useState({ current: '', new: '', confirm: '' })
-  const [showPw, setShowPw]         = useState(false)
-  const [error, setError]           = useState(null)
-  const [errors, setErrors]         = useState([])
-  const [submitting, setSubmitting] = useState(false)
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (submitting) return
-    setError(null)
-    setErrors([])
-    if (form.new !== form.confirm) {
-      setError('New passwords do not match.')
-      return
-    }
-    setSubmitting(true)
-    try {
-      await usersApi.changePassword(form.current, form.new, form.confirm)
-      clearMustChangePassword()
-      toast.success('Password changed! Please log in again with your new password.')
-      // Force a fresh login with the new password instead of keeping the old session active.
-      setTimeout(() => onLogout({ passwordChanged: true }), 1200)
-    } catch (err) {
-      const data = err.response?.data
-      if (data?.errors) setErrors(data.errors)
-      else setError(data?.error || 'Failed to change password.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const fieldStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
-  const labelStyle = { fontSize: 12, fontWeight: 600, color: '#4A6B85' }
-
-  return (
-    <div className="cs-overlay">
-      <div className="cs-modal" style={{ maxWidth: 380 }}>
-        <div className="cs-modal-head">
-          <div className="cs-modal-head-left">
-            <KeyRound size={15} />
-            <span className="cs-modal-title">Change Your Password</span>
-          </div>
-        </div>
-
-        <p style={{ margin: 0, fontSize: 13, color: '#2E4C63', lineHeight: 1.5 }}>
-          You are using a temporary password. Set a new one to continue — your QR badge
-          stays locked until you do.
-        </p>
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
-          <div style={fieldStyle}>
-            <label style={labelStyle} htmlFor="fp-current">Current (Temporary) Password</label>
-            <input
-              id="fp-current"
-              className="cs-input"
-              type={showPw ? 'text' : 'password'}
-              value={form.current}
-              onChange={e => setForm({ ...form, current: e.target.value })}
-              autoComplete="current-password"
-              required
-            />
-          </div>
-          <div style={fieldStyle}>
-            <label style={labelStyle} htmlFor="fp-new">New Password</label>
-            <input
-              id="fp-new"
-              className="cs-input"
-              type={showPw ? 'text' : 'password'}
-              value={form.new}
-              onChange={e => setForm({ ...form, new: e.target.value })}
-              autoComplete="new-password"
-              required
-            />
-          </div>
-          <div style={fieldStyle}>
-            <label style={labelStyle} htmlFor="fp-confirm">Confirm New Password</label>
-            <input
-              id="fp-confirm"
-              className="cs-input"
-              type={showPw ? 'text' : 'password'}
-              value={form.confirm}
-              onChange={e => setForm({ ...form, confirm: e.target.value })}
-              autoComplete="new-password"
-              required
-            />
-          </div>
-
-          <button
-            type="button"
-            className="cs-toggle-btn"
-            style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 5 }}
-            onClick={() => setShowPw(v => !v)}
-          >
-            {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
-            {showPw ? 'Hide passwords' : 'Show passwords'}
-          </button>
-
-          <p style={{ margin: 0, fontSize: 11.5, color: '#64839C', lineHeight: 1.45 }}>
-            At least 8 characters with an uppercase letter, lowercase letter, number and special character.
-          </p>
-
-          {error && <p className="cs-err-text" style={{ margin: 0 }}>{error}</p>}
-          {errors.length > 0 && (
-            <div className="cs-err-text" style={{ margin: 0 }}>
-              {errors.map((msg, i) => <div key={i}>• {msg}</div>)}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <button
-              type="button"
-              style={{
-                flex: 1, height: 38, border: '1.5px solid #D3E1EC', borderRadius: 8,
-                background: '#fff', color: '#2E4C63', fontSize: 13, fontWeight: 600,
-                cursor: 'pointer', fontFamily: 'inherit', display: 'flex',
-                alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}
-              onClick={onLogout}
-            >
-              <LogOut size={14} /> Log Out
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{
-                flex: 1.4, height: 38, border: 'none', borderRadius: 8,
-                background: '#03396C', color: '#fff', fontSize: 13, fontWeight: 600,
-                cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.7 : 1,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: 6, fontFamily: 'inherit',
-              }}
-            >
-              <KeyRound size={14} />
-              {submitting ? 'Saving…' : 'Set New Password'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 // ── Layout ────────────────────────────────────────────────────────────────────
 export default function SecurityLayout({ children, fillHeight = false }) {
   const { user, logout } = useAuthStore()
@@ -561,8 +411,8 @@ export default function SecurityLayout({ children, fillHeight = false }) {
         </nav>
 
         <div className="sidebar-footer">
-          {/* Identity and the icon shortcuts read as one card, matching the
-              admin sidebar; Change Shift and Log Out get their own rows. */}
+          {/* Identity, the icon shortcuts and the two action rows are one card
+              divided by hairlines, matching the admin sidebar. */}
           <div className="footer-card">
             <div className="user-profile">
               {user?.photo_url ? (
@@ -597,22 +447,26 @@ export default function SecurityLayout({ children, fillHeight = false }) {
                 <span className="action-btn-label">Policy</span>
               </button>
             </div>
+
+            {/* Change Shift and Log Out sit in the same card, one hairline row
+                each, so the footer is one object instead of stacked blocks. */}
+            <button
+              className="footer-row-btn footer-row-btn--shift"
+              onClick={() => setShowChangeShift(true)}
+              title="Hand over shift to incoming guard"
+            >
+              <RefreshCw size={14} />
+              <span>Change Shift</span>
+            </button>
+
+            <button
+              className="footer-row-btn footer-row-btn--logout"
+              onClick={() => setShowLogoutConfirm(true)}
+            >
+              <LogOut size={15} />
+              <span>Log Out</span>
+            </button>
           </div>
-
-          {/* Change Shift button */}
-          <button
-            className="cs-trigger-btn"
-            onClick={() => setShowChangeShift(true)}
-            title="Hand over shift to incoming guard"
-          >
-            <RefreshCw size={13} />
-            <span>Change Shift</span>
-          </button>
-
-          <button className="logout-btn" onClick={() => setShowLogoutConfirm(true)}>
-            <LogOut size={16} />
-            <span>Log Out</span>
-          </button>
         </div>
       </aside>
 
@@ -625,7 +479,12 @@ export default function SecurityLayout({ children, fillHeight = false }) {
 
       {/* Forced password change — first credentials login with a temporary password */}
       {user?.role === 'security' && user?.must_change_password && (
-        <ForcePasswordModal onLogout={handleLogout} />
+        <ChangePasswordModal
+          forced
+          subtitle="You are using a temporary password. Set a new one to continue — your QR badge stays locked until you do."
+          onCancel={handleLogout}
+          onDone={() => handleLogout({ passwordChanged: true })}
+        />
       )}
 
       {/* Change Shift Overlay */}

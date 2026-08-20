@@ -20,10 +20,12 @@ import {
   X,
   Shield,
   ShieldCheck,
+  KeyRound,
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../TwoFactor/SecurityPanel'
+import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 
@@ -89,10 +91,15 @@ export default function AdminLayout({ children, fillHeight = false }) {
   // phone, not a screen of the system, and it is reached from the same footer
   // as Help and Policy on every page instead of navigating away from work.
   const [securityOpen, setSecurityOpen] = useState(false)
+  // A CDSO created from User Management signs in with the temporary password
+  // that was emailed to them; the card below blocks the dashboard until it is
+  // replaced. Opening it from the footer is the same card without the block.
+  const [pwOpen, setPwOpen] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
   const isAdmin = user?.role === 'admin'
+  const mustChangePassword = user?.must_change_password === true
 
   const navGroups = buildNavGroups(isAdmin)
 
@@ -200,8 +207,8 @@ export default function AdminLayout({ children, fillHeight = false }) {
         </nav>
 
         <div className="sidebar-footer">
-          {/* Identity and the icon shortcuts read as one card; Log Out gets its
-              own row below it so the label never wraps. */}
+          {/* Identity, the icon shortcuts and Log Out are one card divided by
+              hairlines, so the footer reads as a single object. */}
           <div className="footer-card">
             <div className="user-profile">
               <div className="user-avatar">
@@ -232,13 +239,32 @@ export default function AdminLayout({ children, fillHeight = false }) {
                 <span className="action-btn-label">Security</span>
               </button>
             </div>
+            <button
+              className="footer-row-btn footer-row-btn--password"
+              onClick={() => setPwOpen(true)}
+              title="Change your account password"
+            >
+              <KeyRound size={14} />
+              <span>Change Password</span>
+            </button>
+            <button className="footer-row-btn footer-row-btn--logout" onClick={handleLogout}>
+              <LogOut size={15} />
+              <span>Log Out</span>
+            </button>
           </div>
-          <button className="logout-btn" onClick={handleLogout}>
-            <LogOut size={16} />
-            <span>Log Out</span>
-          </button>
         </div>
       </aside>
+
+      {(mustChangePassword || pwOpen) && (
+        <ChangePasswordModal
+          forced={mustChangePassword}
+          subtitle={mustChangePassword
+            ? 'You are signed in with the temporary password emailed to you. Set a new one to continue.'
+            : undefined}
+          onCancel={mustChangePassword ? handleLogout : () => setPwOpen(false)}
+          onDone={handleLogout}
+        />
+      )}
 
       {securityOpen && (
         <div className="tfa-overlay" onMouseDown={(e) => {
