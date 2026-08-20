@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
+import useTwofaStore from '../../stores/twofaStore'
 import SecurityPanel from '../TwoFactor/SecurityPanel'
 import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import NotificationBell from '../NotificationBell'
@@ -95,6 +96,25 @@ export default function AdminLayout({ children, fillHeight = false }) {
   // that was emailed to them; the card below blocks the dashboard until it is
   // replaced. Opening it from the footer is the same card without the block.
   const [pwOpen, setPwOpen] = useState(false)
+  const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
+
+  /** Prove it's you, then open the form — not the other way round.
+   *
+   *  The server asks for a code on submit anyway (ChangePasswordView is step-up
+   *  protected), but being stopped after typing three password fields is a poor
+   *  way to find that out. Cancelling the prompt just leaves the card closed.
+   *
+   *  The forced first-time change is exempt: that CDSO enrolled seconds ago and
+   *  is already carrying a step-up, so this returns without prompting — and if
+   *  it ever did prompt, they have nowhere else to go. */
+  const openPasswordModal = async () => {
+    try {
+      await ensureStepUp('Confirm it’s you before changing your password.')
+      setPwOpen(true)
+    } catch {
+      /* prompt dismissed — leave the card closed */
+    }
+  }
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -241,7 +261,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
             </div>
             <button
               className="footer-row-btn footer-row-btn--password"
-              onClick={() => setPwOpen(true)}
+              onClick={openPasswordModal}
               title="Change your account password"
             >
               <KeyRound size={14} />

@@ -368,8 +368,7 @@
 }
 
 .action-btn:focus-visible,
-.footer-row-btn:focus-visible,
-.logout-btn:focus-visible {
+.footer-row-btn:focus-visible {
   outline: 2px solid #03396C;
   outline-offset: -2px;
 }
@@ -433,43 +432,6 @@
 
 .footer-row-btn--logout:active {
   background: #F8E2E2;
-}
-
-/* Owner-layout topbar only: the admin and security sidebars now use the quiet
-   .footer-row-btn rows above. */
-.logout-btn {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 12px;
-  background: #FEF4F4;
-  color: #C62828;
-  border: 1px solid #F4CFCF;
-  border-radius: 10px;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease,
-    box-shadow 0.16s ease;
-}
-
-.logout-btn:hover {
-  background: #C62828;
-  color: #FFFFFF;
-  border-color: #C62828;
-  box-shadow: 0 2px 8px rgba(198, 40, 40, 0.25);
-}
-
-.logout-btn:active {
-  background: #A81E1E;
-  border-color: #A81E1E;
-  box-shadow: none;
 }
 
 /* --- Content Wrapper --- */

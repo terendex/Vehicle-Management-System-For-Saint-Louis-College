@@ -44,26 +44,78 @@
 .owner-header .header-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
-.user-greeting {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: #0B2340;
-  margin-right: 8px;
-  display: none; /* hidden on small screens by default */
+/* Identity chip — avatar, name, role — mirroring the admin and security
+   sidebar footers. The name is capped and ellipsized with the full value in a
+   title tooltip: an unbounded greeting wrapped onto three lines and stretched
+   the header. A hairline separates identity from the action buttons. */
+.owner-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding-right: 15px;
+  border-right: 1px solid #E3EDF5;
+}
+
+.owner-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(140deg, #0B4A87 0%, #03396C 100%);
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 5px rgba(3, 57, 108, 0.2);
+}
+
+/* Text column is dropped on small screens; the avatar alone keeps identity */
+.owner-identity-text {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.2;
 }
 
 @media (min-width: 768px) {
-  .user-greeting {
-    display: block;
+  .owner-identity-text {
+    display: flex;
   }
 }
 
+.owner-identity-name {
+  max-width: clamp(130px, 16vw, 240px);
+  font-size: 13px;
+  font-weight: 700;
+  color: #0B2340;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.owner-identity-role {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #2A5B87;
+}
+
 /* Owner-only: these selectors are scoped so they cannot leak into the admin
-   and security sidebar footers, which style their own .action-btn/.logout-btn. */
+   and security sidebar footers, which style their own footer controls. The
+   declarations are complete rather than layered on a shared base — the topbar
+   button used to inherit width:100% from the sidebar rules and stretched
+   halfway across the header. */
 .owner-layout .action-btn {
   display: flex;
   align-items: center;
@@ -87,8 +139,14 @@
 .owner-layout .logout-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 8px 16px;
+  width: auto;
+  height: 36px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: inherit;
+  padding: 0 16px;
   background: #FFFFFF;
   color: #C62828;
   border: 1.5px solid #F3C0C0;
@@ -177,7 +235,7 @@
   }
 
   .owner-layout .logout-btn {
-    padding: 8px 10px;
+    padding: 0 10px;
     gap: 0;
   }
 
