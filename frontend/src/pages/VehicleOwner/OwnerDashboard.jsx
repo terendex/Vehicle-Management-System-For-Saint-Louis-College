@@ -4,7 +4,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn
+  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
@@ -109,6 +109,25 @@ export default function OwnerDashboard() {
 
   /* ── qr copy ── */
   const [qrCopied, setQrCopied] = useState(false)
+
+  /* ── fullscreen qr ──
+     The card-sized code is hard for a guard to scan from a phone held at arm's
+     length, so the owner can blow it up to fill the screen on a white sheet. */
+  const [qrFull, setQrFull] = useState(false)
+
+  /* Escape closes the fullscreen code, and the page behind it stays put so the
+     owner does not lose their scroll position while the guard scans. */
+  useEffect(() => {
+    if (!qrFull) return
+    const onKey = e => { if (e.key === 'Escape') setQrFull(false) }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [qrFull])
 
   /* ── plate swap (conduction → real plate, one-time) ── */
   const [swapOpen, setSwapOpen]           = useState(false)
@@ -273,6 +292,34 @@ export default function OwnerDashboard() {
                 {swapSubmitting ? 'Saving…' : 'Confirm & Save'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen QR — a white sheet edge to edge so the guard's scanner gets
+          the biggest, brightest target the phone can show. */}
+      {qrFull && qrPayload && (
+        <div
+          className="od-qrfs"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Vehicle access QR code, fullscreen"
+          onClick={() => setQrFull(false)}
+        >
+          <button className="od-qrfs-close" onClick={() => setQrFull(false)} aria-label="Close fullscreen code">
+            <X size={22} />
+          </button>
+
+          <div className="od-qrfs-inner" onClick={e => e.stopPropagation()}>
+            <span className="od-qrfs-plate">{reg?.plate_number || reg?.conduction_number || 'Vehicle Pass'}</span>
+            <span className="od-qrfs-sub">Present this code to security personnel</span>
+
+            <div className="od-qrfs-code">
+              <QRCodeSVG value={qrPayload} size={640} level="H" includeMargin={true} />
+            </div>
+
+            <code className="od-qrfs-data">{qrPayload}</code>
+            <p className="od-qrfs-tip">Raise your screen brightness for a faster scan. Tap outside the code or press Esc to close.</p>
           </div>
         </div>
       )}
@@ -523,13 +570,22 @@ export default function OwnerDashboard() {
                 <div className="od-card od-qr-card">
                   <div className="od-card-head"><ShieldCheck size={16} /> Vehicle Access QR Code</div>
                   <p className="od-qr-hint">Present this code to security personnel upon entry.</p>
-                  <div className="od-qr-display">
+                  <button
+                    type="button"
+                    className="od-qr-display od-qr-display--btn"
+                    onClick={() => setQrFull(true)}
+                    title="Show this code fullscreen for scanning"
+                  >
                     <QRCodeSVG value={qrPayload} size={200} level="H" includeMargin={true} />
-                  </div>
+                    <span className="od-qr-expand-hint"><Maximize2 size={11} /> Tap to enlarge</span>
+                  </button>
                   <div className="od-qr-data-box">
                     <span className="od-qr-data-label">QR Data</span>
                     <code className="od-qr-data-code">{qrPayload}</code>
                   </div>
+                  <button className="od-qr-full-btn" onClick={() => setQrFull(true)}>
+                    <Maximize2 size={14} /> Show Fullscreen
+                  </button>
                   <button
                     className="od-copy-btn"
                     onClick={async () => {
