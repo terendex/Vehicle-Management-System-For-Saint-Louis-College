@@ -100,6 +100,20 @@ PARKED_AFTER_SECONDS = 8.0
 # ordering, so a zone never fines a car before it counts as parked.
 DOUBLE_PARK_AFTER_SECONDS = 12.0
 
+# Detector confidence for occupancy, overriding detection._CONF_VEHICLE (0.15).
+#
+# 0.15 is tuned for the gate, where a missed vehicle is a missed entry and a
+# spurious box costs nothing. A parking overview is the opposite problem: the
+# frame is dense, so low-confidence boxes pile up and inflate the count. On the
+# 27-image parking validation split the detector counted 114% of the vehicles
+# actually present at 0.15 — every extra box marks a free bay occupied.
+#
+# Measured mean per-image count error on that split: 35.6% at 0.15, 18.5% at
+# 0.30, 23.3% at 0.40. 0.40 finds 83% of vehicles versus 94% at 0.30, so it
+# trades over-counting for under-counting — bays read free while a car sits in
+# them. Raise toward 0.30 if zones start reporting phantom vacancies.
+OCCUPANCY_CONF = 0.40
+
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a
 # straddle must persist seconds before it counts — so running the model ten
@@ -666,7 +680,7 @@ class ParkingCameraThread(threading.Thread):
         from scanning.ml.detection import detect_vehicles
         from vehicles.lens_layout import detect_across_lenses
 
-        return detect_across_lenses(frame, detect_vehicles)
+        return detect_across_lenses(frame, detect_vehicles, conf=OCCUPANCY_CONF)
 
     def _detector_hits(self, spaces, vehicles, now: float) -> dict:
         """{space_id: is a parked vehicle occupying this bay} from tracked boxes.

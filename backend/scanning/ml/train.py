@@ -261,6 +261,7 @@ def train(
     data_yaml:     Path | None = None,
     gpu_mem_gb:    float = 3.0,
     lr0:           float = 0.001,
+    patience:      int  = 25,
 ) -> None:
     """
     Train or fine-tune the single-class vehicle detector.
@@ -274,6 +275,14 @@ def train(
                        YOLO26 backbone stages, same as YOLOv8).
         data_yaml:     Path to a custom data.yaml. Defaults to vehicle_ds/data.yaml.
         gpu_mem_gb:    Hard VRAM budget for this training process.
+        patience:      Epochs without a fitness improvement before early stopping.
+                       0 disables it. Note that fine-tuning from an existing
+                       checkpoint often scores its best fitness at epoch 1 — the
+                       model already fits this data — so the default 25 can stop
+                       the run before the LR has annealed and before
+                       close_mosaic (last 10 epochs) turns mosaic off, which is
+                       usually where the real gain is. Pass 0 to see a schedule
+                       through to the end.
         lr0:           Initial learning rate. Default 0.001 because we force the
                        Adam optimizer below — YOLO's stock 0.01 is an SGD-scale
                        rate and is ~10x too high for Adam. Training at 0.01 blows
@@ -368,7 +377,7 @@ def train(
         name=RUN_NAME,
         project=str(RUNS_DIR),
         exist_ok=True,
-        patience=25,
+        patience=patience,
         save=True,
         plots=True,
         amp=True,                # FP16 tensor cores on the RTX 3060 — ~2× speed, ~half VRAM
@@ -481,6 +490,10 @@ if __name__ == "__main__":
     parser.add_argument("--lr0",           type=float, default=0.001,
                         help="Initial learning rate (default: 0.001, correct for the "
                              "Adam optimizer this script forces; 0.01 diverges to NaN)")
+    parser.add_argument("--patience",      type=int,   default=25,
+                        help="Epochs without improvement before early stopping; "
+                             "0 disables it (use to let a 60-epoch schedule anneal "
+                             "and reach the final close_mosaic epochs)")
     parser.add_argument("--imgsz",         type=int,   default=640)
     parser.add_argument("--model-size",    type=str,   default="m",
                         choices=["n", "s", "m", "l", "x"],
@@ -515,4 +528,5 @@ if __name__ == "__main__":
         data_yaml=Path(args.data) if args.data else None,
         gpu_mem_gb=args.gpu_mem_gb,
         lr0=args.lr0,
+        patience=args.patience,
     )
