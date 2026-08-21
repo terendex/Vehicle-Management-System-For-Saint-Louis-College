@@ -25,6 +25,7 @@ scanning/ml/
 ├── class_mapping.py       # Any raw label alias → license_plate | vehicle
 ├── train.py               # Vehicle-model trainer (single class)
 ├── download_datasets.py   # Merge extra Roboflow/local datasets → vehicle_ds
+├── build_domain_ds.py     # Merge per-domain exports → all_domains_ds (multi-domain)
 ├── auto_label.py          # Auto-label frames: 0=license_plate, 1=vehicle
 ├── video_to_labeled.py    # Video → frames → auto-labels
 ├── prepare_training.py    # Auto-labeled frames → vehicle_ds (vehicle-only)
@@ -69,6 +70,44 @@ python -m scanning.ml.download_datasets --api-key KEY --dataset workspace/projec
 # A local YOLOv8-format dataset folder from anywhere:
 python -m scanning.ml.download_datasets --local path/to/dataset
 ```
+
+### 2b. Building the multi-domain dataset (how the live model is trained)
+
+The live vehicle model is not trained on one export — it is trained on three
+**domains**, merged by `build_domain_ds.py` into `all_domains_ds/`:
+
+| Domain | Source | View |
+|--------|--------|------|
+| `street` | `vehicle_ds/` | ground-level gate view |
+| `elevated` | `_rf_downloads/elevated_view/` | elevated / angled campus view |
+| `parking` | `_rf_downloads/parking_view/` | parking-lot overview |
+
+```bash
+python -m scanning.ml.build_domain_ds \
+    --domain street:scanning/ml/vehicle_ds \
+    --domain elevated:scanning/ml/_rf_downloads/elevated_view \
+    --domain parking:scanning/ml/_rf_downloads/parking_view \
+    --out scanning/ml/all_domains_ds        # add --dry-run to preview
+
+python -m scanning.ml.train --data scanning/ml/all_domains_ds/data.yaml \
+    --imgsz 832 --epochs 60
+```
+
+Every image is renamed `<domain>__<stem>`, so the domain mix of a split is one
+command away — and a per-domain score is just a filtered val set:
+
+```bash
+ls scanning/ml/all_domains_ds/train/images | sed "s/_.*//" | sort | uniq -c
+```
+
+A source that ships its own `valid/` keeps that split; a train-only export is
+split 80/20 by a hash of the **source photo** name, so every Roboflow
+augmentation of one photo stays on the same side (no train/val leakage) and
+adding images later never reshuffles the existing ones.
+
+> Re-running `train.py` writes into `runs/vehicle_detector/`, overwriting the
+> live `best.pt`. Copy the run directory aside first if the current weights
+> aren't already archived under another `runs/` name.
 
 ### 3. From campus camera footage (optional)
 

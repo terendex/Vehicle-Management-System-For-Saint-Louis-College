@@ -267,6 +267,7 @@ def download_and_merge(
     local_dirs: list[str] | None = None,
     dry_run: bool = False,
     tmp_dir: Path | None = None,
+    download_only: bool = False,
 ) -> None:
     """
     Main entry point: download the requested Roboflow datasets and/or take
@@ -287,7 +288,10 @@ def download_and_merge(
     if datasets and not dry_run:
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    _normalise_existing_dataset(dry_run)
+    # In download-only mode vehicle_ds is never read or written — the caller
+    # just wants the raw export on disk (e.g. as a build_domain_ds source).
+    if not download_only:
+        _normalise_existing_dataset(dry_run)
 
     ambiguity_log: dict[str, list[str]] = defaultdict(list)
     dropped_counts: dict[str, int] = defaultdict(int)
@@ -295,7 +299,11 @@ def download_and_merge(
     total_skipped = 0
 
     print("\n" + "=" * 60)
-    print(f"  Merging {len(datasets)} Roboflow + {len(local_dirs)} local dataset(s) -> vehicle_ds")
+    if download_only:
+        print(f"  Downloading {len(datasets)} Roboflow dataset(s) -> {tmp_dir}")
+        print("  [DOWNLOAD ONLY] -- vehicle_ds is not touched")
+    else:
+        print(f"  Merging {len(datasets)} Roboflow + {len(local_dirs)} local dataset(s) -> vehicle_ds")
     if dry_run:
         print("  [DRY RUN] -- no files will be written")
     print("=" * 60 + "\n")
@@ -320,13 +328,17 @@ def download_and_merge(
                 print(f"     [FAILED] Download failed: {exc}")
                 continue
 
+        if download_only:
+            print(f"     -> {rf_dest}")
+            continue
+
         prefix = f"{workspace}__{project}__v{version}"
         copied, skipped = _merge_dataset(rf_dest, prefix, ambiguity_log,
                                          dropped_counts, dry_run)
         total_copied += copied
         total_skipped += skipped
 
-    for local in local_dirs:
+    for local in local_dirs if not download_only else []:
         src_root = Path(local).resolve()
         print(f"[LOCAL] {src_root}")
         if not src_root.exists():
@@ -336,6 +348,13 @@ def download_and_merge(
                                          dropped_counts, dry_run)
         total_copied += copied
         total_skipped += skipped
+
+    if download_only:
+        print("\n" + "=" * 60)
+        print("  DONE -- downloaded only, nothing merged")
+        print(f"     Exports under: {tmp_dir}")
+        print("=" * 60)
+        return
 
     print("\n" + "=" * 60)
     print("  DONE")
@@ -360,6 +379,9 @@ if __name__ == "__main__":
                         help="Show what would happen without writing files")
     parser.add_argument("--tmp-dir",  type=str, default=None,
                         help="Directory for raw Roboflow downloads")
+    parser.add_argument("--download-only", action="store_true",
+                        help="Only fetch the export into --tmp-dir; do not merge into "
+                             "vehicle_ds (use when the export is a build_domain_ds source)")
     args = parser.parse_args()
 
     download_and_merge(
@@ -368,4 +390,5 @@ if __name__ == "__main__":
         local_dirs=args.local,
         dry_run=args.dry_run,
         tmp_dir=Path(args.tmp_dir) if args.tmp_dir else None,
+        download_only=args.download_only,
     )
