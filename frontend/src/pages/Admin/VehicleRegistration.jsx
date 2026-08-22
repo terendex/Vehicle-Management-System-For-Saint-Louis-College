@@ -4,7 +4,7 @@ import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal, FileText, Paperclip } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
@@ -75,6 +75,58 @@ function StatTile({ variant, count, label, active, onSelect, title }) {
       <span className="vr-stat-value">{count}</span>
       <span className="vr-stat-label">{label}</span>
     </button>
+  )
+}
+
+/* An upload the applicant attached, shown as the thing it is.
+
+   Reviewing an application means reading the licence against the name and the
+   receipt against the OR number — a filename shows the reviewer neither, so
+   anything the browser can draw is drawn inline and links to its full size.
+   PDFs keep the named link (a first-page thumbnail is not worth an embed), and
+   so does any picture the browser turns out not to decode: an iPhone HEIC is
+   accepted at upload and renders nowhere but Safari, which used to leave a
+   broken-image icon with no way to reach the file. */
+function AttachmentPreview({ url, alt, emptyText = 'Not provided' }) {
+  // Keyed by url, not a bare flag: the modal reuses this component across
+  // registrations, and a stale failure would hide the next applicant's photo.
+  const [failedUrl, setFailedUrl] = useState(null)
+
+  if (!url) {
+    return <div className="detail-value vr-attach-empty">{emptyText}</div>
+  }
+
+  const path     = url.split('?')[0]
+  const fileName = decodeURIComponent(path.split('/').pop())
+  const asLink   = /\.pdf$/i.test(path) || failedUrl === url
+
+  return (
+    <a
+      className="vr-attach"
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open ${fileName} full size in a new tab`}
+    >
+      {asLink ? (
+        <span className="vr-attach-file">
+          <FileText size={15} />
+          <span className="vr-attach-name">{fileName}</span>
+        </span>
+      ) : (
+        <img
+          className="vr-attach-img"
+          src={url}
+          alt={alt}
+          loading="lazy"
+          onError={() => setFailedUrl(url)}
+        />
+      )}
+      <span className="vr-attach-hint">
+        <Maximize2 size={11} />
+        {asLink ? 'Open in a new tab' : 'Click to view full size'}
+      </span>
+    </a>
   )
 }
 
@@ -675,58 +727,35 @@ export default function VehicleRegistration() {
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
-              {/* Always rendered so a reviewer can tell "no photo submitted" apart from a missing field */}
-              <div className="detail-item" style={{ gridColumn: 'span 2' }}>
-                <div className="detail-label">Driver's License Photo</div>
-                {selectedReg.drivers_license_image ? (
-                  <a
-                    href={selectedReg.drivers_license_image}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open full size in a new tab"
-                    style={{ display: 'inline-block', marginTop: 4 }}
-                  >
-                    <img
-                      src={selectedReg.drivers_license_image}
-                      alt="Driver's license"
-                      style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #D3E1EC', display: 'block' }}
+              {/* Attachments sit together and are always rendered: "nothing was
+                  submitted" is itself a review finding, and an omitted block
+                  reads as a missing field instead. */}
+              <div className="detail-item vr-attach-block">
+                <div className="detail-section-title vr-attach-heading">
+                  <Paperclip size={14} /> Submitted Documents
+                </div>
+                <div className="vr-attach-grid">
+                  <div>
+                    <div className="detail-label">Driver's License Photo</div>
+                    <AttachmentPreview
+                      url={selectedReg.drivers_license_image}
+                      alt={`Driver's license of ${selectedReg.full_name}`}
                     />
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: '#6B8CA6' }}>
-                      <Maximize2 size={11} /> Click to view full size
-                    </span>
-                  </a>
-                ) : (
-                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic' }}>
-                    Not provided
                   </div>
-                )}
-              </div>
 
-              {/* Assessment form — the enrolment proof. A link rather than a preview:
-                  most of these are PDFs, and the scans that aren't are unreadable at
-                  thumbnail size anyway. Students only, but rendered for every applicant
-                  who actually attached one. */}
-              {(selectedReg.registrant_type === 'student' || selectedReg.assessment_form) && (
-                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
-                  <div className="detail-label">Assessment Form</div>
-                  {selectedReg.assessment_form ? (
-                    <a
-                      href={selectedReg.assessment_form}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open the assessment form in a new tab"
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 13 }}
-                    >
-                      <Maximize2 size={12} />
-                      {decodeURIComponent(selectedReg.assessment_form.split('/').pop())}
-                    </a>
-                  ) : (
-                    <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic' }}>
-                      Not provided
+                  {/* Students must attach the enrolment proof; anyone else who
+                      attached one still gets it shown. */}
+                  {(selectedReg.registrant_type === 'student' || selectedReg.assessment_form) && (
+                    <div>
+                      <div className="detail-label">Assessment Form</div>
+                      <AttachmentPreview
+                        url={selectedReg.assessment_form}
+                        alt={`Assessment form of ${selectedReg.full_name}`}
+                      />
                     </div>
                   )}
                 </div>
-              )}
+              </div>
 
               {/* ── Payment ──
                   Always rendered: "no receipt submitted" is the single most
@@ -756,30 +785,10 @@ export default function VehicleRegistration() {
                 </div>
 
                 {selectedReg.or_receipt_image ? (
-                  <a
-                    href={selectedReg.or_receipt_image}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open the receipt full size in a new tab"
-                    style={{ display: 'inline-block', marginTop: 8 }}
-                  >
-                    {/\.pdf$/i.test(selectedReg.or_receipt_image) ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-                        <Maximize2 size={12} /> View receipt (PDF)
-                      </span>
-                    ) : (
-                      <>
-                        <img
-                          src={selectedReg.or_receipt_image}
-                          alt="Official receipt"
-                          style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #D3E1EC', display: 'block' }}
-                        />
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: '#6B8CA6' }}>
-                          <Maximize2 size={11} /> Click to view full size
-                        </span>
-                      </>
-                    )}
-                  </a>
+                  <AttachmentPreview
+                    url={selectedReg.or_receipt_image}
+                    alt={`Official receipt of ${selectedReg.full_name}`}
+                  />
                 ) : selectedReg.payment_status === 'exempt' ? (
                   <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic', marginTop: 6 }}>
                     No fee due — this department is exempt.

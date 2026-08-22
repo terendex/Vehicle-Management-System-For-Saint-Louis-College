@@ -1764,3 +1764,80 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
   opacity: 1;
 }
 
+
+/* ===== Submitted documents (registration details) ===== */
+
+.vr-attach-block {
+  grid-column: span 2;
+  padding-top: 4px;
+}
+
+.vr-attach-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Two across on a wide modal, stacked once the previews would be too narrow to
+   read a licence number off. */
+.vr-attach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.vr-attach {
+  display: inline-block;
+  margin-top: 4px;
+  text-decoration: none;
+}
+
+.vr-attach-img {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  max-height: 210px;
+  object-fit: contain;
+  background: #F7FAFC;
+  border: 1px solid #D3E1EC;
+  border-radius: 8px;
+}
+
+.vr-attach:hover .vr-attach-img {
+  border-color: #4A6B85;
+}
+
+.vr-attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 300px;
+  padding: 10px 12px;
+  background: #F7FAFC;
+  border: 1px solid #D3E1EC;
+  border-radius: 8px;
+  color: #03396C;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vr-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vr-attach-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  color: #6B8CA6;
+  font-size: 11px;
+}
+
+.vr-attach-empty {
+  color: #64839C;
+  font-style: italic;
+}
