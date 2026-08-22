@@ -375,6 +375,23 @@ export default function VehicleRegistration() {
   // to a single line instead of holding open a full-height band for one sentence.
   const isRefineEmpty = !!activeStatus && activeStatus.count === 0
 
+  /* Fee payment is a question about applications waiting on a decision: the
+     reviewer is deciding whether to approve one, and whether the fee is settled
+     is part of that. Once a registration is accepted, rejected or expired the
+     answer is already baked into the outcome, so the axis only adds three tiles
+     nobody acts on. It is shown for pending and hidden everywhere else. */
+  const showPaymentFilter = statusFilter === 'pending'
+
+  /* Changing status must drop the payment filter with it, not just hide the
+     control. A reviewer who narrows pending to "Unpaid" and then clicks
+     Accepted would otherwise land on a table silently trimmed by a filter that
+     is no longer on screen to explain the missing rows. */
+  const selectStatus = (key) => {
+    setStatusFilter(key)
+    if (key !== 'pending') setPaymentFilter('all')
+    setRegPage(1)
+  }
+
   const hasActiveFilters = typeFilter !== 'all' || paymentFilter !== 'all' || search.trim() !== ''
   const clearFilters = () => { setTypeFilter('all'); setPaymentFilter('all'); setSearch(''); setRegPage(1) }
 
@@ -425,7 +442,7 @@ export default function VehicleRegistration() {
                     count={st.count}
                     label={st.label}
                     active={statusFilter === st.key}
-                    onSelect={st.key === OTHER_KEY ? null : () => { setStatusFilter(st.key); setRegPage(1) }}
+                    onSelect={st.key === OTHER_KEY ? null : () => selectStatus(st.key)}
                     title={`Show ${st.label.toLowerCase()} registrations`}
                   />
                 ))}
@@ -450,29 +467,31 @@ export default function VehicleRegistration() {
               </p>
             ) : (
               <div className="vr-stats-refine-body">
-                <div className="vr-stat-group">
-                  <p className="vr-stat-group-title">Fee Payment</p>
-                  <div className="vr-stat-row">
-                    {(summary?.by_payment ?? []).map(pm => (
-                      <StatTile
-                        key={pm.key}
-                        variant={`pay-${pm.key}`}
-                        count={scopedCount('by_payment', pm.key, pm.count)}
-                        label={pm.label}
-                        active={paymentFilter === pm.key}
-                        onSelect={pm.key === OTHER_KEY ? null : () => {
-                          setPaymentFilter(paymentFilter === pm.key ? 'all' : pm.key); setRegPage(1)
-                        }}
-                        title={activeStatus
-                          ? `Filter to ${pm.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
-                          : `Filter the table to ${pm.label.toLowerCase()} registrations`}
-                      />
-                    ))}
-                    {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+                {showPaymentFilter && (
+                  <div className="vr-stat-group">
+                    <p className="vr-stat-group-title">Fee Payment</p>
+                    <div className="vr-stat-row">
+                      {(summary?.by_payment ?? []).map(pm => (
+                        <StatTile
+                          key={pm.key}
+                          variant={`pay-${pm.key}`}
+                          count={scopedCount('by_payment', pm.key, pm.count)}
+                          label={pm.label}
+                          active={paymentFilter === pm.key}
+                          onSelect={pm.key === OTHER_KEY ? null : () => {
+                            setPaymentFilter(paymentFilter === pm.key ? 'all' : pm.key); setRegPage(1)
+                          }}
+                          title={activeStatus
+                            ? `Filter to ${pm.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
+                            : `Filter the table to ${pm.label.toLowerCase()} registrations`}
+                        />
+                      ))}
+                      {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="vr-stat-divider" aria-hidden="true" />
+                {showPaymentFilter && <div className="vr-stat-divider" aria-hidden="true" />}
 
                 <div className="vr-stat-group">
                   <p className="vr-stat-group-title">Registrant Type</p>
@@ -531,21 +550,26 @@ export default function VehicleRegistration() {
                 <option value="employee">Employee</option>
                 <option value="fetcher">Fetcher / Drop &amp; Go</option>
               </select>
-              <select
-                className="filter-select"
-                value={paymentFilter}
-                onChange={(e) => { setPaymentFilter(e.target.value); setRegPage(1) }}
-                title="Filter by whether the Vehicle Pass fee has been settled"
-              >
-                <option value="all">All Payments</option>
-                <option value="paid">Paid</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="exempt">Fee Exempt</option>
-              </select>
+              {/* Same rule as the tiles above — one axis, shown in one place or
+                  neither, so the toolbar never offers a filter the counts strip
+                  has already dropped. */}
+              {showPaymentFilter && (
+                <select
+                  className="filter-select"
+                  value={paymentFilter}
+                  onChange={(e) => { setPaymentFilter(e.target.value); setRegPage(1) }}
+                  title="Filter by whether the Vehicle Pass fee has been settled"
+                >
+                  <option value="all">All Payments</option>
+                  <option value="paid">Paid</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="exempt">Fee Exempt</option>
+                </select>
+              )}
               <select
                 className="filter-select"
                 value={statusFilter}
-                onChange={(e) => { setStatusFilter(e.target.value); setRegPage(1) }}
+                onChange={(e) => selectStatus(e.target.value)}
               >
                 <option value="pending">Pending Review</option>
                 <option value="accepted">Accepted</option>
