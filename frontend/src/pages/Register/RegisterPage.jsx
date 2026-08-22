@@ -1160,36 +1160,56 @@ export default function RegisterPage() {
           <form onSubmit={handleSubmit} className="register-form" noValidate>
 
             {/* ── Campus Schedule notice ──
-                Ahead of every other section on purpose: slots are first come,
-                first serve, so the applicant knows what is at stake before
-                working through the rest of the form. The picker itself sits
-                further down, with the rest of the student details.
+                Ahead of every other section on purpose: the applicant knows
+                which days their pass covers — and, for students, that slots are
+                first come, first serve — before working through the rest of the
+                form. Employees and fetchers get every campus day, so the notice
+                is all there is; the student picker sits further down, with the
+                rest of the student details.
                 A rotation is taken whole — picking loose days produced passes
                 whose stored days did not match the schedule printed on them. */}
-            {isStudent && (
+            {registrantType && (
               <>
                 <div className="form-grid">
                   <div className="form-group col-span-2">
                     <label className="days-label">
-                      Campus Schedule <span className="required">*</span>
+                      Campus Schedule {isStudent && <span className="required">*</span>}
                     </label>
-                    {formData.student_level === 'sped' ? (
-                      <div className="schedule-note schedule-note--sped">
+                    {isStudent ? (
+                      formData.student_level === 'sped' ? (
+                        <div className="schedule-note schedule-note--sped">
+                          <Info size={13} />
+                          <span>
+                            Special Education students are assigned <strong>all campus days
+                            (Monday to Saturday)</strong>.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="schedule-note">
+                          <Info size={13} />
+                          <span>
+                            Choose <strong>one</strong> schedule — it covers all three of its days.
+                            Slots are <strong>first come, first serve</strong>; a schedule that is
+                            <strong> full</strong> cannot be selected.
+                          </span>
+                        </div>
+                      )
+                    ) : isEmployee ? (
+                      /* Spelled out as Monday–Saturday: "any day" reads as Sunday
+                         included, and the campus is closed then. */
+                      <p className="campus-day-anyday-note">
                         <Info size={13} />
-                        <span>
-                          Special Education students are assigned <strong>all campus days
-                          (Monday to Saturday)</strong>.
-                        </span>
-                      </div>
+                        Employees are permitted to enter and park on <strong>any campus day
+                        (Monday to Saturday)</strong>.
+                      </p>
                     ) : (
-                      <div className="schedule-note">
+                      /* Fetcher — every campus day; entry rules depend on classification */
+                      <p className="campus-day-anyday-note fetcher-note">
                         <Info size={13} />
-                        <span>
-                          Choose <strong>one</strong> schedule — it covers all three of its days.
-                          Slots are <strong>first come, first serve</strong>; a schedule that is
-                          <strong> full</strong> cannot be selected.
-                        </span>
-                      </div>
+                        {fetcherType === 'standby'
+                          ? <>Standby fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to park inside the campus while waiting.</>
+                          : <>Fetchers / Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -1983,31 +2003,6 @@ export default function RegisterPage() {
                     Your latest registrar's assessment form — this is what confirms you are an
                     enrolled SLC student. A clear photo or the PDF from the student portal both work.
                   </span>
-                </div>
-              )}
-
-              {/* Employee — every campus day, no picker. Spelled out as
-                  Monday–Saturday: "any day" reads as Sunday included, and the
-                  campus is closed then. */}
-              {isEmployee && (
-                <div className="form-group col-span-2">
-                  <p className="campus-day-anyday-note">
-                    <Info size={13} />
-                    Employees are permitted to enter and park on <strong>any campus day
-                    (Monday to Saturday)</strong>.
-                  </p>
-                </div>
-              )}
-
-              {/* Fetcher — every campus day; entry rules depend on classification */}
-              {isFetcher && (
-                <div className="form-group col-span-2">
-                  <p className="campus-day-anyday-note fetcher-note">
-                    <Info size={13} />
-                    {fetcherType === 'standby'
-                      ? <>Standby fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to park inside the campus while waiting.</>
-                      : <>Fetchers / Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
-                  </p>
                 </div>
               )}
             </div>
