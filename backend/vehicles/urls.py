@@ -41,6 +41,7 @@ urlpatterns = [
     path('registrations/report/summary-pdf/', views.RegistrationSummaryReportPdfView.as_view(), name='registration-summary-report-pdf'),
     path('registrations/summary/',         views.RegistrationSummaryView.as_view(),      name='registration-summary'),
     path('registrations/pending/',         views.PendingRegistrationsListView.as_view(), name='list-pending-registrations'),
+    path('registrations/<int:pk>/pdf/',    views.RegistrationPdfView.as_view(),          name='registration-pdf'),
     path('registrations/<int:pk>/accept/', views.AcceptRegistrationView.as_view(),       name='accept-registration'),
     path('registrations/<int:pk>/reject/', views.RejectRegistrationView.as_view(),       name='reject-registration'),
 
@@ -71,4 +72,5 @@ urlpatterns = [
     path('scheduled-visits/<int:pk>/', views.ScheduledVisitDetailView.as_view(),   name='scheduled-visit-detail'),
 
     path('', include(router.urls)),
-]
+]
+

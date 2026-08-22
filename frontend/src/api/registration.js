@@ -126,6 +126,15 @@ export const registrationApi = {
     const { data } = await api.post(`/vehicles/registrations/${id}/reject/`, { reason })
     return data
   },
+  /** The approved-registration confirmation PDF, with the applicant's uploaded
+   *  documents appended. Accepted registrations only — the document states the
+   *  pass was granted. */
+  getRegistrationPdf: async (id) => {
+    const { data } = await api.get(`/vehicles/registrations/${id}/pdf/`, {
+      responseType: 'blob',
+    })
+    return data
+  },
 
   // ── Parking availability ──
   getParkingAvailability: async (category) => {

@@ -154,6 +154,10 @@ export default function VehicleRegistration() {
   const [regPage, setRegPage] = useState(1)
   const itemsPerPage = 10
 
+  // Registration confirmation → PDF, for the CDSO's filed copy and for an
+  // owner who lost the one emailed to them on approval.
+  const [printingRegId, setPrintingRegId] = useState(null)
+
   // Modals
   const [selectedReg, setSelectedReg] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
@@ -334,6 +338,43 @@ export default function VehicleRegistration() {
   }
 
   const showResult = (message, type = 'success') => setResultModal({ message, type })
+
+  /* The server rebuilds the same document the approval email carried, so a
+     reprint is never a different document from the original — the CDSO copy
+     just also carries the applicant's uploaded scans.
+
+     Takes the registration explicitly: the table row calls this without
+     opening the modal, so there is no selected registration to read back. */
+  const printRegistration = async (reg) => {
+    if (!reg) return
+    setPrintingRegId(reg.id)
+    try {
+      const blob = await registrationApi.getRegistrationPdf(reg.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `SLC Vehicle Registration - ${reg.plate_number || reg.full_name}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      showResult('Registration PDF downloaded.', 'success')
+    } catch (err) {
+      // responseType 'blob' means an error body arrives as a Blob, not JSON —
+      // read it back or the message would only ever be the generic one.
+      let message = 'Failed to generate the registration PDF.'
+      try {
+        const body = err.response?.data
+        if (body instanceof Blob) {
+          const parsed = JSON.parse(await body.text())
+          if (parsed?.detail) message = parsed.detail
+        } else if (body?.detail) {
+          message = body.detail
+        }
+      } catch { /* keep the generic message */ }
+      showResult(message, 'error')
+    } finally {
+      setPrintingRegId(null)
+    }
+  }
   const openViewModal = (reg) => {
     setSelectedReg(reg)
     setIsViewModalOpen(true)
@@ -614,6 +655,18 @@ export default function VehicleRegistration() {
                       <button className="view-btn" onClick={() => openViewModal(r)} title="View Details">
                         <Eye size={18} />
                       </button>
+                      {r.status === 'accepted' && (
+                        <button
+                          className="view-btn"
+                          disabled={printingRegId === r.id}
+                          onClick={() => printRegistration(r)}
+                          title="Print the registration confirmation, with the submitted documents"
+                        >
+                          {printingRegId === r.id
+                            ? <span className="btn-spinner" />
+                            : <Printer size={18} />}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1083,6 +1136,15 @@ export default function VehicleRegistration() {
               <div className="detail-actions">
                 <button className="btn-outline" onClick={handleViewVehicleQR}>
                   <Eye size={18} /> View Vehicle QR
+                </button>
+                <button
+                  className="btn-outline"
+                  disabled={printingRegId === selectedReg.id}
+                  onClick={() => printRegistration(selectedReg)}
+                  title="The confirmation emailed on approval, plus the documents the applicant uploaded"
+                >
+                  <Printer size={18} />
+                  {printingRegId === selectedReg.id ? 'Preparing…' : 'Print Registration'}
                 </button>
               </div>
             )}

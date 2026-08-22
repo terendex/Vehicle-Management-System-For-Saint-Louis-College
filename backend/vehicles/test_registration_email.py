@@ -166,7 +166,10 @@ class AcceptanceEmailContentTests(TestCase):
 
     @override_settings(MEDIA_URL='/media/')
     def test_carries_the_qr_code_and_the_registration_pdf(self):
-        send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+        # Paid: the confirmation PDF rides with the settled fee, not with the
+        # approval — test_receipt_email pins the unpaid half of that rule.
+        send_acceptance_email(make_reg(payment_status='paid', or_number='1234567'),
+                              'TempPass1!', 'SLC-VO-000001')
         msg = mail.outbox[-1]
         # Local storage has no absolute URL to link, so the inline copy falls
         # back to a data URI — see the remote-storage test below for production.
@@ -231,7 +234,10 @@ class AcceptanceEmailContentTests(TestCase):
         registration_pdf.registration_confirmation_pdf = broken
         try:
             with self.assertLogs('vehicles.email_utils', level='ERROR'):
-                send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+                # Paid, so a PDF is actually attempted — an unpaid
+                # application has none to lose.
+                send_acceptance_email(make_reg(payment_status='paid', or_number='1234567'),
+                                      'TempPass1!', 'SLC-VO-000001')
         finally:
             registration_pdf.registration_confirmation_pdf = original
         msg = mail.outbox[-1]

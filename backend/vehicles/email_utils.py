@@ -171,6 +171,33 @@ def _authorized_driver_row(registration, pad='8px'):
     )
 
 
+def _fee_settled(registration):
+    """Whether there is a settled fee to confirm on paper.
+
+    Exempt counts: nothing was owed, so nothing is outstanding. Only an
+    application still waiting on its Official Receipt is unsettled.
+    """
+    from .models import VehicleRegistration
+    return registration.payment_status in (
+        VehicleRegistration.PaymentStatus.PAID,
+        VehicleRegistration.PaymentStatus.EXEMPT,
+    )
+
+
+def _registration_pdf_attachment(registration):
+    """The (filename, bytes, mimetype) triple for the confirmation PDF.
+
+    Built with the applicant's uploaded documents included, so the copy in the
+    owner's inbox is the same document the CDSO files from Vehicle Registration
+    Management — one builder, one layout, nothing to drift apart.
+    """
+    from registration_pdf import (registration_confirmation_pdf,
+                                  registration_pdf_filename)
+    return (registration_pdf_filename(registration),
+            registration_confirmation_pdf(registration, include_documents=True),
+            'application/pdf')
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
     # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
@@ -329,7 +356,10 @@ def send_acceptance_email(registration, temp_password, user_code=None):
             f"Email: {registration.email}\n"
             f"Temporary Password: {temp_password}\n\n"
             f"You will be prompted to change your password on first login.\n\n"
-            f"A PDF copy of your full registration details is attached."
+            + ("A PDF copy of your full registration details is attached."
+               if _fee_settled(registration) else
+               "Your registration form will be emailed to you as a PDF once "
+               "your Official Receipt has been uploaded.")
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[registration.email],
@@ -343,21 +373,23 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     msg.attach(f'qr-{registration.plate_number or registration.pk}.png',
                qr_png, 'image/png')
 
-    # A failure building the PDF must not cost the owner their approval email
-    # (and, upstream, must not roll back the approval itself) \u2014 so send without
-    # the attachment and log it rather than raising.
-    try:
-        from registration_pdf import (registration_confirmation_pdf,
-                                      registration_pdf_filename)
-        msg.attach(registration_pdf_filename(registration),
-                   registration_confirmation_pdf(registration),
-                   'application/pdf')
-    except Exception:
-        log.exception(
-            "Could not attach registration PDF for %s (registration %s) \u2014 "
-            "sending the approval email without it.",
-            registration.email, registration.pk,
-        )
+    # The confirmation PDF rides with the fee, not with the approval. An
+    # application approved before its Official Receipt is in (see
+    # unpaid_accept_reason) has no settled fee to confirm, so the PDF is sent
+    # instead by send_receipt_received_email the moment the receipt lands.
+    #
+    # A failure building it must not cost the owner their approval email (and,
+    # upstream, must not roll back the approval itself) — so send without the
+    # attachment and log it rather than raising.
+    if _fee_settled(registration):
+        try:
+            msg.attach(*_registration_pdf_attachment(registration))
+        except Exception:
+            log.exception(
+                "Could not attach registration PDF for %s (registration %s) \u2014 "
+                "sending the approval email without it.",
+                registration.email, registration.pk,
+            )
 
     msg.send(fail_silently=False)
 
@@ -575,6 +607,97 @@ def send_pending_email(registration):
         html_message=html_message,
         fail_silently=False,
     )
+
+
+def send_receipt_received_email(registration):
+    """Sent the moment the applicant uploads their Official Receipt.
+
+    This is the email that carries the registration form. Until the receipt is
+    in, there is no settled fee to confirm and nothing worth putting on a PDF
+    the owner is meant to keep; once it is, the form is complete and goes out
+    with the receipt and the rest of the uploads printed into it — the same
+    document the CDSO files.
+
+    The PDF only rides along once the registration is actually approved. It
+    states in its own text that the pass was granted, so sending it to someone
+    still under review would put a pass in their hands that nobody issued; the
+    approval email carries it for them instead, now that their fee is settled.
+    """
+    from .models import VehicleRegistration
+
+    approved   = registration.status == VehicleRegistration.Status.ACCEPTED
+    ref_number = f'REG-{registration.id:06d}'
+    full_name  = esc(registration.full_name)
+    plate_val  = esc_or_dash(registration.plate_number)
+    or_val     = esc_or_dash(registration.or_number)
+    amount_val = (f'PHP {registration.amount_paid:,.2f}'
+                  if registration.amount_paid is not None else DASH)
+
+    next_step_html = (
+        '<p>Your registration form is attached to this email as a PDF. Keep a '
+        'copy — present it when requested at the campus gates.</p>'
+        if approved else
+        '<p>Your application is now queued for CDSO review. Once it is '
+        'approved, your registration form will be emailed to you as a PDF '
+        'along with your portal login and vehicle QR code.</p>'
+    )
+
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
+            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #12915A; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                <h2 style="color: #12915A; margin-top: 0;">Official Receipt Received</h2>
+                <p>Dear {full_name},</p>
+                <p>We have received the Official Receipt for your vehicle pass. Your fee is now recorded as settled.</p>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Reference No.</td>
+                        <td style="padding:7px 0;font-weight:600;">{ref_number}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Plate Number</td>
+                        <td style="padding:7px 0;font-weight:600;">{plate_val}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">OR Number</td>
+                        <td style="padding:7px 0;font-weight:600;">{or_val}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Amount Paid</td>
+                        <td style="padding:7px 0;font-weight:600;">{amount_val}</td></tr>
+                </table>
+                {next_step_html}
+                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
+                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    msg = EmailMultiAlternatives(
+        subject=f"SLC Vehicle Pass — Official Receipt Received ({ref_number})",
+        body=(
+            f"Dear {registration.full_name},\n\n"
+            f"We have received the Official Receipt for your vehicle pass.\n\n"
+            f"Reference No.: {ref_number}\n"
+            f"Plate Number:  {registration.plate_number}\n"
+            f"OR Number:     {registration.or_number}\n\n"
+            + ("Your registration form is attached to this email as a PDF."
+               if approved else
+               "Your application is now queued for CDSO review. Your "
+               "registration form will be emailed to you once it is approved.")
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[registration.email],
+    )
+    msg.attach_alternative(html_message, "text/html")
+
+    if approved:
+        # As in the approval mail: a PDF that will not build must not cost the
+        # applicant the confirmation that their payment landed.
+        try:
+            msg.attach(*_registration_pdf_attachment(registration))
+        except Exception:
+            log.exception(
+                "Could not attach registration PDF for %s (registration %s) — "
+                "sending the receipt confirmation without it.",
+                registration.email, registration.pk,
+            )
+
+    msg.send(fail_silently=False)
 
 
 def send_rejection_email(registration, reason):

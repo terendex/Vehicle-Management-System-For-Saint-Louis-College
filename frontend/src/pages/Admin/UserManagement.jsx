@@ -13,7 +13,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Printer, Smartphone,
+  Shield, Info, Lock, Smartphone,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
@@ -56,8 +56,6 @@ export default function UserManagement() {
   const [editForm, setEditForm]           = useState(null)
   const [editAgencyMode, setEditAgencyMode] = useState(DEFAULT_AGENCY)
 
-  /* ── registration re-print state ── */
-  const [printingReg, setPrintingReg] = useState(false)
 
   /* ── QR state ── */
   const [qrUser,    setQrUser]    = useState(null)
@@ -232,7 +230,6 @@ export default function UserManagement() {
   const menuItemCount = (u) => (
     1                                     /* View Profile */
     + (u.role === 'security' ? 1 : 0)     /* QR Badge */
-    + (u.role === 'vehicle_owner' ? 1 : 0)/* Print Registration */
     + (u.role !== 'security' ? 1 : 0)     /* Reset 2FA */
     + 1                                   /* Disable / Enable */
   )
@@ -402,43 +399,6 @@ export default function UserManagement() {
         notify.validation(errors, { title: 'CDSO not replaced' })
       } else { showResult('Failed to replace CDSO', 'error') }
       setSubmitting(false)
-    }
-  }
-
-  /* ── Registration confirmation → PDF re-print ──
-     For an owner who lost the copy emailed to them on approval. The server
-     rebuilds the same document, so the reprint matches the original. */
-  // Takes the user explicitly: the row menu calls this straight after
-  // setSelectedUser, and reading that state back here would still see the
-  // previous value.
-  const printRegistrationFor = async (user) => {
-    if (!user) return
-    setPrintingReg(true)
-    try {
-      const blob = await usersApi.getRegistrationPdf(user.id)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `SLC Vehicle Registration - ${user.full_name}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success('Registration PDF downloaded.')
-    } catch (err) {
-      // responseType 'blob' means an error body arrives as a Blob, not JSON —
-      // read it back or the toast would only ever say "failed".
-      let message = 'Failed to generate the registration PDF.'
-      try {
-        const body = err.response?.data
-        if (body instanceof Blob) {
-          const parsed = JSON.parse(await body.text())
-          if (parsed?.detail) message = parsed.detail
-        } else if (body?.detail) {
-          message = body.detail
-        }
-      } catch { /* keep the generic message */ }
-      toast.error(message)
-    } finally {
-      setPrintingReg(false)
     }
   }
 
@@ -641,15 +601,6 @@ export default function UserManagement() {
                             onClick={() => { closeMenu(); openQrModal(u) }}
                           >
                             {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
-                          </button>
-                        )}
-                        {u.role === 'vehicle_owner' && (
-                          <button
-                            className="um-dropdown-item view"
-                            title="Re-download the approved registration PDF emailed to this owner"
-                            onClick={() => { setSelectedUser(u); closeMenu(); printRegistrationFor(u) }}
-                          >
-                            <Printer size={15} /> Print Registration
                           </button>
                         )}
                         {u.role !== 'security' && (
@@ -995,16 +946,6 @@ export default function UserManagement() {
                   <button className="um-btn-secondary" onClick={startEdit}>
                     <Pencil size={15} /> Edit Details
                   </button>
-                  {selectedUser.role === 'vehicle_owner' && (
-                    <button
-                      className="um-btn-secondary"
-                      disabled={printingReg}
-                      title="Re-download the approved registration PDF that was emailed to this owner"
-                      onClick={() => printRegistrationFor(selectedUser)}
-                    >
-                      <Printer size={15} /> {printingReg ? 'Preparing…' : 'Print Registration'}
-                    </button>
-                  )}
                   <button
                     className="um-btn-primary"
                     disabled={badgeLocked(selectedUser)}

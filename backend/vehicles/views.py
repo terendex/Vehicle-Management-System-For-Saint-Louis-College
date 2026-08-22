@@ -793,7 +793,8 @@ from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           resolve_student_schedule, schedule_group)
 from accounts.models import User
 from .email_utils import (send_acceptance_email, send_rejection_email,
-                          send_pending_email, send_in_background)
+                          send_pending_email, send_receipt_received_email,
+                          send_in_background)
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -1243,6 +1244,47 @@ def _acceptance_email_failed_notice(registration):
             severity='warning', plate_number=plate, link='/admin/vehicles',
         )
     return _notice
+
+
+class RegistrationPdfView(APIView):
+    """Print the approved-registration confirmation for one registration.
+
+    The CDSO reviews and approves applications on this page, so the printed
+    copy is issued from here too — it used to live in User Management, which
+    meant finding the owner's account to print a document about a registration
+    the reviewer was already looking at.
+
+    Deliberately the same builder the approval email uses, so a reprint is
+    never a different document from the one the owner received. The one
+    difference is `include_documents`: the filed copy carries the scans the
+    applicant uploaded, which the owner's emailed copy has no reason to.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request, pk):
+        from registration_pdf import (registration_confirmation_pdf,
+                                      registration_pdf_filename)
+
+        registration = get_object_or_404(VehicleRegistration, pk=pk)
+        # The document states the registration is approved, so an application
+        # still under review has no printable confirmation — printing one would
+        # put a pass in someone's hands that the CDSO has not granted.
+        if registration.status != VehicleRegistration.Status.ACCEPTED:
+            return Response(
+                {'detail': 'Only an accepted registration can be printed.'},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        pdf = registration_confirmation_pdf(registration, include_documents=True)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Registration PDF printed | REG-{registration.id:06d} "
+              f"({registration.plate_number}) | For: {registration.full_name}")
+
+        resp = HttpResponse(pdf, content_type='application/pdf')
+        resp['Content-Disposition'] = (
+            f'attachment; filename="{registration_pdf_filename(registration)}"'
+        )
+        return resp
 
 
 class AcceptRegistrationView(APIView):
@@ -2198,6 +2240,14 @@ class RegistrationPaymentView(APIView):
         registration.save(update_fields=[
             'or_number', 'or_receipt_image', 'amount_paid', 'paid_at', 'payment_status',
         ])
+
+        # The receipt is what completes the registration form, so this is the
+        # mail that carries it: the PDF the CDSO files, with the uploaded
+        # documents printed into it. Backgrounded like the approval mail — the
+        # applicant is waiting on an upload, not on a mail server, and a dead
+        # SMTP host must not fail a payment that is already recorded.
+        send_in_background(send_receipt_received_email, registration)
+
         return Response(
             {"message": "Receipt received. Your application is now queued for CDSO review.",
              "payment_status": registration.payment_status},
