@@ -92,8 +92,15 @@ function AttachmentPreview({ url, alt, emptyText = 'Not provided' }) {
   // registrations, and a stale failure would hide the next applicant's photo.
   const [failedUrl, setFailedUrl] = useState(null)
 
+  // An empty slot keeps the tile. Three documents that line up whether or not
+  // they arrived is what makes a gap read as a gap — the same fact written as a
+  // bare line of italics just leaves a hole in the row.
   if (!url) {
-    return <div className="detail-value vr-attach-empty">{emptyText}</div>
+    return (
+      <div className="vr-attach vr-attach--empty">
+        <span className="vr-attach-box vr-attach-box--empty">{emptyText}</span>
+      </div>
+    )
   }
 
   const path     = url.split('?')[0]
@@ -109,13 +116,13 @@ function AttachmentPreview({ url, alt, emptyText = 'Not provided' }) {
       title={`Open ${fileName} full size in a new tab`}
     >
       {asLink ? (
-        <span className="vr-attach-file">
-          <FileText size={15} />
+        <span className="vr-attach-box vr-attach-file">
+          <FileText size={22} />
           <span className="vr-attach-name">{fileName}</span>
         </span>
       ) : (
         <img
-          className="vr-attach-img"
+          className="vr-attach-box vr-attach-img"
           src={url}
           alt={alt}
           loading="lazy"
@@ -759,7 +766,7 @@ export default function VehicleRegistration() {
                   <Paperclip size={14} /> Submitted Documents
                 </div>
                 <div className="vr-attach-grid">
-                  <div>
+                  <div className="vr-attach-cell">
                     <div className="detail-label">Driver's License Photo</div>
                     <AttachmentPreview
                       url={selectedReg.drivers_license_image}
@@ -770,7 +777,7 @@ export default function VehicleRegistration() {
                   {/* Students must attach the enrolment proof; anyone else who
                       attached one still gets it shown. */}
                   {(selectedReg.registrant_type === 'student' || selectedReg.assessment_form) && (
-                    <div>
+                    <div className="vr-attach-cell">
                       <div className="detail-label">Assessment Form</div>
                       <AttachmentPreview
                         url={selectedReg.assessment_form}
@@ -778,6 +785,21 @@ export default function VehicleRegistration() {
                       />
                     </div>
                   )}
+
+                  {/* The receipt is an upload like the other two and belongs on
+                      the same row. What it means for the fee stays in Payment
+                      below — the badge and OR number are the reviewer's answer
+                      to "is this settled", the picture is only the proof. */}
+                  <div className="vr-attach-cell">
+                    <div className="detail-label">Official Receipt</div>
+                    <AttachmentPreview
+                      url={selectedReg.or_receipt_image}
+                      alt={`Official receipt of ${selectedReg.full_name}`}
+                      emptyText={selectedReg.payment_status === 'exempt'
+                        ? 'No fee due — exempt'
+                        : 'Not uploaded'}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -808,18 +830,9 @@ export default function VehicleRegistration() {
                   )}
                 </div>
 
-                {selectedReg.or_receipt_image ? (
-                  <AttachmentPreview
-                    url={selectedReg.or_receipt_image}
-                    alt={`Official receipt of ${selectedReg.full_name}`}
-                  />
-                ) : selectedReg.payment_status === 'exempt' ? (
-                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic', marginTop: 6 }}>
+                {selectedReg.payment_status === 'exempt' && (
+                  <div className="detail-value vr-attach-empty" style={{ marginTop: 6 }}>
                     No fee due — this department is exempt.
-                  </div>
-                ) : (
-                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic', marginTop: 6 }}>
-                    No receipt uploaded.
                   </div>
                 )}
 
@@ -939,7 +952,7 @@ export default function VehicleRegistration() {
                     {feeExempt
                       ? <>No Vehicle Pass fee is due from <strong>{selectedReg.full_name}</strong> — their department is exempt.</>
                       : selectedReg.payment_status === 'paid'
-                        ? <>Check the Official Receipt below against the photo <strong>{selectedReg.full_name}</strong> uploaded, then approve.</>
+                        ? <>Check the Official Receipt against the photo <strong>{selectedReg.full_name}</strong> uploaded under Submitted Documents, then approve.</>
                         : <><strong>{selectedReg.full_name}</strong> has not submitted a receipt. Enter their OR number if they brought it to the counter.</>}
                   </p>
 
@@ -960,7 +973,7 @@ export default function VehicleRegistration() {
                       />
                       <p className="form-hint">
                         {selectedReg.payment_status === 'paid'
-                          ? 'Prefilled from the receipt the applicant uploaded — correct it only if it does not match the image above.'
+                          ? 'Prefilled from the receipt the applicant uploaded — correct it only if it does not match the receipt under Submitted Documents.'
                           : `Issued by the Accounting Office upon payment of ₱${selectedReg.registrant_type === 'employee' ? '150.00 (50% employee discount)' : '300.00'}`}
                       </p>
                     </div>

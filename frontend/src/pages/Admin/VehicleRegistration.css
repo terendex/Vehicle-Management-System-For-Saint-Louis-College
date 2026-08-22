@@ -1779,53 +1779,73 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
   margin-bottom: 10px;
 }
 
-/* Two across on a wide modal, stacked once the previews would be too narrow to
-   read a licence number off. */
+/* Three tiles across on a wide modal, folding to two and then one. Every cell
+   is the same width and every preview the same height, so the row reads as one
+   set of documents rather than three differently-shaped pictures. */
 .vr-attach-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 16px;
+  align-items: start;
+}
+
+.vr-attach-cell {
+  min-width: 0;
 }
 
 .vr-attach {
-  display: inline-block;
-  margin-top: 4px;
+  display: block;
+  margin-top: 6px;
   text-decoration: none;
 }
 
-.vr-attach-img {
-  display: block;
+/* The frame every attachment fills, whatever it turns out to be. A fixed height
+   is what keeps a portrait scan and a landscape receipt on the same line. */
+.vr-attach-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
-  max-width: 300px;
-  max-height: 210px;
-  object-fit: contain;
+  height: 168px;
+  padding: 10px;
   background: #F7FAFC;
   border: 1px solid #D3E1EC;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
-.vr-attach:hover .vr-attach-img {
+/* contain, not cover: a cropped licence is a licence number the reviewer
+   cannot read, which defeats the point of showing it at all. */
+.vr-attach-img {
+  padding: 0;
+  object-fit: contain;
+}
+
+.vr-attach:hover .vr-attach-box {
   border-color: #4A6B85;
 }
 
 .vr-attach-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 300px;
-  padding: 10px 12px;
-  background: #F7FAFC;
-  border: 1px solid #D3E1EC;
-  border-radius: 8px;
+  flex-direction: column;
   color: #03396C;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
+  text-align: center;
 }
 
 .vr-attach-name {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vr-attach-box--empty {
+  border-style: dashed;
+  color: #64839C;
+  font-size: 13px;
+  font-style: italic;
+  text-align: center;
 }
 
 .vr-attach-hint {
