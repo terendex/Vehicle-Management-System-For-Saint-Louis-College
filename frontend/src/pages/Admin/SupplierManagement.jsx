@@ -4,7 +4,8 @@ import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
@@ -38,10 +39,16 @@ function AddSupplierModal({ onClose, onCreated }) {
   const [saving, setSaving]         = useState(false)
   const plateRef = useRef(null)
 
-  const addPlate = () => {
+  const addPlate = async () => {
     const p = formatPlateNumber(plateInput.trim())
-    if (!p) return
-    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
+    if (!p) {
+      await notify.error('Enter a plate number first.', { title: 'Nothing to add' })
+      return
+    }
+    if (!isValidPlateNumber(p)) {
+      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
+      return
+    }
     if (plates.includes(p)) { toast.error('Plate already added.'); return }
     setPlates(prev => [...prev, p])
     setPlateInput('')
@@ -52,7 +59,9 @@ function AddSupplierModal({ onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!name.trim()) return
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     setSaving(true)
     try {
       const { data } = await createSupplier({ company_name: name.trim(), category, plates })
@@ -77,7 +86,7 @@ function AddSupplierModal({ onClose, onCreated }) {
           <button className="sp-modal-close" onClick={onClose}><X size={16} /></button>
         </div>
 
-        <form onSubmit={handleSubmit} className="sp-modal-form">
+        <form onSubmit={handleSubmit} className="sp-modal-form" noValidate>
           <div className="sp-field">
             <label className="sp-label">Company Name</label>
             <input
@@ -116,10 +125,7 @@ function AddSupplierModal({ onClose, onCreated }) {
                 <Plus size={15} /> Add
               </button>
             </div>
-            {plateError
-              ? <span className="sp-field-error-msg">{plateError}</span>
-              : <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
-            }
+            <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
             {plates.length > 0 && (
               <div className="sp-plate-tags">
                 {plates.map(p => (
@@ -189,7 +195,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
     const p = formatPlateNumber(plateInput.trim())
     if (!p) return
     if (!isValidPlateNumber(p)) {
-      setPlateError('Invalid Philippine plate number format.')
+      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
       return
     }
     if (plates.some(pl => pl.plate_number === p)) {
@@ -324,10 +330,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
-          {plateError
-            ? <span className="sp-field-error-msg">{plateError}</span>
-            : <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
-          }
+            <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
 
           {plates.length === 0 ? (
             <p className="sp-no-plates">No plates registered yet. Add one above.</p>
@@ -445,7 +448,7 @@ function ScheduledVisitsSection({ suppliers }) {
         </div>
       </div>
 
-      <form onSubmit={handleAdd} className="sp-modal-form" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
+      <form onSubmit={handleAdd} className="sp-modal-form" noValidate style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
         <div className="sp-field">
           <label className="sp-label">Name</label>
           <input className="sp-text-input" value={form.visitor_name} onChange={e => setForm(f => ({ ...f, visitor_name: e.target.value }))} placeholder="Visitor / company name" required />

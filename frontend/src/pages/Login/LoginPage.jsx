@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, AlertCircle, Car, ChevronRight, ShieldCheck } from 'lucide-react'
+import { Eye, EyeOff, LogIn, Car, ChevronRight } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import TwoFactorChallenge from '../../components/TwoFactor/TwoFactorChallenge'
 import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
@@ -16,7 +18,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedEmail'))
   const [showPassword, setShowPassword] = useState(false)
-  const [showErrorModal, setShowErrorModal] = useState(false)
   // Set when the server accepts the password but wants a code before it hands
   // over a session. Holds { twofa_action, challenge, email, ... }.
   const [challenge, setChallenge] = useState(null)
@@ -40,8 +41,22 @@ export default function LoginPage() {
   }, [rememberMe, email])
 
   useEffect(() => {
-    if (error) setShowErrorModal(true)
-  }, [error])
+    if (!passwordChanged) return
+    notify.success('Password changed. Please sign in with your new password.', {
+      title: 'Password updated',
+    })
+  }, [passwordChanged])
+
+  // A rejected sign-in is announced once, and the message is cleared only when
+  // the dialog is acknowledged — clearing it earlier would blank the text the
+  // dialog is still showing.
+  useEffect(() => {
+    if (!error) return
+    let live = true
+    notify.error(error, { title: 'Login Failed', confirmLabel: 'Try Again' })
+      .then(() => { if (live) clearError() })
+    return () => { live = false }
+  }, [error, clearError])
 
   const goToDashboard = (u) => {
     if (u.role === 'admin') navigate('/admin')
@@ -51,8 +66,10 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     clearError()
-    setShowErrorModal(false)
     try {
       const result = await login(email, password)
       // The password was right but a second factor is owed — swap the form for
@@ -64,7 +81,7 @@ export default function LoginPage() {
       }
       goToDashboard(result.user)
     } catch {
-      setShowErrorModal(true)
+      // The store holds the message; the effect above raises the dialog.
     }
   }
 
@@ -78,11 +95,6 @@ export default function LoginPage() {
   const cancelTwoFactor = () => {
     setChallenge(null)
     setPassword('')
-  }
-
-  const closeErrorModal = () => {
-    setShowErrorModal(false)
-    clearError()
   }
 
   return (
@@ -116,21 +128,7 @@ export default function LoginPage() {
             <p className="card-subtitle">Sign in to access the smart parking and vehicle verification system</p>
           </div>
 
-          {passwordChanged && !error && (
-            <div className="success-alert" role="status">
-              <ShieldCheck size={16} />
-              <span>Password changed. Please sign in with your new password.</span>
-            </div>
-          )}
-
-          {error && !showErrorModal && (
-            <div className="error-alert" id="login-error" role="alert">
-              <AlertCircle size={16} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="login-form" id="login-form">
+          <form onSubmit={handleSubmit} className="login-form" id="login-form" noValidate>
             <div className="form-group">
               <label className="form-label" htmlFor="login-email">
                 Email <span className="required">*</span>
@@ -244,20 +242,6 @@ export default function LoginPage() {
           )}
         </div>
       </main>
-
-      {/* Error Modal */}
-      {showErrorModal && (
-        <div className="modal-overlay" onClick={closeErrorModal}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-icon">
-              <AlertCircle size={28} color="#FFFFFF" />
-            </div>
-            <h2 className="modal-title">Login Failed</h2>
-            <p className="modal-message">{error}</p>
-            <button className="modal-btn" onClick={closeErrorModal}>Try Again</button>
-          </div>
-        </div>
-      )}
 
     </div>
   )

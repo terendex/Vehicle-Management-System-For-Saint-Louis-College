@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
 import { getGates, createGate, updateGate } from '../../api/scanning'
 import { invalidateGates } from '../../hooks/useGates'
@@ -211,11 +212,10 @@ export default function SystemSettings() {
   const handleAddGate = async (e) => {
     e.preventDefault()
     const num = gateForm.number.trim().replace(/^gate/i, '')
-    if (!/^\d{1,3}$/.test(num)) {
-      toast.error('Gate number must be numeric, e.g. 2.')
-      return
-    }
-    if (!gateForm.label.trim()) return
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!/^\d{1,3}$/.test(num)) problems.push('Gate number must be numeric, e.g. 2.')
+    if (!gateForm.label.trim()) problems.push('Give the gate a label.')
+    if (await notify.validation(problems, { title: 'Gate not added' })) return
     setAddingGate(true)
     try {
       const { data } = await createGate({ gate_id: `gate${num}`, label: gateForm.label.trim() })
@@ -254,7 +254,10 @@ export default function SystemSettings() {
 
   const handleBroadcast = async (e) => {
     e.preventDefault()
-    if (!noticeForm.title.trim() || !noticeForm.body.trim()) return
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!noticeForm.title.trim()) problems.push('Give the notice a title.')
+    if (!noticeForm.body.trim()) problems.push('Write the body of the notice.')
+    if (await notify.validation(problems, { title: 'Notice not sent' })) return
     setBroadcasting(true)
     try {
       const { data } = await createNotice(noticeForm)
@@ -808,7 +811,7 @@ export default function SystemSettings() {
 
             <div className="ss-rows">
               <div className="ss-row ss-row--stacked">
-                <form className="ss-inline-form" onSubmit={handleAddGate}>
+                <form className="ss-inline-form" onSubmit={handleAddGate} noValidate>
                   <div className="ss-form-grid">
                     <div className="ss-field" style={{ flex: '0 0 140px' }}>
                       <label className="ss-label" htmlFor="gate-number">Gate Number</label>
@@ -841,7 +844,7 @@ export default function SystemSettings() {
                   <button
                     type="submit"
                     className="ss-broadcast-btn"
-                    disabled={addingGate || !gateForm.number.trim() || !gateForm.label.trim()}
+                    disabled={addingGate}
                   >
                     {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
                     {addingGate ? 'Adding…' : 'Add Gate'}
@@ -898,7 +901,7 @@ export default function SystemSettings() {
 
             <div className="ss-rows">
               <div className="ss-row ss-row--stacked">
-                <form className="ss-inline-form" onSubmit={handleBroadcast}>
+                <form className="ss-inline-form" onSubmit={handleBroadcast} noValidate>
                   <div className="ss-field">
                     <label className="ss-label" htmlFor="notice-title">Subject / Title</label>
                     <input
@@ -927,7 +930,7 @@ export default function SystemSettings() {
                   <button
                     type="submit"
                     className="ss-broadcast-btn"
-                    disabled={broadcasting || !noticeForm.title.trim() || !noticeForm.body.trim()}
+                    disabled={broadcasting}
                   >
                     {broadcasting ? <Loader2 size={15} className="ss-spinner" /> : <Send size={15} />}
                     {broadcasting ? 'Sending…' : 'Broadcast to All Owners'}
@@ -1166,19 +1169,20 @@ export default function SystemSettings() {
         {/* ── Save Bar ───────────────────────────────────────────────── */}
         {!loading && (
           <div className={`ss-save-bar ${isDirty ? 'ss-save-bar--visible' : ''}`}>
-            <span className="ss-unsaved-label">
-              {expiryInvalid
-                ? 'Account expiration needs at least 1 month or 1 day'
-                : dwellInvalid
-                  ? 'Double-parking delay cannot be shorter than the parked delay'
-                  : keepInvalid
-                    ? 'Automatic backups to keep must be between 1 and 90'
-                    : 'Unsaved changes'}
-            </span>
+            <span className="ss-unsaved-label">Unsaved changes</span>
             <button
               className="ss-save-btn"
-              onClick={() => setConfirmSave(true)}
-              disabled={saving || !isDirty || expiryInvalid || dwellInvalid || keepInvalid}
+              onClick={async () => {
+                // Stated on the way out rather than by locking the button and
+                // hoping the strip beside it is read.
+                const problems = []
+                if (expiryInvalid) problems.push('Account expiration needs at least 1 month or 1 day.')
+                if (dwellInvalid)  problems.push('The double-parking delay cannot be shorter than the parked delay.')
+                if (keepInvalid)   problems.push('Automatic backups to keep must be between 1 and 90.')
+                if (await notify.validation(problems, { title: 'Settings not saved' })) return
+                setConfirmSave(true)
+              }}
+              disabled={saving || !isDirty}
             >
               {saving ? <Loader2 size={15} className="ss-spinner" /> : <Save size={15} />}
               {saving ? 'Saving…' : 'Save Changes'}

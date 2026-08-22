@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Mail, ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react'
+import { Mail, ArrowLeft, CheckCircle } from 'lucide-react'
 import { authApi } from '../../api/auth'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
 import './ForgotPasswordPage.css'
@@ -17,11 +19,12 @@ export default function ForgotPasswordPage() {
   // `sent` swaps the whole card from "form" to "confirmation" view instead of routing away,
   // so the user stays on this page and can immediately go back if they mistyped the email.
   const [sent, setSent]         = useState(false)
-  const [error, setError]       = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     setLoading(true)
     try {
       // Normalize the email client-side (trim + lowercase) so "  User@Mail.com" and
@@ -29,7 +32,9 @@ export default function ForgotPasswordPage() {
       await authApi.requestPasswordReset(email.trim().toLowerCase())
       setSent(true)
     } catch (err) {
-      setError(err?.response?.data?.error || 'Something went wrong. Please try again.')
+      notify.error(err?.response?.data?.error || 'Something went wrong. Please try again.', {
+        title: 'Reset link not sent',
+      })
     } finally {
       setLoading(false)
     }
@@ -78,14 +83,7 @@ export default function ForgotPasswordPage() {
                 </p>
               </div>
 
-              {error && (
-                <div className="error-alert" role="alert">
-                  <AlertCircle size={16} />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="login-form">
+              <form onSubmit={handleSubmit} className="login-form" noValidate>
                 <div className="form-group">
                   <label className="form-label" htmlFor="fp-email">
                     Email <span className="required">*</span>

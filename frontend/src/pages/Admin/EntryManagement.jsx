@@ -4,7 +4,8 @@ import {
   CheckCircle, XCircle, Clock, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Zap, Video, Wifi, LogOut,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatDistanceToNow } from 'date-fns'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getAccessLogs, getOffices, createVisitorPass } from '../../api/scanning'
@@ -65,6 +66,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     if (!officeId || !purpose.trim()) { toast.error('Please fill in all fields.'); return }
     setLoading(true)
     try {
@@ -86,7 +90,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
           <span className="em-modal-title"><UserPlus size={17} /> Create Visitor Pass</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="em-modal-body">
             <div className="em-field">
               <label className="em-label">License Plate</label>

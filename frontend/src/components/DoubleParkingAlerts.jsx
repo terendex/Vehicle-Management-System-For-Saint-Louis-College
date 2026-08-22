@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from './Feedback/notify'
 import { zoneApi } from '../api/parking'
 import { useLiveUpdates } from '../realtime/useLiveUpdates'
 import './DoubleParkingAlerts.css'

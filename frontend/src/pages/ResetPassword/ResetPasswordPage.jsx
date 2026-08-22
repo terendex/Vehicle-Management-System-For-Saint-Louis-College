@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, KeyRound, CheckCircle, AlertCircle, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { authApi } from '../../api/auth'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
 // For .tfa-warn on the post-reset notice, so the warning matches the one the
@@ -78,8 +80,6 @@ export default function ResetPasswordPage() {
   // than alarming — a code demanded straight after a password reset is exactly
   // what a phishing victim should be suspicious of if it arrives unannounced.
   const [twofaNext, setTwofaNext]           = useState(false)
-  const [error, setError]                   = useState('')
-  const [fieldErrors, setFieldErrors]       = useState([])
   const [resetRole, setResetRole]           = useState(null)
 
   // Guards don't use /login — route them back to the guard sign-in page instead.
@@ -93,17 +93,25 @@ export default function ResetPasswordPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
-    setFieldErrors([])
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
 
-    if (!matches) {
-      setError('Passwords do not match.')
-      return
-    }
+    // The strength checklist under the field is a live guide, not a verdict —
+    // what is actually wrong at submit time is stated here, as one dialog.
+    const problems = []
     if (!allValid) {
-      setError('Please meet all password requirements.')
-      return
+      const unmet = [
+        [checks.length,  'At least 8 characters'],
+        [checks.upper,   'One uppercase letter'],
+        [checks.lower,   'One lowercase letter'],
+        [checks.number,  'One number'],
+        [checks.special, 'One special character'],
+      ].filter(([ok]) => !ok).map(([, text]) => text)
+      problems.push(...unmet)
     }
+    if (!matches) problems.push('The two passwords do not match.')
+    if (await notify.validation(problems, { title: 'Password not accepted' })) return
 
     setLoading(true)
     try {
@@ -114,9 +122,14 @@ export default function ResetPasswordPage() {
     } catch (err) {
       const data = err?.response?.data
       if (data?.errors && Array.isArray(data.errors)) {
-        setFieldErrors(data.errors)
+        notify.error('The password was rejected:', {
+          title: 'Password not accepted',
+          details: data.errors,
+        })
       } else {
-        setError(data?.error || 'Something went wrong. Please try again.')
+        notify.error(data?.error || 'Something went wrong. Please try again.', {
+          title: 'Reset failed',
+        })
       }
     } finally {
       setLoading(false)
@@ -194,25 +207,7 @@ export default function ResetPasswordPage() {
                 <p className="card-subtitle">Choose a strong password for your account.</p>
               </div>
 
-              {error && (
-                <div className="error-alert" role="alert">
-                  <AlertCircle size={16} />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              {fieldErrors.length > 0 && (
-                <div className="error-alert rp-field-errors" role="alert">
-                  {fieldErrors.map((e) => (
-                    <div key={e} className="rp-field-error-row">
-                      <AlertCircle size={14} className="rp-field-error-icon" />
-                      <span>{e}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="login-form">
+              <form onSubmit={handleSubmit} className="login-form" noValidate>
                 {/* New Password */}
                 <div className="form-group">
                   <label className="form-label" htmlFor="rp-new">
@@ -281,7 +276,7 @@ export default function ResetPasswordPage() {
                 <button
                   type="submit"
                   className="login-button"
-                  disabled={isLoading || !allValid || !matches}
+                  disabled={isLoading}
                 >
                   {isLoading ? (
                     <div className="button-loading">

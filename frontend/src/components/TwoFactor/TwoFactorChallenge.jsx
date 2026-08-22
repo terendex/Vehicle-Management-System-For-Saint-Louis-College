@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { twofaApi } from '../../api/twofa'
 import CodeField from './CodeField'
+import notify from '../Feedback/notify'
 import './twofactor.css'
 
 /**
@@ -58,8 +59,10 @@ export default function TwoFactorChallenge({
       .then((data) => { if (!cancelled) setEnrollment(data) })
       .catch((err) => {
         if (!cancelled) {
-          setError(err.response?.data?.error
-            || 'Could not start the setup. Please sign in again.')
+          const msg = err.response?.data?.error
+            || 'Could not start the setup. Please sign in again.'
+          setError(msg)
+          notify.error(msg, { title: 'Setup unavailable' })
         }
       })
     return () => { cancelled = true }
@@ -86,7 +89,14 @@ export default function TwoFactorChallenge({
     if (busy) return
     const value = (submitted || code).trim()
     const usingBackup = useBackup && !!backupCode.trim()
-    if (!usingBackup && value.length !== 6) return
+    if (!usingBackup && value.length !== 6) {
+      await notify.error('Enter all six digits of the code.', { title: 'Code incomplete' })
+      return
+    }
+    if (useBackup && !backupCode.trim()) {
+      await notify.error('Enter one of your backup codes.', { title: 'Backup code missing' })
+      return
+    }
 
     setBusy(true)
     setError('')
@@ -119,10 +129,12 @@ export default function TwoFactorChallenge({
         }
       }
     } catch (err) {
-      setError(err.response?.data?.error
+      const msg = err.response?.data?.error
         || err.response?.data?.detail
-        || 'That code is not correct. Please try again.')
+        || 'That code is not correct. Please try again.'
+      setError(msg)
       setCode('')
+      notify.error(msg, { title: 'Verification failed', confirmLabel: 'Try Again' })
     } finally {
       setBusy(false)
     }
@@ -267,12 +279,6 @@ export default function TwoFactorChallenge({
             autoFocus={!!enrollment}
           />
 
-          {error && (
-            <div className="tfa-error" role="alert">
-              <AlertCircle size={15} /><span>{error}</span>
-            </div>
-          )}
-
           <div className="tfa-actions">
             <button type="button" className="tfa-btn tfa-btn-ghost" onClick={onCancel}>
               <ArrowLeft size={16} />Back
@@ -280,7 +286,7 @@ export default function TwoFactorChallenge({
             <button
               type="submit"
               className="tfa-btn tfa-btn-primary"
-              disabled={busy || !enrollment || code.length !== 6}
+              disabled={busy || !enrollment}
             >
               <ShieldCheck size={16} />{busy ? 'Verifying…' : 'Turn on'}
             </button>
@@ -329,12 +335,6 @@ export default function TwoFactorChallenge({
           />
         )}
 
-        {error && (
-          <div className="tfa-error" role="alert">
-            <AlertCircle size={15} /><span>{error}</span>
-          </div>
-        )}
-
         <div className="tfa-actions">
           <button type="button" className="tfa-btn tfa-btn-ghost" onClick={onCancel}>
             <ArrowLeft size={16} />Back
@@ -342,7 +342,7 @@ export default function TwoFactorChallenge({
           <button
             type="submit"
             className="tfa-btn tfa-btn-primary"
-            disabled={busy || (useBackup ? !backupCode.trim() : code.length !== 6)}
+            disabled={busy}
           >
             <KeyRound size={16} />{busy ? 'Verifying…' : 'Verify'}
           </button>

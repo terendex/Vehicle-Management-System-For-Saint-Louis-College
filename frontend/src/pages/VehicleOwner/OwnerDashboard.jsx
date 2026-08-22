@@ -10,6 +10,8 @@ import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
 import useTwofaStore from '../../stores/twofaStore'
 import { usersApi } from '../../api/users'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
 import { getNotices } from '../../api/vehicles'
@@ -102,10 +104,7 @@ export default function OwnerDashboard() {
   const [showCurrent, setShowCurrent] = useState(false)
   const [showNew, setShowNew] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
-  const [pwError, setPwError] = useState(null)
-  const [pwErrors, setPwErrors] = useState([])
   const [pwSubmitting, setPwSubmitting] = useState(false)
-  const [pwSuccess, setPwSuccess] = useState(false)
 
   /* ── qr copy ── */
   const [qrCopied, setQrCopied] = useState(false)
@@ -132,7 +131,6 @@ export default function OwnerDashboard() {
   /* ── plate swap (conduction → real plate, one-time) ── */
   const [swapOpen, setSwapOpen]           = useState(false)
   const [swapValue, setSwapValue]         = useState('')
-  const [swapError, setSwapError]         = useState(null)
   const [swapSubmitting, setSwapSubmitting] = useState(false)
   const [swapSuccess, setSwapSuccess]     = useState(false)
 
@@ -140,9 +138,11 @@ export default function OwnerDashboard() {
 
   const handlePlateSwap = async () => {
     const plate = swapValue.trim().toUpperCase()
-    if (!plate) { setSwapError('Enter your new plate number.'); return }
+    if (!plate) {
+      await notify.error('Enter your new plate number.', { title: 'Plate not saved' })
+      return
+    }
     setSwapSubmitting(true)
-    setSwapError(null)
     try {
       await usersApi.swapPlate(plate)
       setSwapOpen(false)
@@ -150,8 +150,8 @@ export default function OwnerDashboard() {
       setSwapValue('')
       await fetchReg()  // reflect the new plate + hide the option
     } catch (err) {
-      setSwapError(err.response?.data?.plate_number || err.response?.data?.error
-        || 'Could not update your plate. Please try again.')
+      notify.error(err.response?.data?.plate_number || err.response?.data?.error
+        || 'Could not update your plate. Please try again.', { title: 'Plate not saved' })
     } finally {
       setSwapSubmitting(false)
     }
@@ -227,23 +227,44 @@ export default function OwnerDashboard() {
   /* ── password change ── */
   const handlePwChange = async (e) => {
     e.preventDefault()
-    setPwError(null)
-    setPwErrors([])
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
+
+    // Said outright rather than left to a dead submit button and a line of red
+    // under one field.
+    const problems = []
+    if (!pwForm.current) problems.push('Enter your current password.')
+    PW_RULES.forEach((rule) => {
+      if (!rule.test(pwForm.new)) problems.push(`New password: ${rule.label.toLowerCase()}.`)
+    })
+    if (!pwForm.confirm) problems.push('Re-enter the new password to confirm it.')
+    else if (pwForm.new !== pwForm.confirm) problems.push('The two new passwords do not match.')
+    if (await notify.validation(problems, { title: 'Password not accepted' })) return
+
     setPwSubmitting(true)
     try {
       await usersApi.changePassword(pwForm.current, pwForm.new, pwForm.confirm)
       clearMustChangePassword()
-      setPwSuccess(true)
       setPwForm({ current: '', new: '', confirm: '' })
+      await notify.success(
+        "For your security you're being signed out. Please log in again with your new password.",
+        { title: 'Password Changed' },
+      )
       // Force a fresh login with the new password instead of keeping the old session active.
       // logout() handles the redirect itself, so hand it the destination.
-      setTimeout(() => logout('/login?passwordChanged=1'), 1800)
+      logout('/login?passwordChanged=1')
     } catch (err) {
       const data = err.response?.data
       if (data?.errors) {
-        setPwErrors(data.errors)
+        notify.error('The password was rejected:', {
+          title: 'Password not accepted',
+          details: data.errors,
+        })
       } else {
-        setPwError(data?.error || 'Failed to change password.')
+        notify.error(data?.error || 'Failed to change password.', {
+          title: 'Password not changed',
+        })
       }
     } finally {
       setPwSubmitting(false)
@@ -285,7 +306,6 @@ export default function OwnerDashboard() {
               placeholder="e.g. ABC 1234"
               autoFocus
             />
-            {swapError && <p className="od-swap-error"><AlertTriangle size={13} /> {swapError}</p>}
             <div className="od-modal-actions">
               <button className="od-btn-ghost" onClick={() => setSwapOpen(false)} disabled={swapSubmitting}>Cancel</button>
               <button className="od-btn-primary" onClick={handlePlateSwap} disabled={swapSubmitting}>
@@ -342,83 +362,64 @@ export default function OwnerDashboard() {
       {pwModal && (
         <div className="od-modal-overlay">
           <div className="od-modal">
-            {pwSuccess ? (
-              <div className="od-pw-success">
-                <div className="od-pw-success-icon"><ShieldCheck size={36} /></div>
-                <h3>Password Changed!</h3>
-                <p>For your security you're being signed out. Please log in again with your new password.</p>
+            <div className="od-modal-icon warn"><AlertTriangle size={26} /></div>
+            <h2 className="od-modal-title">Change Your Password</h2>
+            <p className="od-modal-subtitle">
+              {mustChange
+                ? 'You are using a temporary password. Please set a new password before continuing.'
+                : 'Update your account password below.'}
+            </p>
+
+            <form noValidate onSubmit={handlePwChange} className="od-pw-form">
+              <div className="od-form-group">
+                <label>{mustChange ? 'Current (Temporary) Password' : 'Current Password'}</label>
+                <div className="od-pw-wrap">
+                  <input type={showCurrent ? 'text' : 'password'} value={pwForm.current} onChange={e => setPwForm({ ...pwForm, current: e.target.value })} placeholder="Enter current password" required autoComplete="current-password" />
+                  <button type="button" className="od-pw-eye" onClick={() => setShowCurrent(v => !v)}>{showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="od-modal-icon warn"><AlertTriangle size={26} /></div>
-                <h2 className="od-modal-title">Change Your Password</h2>
-                <p className="od-modal-subtitle">
-                  {mustChange
-                    ? 'You are using a temporary password. Please set a new password before continuing.'
-                    : 'Update your account password below.'}
-                </p>
 
-                <form onSubmit={handlePwChange} className="od-pw-form">
-                  <div className="od-form-group">
-                    <label>{mustChange ? 'Current (Temporary) Password' : 'Current Password'}</label>
-                    <div className="od-pw-wrap">
-                      <input type={showCurrent ? 'text' : 'password'} value={pwForm.current} onChange={e => setPwForm({ ...pwForm, current: e.target.value })} placeholder="Enter current password" required autoComplete="current-password" />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowCurrent(v => !v)}>{showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              <div className="od-form-group">
+                <label>New Password</label>
+                <div className="od-pw-wrap">
+                  <input type={showNew ? 'text' : 'password'} value={pwForm.new} onChange={e => setPwForm({ ...pwForm, new: e.target.value })} placeholder="Enter new password" required autoComplete="new-password" />
+                  <button type="button" className="od-pw-eye" onClick={() => setShowNew(v => !v)}>{showNew ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                </div>
+                {pwForm.new && (
+                  <div className="od-strength-wrap">
+                    <div className="od-strength-bar-bg">
+                      <div className={`od-strength-bar ${strength.level}`} style={{ width: `${strength.score * 20}%` }} />
                     </div>
-                  </div>
-
-                  <div className="od-form-group">
-                    <label>New Password</label>
-                    <div className="od-pw-wrap">
-                      <input type={showNew ? 'text' : 'password'} value={pwForm.new} onChange={e => setPwForm({ ...pwForm, new: e.target.value })} placeholder="Enter new password" required autoComplete="new-password" />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowNew(v => !v)}>{showNew ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-                    </div>
-                    {pwForm.new && (
-                      <div className="od-strength-wrap">
-                        <div className="od-strength-bar-bg">
-                          <div className={`od-strength-bar ${strength.level}`} style={{ width: `${strength.score * 20}%` }} />
+                    <span className={`od-strength-label ${strength.level}`}>{STRENGTH_LABELS[strength.level]}</span>
+                    <div className="od-pw-rules">
+                      {PW_RULES.map(rule => (
+                        <div key={rule.key} className={`od-pw-rule ${rule.test(pwForm.new) ? 'met' : ''}`}>
+                          {rule.test(pwForm.new) ? <Check size={12} /> : <Circle size={12} />}
+                          {rule.label}
                         </div>
-                        <span className={`od-strength-label ${strength.level}`}>{STRENGTH_LABELS[strength.level]}</span>
-                        <div className="od-pw-rules">
-                          {PW_RULES.map(rule => (
-                            <div key={rule.key} className={`od-pw-rule ${rule.test(pwForm.new) ? 'met' : ''}`}>
-                              {rule.test(pwForm.new) ? <Check size={12} /> : <Circle size={12} />}
-                              {rule.label}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="od-form-group">
-                    <label>Confirm New Password</label>
-                    <div className="od-pw-wrap">
-                      <input type={showConfirm ? 'text' : 'password'} value={pwForm.confirm} onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} placeholder="Re-enter new password" required autoComplete="new-password" />
-                      <button type="button" className="od-pw-eye" onClick={() => setShowConfirm(v => !v)}>{showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                      ))}
                     </div>
-                    {pwForm.confirm && pwForm.new && pwForm.confirm !== pwForm.new && (
-                      <p className="od-field-error">Passwords do not match.</p>
-                    )}
                   </div>
+                )}
+              </div>
 
-                  {pwError && <div className="od-error-banner">{pwError}</div>}
-                  {pwErrors.length > 0 && (
-                    <div className="od-error-banner">
-                      {pwErrors.map((e, i) => <div key={i}>• {e}</div>)}
-                    </div>
-                  )}
+              <div className="od-form-group">
+                <label>Confirm New Password</label>
+                <div className="od-pw-wrap">
+                  <input type={showConfirm ? 'text' : 'password'} value={pwForm.confirm} onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} placeholder="Re-enter new password" required autoComplete="new-password" />
+                  <button type="button" className="od-pw-eye" onClick={() => setShowConfirm(v => !v)}>{showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                </div>
+              </div>
 
-                  <div className="od-pw-actions">
-                    {!mustChange && <button type="button" className="od-btn-outline" onClick={() => setPwModal(false)}>Cancel</button>}
-                    {mustChange && <button type="button" className="od-btn-logout" onClick={handleLogout}><LogOut size={15} /> Log Out</button>}
-                    <button type="submit" className="od-btn-primary" disabled={pwSubmitting || strength.score < 5 || pwForm.new !== pwForm.confirm}>
-                      {pwSubmitting ? 'Saving…' : <><KeyRound size={15} /> Set New Password</>}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
+
+              <div className="od-pw-actions">
+                {!mustChange && <button type="button" className="od-btn-outline" onClick={() => setPwModal(false)}>Cancel</button>}
+                {mustChange && <button type="button" className="od-btn-logout" onClick={handleLogout}><LogOut size={15} /> Log Out</button>}
+                <button type="submit" className="od-btn-primary" disabled={pwSubmitting}>
+                  {pwSubmitting ? 'Saving…' : <><KeyRound size={15} /> Set New Password</>}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -557,7 +558,7 @@ export default function OwnerDashboard() {
                     <div className="od-plate-swap-cta">
                       <p>Registered with a conduction number. Received your official plate? Enter it to
                          verify your vehicle — this replaces your conduction number and can only be done once.</p>
-                      <button type="button" className="od-plate-swap-btn" onClick={() => { setSwapError(null); setSwapOpen(true) }}>
+                      <button type="button" className="od-plate-swap-btn" onClick={() => setSwapOpen(true)}>
                         <Car size={14} /> I received my plate number
                       </button>
                     </div>

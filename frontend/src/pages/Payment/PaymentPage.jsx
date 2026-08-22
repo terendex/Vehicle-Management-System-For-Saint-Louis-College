@@ -3,6 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { CheckCircle, AlertTriangle, Upload, X, FileText, Receipt, ArrowLeft, Info } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import slcLogo from '../../assets/slclogo.jpg'
 import './PaymentPage.css'
 
@@ -56,10 +58,8 @@ export default function PaymentPage() {
   const [orNumber, setOrNumber] = useState('')
   const [receipt, setReceipt]   = useState(null)
   const [preview, setPreview]   = useState(null)
-  const [fileError, setFileError] = useState(null)
 
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
   const [submitted, setSubmitted]   = useState(false)
 
   const load = useCallback(async () => {
@@ -98,17 +98,15 @@ export default function PaymentPage() {
     // Some browsers report an empty type for HEIC; fall back to the extension.
     const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
     if (!RECEIPT_TYPES.includes(file.type) && !extOk) {
-      setFileError('Please choose a JPG, PNG, WEBP, HEIC or PDF file.')
+      notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
       return
     }
     if (file.size > RECEIPT_MAX_BYTES) {
-      setFileError(`That file is ${formatFileSize(file.size)}. Please keep it under ${RECEIPT_MAX_MB}MB.`)
+      notify.error(`That file is ${formatFileSize(file.size)}. Please keep it under ${RECEIPT_MAX_MB}MB.`, { title: 'File too large' })
       return
     }
 
-    setFileError(null)
     setReceipt(file)
-    setSubmitError(null)
     // PDFs and HEIC won't render — those fall back to the filename chip.
     // Built outside the updater so StrictMode's double-invoke can't leak a URL.
     const nextPreview = /^image\/(jpeg|png|webp)$/.test(file.type)
@@ -122,7 +120,6 @@ export default function PaymentPage() {
 
   const clearReceipt = () => {
     setReceipt(null)
-    setFileError(null)
     setPreview((prev) => {
       if (prev) URL.revokeObjectURL(prev)
       return null
@@ -133,26 +130,20 @@ export default function PaymentPage() {
   // an applicant file a 4-digit number that the reviewer's panel then refused,
   // leaving the application impossible to approve from either side.
   const orValid = /^\d{6,7}$/.test(orNumber)
-  const canSubmit = orValid && !!receipt && !submitting
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setSubmitError(null)
-    if (!orValid) {
-      setSubmitError('Enter the Official Receipt number — 6 or 7 digits, numbers only.')
-      return
-    }
-    if (!receipt) {
-      setSubmitError('Attach a photo or scan of your Official Receipt.')
-      return
-    }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!orValid) problems.push('Enter the Official Receipt number — 6 or 7 digits, numbers only.')
+    if (!receipt) problems.push('Attach a photo or scan of your Official Receipt.')
+    if (await notify.validation(problems, { title: 'Receipt not submitted' })) return
 
     setSubmitting(true)
     try {
       await registrationApi.submitPaymentReceipt(token, orNumber, receipt)
       setSubmitted(true)
     } catch (err) {
-      setSubmitError(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.')
+      notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
     } finally {
       setSubmitting(false)
     }
@@ -319,7 +310,7 @@ export default function PaymentPage() {
             </span>
           </div>
 
-          <form onSubmit={handleSubmit} className="paypage-form">
+          <form noValidate onSubmit={handleSubmit} className="paypage-form">
 
             <div className="paypage-field">
               <label className="paypage-label" htmlFor="or-number">
@@ -331,7 +322,7 @@ export default function PaymentPage() {
                 inputMode="numeric"
                 maxLength={7}
                 value={orNumber}
-                onChange={(e) => { setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7)); setSubmitError(null) }}
+                onChange={(e) => setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7))}
                 placeholder="e.g. 1380093"
                 disabled={submitting}
                 className={`paypage-input${orNumber && !orValid ? ' paypage-input--error' : ''}`}
@@ -390,17 +381,10 @@ export default function PaymentPage() {
                 Make sure the receipt number and amount are readable — a blurry photo sends
                 your application back to you.
               </span>
-              {fileError && <span className="paypage-error-msg">{fileError}</span>}
             </div>
 
-            {submitError && (
-              <div className="paypage-submit-error">
-                <AlertTriangle size={15} />
-                {submitError}
-              </div>
-            )}
 
-            <button type="submit" className="paypage-btn-submit" disabled={!canSubmit}>
+            <button type="submit" className="paypage-btn-submit" disabled={submitting}>
               {submitting ? 'Submitting…' : 'Submit Receipt'}
             </button>
           </form>

@@ -5,7 +5,7 @@ import {
   ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '../../components/Feedback/notify'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'

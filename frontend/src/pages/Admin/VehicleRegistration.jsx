@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { registrationApi } from '../../api/registration'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal } from 'lucide-react'
@@ -244,6 +246,9 @@ export default function VehicleRegistration() {
   const handleReject = async (e) => {
     e.preventDefault()
     if (!selectedReg) return
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     setSubmitting(true)
     try {
       await registrationApi.rejectRegistration(selectedReg.id, rejectReason)
@@ -1051,7 +1056,7 @@ export default function VehicleRegistration() {
               <h2 className="modal-title danger">Reject Registration</h2>
               <button className="modal-close-btn" onClick={() => setIsRejectModalOpen(false)}><X size={20} /></button>
             </div>
-            <form onSubmit={handleReject}>
+            <form onSubmit={handleReject} noValidate>
               <div className="form-group">
                 <label className="form-label">Reason for Rejection <span className="required">*</span></label>
                 <textarea

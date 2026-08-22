@@ -3,6 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft, FileText } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 
 const LICENSE_IMAGE_MAX_MB    = 5
@@ -211,7 +213,6 @@ export default function RegisterPage() {
   const [registrantType, setRegistrantType] = useState(null)
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
   const [regStatus, setRegStatus] = useState(null)
   const [regStatusLoading, setRegStatusLoading] = useState(false)
   // vehiclePassFee is derived below, once formData exists — it depends on the
@@ -223,9 +224,7 @@ export default function RegisterPage() {
   const [dupChecking, setDupChecking] = useState({})
   const [licenseImage, setLicenseImage] = useState(null)
   const [licensePreview, setLicensePreview] = useState(null)
-  const [licenseError, setLicenseError] = useState(null)
   const [assessmentFile, setAssessmentFile] = useState(null)
-  const [assessmentError, setAssessmentError] = useState(null)
   // Set when the registration saved but the document upload didn't, so the
   // success screen can tell the applicant to bring the physical copies instead.
   const [licenseUploadFailed, setLicenseUploadFailed] = useState(false)
@@ -477,7 +476,6 @@ export default function RegisterPage() {
       // check below will repopulate it once the new value settles
       if (['plate_number', 'email', 'drivers_license', 'student_id', 'employee_id'].includes(name))
         setDupErrors((prev) => ({ ...prev, [name]: null }))
-      setSubmitError(null)
     }
   }
 
@@ -494,7 +492,6 @@ export default function RegisterPage() {
       ...prev,
       vehicle_color: choice === 'Other' ? '' : validateField('vehicle_color', value),
     }))
-    setSubmitError(null)
   }
 
   /* ── Driver's license photo ── */
@@ -505,15 +502,14 @@ export default function RegisterPage() {
     if (!file) return
 
     if (!LICENSE_IMAGE_TYPES.includes(file.type)) {
-      setLicenseError('Please choose a JPG, PNG, WEBP or HEIC image.')
+      notify.error('Please choose a JPG, PNG, WEBP or HEIC image.', { title: 'Unsupported file' })
       return
     }
     if (file.size > LICENSE_IMAGE_MAX_BYTES) {
-      setLicenseError(`That image is ${formatFileSize(file.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`)
+      notify.error(`That image is ${formatFileSize(file.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`, { title: 'Image too large' })
       return
     }
 
-    setLicenseError(null)
     setLicenseImage(file)
     // HEIC won't render in most browsers — fall back to the filename-only chip.
     // Built outside the updater so StrictMode's double-invoke can't leak a second URL.
@@ -528,7 +524,6 @@ export default function RegisterPage() {
 
   const clearLicenseImage = () => {
     setLicenseImage(null)
-    setLicenseError(null)
     setLicensePreview((prev) => {
       if (prev) URL.revokeObjectURL(prev)
       return null
@@ -548,21 +543,19 @@ export default function RegisterPage() {
     // Some browsers report an empty type for HEIC; fall back to the extension.
     const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
     if (!ASSESSMENT_FILE_TYPES.includes(file.type) && !extOk) {
-      setAssessmentError('Please choose a JPG, PNG, WEBP, HEIC or PDF file.')
+      notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
       return
     }
     if (file.size > ASSESSMENT_FILE_MAX_BYTES) {
-      setAssessmentError(`That file is ${formatFileSize(file.size)}. Please keep it under ${ASSESSMENT_FILE_MAX_MB}MB.`)
+      notify.error(`That file is ${formatFileSize(file.size)}. Please keep it under ${ASSESSMENT_FILE_MAX_MB}MB.`, { title: 'File too large' })
       return
     }
 
-    setAssessmentError(null)
     setAssessmentFile(file)
   }
 
   const clearAssessmentFile = () => {
     setAssessmentFile(null)
-    setAssessmentError(null)
   }
 
   // Release the last object URL when the form unmounts
@@ -647,19 +640,37 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    // Grabbed before the first await — React clears currentTarget once the
+    // handler returns, and everything below yields.
+    const formEl = e.currentTarget
 
-    setSubmitError(null)
-
-    if (!registrantType) {
-      setSubmitError('Please select your registrant type.')
-      return
-    }
+    // Two things stop the application outright rather than being something to
+    // correct on the form, so they are said on their own.
     if (regStatus && !regStatus.is_open) {
-      setSubmitError('Registration is currently closed. Please try again during the registration window.')
+      await notify.error(
+        'Registration is currently closed. Please try again during the registration window.',
+        { title: 'Registration closed' },
+      )
+      return
+    }
+    if (banned) {
+      await notify.error(banned, { title: 'Application blocked' })
       return
     }
 
-    // Run all format validations before submitting
+    // Everything else is gathered into one list. The form is long enough that
+    // reporting the first problem, then the next one after another submit, is
+    // its own small ordeal — so say all of it at once.
+    const problems = []
+
+    if (!registrantType) problems.push('Select your registrant type.')
+
+    // Whatever the browser would have refused on its own. The form carries
+    // noValidate, so this is the only thing standing in for it.
+    problems.push(...fieldProblems(formEl))
+
+    // Format checks. These still mark their fields red, so the list and the
+    // form agree on what to look at.
     const fieldsToValidate = ['email', 'plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'driver_contact', 'student_id', 'employee_id']
     const newErrors = {}
     fieldsToValidate.forEach(name => {
@@ -668,84 +679,61 @@ export default function RegisterPage() {
     })
     if (Object.keys(newErrors).length > 0) {
       setFormErrors(prev => ({ ...prev, ...newErrors }))
-      setSubmitError('Please fix the format errors highlighted in the form before submitting.')
-      return
+      problems.push(...Object.values(newErrors))
     }
 
-    // Block on already-known duplicates from the live check (the backend re-checks regardless)
-    if (dupErrors.plate_number || dupErrors.conduction_number || dupErrors.email || dupErrors.drivers_license || dupErrors.student_id || dupErrors.employee_id) {
-      setSubmitError('Please resolve the duplicate entries highlighted in the form before submitting.')
-      return
-    }
+    // Already-known duplicates from the live check (the backend re-checks regardless)
+    ;['plate_number', 'conduction_number', 'email', 'drivers_license', 'student_id', 'employee_id']
+      .forEach((name) => { if (dupErrors[name]) problems.push(dupErrors[name]) })
 
-    if (!formData.privacy_consent) {
-      setSubmitError('You must agree to the Data Privacy Consent before submitting.')
-      return
-    }
+    if (!formData.privacy_consent) problems.push('Agree to the Data Privacy Consent.')
     if (!formData.details_confirmed) {
-      setSubmitError('Please confirm that all the details you entered are true, complete and correct.')
-      return
+      problems.push('Confirm that all the details you entered are true, complete and correct.')
     }
+
     if (registrantType === 'student') {
       // The whole point of the attachment is proving enrolment, so a student
-      // application without it can't be reviewed — blocked here rather than
+      // application without it can’t be reviewed — blocked here rather than
       // letting CDSO chase it down after the fact.
       if (!assessmentFile) {
-        setSubmitError('Please attach your assessment form so CDSO can verify your enrolment.')
-        return
+        problems.push('Attach your assessment form so CDSO can verify your enrolment.')
       }
       if (!formData.student_level) {
-        setSubmitError('Please select your education level.')
-        return
+        problems.push('Select your education level.')
+      } else if (formData.student_level === 'college' && (!formData.student_program.trim() || !formData.student_year)) {
+        problems.push('Select your program and year level.')
+      } else if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
+        problems.push('Select your track/strand and grade level.')
+      } else if (['jhs', 'elementary'].includes(formData.student_level) && !formData.student_grade) {
+        problems.push('Select your grade level.')
       }
-      if (formData.student_level === 'college' && (!formData.student_program.trim() || !formData.student_year)) {
-        setSubmitError('Please select your program and year level.')
-        return
-      }
-      if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
-        setSubmitError('Please select your track/strand and grade level.')
-        return
-      }
-      if (['jhs', 'elementary'].includes(formData.student_level) && !formData.student_grade) {
-        setSubmitError('Please select your grade level.')
-        return
-      }
-      // A guardian-driven registration always needs the driver's details.
+      // A guardian-driven registration always needs the driver’s details.
       if (formData.who_drives === 'guardian') {
-        if (!formData.driver_name.trim()) {
-          setSubmitError("Please enter the authorized driver's full name.")
-          return
-        }
-        if (!formData.driver_relationship) {
-          setSubmitError("Please select the driver's relationship to the student.")
-          return
+        if (!formData.driver_name.trim()) problems.push("Enter the authorized driver's full name.")
+        if (!formData.driver_relationship) problems.push("Select the driver's relationship to the student.")
+      }
+      if (formData.student_level !== 'sped') {
+        const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
+        if (!chosen) {
+          problems.push('Choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
+        } else if (groupSlots(chosen)?.available === 0) {
+          problems.push(`The ${chosen.short} schedule is full — choose the other schedule.`)
         }
       }
     }
+
     if (registrantType === 'fetcher') {
       if (!fetcherType) {
-        setSubmitError('Please choose your fetcher classification: Fetcher/Drop & Go or Standby.')
-        return
+        problems.push('Choose your fetcher classification: Fetcher/Drop & Go or Standby.')
       }
-      for (let i = 0; i < fetcherStudents.length; i++) {
-        const s = fetcherStudents[i]
-        if (!s.full_name.trim() || !s.student_id.trim() || !s.student_level) {
-          setSubmitError(`Student #${i + 1}: full name, student ID and education level are required.`)
-          return
+      fetcherStudents.forEach((st, i) => {
+        if (!st.full_name.trim() || !st.student_id.trim() || !st.student_level) {
+          problems.push(`Student #${i + 1}: full name, student ID and education level are required.`)
         }
-      }
+      })
     }
-    if (registrantType === 'student' && formData.student_level !== 'sped') {
-      const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
-      if (!chosen) {
-        setSubmitError('Please choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
-        return
-      }
-      if (groupSlots(chosen)?.available === 0) {
-        setSubmitError(`The ${chosen.short} schedule is full. Please choose the other schedule.`)
-        return
-      }
-    }
+
+    if (await notify.validation(problems, { title: 'Check your application' })) return
 
     setSubmitting(true)
     try {
@@ -830,7 +818,7 @@ export default function RegisterPage() {
       const msg = errData?.error
         || (typeof errData === 'object' ? Object.entries(errData).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' | ') : null)
         || 'Failed to submit registration. Please try again.'
-      setSubmitError(msg)
+      notify.error(msg, { title: 'Registration not submitted' })
       console.error('Registration error:', errData || err)
     } finally {
       setSubmitting(false)
@@ -847,9 +835,18 @@ export default function RegisterPage() {
     'drivers_license', 'house_street', 'driver_name', 'driver_contact',
   ]
 
-  const handleBackToLogin = () => {
+  const handleBackToLogin = async () => {
     const started = TYPED_FIELDS.some(f => (formData[f] || '').trim() !== '')
-    if (started && !window.confirm('Leave this application? Anything you have filled in will be lost.')) return
+    if (started) {
+      const leave = await notify.confirm({
+        title: 'Leave this application?',
+        message: 'Anything you have filled in will be lost.',
+        confirmLabel: 'Leave',
+        cancelLabel: 'Stay',
+        danger: true,
+      })
+      if (!leave) return
+    }
     navigate('/login')
   }
 
@@ -1112,7 +1109,7 @@ export default function RegisterPage() {
             </div>
           ) : null}
 
-          <form onSubmit={handleSubmit} className="register-form">
+          <form onSubmit={handleSubmit} className="register-form" noValidate>
 
             {/* ── Campus Schedule ──
                 Ahead of every other section on purpose: slots are first come,
@@ -1264,8 +1261,6 @@ export default function RegisterPage() {
                     className={formErrors.plate_number || dupErrors.plate_number ? 'input-error' : ''}
                   />
                   <span className="field-hint">{FIELD_PATTERNS.plate_number.hint}</span>
-                  {formErrors.plate_number && <span className="field-error-msg">{formErrors.plate_number}</span>}
-                  {!formErrors.plate_number && dupErrors.plate_number && <span className="field-error-msg">{dupErrors.plate_number}</span>}
                   {!formErrors.plate_number && dupChecking.plate_number && <span className="field-checking-msg">Checking availability…</span>}
                 </div>
               ) : (
@@ -1281,8 +1276,6 @@ export default function RegisterPage() {
                     className={formErrors.conduction_number || dupErrors.conduction_number ? 'input-error' : ''}
                   />
                   <span className="field-hint">For newly purchased vehicles without a plate yet. {FIELD_PATTERNS.conduction_number.hint}</span>
-                  {formErrors.conduction_number && <span className="field-error-msg">{formErrors.conduction_number}</span>}
-                  {!formErrors.conduction_number && dupErrors.conduction_number && <span className="field-error-msg">{dupErrors.conduction_number}</span>}
                 </div>
               )}
 
@@ -1478,8 +1471,6 @@ export default function RegisterPage() {
                   placeholder={FIELD_PATTERNS.email.hint}
                   className={formErrors.email || dupErrors.email ? 'input-error' : ''}
                 />
-                {formErrors.email && <span className="field-error-msg">{formErrors.email}</span>}
-                {!formErrors.email && dupErrors.email && <span className="field-error-msg">{dupErrors.email}</span>}
                 {!formErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
               </div>
 
@@ -1545,8 +1536,6 @@ export default function RegisterPage() {
                         className={formErrors.student_id || dupErrors.student_id ? 'input-error' : ''}
                       />
                       <span className="field-hint">{FIELD_PATTERNS.student_id.hint}</span>
-                      {formErrors.student_id && <span className="field-error-msg">{formErrors.student_id}</span>}
-                      {!formErrors.student_id && dupErrors.student_id && <span className="field-error-msg">{dupErrors.student_id}</span>}
                       {!formErrors.student_id && dupChecking.student_id && <span className="field-checking-msg">Checking availability…</span>}
                     </div>
                   )}
@@ -1681,8 +1670,6 @@ export default function RegisterPage() {
                       className={formErrors.employee_id || dupErrors.employee_id ? 'input-error' : ''}
                     />
                     <span className="field-hint">{FIELD_PATTERNS.employee_id.hint}</span>
-                    {formErrors.employee_id && <span className="field-error-msg">{formErrors.employee_id}</span>}
-                    {!formErrors.employee_id && dupErrors.employee_id && <span className="field-error-msg">{dupErrors.employee_id}</span>}
                     {!formErrors.employee_id && dupChecking.employee_id && <span className="field-checking-msg">Checking availability…</span>}
                   </div>
                   <div className="form-group">
@@ -1720,7 +1707,6 @@ export default function RegisterPage() {
                   />
                 </div>
                 <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
-                {formErrors.contact_number && <span className="field-error-msg">{formErrors.contact_number}</span>}
               </div>
 
               <div className="form-group">
@@ -1810,7 +1796,6 @@ export default function RegisterPage() {
                       className={formErrors.drivers_license ? 'input-error' : ''}
                     />
                     <span className="field-hint">The authorized driver's LTO license — {FIELD_PATTERNS.drivers_license.hint}</span>
-                    {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
                   </div>
                   <div className="form-group">
                     <label>Driver's Contact Number</label>
@@ -1828,7 +1813,6 @@ export default function RegisterPage() {
                       />
                     </div>
                     <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
-                    {formErrors.driver_contact && <span className="field-error-msg">{formErrors.driver_contact}</span>}
                   </div>
                 </>
               ) : (
@@ -1845,7 +1829,6 @@ export default function RegisterPage() {
                     className={formErrors.drivers_license ? 'input-error' : ''}
                   />
                   <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
-                  {formErrors.drivers_license && <span className="field-error-msg">{formErrors.drivers_license}</span>}
                 </div>
               )}
 
@@ -1891,7 +1874,6 @@ export default function RegisterPage() {
                 <span className="field-hint">
                   A clear, readable photo of the driver's license helps CDSO verify the application faster.
                 </span>
-                {licenseError && <span className="field-error-msg">{licenseError}</span>}
               </div>
 
               {/* Assessment form — the enrolment proof. Students only: an employee
@@ -1938,7 +1920,6 @@ export default function RegisterPage() {
                     Your latest registrar's assessment form — this is what confirms you are an
                     enrolled SLC student. A clear photo or the PDF from the student portal both work.
                   </span>
-                  {assessmentError && <span className="field-error-msg">{assessmentError}</span>}
                 </div>
               )}
 
@@ -2167,25 +2148,13 @@ export default function RegisterPage() {
 
             </>}
 
-            {banned && (
-              <div className="reg-submit-error">
-                <AlertTriangle size={15} />
-                {banned}
-              </div>
-            )}
 
-            {submitError && (
-              <div className="reg-submit-error">
-                <AlertTriangle size={15} />
-                {submitError}
-              </div>
-            )}
 
             <div className="form-actions">
               <button
                 type="submit"
                 className="btn-submit"
-                disabled={submitting || !registrantType || (regStatus && !regStatus.is_open) || !!banned}
+                disabled={submitting}
               >
                 {submitting ? 'Submitting...' : 'Submit Registration'}
               </button>

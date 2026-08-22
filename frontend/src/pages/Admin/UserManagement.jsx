@@ -15,7 +15,7 @@ import {
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
   Shield, Info, Lock, Printer, Smartphone,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
 
 const DEFAULT_AGENCY = 'RANNIAG'
@@ -300,7 +300,7 @@ export default function UserManagement() {
     if (!editForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (selectedUser.role === 'security' && !editForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
-    if (Object.keys(errors).length > 0) return
+    if (await notify.validation(errors)) return
     setSubmitting(true)
     try {
       const payload = {
@@ -323,20 +323,22 @@ export default function UserManagement() {
       for (const f of ['full_name', 'email', 'agency', 'contact', 'address']) {
         if (data?.[f]) fieldErrors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
       }
-      if (Object.keys(fieldErrors).length > 0) setFormErrors(fieldErrors)
-      else toast.error('Failed to update user.')
+      if (Object.keys(fieldErrors).length > 0) {
+        setFormErrors(fieldErrors)
+        notify.validation(fieldErrors, { title: 'User not updated' })
+      } else toast.error('Failed to update user.')
     } finally { setSubmitting(false) }
   }
 
   /* ── guard validation & submit ── */
-  const validateGuard = () => {
+  const validateGuard = async () => {
     const errors = {}
     if (!guardForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!guardForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (!guardForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
-    return Object.keys(errors).length === 0
+    return !(await notify.validation(errors))
   }
 
   const handleAddGuard = async () => {
@@ -359,25 +361,26 @@ export default function UserManagement() {
       if (Object.keys(fieldErrors).length > 0) {
         setFormErrors(fieldErrors)
         setModal('add')
+        notify.validation(fieldErrors, { title: 'Guard not created' })
       } else {
         showResult('Failed to create guard.', 'error')
       }
     } finally { setSubmitting(false) }
   }
 
-  const onAddClick = () => {
-    if (addType === 'guard')  { if (!validateGuard()) return;  setModal('confirmAdd') }
-    if (addType === 'admin')  { if (!validateAdmin()) return;  setModal('confirmAdd') }
+  const onAddClick = async () => {
+    if (addType === 'guard')  { if (!(await validateGuard())) return;  setModal('confirmAdd') }
+    if (addType === 'admin')  { if (!(await validateAdmin())) return;  setModal('confirmAdd') }
   }
 
   /* ── admin validation ── */
-  const validateAdmin = () => {
+  const validateAdmin = async () => {
     const errors = {}
     if (!adminForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!adminForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email)) errors.email = 'Invalid email format.'
     setFormErrors(errors)
-    return Object.keys(errors).length === 0
+    return !(await notify.validation(errors))
   }
 
   const handleReplaceAdmin = async () => {
@@ -396,6 +399,7 @@ export default function UserManagement() {
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         setFormErrors(errors); setModal('add')
+        notify.validation(errors, { title: 'CDSO not replaced' })
       } else { showResult('Failed to replace CDSO', 'error') }
       setSubmitting(false)
     }
@@ -745,7 +749,6 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
                       onBlur={e => setGuardForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="e.g. Juan Dela Cruz" />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -755,7 +758,6 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, email: e.target.value })}
                       onBlur={e => setGuardForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="e.g. guard@slc.edu.ph" />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Agency <span className="um-required">*</span></label>
@@ -778,7 +780,6 @@ export default function UserManagement() {
                         onChange={e => setGuardForm({ ...guardForm, agency: e.target.value })}
                         placeholder="Enter agency name" />
                     )}
-                    {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                   </div>
                 </>
               )}
@@ -804,7 +805,6 @@ export default function UserManagement() {
                       onChange={e => setAdminForm({ ...adminForm, full_name: e.target.value })}
                       onBlur={e => setAdminForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="Enter full name" />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -813,7 +813,6 @@ export default function UserManagement() {
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
                       onBlur={e => setAdminForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="Enter email address" />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                 </>
               )}
@@ -875,7 +874,6 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={editForm.full_name}
                       onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -883,7 +881,6 @@ export default function UserManagement() {
                       type="email"
                       value={editForm.email}
                       onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                   {selectedUser.role === 'security' && (
                     <div className="um-form-group">
@@ -907,7 +904,6 @@ export default function UserManagement() {
                           onChange={e => setEditForm({ ...editForm, agency: e.target.value })}
                           placeholder="Enter agency name" />
                       )}
-                      {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                     </div>
                   )}
                   {selectedUser.role === 'vehicle_owner' && (

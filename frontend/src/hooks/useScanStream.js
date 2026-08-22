@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../components/Feedback/notify";
 import { WS_BASE } from "../api/wsBase";
+
+// A flapping camera or scanner re-raises the same message on every retry.
+// These dialogs stay dismissed for this long afterwards so a dead socket
+// cannot bury the screen a guard is working on.
+const STREAM_THROTTLE = 30000
 
 // ── Bounding box colours ───────────────────────────────────────────────────────
 const TRACK_COLORS = {
@@ -176,7 +181,7 @@ export function useScanStream(token, cameraOn, gateId = 'main') {
         const msg = JSON.parse(event.data);
 
         if (msg.type === "error") {
-          toast.error(msg.message);
+          toast.error(msg.message, { title: "Scanner error", throttleMs: STREAM_THROTTLE });
           return;
         }
 
@@ -221,7 +226,7 @@ export function useScanStream(token, cameraOn, gateId = 'main') {
       }
     };
 
-    socket.onerror = () => toast.error("WebSocket error");
+    socket.onerror = () => toast.error("Scanner connection error", { title: "Scanner error", throttleMs: STREAM_THROTTLE });
     socket.onclose = () => {
       if (!isCancelled) {
         setScanning(false);

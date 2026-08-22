@@ -4,7 +4,8 @@ import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import { zoneApi } from '../../api/parking'
 import { overrideEntry } from '../../api/scanning'
@@ -24,7 +25,10 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!plate.trim() || !reason.trim()) { toast.error('Plate and reason are required.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!plate.trim()) problems.push('Enter the plate number.')
+    if (!reason.trim()) problems.push('Give a reason for the override.')
+    if (await notify.validation(problems, { title: 'Override not logged' })) return
     setLoading(true)
     try {
       await overrideEntry({ plate_number: plate.trim().toUpperCase(), reason: `Parking override — ${zoneName}: ${reason}` })
@@ -50,7 +54,7 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit} style={{ padding: 18 }}>
+        <form onSubmit={handleSubmit} noValidate style={{ padding: 18 }}>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: '#8A6B00', background: '#FDF0BE', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
             Allow a vehicle to park in <strong>{zoneName}</strong> even if the zone is full. This will be logged.
           </p>
@@ -90,7 +94,9 @@ function IssueViolationModal({ onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!plate.trim()) { toast.error('Plate number is required.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!plate.trim()) problems.push('Enter the plate number.')
+    if (await notify.validation(problems, { title: 'Violation not issued' })) return
     setLoading(true)
     try {
       await createViolation({ plate_number: plate.trim().toUpperCase(), violation_type: type, notes })
@@ -113,7 +119,7 @@ function IssueViolationModal({ onClose }) {
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit} style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form onSubmit={handleSubmit} noValidate style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate *</label>
             <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required

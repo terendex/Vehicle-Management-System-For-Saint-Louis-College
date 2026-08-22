@@ -5,7 +5,8 @@ import {
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -137,7 +138,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!purpose.trim()) { toast.error('Please enter the purpose of visit.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
+    if (await notify.validation(problems, { title: 'Pass not issued' })) return
     setLoading(true)
     try {
       const res = await createVisitorPass({
@@ -167,7 +170,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
           <span className="em-modal-title"><UserPlus size={17} /> Create Visitor Pass</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="em-modal-body">
             <div className="em-field">
               <label className="em-label">License Plate</label>
@@ -215,7 +218,9 @@ function OverrideModal({ plate, onClose, onOverridden }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!reason.trim()) { toast.error('Please provide a reason.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!reason.trim()) problems.push('Give a reason for the override.')
+    if (await notify.validation(problems, { title: 'Override not logged' })) return
     setLoading(true)
     try {
       await overrideEntry({ plate_number: plate, reason })
@@ -233,7 +238,7 @@ function OverrideModal({ plate, onClose, onOverridden }) {
           <span className="em-modal-title"><Shield size={17} /> Override Entry</span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="em-modal-body">
             <div className="em-field">
               <label className="em-label">License Plate</label>
@@ -835,7 +840,10 @@ export default function SecurityEntryManagement() {
   const handleCheckEntry = async (e) => {
     e?.preventDefault()
     const raw = plateInput.trim().toUpperCase()
-    if (!raw) return
+    if (!raw) {
+      await notify.error('Enter a plate or conduction number to check.', { title: 'Nothing to check' })
+      return
+    }
 
     // Visitor slip QR scanned into the lookup box (USB scanner or typed):
     // records the visitor's exit — visitor exits are QR-only, never by plate.
@@ -974,7 +982,7 @@ export default function SecurityEntryManagement() {
             {/* Combined Plate Input */}
             <div style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
               <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate Number</span>
-              <form onSubmit={handleCheckEntry} style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <form onSubmit={handleCheckEntry} noValidate style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                 <input
                   className="em-plate-input"
                   value={plateInput}
@@ -997,7 +1005,7 @@ export default function SecurityEntryManagement() {
                   type="submit"
                   className="em-btn em-btn-primary"
                   style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                  disabled={loading || !plateInput.trim()}
+                  disabled={loading}
                 >
                   {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Plate — Entry / Exit</>}
                 </button>

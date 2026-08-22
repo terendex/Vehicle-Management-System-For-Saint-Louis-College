@@ -6,7 +6,8 @@ import {
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
   VideoOff,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
@@ -278,7 +279,13 @@ export default function ParkingManagement({ embedded = false }) {
 
   const handleAddZone = async (e) => {
     e.preventDefault()
-    if (!newZone.name.trim()) return
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
+    if (!newZone.name.trim()) {
+      await notify.error('Give the zone a name.', { title: 'Zone not created' })
+      return
+    }
     setAddingZone(true)
     try {
       const z = await zoneApi.create({
@@ -569,7 +576,12 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   const confirmOccupy = async () => {
-    if (!spaceOpPlate.trim()) return
+    if (!spaceOpPlate.trim()) {
+      await notify.error('Enter the plate number parked in this space.', {
+        title: 'Space not updated',
+      })
+      return
+    }
     try {
       const u = await zoneApi.markOccupied(spaceOp.space.id, spaceOpPlate)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))
@@ -1304,7 +1316,7 @@ export default function ParkingManagement({ embedded = false }) {
       {/* ── Modal: New Zone ── */}
       {showNew && (
         <div className="pm-overlay" onClick={() => setShowNew(false)}>
-          <form className="pm-modal" onSubmit={handleAddZone} onClick={e => e.stopPropagation()}>
+          <form className="pm-modal" noValidate onSubmit={handleAddZone} onClick={e => e.stopPropagation()}>
             <div className="pm-modal-header">
               <span>Create Parking Zone</span>
               <button type="button" className="pm-modal-close" onClick={() => setShowNew(false)}><X size={16} /></button>
@@ -1359,7 +1371,7 @@ export default function ParkingManagement({ embedded = false }) {
             </div>
             <div className="pm-modal-footer">
               <button type="button" className="pm-btn pm-btn--outline" onClick={() => setShowNew(false)}>Cancel</button>
-              <button type="submit" className="pm-btn pm-btn--primary" disabled={addingZone || !newZone.name.trim()}>
+              <button type="submit" className="pm-btn pm-btn--primary" disabled={addingZone}>
                 {addingZone ? <Loader2 size={13} className="pm-spin" /> : <Plus size={13} />} Create Zone
               </button>
             </div>
@@ -1388,7 +1400,7 @@ export default function ParkingManagement({ embedded = false }) {
             </div>
             <div className="pm-modal-footer">
               <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>
-              <button className="pm-btn pm-btn--primary" onClick={confirmOccupy} disabled={!spaceOpPlate.trim()}>
+              <button className="pm-btn pm-btn--primary" onClick={confirmOccupy}>
                 <CheckCircle2 size={13} /> Confirm Occupied
               </button>
             </div>

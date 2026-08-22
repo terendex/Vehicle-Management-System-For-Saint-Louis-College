@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, Check, Circle, Eye, EyeOff, KeyRound, LogOut, ShieldCheck,
+  AlertTriangle, Check, Circle, Eye, EyeOff, KeyRound, LogOut,
 } from 'lucide-react'
 import { usersApi } from '../../api/users'
 import useAuthStore from '../../stores/authStore'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
+import notify from '../Feedback/notify'
+import { fieldProblems } from '../Feedback/formProblems'
 import './ChangePasswordModal.css'
 
 /**
@@ -28,53 +30,61 @@ export default function ChangePasswordModal({
 
   const [form, setForm]             = useState({ current: '', new: '', confirm: '' })
   const [show, setShow]             = useState({ current: false, new: false, confirm: false })
-  const [error, setError]           = useState(null)
-  const [errors, setErrors]         = useState([])
   const [submitting, setSubmitting] = useState(false)
-  const [success, setSuccess]       = useState(false)
 
   const strength = pwStrength(form.new)
-  const mismatch = !!form.confirm && form.new !== form.confirm
   const toggle   = (field) => setShow(s => ({ ...s, [field]: !s[field] }))
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (submitting) return
-    setError(null)
-    setErrors([])
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
+
+    // Checked here rather than by greying out the submit button: a button that
+    // will not press tells you it refuses but never tells you why.
+    const problems = []
+    if (!form.current) problems.push('Enter your current password.')
+    PW_RULES.forEach((rule) => {
+      if (!rule.test(form.new)) problems.push(`New password: ${rule.label.toLowerCase()}.`)
+    })
+    if (!form.confirm) problems.push('Re-enter the new password to confirm it.')
+    else if (form.new !== form.confirm) problems.push('The two new passwords do not match.')
+    if (await notify.validation(problems, { title: 'Password not accepted' })) return
+
     setSubmitting(true)
     try {
       await usersApi.changePassword(form.current, form.new, form.confirm)
       clearMustChangePassword()
-      setSuccess(true)
       setForm({ current: '', new: '', confirm: '' })
+      await notify.success(
+        'For your security you are being signed out. Please log in again with your new password.',
+        { title: 'Password Changed' },
+      )
       // A fresh login with the new password, rather than carrying on in a
       // session that was opened with the old one.
-      setTimeout(() => onDone?.(), 1800)
+      onDone?.()
     } catch (err) {
       if (err.stepUpCancelled) {
-        setError('Verification cancelled — your password was not changed.')
+        notify.error('Verification cancelled — your password was not changed.', {
+          title: 'Not changed',
+        })
       } else {
         const data = err.response?.data
-        if (data?.errors) setErrors(data.errors)
-        else setError(data?.error || data?.detail || 'Failed to change password.')
+        if (data?.errors) {
+          notify.error('The password was rejected:', {
+            title: 'Password not accepted',
+            details: data.errors,
+          })
+        } else {
+          notify.error(data?.error || data?.detail || 'Failed to change password.', {
+            title: 'Password not changed',
+          })
+        }
       }
       setSubmitting(false)
     }
-  }
-
-  if (success) {
-    return (
-      <div className="cpw-overlay">
-        <div className="cpw-modal">
-          <div className="cpw-success">
-            <div className="cpw-success-icon"><ShieldCheck size={34} /></div>
-            <h3>Password Changed!</h3>
-            <p>For your security you are being signed out. Please log in again with your new password.</p>
-          </div>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -90,7 +100,7 @@ export default function ChangePasswordModal({
             : 'Update your account password below.')}
         </p>
 
-        <form onSubmit={handleSubmit} className="cpw-form">
+        <form onSubmit={handleSubmit} className="cpw-form" noValidate>
           <div className="cpw-group">
             <label htmlFor="cpw-current">
               {forced ? 'Current (Temporary) Password' : 'Current Password'}
@@ -172,15 +182,7 @@ export default function ChangePasswordModal({
                 {show.confirm ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
-            {mismatch && <p className="cpw-field-error">Passwords do not match.</p>}
           </div>
-
-          {error && <div className="cpw-banner">{error}</div>}
-          {errors.length > 0 && (
-            <div className="cpw-banner">
-              {errors.map((msg, i) => <div key={i}>• {msg}</div>)}
-            </div>
-          )}
 
           <div className="cpw-actions">
             {forced ? (
@@ -195,7 +197,7 @@ export default function ChangePasswordModal({
             <button
               type="submit"
               className="cpw-btn-primary"
-              disabled={submitting || !form.current || strength.score < 5 || mismatch || !form.confirm}
+              disabled={submitting}
             >
               <KeyRound size={15} />
               {submitting ? 'Saving…' : 'Set New Password'}

@@ -1,6 +1,6 @@
 import { useEffect, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, Outlet } from 'react-router-dom'
-import { Toaster } from 'sonner'
+import FeedbackHost from './components/Feedback/FeedbackHost'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
@@ -111,7 +111,10 @@ export default function App() {
     <LiveUpdatesProvider>
     <CameraProvider>
     <BrowserRouter>
-      <Toaster richColors position="top-right" />
+      {/* Every confirmation, error and success in the app is raised here as a
+          modal the user has to acknowledge. Mounted at the root so any page,
+          hook or socket handler can reach it. */}
+      <FeedbackHost />
       {/* Renders nothing until a sensitive request is held for a code. Mounted
           at the root so every screen is covered without knowing it exists. */}
       <StepUpGate />

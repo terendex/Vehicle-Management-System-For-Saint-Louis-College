@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
-import { toast } from 'sonner'
+import { toast } from '../../components/Feedback/notify'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'

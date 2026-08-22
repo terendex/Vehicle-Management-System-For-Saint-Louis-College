@@ -1,6 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { toast } from '../components/Feedback/notify'
 import { WS_BASE } from '../api/wsBase'
+
+// A flapping camera or scanner re-raises the same message on every retry.
+// These dialogs stay dismissed for this long afterwards so a dead socket
+// cannot bury the screen a guard is working on.
+const STREAM_THROTTLE = 30000
 
 const TRACK_COLORS = {
   license_plate: '#14A374',
@@ -242,7 +247,7 @@ export function CameraProvider({ children }) {
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
 
     // Announce an outage once, not on every attempt.
-    if (attempt === 1) toast.error('Camera feed lost — reconnecting…')
+    if (attempt === 1) toast.error('Camera feed lost — reconnecting…', { title: 'Camera error', throttleMs: STREAM_THROTTLE })
 
     setCameras(p => p.map(c => c.id === camId
       ? { ...c, statusMsg: `Reconnecting in ${Math.round(delay / 1000)}s…` } : c))

@@ -5,7 +5,8 @@ import {
   Loader2, User, Car, Users, ChevronRight, Truck, Timer,
   CalendarRange, Globe, Plus, CheckCircle, Archive, AlertTriangle,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import {
   getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
   getRegistrationPeriods, createRegistrationPeriod, updateRegistrationPeriod,
@@ -96,8 +97,11 @@ function EditModal({ entryType, rule, onSave, onClose }) {
   const toggleDay = (key) =>
     setDays((prev) => prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key])
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     const payload = { days, start_time: startTime, end_time: endTime, enabled }
     if (entryType.hasStayLimit) {
       payload.max_stay_minutes = maxStay === '' ? null : Math.max(1, parseInt(maxStay, 10) || 0)
@@ -117,7 +121,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
           <button className="rc-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="rc-modal-body">
             <div className="rc-field">
               <label className="rc-field-label">Allowed Days</label>
@@ -377,7 +381,7 @@ export default function RuleConstraints() {
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
       errors.end_date = 'End date must be on or after start date.'
     setPeriodErrors(errors)
-    if (Object.keys(errors).length) return
+    if (await notify.validation(errors)) return
 
     setSavingPeriod(true)
     try {
@@ -403,6 +407,9 @@ export default function RuleConstraints() {
         : {}
       if (Object.keys(fieldErrors).length) {
         setPeriodErrors(fieldErrors)
+        notify.validation(fieldErrors, {
+          title: `Period not ${editing ? 'updated' : 'created'}`,
+        })
       } else {
         toast.error(d?.detail || `Failed to ${editing ? 'update' : 'create'} registration period.`)
       }
@@ -537,7 +544,6 @@ export default function RuleConstraints() {
                           <option key={opt} value={opt}>{opt}</option>
                         ))}
                       </select>
-                      {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
                     </div>
                     <div className="rc-reg-field">
                       <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
@@ -548,7 +554,6 @@ export default function RuleConstraints() {
                         min={editing ? undefined : new Date().toISOString().slice(0, 10)}
                         onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
                       />
-                      {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
                     </div>
                     <div className="rc-reg-field">
                       <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
@@ -559,7 +564,6 @@ export default function RuleConstraints() {
                         min={periodForm.start_date || undefined}
                         onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
                       />
-                      {periodErrors.end_date && <span className="rc-field-error">{periodErrors.end_date}</span>}
                     </div>
                   </div>
                   <div className="rc-period-form-actions">
