@@ -2698,8 +2698,21 @@ class ParkingNoticeView(APIView):
         return [permissions.IsAuthenticated()]
 
     def get(self, request):
-        """All authenticated users see active notices."""
+        """Active notices, limited to the ones broadcast since the reader joined.
+
+        A notice is a broadcast, not a bulletin board: it went out by email to
+        the owners who existed when it was sent. Someone who registers later was
+        never a recipient, so replaying the backlog in their portal would show
+        them announcements about weeks they were not on campus for. Only what is
+        posted from their account's creation onwards is theirs to see.
+
+        The CDSO (admin) is exempt — System Settings is where notices are
+        managed and removed, so it has to list every active one regardless of
+        which admin account is looking.
+        """
         notices = ParkingNotice.objects.filter(is_active=True)
+        if request.user.role != 'admin':
+            notices = notices.filter(created_at__gte=request.user.date_joined)
         return Response(ParkingNoticeSerializer(notices, many=True).data)
 
     def post(self, request):

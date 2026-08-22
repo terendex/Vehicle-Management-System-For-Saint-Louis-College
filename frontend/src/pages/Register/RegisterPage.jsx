@@ -30,6 +30,50 @@ const SCHOOL_EMAIL_DOMAIN = 'slc-sflu.edu.ph'
 const SCHOOL_EMAIL_REGEX  = /^\d{8}@slc-sflu\.edu\.ph$/
 const GENERIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+/* Why the address was refused. Problems are reported in one modal on submit,
+   where a bare "invalid email" leaves the applicant guessing which half of the
+   address is at fault — so name the actual fault instead. Only ever called on
+   an address the rule's regex has already rejected. */
+function describeEmail(value, { school }) {
+  const email = value.trim()
+
+  if (/\s/.test(email)) return 'Email address can’t contain spaces — remove them.'
+
+  const parts = email.split('@')
+  if (parts.length === 1) {
+    return school
+      ? `Email address is missing the @ — enter your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
+      : 'Email address is missing the @ — e.g. juan@example.com.'
+  }
+  if (parts.length > 2) return 'Email address has more than one @ — keep only the one before the domain.'
+
+  const [local, domain] = parts
+  if (!local) {
+    return school
+      ? 'Enter your 8-digit school ID before the @.'
+      : 'Enter a name before the @ — e.g. juan@example.com.'
+  }
+  if (!domain) {
+    return school
+      ? `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
+      : 'Add a domain after the @ — e.g. example.com.'
+  }
+
+  if (school) {
+    if (domain !== SCHOOL_EMAIL_DOMAIN) {
+      return `Registration needs your SLC school email — replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
+    }
+    if (!/^\d+$/.test(local)) {
+      return 'The part before the @ must be your 8-digit school ID — digits only, no letters or dots.'
+    }
+    return `Your school ID must be 8 digits — “${local}” has ${local.length}.`
+  }
+
+  if (domain.startsWith('.') || domain.endsWith('.')) return `“${domain}” can’t start or end with a dot.`
+  if (!domain.includes('.')) return `“${domain}” is missing its ending — e.g. ${domain}.com.`
+  return 'Invalid email address format — e.g. juan@example.com.'
+}
+
 function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
@@ -400,11 +444,13 @@ export default function RegisterPage() {
     email: registrantType === 'fetcher'
       ? {
           regex: GENERIC_EMAIL_REGEX,
+          describe: (value) => describeEmail(value, { school: false }),
           message: 'Invalid email address format',
           hint: 'e.g. juan@example.com',
         }
       : {
           regex: SCHOOL_EMAIL_REGEX,
+          describe: (value) => describeEmail(value, { school: true }),
           message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
           hint: `e.g. 23100174@${SCHOOL_EMAIL_DOMAIN}`,
         },
@@ -449,7 +495,9 @@ export default function RegisterPage() {
     const valid = typeof rule.validate === 'function'
       ? rule.validate(value.trim())
       : rule.regex.test(value.trim())
-    return valid ? null : rule.message
+    if (valid) return null
+    // A rule may explain the specific fault; otherwise its one flat message stands.
+    return rule.describe ? rule.describe(value) : rule.message
   }
 
   const handleInputChange = (e) => {
