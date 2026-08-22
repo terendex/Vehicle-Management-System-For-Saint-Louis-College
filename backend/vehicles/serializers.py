@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice, Supplier, SupplierPlate, ScheduledVisit
+from .document_urls import signed_document_url
 from accounts.models import User
 
 
@@ -23,6 +24,13 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 class VehicleRegistrationSerializer(serializers.ModelSerializer):
     registration_block_count = serializers.SerializerMethodField()
+
+    # The applicant's uploads. What is stored is an object key; what a browser
+    # needs is a URL it can fetch, and for the reasons in document_urls that is
+    # not the bucket's public path. Swapped on the way out in to_representation
+    # rather than declared as fields here, so read_only_fields below stays the
+    # single list of what the review process owns.
+    DOCUMENT_FIELDS = ('drivers_license_image', 'assessment_form', 'or_receipt_image')
 
     class Meta:
         model = VehicleRegistration
@@ -101,6 +109,12 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         # instance.department is a FK: without select_related('department') on
         # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
+        # What is stored is an object key; what the reviewer's browser needs is
+        # a URL it can fetch. See document_urls for why that is not the bucket's
+        # public path.
+        request = self.context.get('request')
+        for name in self.DOCUMENT_FIELDS:
+            data[name] = signed_document_url(getattr(instance, name), request)
         # payment_token is the secret in the applicant's receipt-upload link.
         # This serializer feeds the CDSO queue and the vehicle profile a guard
         # can open, so anyone with either view could otherwise read a stranger's
