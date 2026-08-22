@@ -182,3 +182,58 @@ class FetcherEmailTests(TestCase):
         self.assertNotIn('Department', body)
         self.assertIn('Classification', body)
         self.assertIn('DELA CRUZ, JUAN', body)
+
+
+@override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
+class PendingAcknowledgementPdfTests(TestCase):
+    """The registration-received email carries proof of application.
+
+    The approval PDF states that a pass was granted, so it cannot stand in for
+    this one — an applicant asked "did you register?" before CDSO has decided
+    had nothing to show but an inbox.
+    """
+
+    def setUp(self):
+        self.reg = VehicleRegistration.objects.create(
+            registrant_type='student', full_name='ACK, TESTER',
+            email='ack-test@example.com', plate_number='ACK 0001',
+            vehicle_type='car', contact_number='+639171234567',
+            address='San Fernando, La Union', drivers_license='N01-20-900003',
+            student_id='23100999', program_year='BSIT - 4',
+            student_level='college', campus_days=['Monday'],
+            status=VehicleRegistration.Status.PENDING,
+        )
+
+    def test_pending_email_attaches_a_pdf(self):
+        send_pending_email(self.reg)
+        attachments = mail.outbox[-1].attachments
+        self.assertEqual(len(attachments), 1)
+        name, content, mimetype = attachments[0]
+        self.assertTrue(name.endswith('.pdf'))
+        self.assertEqual(mimetype, 'application/pdf')
+        self.assertTrue(content.startswith(b'%PDF'))
+
+    def test_acknowledgement_is_not_named_like_the_pass(self):
+        from registration_pdf import registration_pdf_filename
+
+        self.assertNotEqual(registration_pdf_filename(self.reg, pending=True),
+                            registration_pdf_filename(self.reg))
+        self.assertIn('Acknowledgement',
+                      registration_pdf_filename(self.reg, pending=True))
+
+    def test_a_broken_pdf_does_not_cost_the_applicant_the_email(self):
+        """The submission is already saved; a build failure must not raise."""
+        import registration_pdf
+
+        def broken(*a, **kw):
+            raise RuntimeError('no reportlab today')
+
+        original = registration_pdf.registration_confirmation_pdf
+        registration_pdf.registration_confirmation_pdf = broken
+        try:
+            send_pending_email(self.reg)
+        finally:
+            registration_pdf.registration_confirmation_pdf = original
+
+        self.assertEqual(len(mail.outbox[-1].attachments), 0)
+        self.assertIn('REG-', mail.outbox[-1].subject)

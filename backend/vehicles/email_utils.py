@@ -235,17 +235,25 @@ def _fee_settled(registration):
     )
 
 
-def _registration_pdf_attachment(registration):
-    """The (filename, bytes, mimetype) triple for the confirmation PDF.
+def _registration_pdf_attachment(registration, pending=False):
+    """The (filename, bytes, mimetype) triple for the registration PDF.
 
     Built with the applicant's uploaded documents included, so the copy in the
     owner's inbox is the same document the CDSO files from Vehicle Registration
     Management — one builder, one layout, nothing to drift apart.
+
+    `pending` builds the acknowledgement copy — same record, stated as an
+    application under review rather than an approved pass. The uploads are left
+    out of that one: at the moment it is built they have only just been sent,
+    and mailing them straight back doubles the size of the first email an
+    applicant receives for nothing they do not already have.
     """
     from registration_pdf import (registration_confirmation_pdf,
                                   registration_pdf_filename)
-    return (registration_pdf_filename(registration),
-            registration_confirmation_pdf(registration, include_documents=True),
+    return (registration_pdf_filename(registration, pending=pending),
+            registration_confirmation_pdf(registration,
+                                          include_documents=not pending,
+                                          pending=pending),
             'application/pdf')
 
 
@@ -586,9 +594,14 @@ def send_pending_email(registration):
                 <!-- Greeting -->
                 <div style="padding: 0 32px 20px;">
                     <p style="margin:0 0 8px;">Dear <strong>{full_name_val}</strong>,</p>
-                    <p style="color:#5A5F72;font-size:14px;margin:0;">
+                    <p style="color:#5A5F72;font-size:14px;margin:0 0 8px;">
                         Thank you for submitting your vehicle registration. The CDSO office will review your application
                         and send you a follow-up email once a decision has been made. Please keep this email for your records.
+                    </p>
+                    <p style="color:#5A5F72;font-size:14px;margin:0;">
+                        Your <strong>registration acknowledgement</strong> is attached to this email as a PDF — keep it as
+                        proof that you applied. It is <strong>not</strong> a vehicle pass and does not grant entry; the pass
+                        follows only if your application is approved.
                     </p>
                 </div>
 
@@ -654,9 +667,11 @@ def send_pending_email(registration):
     if student_lines:
         listed = '\n'.join(f"  - {line}" for line in student_lines)
         fetched_text = f"Students to fetch:\n{listed}\n\n"
-    send_mail(
+    # EmailMultiAlternatives rather than send_mail(): send_mail cannot carry an
+    # attachment, and this email now does — see below.
+    msg = EmailMultiAlternatives(
         subject=f"SLC Vehicle Registration Received — {ref_number} (Pending Review)",
-        message=(
+        body=(
             f"Dear {registration.full_name},\n\n"
             f"Your vehicle registration has been received and is pending CDSO review.\n\n"
             f"Reference No.: {ref_number}\n"
@@ -665,14 +680,35 @@ def send_pending_email(registration):
             f"Submitted:     {submitted_at}\n\n"
             f"{fetched_text}"
             f"{payment_text}"
+            f"Your registration acknowledgement is attached as a PDF \u2014 keep it as "
+            f"proof that you applied. It is not a vehicle pass.\n\n"
             f"You will be notified by email once a decision has been made.\n\n"
             f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[registration.email],
-        html_message=html_message,
-        fail_silently=False,
+        to=[registration.email],
     )
+    msg.attach_alternative(html_message, "text/html")
+
+    # Proof of application, on paper. Until this existed, an applicant who was
+    # asked whether they had registered had nothing to show but an email — and
+    # the approval PDF, which is the document that answers that, does not exist
+    # until CDSO has decided.
+    #
+    # Built as the *pending* copy: it states in its own text that it is not a
+    # pass, so it cannot be waved at a gate. A failure building it must not cost
+    # the applicant their acknowledgement email (and, upstream, must not roll
+    # back the submission) — so send without the attachment and log it.
+    try:
+        msg.attach(*_registration_pdf_attachment(registration, pending=True))
+    except Exception:
+        log.exception(
+            "Could not attach the registration acknowledgement PDF for %s "
+            "(registration %s) — sending the pending email without it.",
+            registration.email, registration.pk,
+        )
+
+    msg.send(fail_silently=False)
 
 
 def send_receipt_received_email(registration):

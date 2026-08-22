@@ -96,10 +96,16 @@ def _campus_days(registration):
     return ', '.join(known + extra)
 
 
-def registration_pdf_filename(registration):
-    """e.g. 'SLC Vehicle Registration - ABC1234.pdf'"""
+def registration_pdf_filename(registration, pending=False):
+    """e.g. 'SLC Vehicle Registration - ABC1234.pdf'.
+
+    The pending copy is named differently on purpose: an applicant who keeps
+    both ends up with two files in one folder, and the one that is only an
+    acknowledgement must not be the one they present at a gate.
+    """
     plate = (registration.plate_number or 'registration').replace('/', '-')
-    return f'SLC Vehicle Registration - {plate}.pdf'
+    kind = 'Registration Acknowledgement' if pending else 'Vehicle Registration'
+    return f'SLC {kind} - {plate}.pdf'
 
 
 def _documents_story(registration, content_width, head_style, note_style):
@@ -188,7 +194,7 @@ def _documents_story(registration, content_width, head_style, note_style):
     ]
 
 
-def registration_confirmation_pdf(registration, include_documents=False):
+def registration_confirmation_pdf(registration, include_documents=False, pending=False):
     """Build the approved-registration confirmation and return PDF bytes.
 
     Bytes rather than an HttpResponse: this is attached to an email, not
@@ -200,6 +206,14 @@ def registration_confirmation_pdf(registration, include_documents=False):
     document that is already the largest thing the approval email carries. The
     CDSO's own printout turns it on: that is the copy that gets filed, and the
     file is meant to hold the evidence.
+
+    `pending` builds the acknowledgement instead: the same record of what was
+    submitted, but saying plainly that the application is still under review and
+    is not a pass. It rides along with the registration-received email, so an
+    applicant has something to show that they did register — which, until the
+    approval PDF exists, was only ever an email in their inbox. Every claim this
+    document makes about an approval is dropped rather than left blank, so it
+    can never be mistaken for the one that grants entry.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -284,22 +298,35 @@ def registration_confirmation_pdf(registration, include_documents=False):
             specific.append((f'Student Fetched #{i}',
                              ' · '.join(b for b in bits if b)))
 
+    if pending:
+        intro = ('This acknowledges that the vehicle registration below was '
+                 '<b>received</b> and is awaiting CDSO review. It is proof of '
+                 'application only — it is <b>not</b> a vehicle pass and does '
+                 'not grant entry to the campus.')
+        summary = [
+            ('Status', r.get_status_display()),
+            ('Reference No.', f'REG-{r.id:06d}'),
+            ('Date Submitted', when(r.created_at)),
+            ('OR Number', r.or_number),
+        ]
+    else:
+        intro = ('This confirms that the vehicle registration below has been '
+                 '<b>approved</b>. Present this document when requested at the '
+                 'campus gates.')
+        summary = [
+            ('Status', r.get_status_display()),
+            ('Reference No.', f'REG-{r.id:06d}'),
+            ('Date Submitted', when(r.created_at)),
+            ('Date Approved', when(r.reviewed_at) or generated_at),
+            ('OR Number', r.or_number),
+        ]
+
     story = [
-        Paragraph(
-            'This confirms that the vehicle registration below has been '
-            '<b>approved</b>. Present this document when requested at the '
-            'campus gates.',
-            note_style),
+        Paragraph(intro, note_style),
         Spacer(1, 5 * mm),
     ]
 
-    story += section('Registration Summary', [
-        ('Status', r.get_status_display()),
-        ('Reference No.', f'REG-{r.id:06d}'),
-        ('Date Submitted', when(r.created_at)),
-        ('Date Approved', when(r.reviewed_at) or generated_at),
-        ('OR Number', r.or_number),
-    ])
+    story += section('Registration Summary', summary)
 
     story += section('Registrant Details', [
         ('Full Name', r.full_name),
@@ -337,24 +364,29 @@ def registration_confirmation_pdf(registration, include_documents=False):
     if include_documents:
         story += _documents_story(r, 170 * mm, head_style, note_style)
 
-    story.append(Paragraph(
-        'This document is system-generated and valid without a signature. '
-        'Report any change of vehicle or contact information to the CDSO office.',
-        note_style))
+    closing = ('This document is system-generated and valid without a signature. '
+               'Report any change of vehicle or contact information to the CDSO office.')
+    if pending:
+        closing = ('This document is system-generated and valid without a signature. '
+                   'It records a submitted application, not an approved pass — you '
+                   'will receive a separate email once CDSO has reviewed it.')
+    story.append(Paragraph(closing, note_style))
 
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=20 * mm, rightMargin=20 * mm,
         topMargin=48 * mm, bottomMargin=18 * mm,
-        title=f'Vehicle Registration Confirmation - {r.plate_number}',
+        title=(f'Vehicle Registration Acknowledgement - {r.plate_number}' if pending
+               else f'Vehicle Registration Confirmation - {r.plate_number}'),
     )
 
     def draw_frame(canvas, doc_):
         w, h = A4
         draw_letterhead(
             canvas, w, h,
-            title='VEHICLE REGISTRATION CONFIRMATION',
+            title=('VEHICLE REGISTRATION ACKNOWLEDGEMENT' if pending
+                   else 'VEHICLE REGISTRATION CONFIRMATION'),
             footer_left=f'Generated {generated_at} · Saint Louis College CDSO',
             footer_right=f'Page {doc_.page}',
         )

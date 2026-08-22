@@ -146,6 +146,7 @@
 /* Shared bar metrics. Pages override background/border/position. */
 .login-header,
 .register-header,
+.paypage-header,
 .not-found-header,
 .owner-header {
   min-height: 64px;

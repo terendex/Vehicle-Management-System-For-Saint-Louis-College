@@ -16,7 +16,12 @@
   color: #12293F;
 }
 
-/* The logo + name lockup inside comes from styles/slc-header.css */
+/* The logo + name lockup inside comes from styles/slc-header.css, and so do the
+   bar's own metrics — this header is listed alongside .login-header there, so
+   the two bars are the same height and wrap the same way at every width. It
+   sticks like the login and register bars: the applicant scrolls a form here
+   too, and a bar that scrolls away on one page and not the others reads as a
+   different site. */
 .paypage-header {
   width: 100%;
   background: #FFFFFF;
@@ -26,6 +31,9 @@
   display: flex;
   align-items: center;
   box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .paypage-main {
