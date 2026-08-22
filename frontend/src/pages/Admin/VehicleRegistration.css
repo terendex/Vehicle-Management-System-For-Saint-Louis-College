@@ -558,15 +558,16 @@
 
 /* ── Headline counts ─────────────────────────────────────────────────────── */
 
-/* Two tiers. The primary line answers "how many, at what stage" and is the
-   only one that changes which rows load; the refine panel below narrows
-   whatever that line selected. Making the second tier a bounded, tinted
-   surface is what stops ten identical tiles reading as one flat strip. */
+/* The total and the refine panel share one line: the total is a single tile
+   and the panel is a short row of them, so stacking left a full-width band of
+   empty space beside each. Making the panel a bounded, tinted surface is what
+   keeps it reading as a second tier rather than more tiles on the same strip. */
 .vr-stats {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: stretch;
+  gap: 14px;
   margin-bottom: 18px;
+  flex-wrap: wrap;
 }
 
 .vr-stats-primary {
@@ -577,6 +578,10 @@
 }
 
 .vr-stats-refine {
+  /* Takes the width the total tile does not, and drops to its own line rather
+     than squeezing the tiles below a readable width. */
+  flex: 1 1 460px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -637,7 +642,7 @@
 /* On the collapsed one-line form the message trails the header, so it needs a
    separator; stacked on a narrow screen it is its own line and must not. */
 .vr-stats-refine--empty .vr-stats-refine-empty::before {
-  content: ' b7';
+  content: '·';
   margin-right: 8px;
   color: #B7C9D8;
 }
@@ -761,7 +766,7 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
 .vr-stat--total {
   background: linear-gradient(135deg, #03396C 0%, #04508F 100%);
   border-color: #03396C;
-  align-self: flex-end;
+  align-self: stretch;
   padding: 13px 20px;
   box-shadow: 0 3px 10px rgba(3, 57, 108, 0.18);
 }
@@ -792,7 +797,7 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
 }
 
 @media (max-width: 720px) {
-  .vr-stats { gap: 10px; }
+  .vr-stats { flex-direction: column; gap: 10px; }
   .vr-stats-primary { gap: 10px; }
   .vr-stat--total { align-self: stretch; }
   .vr-stats-refine-body { gap: 12px; }
