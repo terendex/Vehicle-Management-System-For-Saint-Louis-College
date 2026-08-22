@@ -792,7 +792,8 @@ from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
                           resolve_student_schedule, schedule_group)
 from accounts.models import User
-from .email_utils import send_acceptance_email, send_rejection_email, send_pending_email
+from .email_utils import (send_acceptance_email, send_rejection_email,
+                          send_pending_email, send_in_background)
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -1223,6 +1224,27 @@ def _validate_authorized_driver(registrant_type, data):
     return None
 
 
+def _acceptance_email_failed_notice(registration):
+    """The admin-bell replacement for the old `email_status: 'failed'` warning.
+
+    The pass is already issued at this point; what the CDSO needs to know is
+    that the owner never received the credentials to use it.
+    """
+    from accounts.notifications import notify
+    plate = registration.plate_number or registration.conduction_number or ''
+
+    def _notice():
+        notify(
+            'registration', 'acceptance_email_failed',
+            f"Approval email failed — {plate}",
+            f"{registration.full_name}'s vehicle pass was approved, but the email "
+            f"carrying their portal credentials could not be delivered to "
+            f"{registration.email}. Give them their login details directly.",
+            severity='warning', plate_number=plate, link='/admin/vehicles',
+        )
+    return _notice
+
+
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -1456,24 +1478,19 @@ class AcceptRegistrationView(APIView):
                   target_user=user)
         system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
-        # Send acceptance email with QR code and credentials. Sent after the
-        # transaction above has committed, so a dead SMTP server costs the
-        # applicant their email but never their account.
-        try:
-            send_acceptance_email(registration, temp_password, user.user_code)
-            email_status = 'sent'
-        except Exception:
-            # Log the failure but don't crash the acceptance
-            logger.exception(
-                "Failed to send acceptance email to %s (registration %s) — the "
-                "account was still created; the owner has no credentials until "
-                "this is resent.", registration.email, registration.pk,
-            )
-            email_status = 'failed'
+        # Acceptance mail with the QR code and credentials, handed to a background
+        # thread. The transaction above has already committed, so this was never
+        # able to affect the outcome — it only made the reviewer wait on a mail
+        # server. A failed send raises an admin notification instead of the
+        # response field the CDSO page used to warn from.
+        send_in_background(
+            send_acceptance_email, registration, temp_password, user.user_code,
+            on_failure=_acceptance_email_failed_notice(registration),
+        )
 
         return Response({
             "message": "Registration accepted and user created.",
-            "email_status": email_status,
+            "email_status": 'queued',
             "account": {
                 "user_code": user.user_code,
                 "system_id": system_id,
@@ -1676,16 +1693,13 @@ class CdsoDirectRegisterView(APIView):
             # AcceptRegistrationView.
         system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
 
-        try:
-            send_acceptance_email(registration, temp_password, user.user_code)
-            email_status = 'sent'
-        except Exception:
-            logger.exception(
-                "Failed to send acceptance email to %s (walk-in registration %s) "
-                "— the account was still created.",
-                registration.email, registration.pk,
-            )
-            email_status = 'failed'
+        # Same reasoning as AcceptRegistrationView: the account exists either way,
+        # so the send belongs off the request path with a notification on failure.
+        send_in_background(
+            send_acceptance_email, registration, temp_password, user.user_code,
+            on_failure=_acceptance_email_failed_notice(registration),
+        )
+        email_status = 'queued'
 
         return Response({
             "message": "Walk-in registered and account created.",

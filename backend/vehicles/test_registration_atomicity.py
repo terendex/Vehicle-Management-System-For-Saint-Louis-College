@@ -133,12 +133,14 @@ class AcceptanceAtomicityTests(TestCase):
         unreachable SMTP server costs the owner their credentials email and
         nothing else."""
         reg_id = self._submit()
+        # The send now happens off the request path, so the failure surfaces in
+        # email_utils' log and an admin notification rather than the response.
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR'):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
                 res = self._accept(reg_id)
 
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.data['email_status'], 'failed')
+        self.assertEqual(res.data['email_status'], 'queued')
         reg = VehicleRegistration.objects.get(pk=reg_id)
         self.assertEqual(reg.status, 'accepted')
         self.assertIsNotNone(reg.user)

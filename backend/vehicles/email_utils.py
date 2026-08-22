@@ -1,8 +1,10 @@
 import html
 import logging
+import threading
 
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
+from django.db import connection
 import qrcode
 from io import BytesIO
 import base64
@@ -10,6 +12,58 @@ import base64
 log = logging.getLogger(__name__)
 
 DASH = '—'
+
+
+def send_in_background(send, *args, on_failure=None, **kwargs):
+    """Deliver an email without making the caller wait for the mail server.
+
+    Approving a registration was spending its time on three things: hashing the
+    new account's password, a couple of dozen database round trips, and this —
+    building a large HTML mail and handing it to Brevo over HTTPS (or to Gmail
+    over SMTP on the campus half). Only the third has nothing to do with the
+    answer the reviewer is waiting for: the account, the vehicle and the pass
+    are already committed before this runs, and the send was best-effort even
+    when it was synchronous.
+
+    The failure path is what makes this safe to move. A dead mail server used to
+    surface as `email_status: 'failed'` in the response, which the CDSO page
+    turned into a "give them their credentials directly" warning. Losing that
+    signal to a background thread would be a real regression, so `on_failure`
+    replaces it — the callers raise an admin notification, which reaches the
+    same person through the bell instead of the modal, and outlives the session.
+
+    Returns the Thread so a test can join it. With EMAIL_SEND_ASYNC off (the
+    default under test) the work runs inline and None comes back — the failure
+    contract is identical either way, so only the concurrency differs.
+    """
+    def _run():
+        try:
+            send(*args, **kwargs)
+        except Exception:
+            log.exception("[email] %s failed; notifying instead", getattr(send, '__name__', send))
+            if on_failure is not None:
+                try:
+                    on_failure()
+                except Exception:
+                    log.exception("[email] the failure notice itself failed")
+
+    if not getattr(settings, 'EMAIL_SEND_ASYNC', True):
+        _run()
+        return None
+
+    def _threaded():
+        try:
+            _run()
+        finally:
+            # A thread gets its own connection the moment it touches the ORM
+            # (the templates read a department FK, and on_failure writes a
+            # Notification row). Left open, each send leaks one for the life of
+            # the worker until the pool refuses new ones.
+            connection.close()
+
+    thread = threading.Thread(target=_threaded, name='email-send', daemon=True)
+    thread.start()
+    return thread
 
 
 def esc(value):

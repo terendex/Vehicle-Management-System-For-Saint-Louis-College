@@ -445,6 +445,13 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 # Railway URL there.
 PUBLIC_SITE_URL = (os.getenv('PUBLIC_SITE_URL') or FRONTEND_URL).rstrip('/')
 
+# Acceptance mail is handed to a background thread so a reviewer approving a
+# registration does not wait on Brevo or SMTP. Off under test, where a thread
+# would make `mail.outbox` and log assertions race the assertion itself; the
+# failure contract (log + admin notification) is identical either way, so the
+# tests still cover it.
+EMAIL_SEND_ASYNC = os.getenv('EMAIL_SEND_ASYNC', 'true').lower() == 'true' and not _TESTING
+
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')

@@ -120,7 +120,6 @@ export default function VehicleRegistration() {
   const [qrViewerCopied, setQrViewerCopied] = useState(false)
   const [accountModal, setAccountModal] = useState(null)
   const [blockPrompt, setBlockPrompt] = useState(null)  // registration-block 409 payload
-  const [emailFailed, setEmailFailed] = useState(false)
 
   useEffect(() => {
     fetchRegistrations()
@@ -238,7 +237,6 @@ export default function VehicleRegistration() {
       refreshAll()
       if (result?.account) {
         setAccountModal(result.account)
-        setEmailFailed(result.email_status === 'failed')
       } else {
         showResult('Registration accepted successfully!', 'success')
       }
@@ -1236,15 +1234,14 @@ export default function VehicleRegistration() {
                 <span className="account-cred-field">Password</span>
                 <span className="account-cred-val account-cred-muted">Sent securely to owner's email</span>
               </div>
-              {emailFailed ? (
-                <p className="account-cred-warning is-error">
-                  ⚠ Email failed to send. Please check SMTP settings and share credentials manually.
-                </p>
-              ) : (
-                <p className="account-cred-warning is-ok">
-                  ✓ Credentials have been emailed to the vehicle owner.
-                </p>
-              )}
+              {/* The send is queued rather than awaited, so approving no longer
+                  waits on the mail server. Delivery therefore is not known yet;
+                  a failure raises a warning in Notifications instead of here. */}
+              <p className="account-cred-warning is-ok">
+                ✓ Credentials are on their way to the vehicle owner. If delivery fails,
+                a warning appears in <strong>Notifications</strong> — share the details
+                directly if that happens.
+              </p>
             </div>
 
             <div className="account-sections">

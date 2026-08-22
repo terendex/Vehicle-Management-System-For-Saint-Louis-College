@@ -289,17 +289,80 @@ class MailFailureIsReportedTests(TestCase):
         self.assertEqual(VehicleRegistration.objects.get(pk=reg_id).status, 'rejected')
 
     def test_acceptance_reports_a_dead_mail_server_and_keeps_the_account(self):
+        """The acceptance mail moved off the request path, so a dead server no
+        longer reaches the reviewer through the response. It has to reach them
+        somewhere, or an owner silently never gets their credentials — the
+        admin bell is that somewhere."""
+        from accounts.models import Notification
+
         reg_id = self._submit().data['id']
         self.client.force_authenticate(user=self.admin)
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR'):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
                 res = self.client.post(f'/api/vehicles/registrations/{reg_id}/accept/',
                                        {'or_number': '1234567'}, format='json')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.data['email_status'], 'failed')
+        # The send is queued, not awaited — the reviewer is not made to wait on
+        # a mail server for an outcome already committed.
+        self.assertEqual(res.data['email_status'], 'queued')
+
         reg = VehicleRegistration.objects.get(pk=reg_id)
         self.assertEqual(reg.status, 'accepted')
         self.assertIsNotNone(reg.user, 'the account must survive a mail failure')
+
+        notice = Notification.objects.filter(event='acceptance_email_failed').first()
+        self.assertIsNotNone(
+            notice, 'a failed credentials email must still reach the CDSO somehow')
+        self.assertIn(reg.email, notice.message)
+        self.assertEqual(notice.severity, 'warning')
+
+    def test_a_successful_acceptance_raises_no_failure_notice(self):
+        from accounts.models import Notification
+
+        reg_id = self._submit().data['id']
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.post(f'/api/vehicles/registrations/{reg_id}/accept/',
+                               {'or_number': '1234567'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['email_status'], 'queued')
+        self.assertFalse(
+            Notification.objects.filter(event='acceptance_email_failed').exists(),
+            'a delivered email must not raise a failure notice')
+
+    def test_the_background_sender_really_runs_on_a_thread(self):
+        """The inline mode the rest of the suite runs in must not be the only
+        path that works — this exercises the threaded one and joins it."""
+        from django.core import mail
+        from vehicles.email_utils import send_in_background
+
+        seen = {}
+
+        def _send(marker):
+            seen['marker'] = marker
+            mail.send_mail('subject', 'body', 'from@slc.edu.ph', ['to@slc.edu.ph'])
+
+        with override_settings(EMAIL_SEND_ASYNC=True):
+            thread = send_in_background(_send, 'ran')
+        self.assertIsNotNone(thread, 'async mode must hand back a thread')
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), 'the send thread did not finish')
+        self.assertEqual(seen.get('marker'), 'ran')
+
+    def test_a_threaded_failure_still_reaches_on_failure(self):
+        from vehicles.email_utils import send_in_background
+
+        called = {}
+
+        def _boom():
+            raise RuntimeError('mail server down')
+
+        with override_settings(EMAIL_SEND_ASYNC=True):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
+                thread = send_in_background(
+                    _boom, on_failure=lambda: called.setdefault('notified', True))
+                thread.join(timeout=10)
+        self.assertTrue(called.get('notified'),
+                        'a failure on the thread must still raise its notice')
 
     def test_password_reset_logs_instead_of_failing_silently(self):
         User.objects.create_user(email='owner@slc.edu.ph', full_name='Owner',
