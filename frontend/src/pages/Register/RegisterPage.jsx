@@ -1159,10 +1159,11 @@ export default function RegisterPage() {
 
           <form onSubmit={handleSubmit} className="register-form" noValidate>
 
-            {/* ── Campus Schedule ──
+            {/* ── Campus Schedule notice ──
                 Ahead of every other section on purpose: slots are first come,
-                first serve, so the applicant claims a rotation before working
-                through the rest of the form rather than after.
+                first serve, so the applicant knows what is at stake before
+                working through the rest of the form. The picker itself sits
+                further down, with the rest of the student details.
                 A rotation is taken whole — picking loose days produced passes
                 whose stored days did not match the schedule printed on them. */}
             {isStudent && (
@@ -1190,58 +1191,6 @@ export default function RegisterPage() {
                         </span>
                       </div>
                     )}
-
-                    {formData.student_level === 'sped' ? (
-                      <div className="schedule-group-picker">
-                        <div className="schedule-group-card schedule-group-card--sped">
-                          <span className="schedule-group-days">Monday – Saturday</span>
-                          <span className="schedule-group-caption">All campus days assigned</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="schedule-group-picker">
-                        {SCHEDULE_GROUPS.map(group => {
-                          const slot = groupSlots(group)
-                          const isFull = slot?.available === 0
-                          const isSelected = formData.schedule === group.code
-                          return (
-                            <button
-                              key={group.code}
-                              type="button"
-                              className={[
-                                'schedule-group-card',
-                                isSelected ? 'schedule-group-card--selected' : '',
-                                isFull ? 'schedule-group-card--full' : '',
-                              ].filter(Boolean).join(' ')}
-                              onClick={() => !isFull && selectSchedule(group)}
-                              disabled={isFull}
-                              aria-pressed={isSelected}
-                              title={isFull ? `The ${group.short} schedule is full` : group.caption}
-                            >
-                              <span className="schedule-group-days">{group.short}</span>
-                              <span className="schedule-group-caption">{group.caption}</span>
-                              <span className="schedule-group-slots">
-                                {loadingSlots
-                                  ? '···'
-                                  : slot
-                                    ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
-                                    : '—'}
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-
-                    <div className="campus-day-summary">
-                      <span className="campus-day-counter">
-                        {formData.student_level === 'sped'
-                          ? 'Entry is allowed Monday to Saturday.'
-                          : formData.schedule
-                            ? `You may enter on ${formData.campus_days.join(', ')}.`
-                            : 'No schedule selected yet.'}
-                      </span>
-                    </div>
                   </div>
                 </div>
                 <hr className="divider" />
@@ -1809,6 +1758,69 @@ export default function RegisterPage() {
                       )}
                     </>
                   )}
+                </div>
+              )}
+
+              {/* ── Campus Schedule picker ──
+                  The first-come-first-serve notice sits at the top of the form;
+                  the rotation itself is claimed here, right after the driver is
+                  settled, so the whole student block reads in one pass. */}
+              {isStudent && (
+                <div className="form-group col-span-2">
+                  <label className="days-label">
+                    Select Your Campus Schedule <span className="required">*</span>
+                  </label>
+                  {formData.student_level === 'sped' ? (
+                    <div className="schedule-group-picker">
+                      <div className="schedule-group-card schedule-group-card--sped">
+                        <span className="schedule-group-days">Monday – Saturday</span>
+                        <span className="schedule-group-caption">All campus days assigned</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="schedule-group-picker">
+                      {SCHEDULE_GROUPS.map(group => {
+                        const slot = groupSlots(group)
+                        const isFull = slot?.available === 0
+                        const isSelected = formData.schedule === group.code
+                        return (
+                          <button
+                            key={group.code}
+                            type="button"
+                            className={[
+                              'schedule-group-card',
+                              isSelected ? 'schedule-group-card--selected' : '',
+                              isFull ? 'schedule-group-card--full' : '',
+                            ].filter(Boolean).join(' ')}
+                            onClick={() => !isFull && selectSchedule(group)}
+                            disabled={isFull}
+                            aria-pressed={isSelected}
+                            title={isFull ? `The ${group.short} schedule is full` : group.caption}
+                          >
+                            <span className="schedule-group-days">{group.short}</span>
+                            <span className="schedule-group-caption">{group.caption}</span>
+                            <span className="schedule-group-slots">
+                              {loadingSlots
+                                ? '···'
+                                : slot
+                                  ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
+                                  : '—'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <div className="campus-day-summary">
+                    <span className="campus-day-counter">
+                      {formData.student_level === 'sped'
+                        ? 'Entry is allowed Monday to Saturday.'
+                        : formData.schedule
+                          ? `You may enter on ${formData.campus_days.join(', ')}.`
+                          : 'No schedule selected yet.'}
+                    </span>
+                  </div>
                 </div>
               )}
 
