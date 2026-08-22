@@ -769,13 +769,6 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
 .vr-stat--total .vr-stat-value { color: #fff; font-size: 28px; }
 .vr-stat--total .vr-stat-label { color: #C7DCEC; }
 
-/* Status tints match the table's status badges so the same word reads the
-   same colour whether it is a count or a row. */
-.vr-stat--pending  { --tile-accent: #8A6B00; --tile-tint: #FCF5E3; }
-.vr-stat--accepted { --tile-accent: #12915A; --tile-tint: #E9F6F0; }
-.vr-stat--rejected { --tile-accent: #C62828; --tile-tint: #FCECEC; }
-.vr-stat--expired  { --tile-accent: #64839C; --tile-tint: #EEF3F8; }
-
 /* Fee tints: unpaid is the one that wants chasing, exempt is a non-event. */
 .vr-stat--pay-unpaid { --tile-accent: #C62828; --tile-tint: #FCECEC; }
 .vr-stat--pay-paid   { --tile-accent: #12915A; --tile-tint: #E9F6F0; }

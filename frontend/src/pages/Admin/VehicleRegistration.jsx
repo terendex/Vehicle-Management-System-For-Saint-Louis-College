@@ -427,34 +427,16 @@ export default function VehicleRegistration() {
           }]}
         />
 
-        {/* Two tiers, because the axes are not peers. Status is navigation: it
-            decides which rows the table loads, so it sits on the primary line
-            with the total. Payment and registrant type only narrow whatever
-            status is already on screen, so they are grouped into one panel
-            underneath that states the scope once instead of tagging each
-            heading with it. */}
+        {/* Status is navigation — it decides which rows the table loads at all —
+            and the toolbar's status select is where that choice lives. Payment
+            and registrant type only narrow whatever status is already on
+            screen, so they stay here as tiles in one panel that states that
+            scope once instead of tagging each heading with it. */}
         <div className="vr-stats">
           <div className="vr-stats-primary">
             <div className="vr-stat vr-stat--total">
               <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
               <span className="vr-stat-label">Total Registrations</span>
-            </div>
-            <div className="vr-stat-group">
-              <p className="vr-stat-group-title">By Status</p>
-              <div className="vr-stat-row">
-                {(summary?.by_status ?? []).map(st => (
-                  <StatTile
-                    key={st.key}
-                    variant={st.key}
-                    count={st.count}
-                    label={st.label}
-                    active={statusFilter === st.key}
-                    onSelect={st.key === OTHER_KEY ? null : () => selectStatus(st.key)}
-                    title={`Show ${st.label.toLowerCase()} registrations`}
-                  />
-                ))}
-                {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
-              </div>
             </div>
           </div>
 
