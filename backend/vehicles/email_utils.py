@@ -356,6 +356,58 @@ def send_pending_email(registration):
     )
     ref_number = f"REG-{str(registration.pk).zfill(6)}"
 
+    # ── Payment call-to-action ──
+    # The applicant records their own payment now: they settle the fee at the
+    # Accounting Office and upload the Official Receipt through this link, so CDSO
+    # verifies an image instead of re-keying a number at a counter.
+    # PUBLIC_SITE_URL, not FRONTEND_URL — the campus half's FRONTEND_URL is a LAN
+    # address that resolves nowhere from an applicant's phone.
+    base_url = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    fee = registration.pass_fee()
+    if fee == 0:
+        # Fee-exempt: no Accounting stop, no receipt, and no link to send.
+        payment_block = """
+                <div style="margin: 0 32px 24px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:10px; padding:18px 20px;">
+                    <h4 style="color:#065F46;margin:0 0 8px;font-size:14px;">No Payment Required</h4>
+                    <p style="color:#047857;font-size:13px;margin:0;line-height:1.7;">
+                        Your department is <strong>exempt</strong> from the Vehicle Pass fee, so there is
+                        nothing to settle at the Accounting Office. Simply proceed to the CDSO Office once
+                        your application is approved.
+                    </p>
+                </div>"""
+        payment_steps = "<li>No Vehicle Pass fee is due &#8212; your department is exempt.</li>"
+        payment_text  = "No Vehicle Pass fee is due - your department is exempt.\n\n"
+    else:
+        payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
+        payment_block = f"""
+                <div style="margin: 0 32px 24px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; padding:18px 20px;">
+                    <h4 style="color:#1E40AF;margin:0 0 8px;font-size:14px;">Next Step &#8212; Pay &amp; Upload Your Receipt</h4>
+                    <p style="color:#1D4ED8;font-size:13px;margin:0 0 14px;line-height:1.7;">
+                        Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the
+                        <strong>Accounting Office</strong>, then upload a photo of your Official Receipt
+                        using the button below. Your application stays <strong>unpaid</strong> and is not
+                        queued for review until the receipt is received.
+                    </p>
+                    <a href="{payment_link}"
+                       style="display:inline-block;background:#1D4ED8;color:#FFFFFF;text-decoration:none;
+                              padding:11px 22px;border-radius:8px;font-size:13px;font-weight:700;">
+                        Upload Official Receipt
+                    </a>
+                    <p style="color:#60A5FA;font-size:11px;margin:12px 0 0;word-break:break-all;">
+                        Or paste this link into your browser: {payment_link}
+                    </p>
+                </div>"""
+        payment_steps = (
+            f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
+            f"Office, then <strong>upload your Official Receipt</strong> using the link above.</li>"
+        )
+        payment_text = (
+            f"NEXT STEP - PAY AND UPLOAD YOUR RECEIPT\n"
+            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then upload\n"
+            f"a photo of your Official Receipt here:\n{payment_link}\n\n"
+            f"Your application is not queued for review until the receipt is received.\n\n"
+        )
+
     html_message = f"""
     <html>
         <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
@@ -425,10 +477,14 @@ def send_pending_email(registration):
                     </table>
                 </div>
 
+                <!-- Payment -->
+                {payment_block}
+
                 <!-- What Happens Next -->
                 <div style="margin: 0 32px 24px; background: #F0F2F7; border-radius: 10px; padding: 18px 20px;">
                     <h4 style="color:#2A2B61;margin:0 0 12px;font-size:14px;">What Happens Next?</h4>
                     <ol style="margin:0;padding-left:20px;color:#5A5F72;font-size:13px;line-height:1.9;">
+                        {payment_steps}
                         <li>The CDSO office will review your submitted documents and information.</li>
                         <li>You will receive an email once your registration is <strong>approved</strong> or <strong>declined</strong>.</li>
                         <li>If approved, your portal login credentials and vehicle QR code will be sent to this email.</li>
@@ -456,6 +512,7 @@ def send_pending_email(registration):
             f"Plate Number:  {registration.plate_number}\n"
             f"Type:          {type_display}\n"
             f"Submitted:     {submitted_at}\n\n"
+            f"{payment_text}"
             f"You will be notified by email once a decision has been made.\n\n"
             f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),

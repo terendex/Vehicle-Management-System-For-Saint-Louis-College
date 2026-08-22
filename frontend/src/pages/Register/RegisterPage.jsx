@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft, FileText } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
@@ -8,6 +8,25 @@ import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 const LICENSE_IMAGE_MAX_MB    = 5
 const LICENSE_IMAGE_MAX_BYTES = LICENSE_IMAGE_MAX_MB * 1024 * 1024
 const LICENSE_IMAGE_TYPES     = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+
+/* ── Assessment form ──
+   The registrar's assessment form is what proves the applicant is genuinely
+   enrolled — a student number alone is trivial to make up. PDF is accepted
+   alongside the image types because that is what the student portal hands out;
+   most applicants photograph the printed copy instead. */
+const ASSESSMENT_FILE_MAX_MB    = 5
+const ASSESSMENT_FILE_MAX_BYTES = ASSESSMENT_FILE_MAX_MB * 1024 * 1024
+const ASSESSMENT_FILE_TYPES     = [...LICENSE_IMAGE_TYPES, 'application/pdf']
+
+/* ── School email ──
+   Students and employees are issued <8-digit ID>@slc-sflu.edu.ph, so the form
+   accepts nothing else from them: it is the cheapest check that the applicant
+   actually belongs to SLC, and it makes the address the CDSO's approval mail
+   goes to one the school controls. Fetchers are parents and guardians with no
+   school account, so they keep a plain email address. */
+const SCHOOL_EMAIL_DOMAIN = 'slc-sflu.edu.ph'
+const SCHOOL_EMAIL_REGEX  = /^\d{8}@slc-sflu\.edu\.ph$/
+const GENERIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
@@ -205,8 +224,10 @@ export default function RegisterPage() {
   const [licenseImage, setLicenseImage] = useState(null)
   const [licensePreview, setLicensePreview] = useState(null)
   const [licenseError, setLicenseError] = useState(null)
-  // Set when the registration saved but the photo upload didn't, so the success
-  // screen can tell the applicant to bring the physical license instead.
+  const [assessmentFile, setAssessmentFile] = useState(null)
+  const [assessmentError, setAssessmentError] = useState(null)
+  // Set when the registration saved but the document upload didn't, so the
+  // success screen can tell the applicant to bring the physical copies instead.
   const [licenseUploadFailed, setLicenseUploadFailed] = useState(false)
 
   // Schedule slots & reference lists
@@ -263,6 +284,8 @@ export default function RegisterPage() {
     vehicle_color_choice: '',
     body_number: '',
     privacy_consent: false,
+    // Form-only attestation, stripped from the payload before submitting.
+    details_confirmed: false,
   })
 
   // What this applicant actually owes. Mirrors VehicleRegistration.pass_fee on
@@ -373,11 +396,19 @@ export default function RegisterPage() {
       message: 'Invalid Philippine plate number format',
       hint: 'e.g. ABC 1234 · AB 1234 · N123BC · ABC123',
     },
-    email: {
-      regex: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-      message: 'Invalid email address format',
-      hint: 'e.g. juan@example.com',
-    },
+    // Fetchers are outsiders — anything that looks like an email will do.
+    // Everyone else has to use their SLC address.
+    email: registrantType === 'fetcher'
+      ? {
+          regex: GENERIC_EMAIL_REGEX,
+          message: 'Invalid email address format',
+          hint: 'e.g. juan@example.com',
+        }
+      : {
+          regex: SCHOOL_EMAIL_REGEX,
+          message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
+          hint: `e.g. 23100174@${SCHOOL_EMAIL_DOMAIN}`,
+        },
     conduction_number: {
       regex: /^[A-Z0-9]{5,12}$/i,
       message: 'Invalid conduction number. Use 5–12 alphanumeric characters.',
@@ -504,6 +535,36 @@ export default function RegisterPage() {
     })
   }
 
+  /* ── Assessment form ──
+     No preview: half of these are PDFs, and the ones that aren't are dense
+     scans that read as noise at thumbnail size. The filename chip is enough
+     for the applicant to confirm they picked the right file. */
+  const handleAssessmentChange = (e) => {
+    const file = e.target.files?.[0]
+    // Let the user re-pick the same file after removing it
+    e.target.value = ''
+    if (!file) return
+
+    // Some browsers report an empty type for HEIC; fall back to the extension.
+    const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
+    if (!ASSESSMENT_FILE_TYPES.includes(file.type) && !extOk) {
+      setAssessmentError('Please choose a JPG, PNG, WEBP, HEIC or PDF file.')
+      return
+    }
+    if (file.size > ASSESSMENT_FILE_MAX_BYTES) {
+      setAssessmentError(`That file is ${formatFileSize(file.size)}. Please keep it under ${ASSESSMENT_FILE_MAX_MB}MB.`)
+      return
+    }
+
+    setAssessmentError(null)
+    setAssessmentFile(file)
+  }
+
+  const clearAssessmentFile = () => {
+    setAssessmentFile(null)
+    setAssessmentError(null)
+  }
+
   // Release the last object URL when the form unmounts
   useEffect(() => () => { if (licensePreview) URL.revokeObjectURL(licensePreview) }, [licensePreview])
 
@@ -621,7 +682,18 @@ export default function RegisterPage() {
       setSubmitError('You must agree to the Data Privacy Consent before submitting.')
       return
     }
+    if (!formData.details_confirmed) {
+      setSubmitError('Please confirm that all the details you entered are true, complete and correct.')
+      return
+    }
     if (registrantType === 'student') {
+      // The whole point of the attachment is proving enrolment, so a student
+      // application without it can't be reviewed — blocked here rather than
+      // letting CDSO chase it down after the fact.
+      if (!assessmentFile) {
+        setSubmitError('Please attach your assessment form so CDSO can verify your enrolment.')
+        return
+      }
       if (!formData.student_level) {
         setSubmitError('Please select your education level.')
         return
@@ -726,19 +798,28 @@ export default function RegisterPage() {
           : [],
       }
       delete payload.who_drives
+      // Form-only attestation — the backend has no column for it.
+      delete payload.details_confirmed
       // UI-only helper for the colour dropdown — the backend stores vehicle_color.
       delete payload.vehicle_color_choice
 
       const result = await registrationApi.submitOpenRegistration(payload)
 
-      if (licenseImage && result?.id) {
-        // Best-effort — a failed photo upload shouldn't block the (already submitted)
-        // registration, but the applicant is told so they can bring the physical license.
+      // Only students have an assessment form; if one was attached before the
+      // applicant switched registrant type, it is dropped rather than filed
+      // against a registration nobody will look for it on.
+      const assessment = registrantType === 'student' ? assessmentFile : null
+      if ((licenseImage || assessment) && result?.id) {
+        // Best-effort — a failed upload shouldn't block the (already submitted)
+        // registration, but the applicant is told so they can bring the physical copies.
         try {
-          await registrationApi.uploadLicenseImage(result.id, payload.email, licenseImage)
+          await registrationApi.uploadRegistrationDocuments(result.id, payload.email, {
+            license: licenseImage,
+            assessment,
+          })
         } catch (uploadErr) {
           setLicenseUploadFailed(true)
-          console.error('License image upload failed:', uploadErr)
+          console.error('Registration document upload failed:', uploadErr)
         }
       }
 
@@ -894,8 +975,9 @@ export default function RegisterPage() {
               <div className="success-license-warn">
                 <AlertTriangle size={16} />
                 <span>
-                  Your driver's license photo could not be uploaded, but your application was
-                  submitted. Just bring the physical license when you visit the CDSO Office.
+                  Your supporting documents could not be uploaded, but your application was
+                  submitted. Just bring the physical driver's license and assessment form when
+                  you visit the CDSO Office.
                 </span>
               </div>
             )}
@@ -917,12 +999,19 @@ export default function RegisterPage() {
                     <span>Pay <strong>₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong></span>
                   )}
                 </div>
+                {/* Exempt applicants never receive an Official Receipt, so the
+                    upload step does not exist for them — and the numbering has
+                    to close up rather than skip from 1 to 3. */}
+                {!feeExempt && (
+                  <div className="success-next-item">
+                    <span className="success-next-num">2</span>
+                    <span>
+                      <strong>Upload your OR</strong> using the link in the email we just sent
+                    </span>
+                  </div>
+                )}
                 <div className="success-next-item">
-                  <span className="success-next-num">2</span>
-                  <span>Bring your <strong>OR</strong> to the <strong>CDSO Office</strong></span>
-                </div>
-                <div className="success-next-item">
-                  <span className="success-next-num">3</span>
+                  <span className="success-next-num">{feeExempt ? 2 : 3}</span>
                   <span>Watch for an <strong>approval email</strong> with your portal credentials</span>
                 </div>
               </div>
@@ -1024,6 +1113,95 @@ export default function RegisterPage() {
           ) : null}
 
           <form onSubmit={handleSubmit} className="register-form">
+
+            {/* ── Campus Schedule ──
+                Ahead of every other section on purpose: slots are first come,
+                first serve, so the applicant claims a rotation before working
+                through the rest of the form rather than after.
+                A rotation is taken whole — picking loose days produced passes
+                whose stored days did not match the schedule printed on them. */}
+            {isStudent && (
+              <>
+                <div className="form-grid">
+                  <div className="form-group col-span-2">
+                    <label className="days-label">
+                      Campus Schedule <span className="required">*</span>
+                    </label>
+                    {formData.student_level === 'sped' ? (
+                      <div className="schedule-note schedule-note--sped">
+                        <Info size={13} />
+                        <span>
+                          Special Education students are assigned <strong>all campus days
+                          (Monday to Saturday)</strong>.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="schedule-note">
+                        <Info size={13} />
+                        <span>
+                          Choose <strong>one</strong> schedule — it covers all three of its days.
+                          Slots are <strong>first come, first serve</strong>; a schedule that is
+                          <strong> full</strong> cannot be selected.
+                        </span>
+                      </div>
+                    )}
+
+                    {formData.student_level === 'sped' ? (
+                      <div className="schedule-group-picker">
+                        <div className="schedule-group-card schedule-group-card--sped">
+                          <span className="schedule-group-days">Monday – Saturday</span>
+                          <span className="schedule-group-caption">All campus days assigned</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="schedule-group-picker">
+                        {SCHEDULE_GROUPS.map(group => {
+                          const slot = groupSlots(group)
+                          const isFull = slot?.available === 0
+                          const isSelected = formData.schedule === group.code
+                          return (
+                            <button
+                              key={group.code}
+                              type="button"
+                              className={[
+                                'schedule-group-card',
+                                isSelected ? 'schedule-group-card--selected' : '',
+                                isFull ? 'schedule-group-card--full' : '',
+                              ].filter(Boolean).join(' ')}
+                              onClick={() => !isFull && selectSchedule(group)}
+                              disabled={isFull}
+                              aria-pressed={isSelected}
+                              title={isFull ? `The ${group.short} schedule is full` : group.caption}
+                            >
+                              <span className="schedule-group-days">{group.short}</span>
+                              <span className="schedule-group-caption">{group.caption}</span>
+                              <span className="schedule-group-slots">
+                                {loadingSlots
+                                  ? '···'
+                                  : slot
+                                    ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
+                                    : '—'}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    <div className="campus-day-summary">
+                      <span className="campus-day-counter">
+                        {formData.student_level === 'sped'
+                          ? 'Entry is allowed Monday to Saturday.'
+                          : formData.schedule
+                            ? `You may enter on ${formData.campus_days.join(', ')}.`
+                            : 'No schedule selected yet.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <hr className="divider" />
+              </>
+            )}
 
             {/* ── Registrant Type ── */}
             <h3 className="section-heading">Registrant Type</h3>
@@ -1716,84 +1894,51 @@ export default function RegisterPage() {
                 {licenseError && <span className="field-error-msg">{licenseError}</span>}
               </div>
 
-              {/* Campus schedule — students only. A rotation is taken whole:
-                  picking loose days produced passes whose stored days did not
-                  match the schedule printed on them. */}
+              {/* Assessment form — the enrolment proof. Students only: an employee
+                  or a fetching parent has no assessment to show. */}
               {isStudent && (
                 <div className="form-group col-span-2">
-                  <label className="days-label">
-                    Campus Schedule <span className="required">*</span>
-                  </label>
-                  {formData.student_level === 'sped' ? (
-                    <div className="schedule-note schedule-note--sped">
-                      <Info size={13} />
-                      <span>
-                        Special Education students are assigned <strong>all campus days
-                        (Monday to Saturday)</strong>.
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="schedule-note">
-                      <Info size={13} />
-                      <span>
-                        Choose <strong>one</strong> schedule — it covers all three of its days.
-                        Slots are <strong>first come, first serve</strong>; a schedule that is
-                        <strong> full</strong> cannot be selected.
-                      </span>
-                    </div>
-                  )}
+                  <label>Assessment Form <span className="required">*</span></label>
 
-                  {formData.student_level === 'sped' ? (
-                    <div className="schedule-group-picker">
-                      <div className="schedule-group-card schedule-group-card--sped">
-                        <span className="schedule-group-days">Monday – Saturday</span>
-                        <span className="schedule-group-caption">All campus days assigned</span>
+                  {!assessmentFile ? (
+                    <label className="license-upload">
+                      <input
+                        type="file"
+                        accept={ASSESSMENT_FILE_TYPES.join(',')}
+                        onChange={handleAssessmentChange}
+                        className="license-upload-input"
+                      />
+                      <Upload size={18} className="license-upload-icon" />
+                      <span className="license-upload-text">
+                        <strong>Choose a file</strong>
+                        <span>JPG, PNG, WEBP, HEIC or PDF · up to {ASSESSMENT_FILE_MAX_MB}MB</span>
+                      </span>
+                    </label>
+                  ) : (
+                    <div className="license-preview">
+                      <div className="license-preview-img license-preview-noimg">
+                        <FileText size={20} />
                       </div>
-                    </div>
-                  ) : (
-                    <div className="schedule-group-picker">
-                      {SCHEDULE_GROUPS.map(group => {
-                        const slot = groupSlots(group)
-                        const isFull = slot?.available === 0
-                        const isSelected = formData.schedule === group.code
-                        return (
-                          <button
-                            key={group.code}
-                            type="button"
-                            className={[
-                              'schedule-group-card',
-                              isSelected ? 'schedule-group-card--selected' : '',
-                              isFull ? 'schedule-group-card--full' : '',
-                            ].filter(Boolean).join(' ')}
-                            onClick={() => !isFull && selectSchedule(group)}
-                            disabled={isFull}
-                            aria-pressed={isSelected}
-                            title={isFull ? `The ${group.short} schedule is full` : group.caption}
-                          >
-                            <span className="schedule-group-days">{group.short}</span>
-                            <span className="schedule-group-caption">{group.caption}</span>
-                            <span className="schedule-group-slots">
-                              {loadingSlots
-                                ? '···'
-                                : slot
-                                  ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
-                                  : '—'}
-                            </span>
-                          </button>
-                        )
-                      })}
+                      <div className="license-preview-meta">
+                        <span className="license-preview-name" title={assessmentFile.name}>{assessmentFile.name}</span>
+                        <span className="license-preview-size">{formatFileSize(assessmentFile.size)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="license-preview-remove"
+                        onClick={clearAssessmentFile}
+                        aria-label="Remove assessment form"
+                      >
+                        <X size={15} />
+                      </button>
                     </div>
                   )}
 
-                  <div className="campus-day-summary">
-                    <span className="campus-day-counter">
-                      {formData.student_level === 'sped'
-                        ? 'Entry is allowed Monday to Saturday.'
-                        : formData.schedule
-                          ? `You may enter on ${formData.campus_days.join(', ')}.`
-                          : 'No schedule selected yet.'}
-                    </span>
-                  </div>
+                  <span className="field-hint">
+                    Your latest registrar's assessment form — this is what confirms you are an
+                    enrolled SLC student. A clear photo or the PDF from the student portal both work.
+                  </span>
+                  {assessmentError && <span className="field-error-msg">{assessmentError}</span>}
                 </div>
               )}
 
@@ -1943,10 +2088,10 @@ export default function RegisterPage() {
                       on the confirmation screen after submitting. */}
                   {feeExempt ? (
                     <li>To settle the Vehicle Pass fee assessed for your department at the
-                      <strong> Accounting Office</strong>, where one applies, and present the
-                      Official Receipt (OR) at the <strong>CDSO Office</strong>.</li>
+                      <strong> Accounting Office</strong>, where one applies, and to upload the
+                      Official Receipt (OR) using the link sent to my email.</li>
                   ) : (
-                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong> and present the Official Receipt (OR) at the CDSO Office.</li>
+                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong>, and to upload the Official Receipt (OR) using the link sent to my email.</li>
                   )}
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
@@ -1976,6 +2121,31 @@ export default function RegisterPage() {
                     </div>
                   </li>
                 </ol>
+              </div>
+
+              {/* Attestation — sits between the terms and the privacy consent so the
+                  applicant ticks it while the terms are still on screen. Separate
+                  from privacy_consent on purpose: agreeing to be bound by the rules
+                  and vouching for the data are two different promises, and CDSO
+                  rejects applications for the second far more often than the first. */}
+              <div className="consent-section">
+                <label className="consent-label">
+                  <input
+                    type="checkbox"
+                    name="details_confirmed"
+                    checked={formData.details_confirmed}
+                    onChange={handleInputChange}
+                    required
+                    className="consent-checkbox"
+                  />
+                  <span>
+                    <strong>CONFIRMATION OF DETAILS:</strong> I confirm that all the details I
+                    have entered in this form — my personal information, vehicle details and the
+                    documents I attached — are <strong>true, complete and correct</strong>. I
+                    understand that any false or misleading information is grounds for the denial
+                    or revocation of my vehicle pass.
+                  </span>
+                </label>
               </div>
 
               <div className="consent-section">

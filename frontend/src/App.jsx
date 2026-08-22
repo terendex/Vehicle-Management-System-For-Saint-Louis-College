@@ -39,6 +39,7 @@ const SecurityAuditLogPage    = lazy(() => import('./pages/Security/SecurityAudi
 const SecurityQRLogin         = lazy(() => import('./pages/Security/SecurityQRLogin'))
 const OwnerDashboard          = lazy(() => import('./pages/VehicleOwner/OwnerDashboard'))
 const RegisterPage            = lazy(() => import('./pages/Register/RegisterPage'))
+const PaymentPage             = lazy(() => import('./pages/Payment/PaymentPage'))
 const ForgotPasswordPage      = lazy(() => import('./pages/ForgotPassword/ForgotPasswordPage'))
 const ResetPasswordPage       = lazy(() => import('./pages/ResetPassword/ResetPasswordPage'))
 const PolicyPage              = lazy(() => import('./pages/Policy/PolicyPage'))
@@ -123,6 +124,9 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        {/* Applicant's own proof-of-payment step, reached from the pending email.
+            Public: the payment token in the query string is the only key. */}
+        <Route path="/registration/payment" element={<PaymentPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/policy" element={<PolicyPage />} />

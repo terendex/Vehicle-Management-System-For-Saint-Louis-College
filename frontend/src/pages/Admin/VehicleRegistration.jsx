@@ -22,6 +22,15 @@ const SCHEDULE_LABELS = {
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DAY_SHORT = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' }
 
+/* Payment is a separate axis from review status: an application can be rejected
+   after the applicant already paid, and a fee-exempt one is neither paid nor
+   owing. The table shows both badges rather than folding them into one word. */
+const PAYMENT_LABELS = {
+  unpaid: 'Unpaid',
+  paid:   'Paid',
+  exempt: 'Exempt',
+}
+
 function formatSchedule(entity) {
   if (!entity?.schedule) return '—'
   if (entity.schedule === 'MIXED' && entity.campus_days?.length > 0) {
@@ -30,24 +39,29 @@ function formatSchedule(entity) {
   return SCHEDULE_LABELS[entity.schedule] || entity.schedule
 }
 
-const DATE_PERIODS = [
-  { value: 'all',   label: 'All' },
-  { value: 'day',   label: 'Today' },
-  { value: 'week',  label: 'Week' },
-  { value: 'month', label: 'Month' },
-  { value: 'year',  label: 'Year' },
-]
+// The backend reports an "other" bucket only when a row carries a registrant
+// type or status that is no longer in either enum. It is shown so the counts
+// still add up to the total, but it is not a filter: the status dropdown has no
+// such option and the type filter would match nothing, so a click would land
+// the page on an empty table it could not explain.
+const OTHER_KEY = 'other'
 
-function getPeriodStart(period) {
-  const d = new Date()
-  if (period === 'day') { d.setHours(0, 0, 0, 0) }
-  else if (period === 'week') {
-    const dow = d.getDay()
-    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
-    d.setHours(0, 0, 0, 0)
-  } else if (period === 'month') { d.setDate(1); d.setHours(0, 0, 0, 0) }
-  else if (period === 'year')  { d.setMonth(0, 1); d.setHours(0, 0, 0, 0) }
-  return d
+function StatTile({ variant, count, label, active, onSelect, title }) {
+  const className = `vr-stat vr-stat--sm vr-stat--${variant} ${active ? 'active' : ''}`
+  if (!onSelect) {
+    return (
+      <div className={`${className} vr-stat--static`} title={`${label} — not a filter`}>
+        <span className="vr-stat-value">{count}</span>
+        <span className="vr-stat-label">{label}</span>
+      </div>
+    )
+  }
+  return (
+    <button type="button" className={className} onClick={onSelect} title={title}>
+      <span className="vr-stat-value">{count}</span>
+      <span className="vr-stat-label">{label}</span>
+    </button>
+  )
 }
 
 export default function VehicleRegistration() {
@@ -55,9 +69,13 @@ export default function VehicleRegistration() {
   const [registrations, setRegistrations] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('pending')
-  const [datePeriod, setDatePeriod] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [paymentFilter, setPaymentFilter] = useState('all')
   const [search, setSearch] = useState('')
+
+  // Counts across every status and registrant type. The table only ever holds
+  // one status at a time, so these cannot be tallied from the rows on screen.
+  const [summary, setSummary] = useState(null)
 
   // Pagination
   const [regPage, setRegPage] = useState(1)
@@ -73,6 +91,9 @@ export default function VehicleRegistration() {
   const [orNumber, setOrNumber] = useState('')
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
   const [specialCaseReason, setSpecialCaseReason] = useState('')
+  // Required by the backend when the application has no Official Receipt on
+  // file at all — a pass may still be granted, but never without a reason.
+  const [unpaidReason, setUnpaidReason] = useState('')
   const [scheduleSlots, setScheduleSlots] = useState(null) // per-day remaining student slots
 
   const orValid = orNumber.trim().length >= 6 && orNumber.trim().length <= 7
@@ -91,6 +112,18 @@ export default function VehicleRegistration() {
     fetchRegistrations()
   }, [statusFilter])
 
+  useEffect(() => { fetchSummary() }, [])
+
+  const fetchSummary = async () => {
+    try {
+      setSummary(await registrationApi.getRegistrationSummary())
+    } catch (error) {
+      // The counts are a read-out, not a gate — a failed fetch just leaves the
+      // strip on its placeholder dashes rather than blocking the table.
+      console.error('Failed to fetch registration summary:', error)
+    }
+  }
+
   const fetchRegistrations = async () => {
     setLoading(true)
     try {
@@ -106,7 +139,8 @@ export default function VehicleRegistration() {
   }
 
   // Live-refresh when a registration is created/approved/rejected anywhere
-  useLiveUpdates(fetchRegistrations, ['vehicleregistration', 'vehicle'])
+  const refreshAll = () => { fetchRegistrations(); fetchSummary() }
+  useLiveUpdates(refreshAll, ['vehicleregistration', 'vehicle'])
 
   const qrPrintRef = useRef(null)
 
@@ -183,10 +217,11 @@ export default function VehicleRegistration() {
         daysOverride.length > 0 ? daysOverride : undefined,
         tooManyDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
         acknowledgeBlock,
+        unpaidReason.trim() || undefined,
       )
       setBlockPrompt(null)
       setIsViewModalOpen(false)
-      fetchRegistrations()
+      refreshAll()
       if (result?.account) {
         setAccountModal(result.account)
         setEmailFailed(result.email_status === 'failed')
@@ -215,7 +250,7 @@ export default function VehicleRegistration() {
       setIsRejectModalOpen(false)
       setIsViewModalOpen(false)
       setRejectReason('')
-      fetchRegistrations()
+      refreshAll()
       showResult('Registration rejected successfully.', 'success')
     } catch (error) {
       showResult(error.response?.data?.error || 'Failed to reject registration.', 'error')
@@ -228,9 +263,12 @@ export default function VehicleRegistration() {
   const openViewModal = (reg) => {
     setSelectedReg(reg)
     setIsViewModalOpen(true)
-    setOrNumber('')
+    // Prefilled from the receipt the applicant uploaded, so the reviewer is
+    // confirming a number against the image rather than re-typing it.
+    setOrNumber(reg.or_number || '')
     setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
     setSpecialCaseReason('')
+    setUnpaidReason('')
     // Per-day remaining student slots — so the admin can see capacity before
     // assigning campus days (same slot counts shown on the public register form).
     setScheduleSlots(null)
@@ -241,8 +279,8 @@ export default function VehicleRegistration() {
   const openRejectModal = () => setIsRejectModalOpen(true)
 
   const filteredRegistrations = registrations.filter(r => {
-    if (datePeriod !== 'all' && new Date(r.created_at) < getPeriodStart(datePeriod)) return false
     if (typeFilter !== 'all' && r.registrant_type !== typeFilter) return false
+    if (paymentFilter !== 'all' && r.payment_status !== paymentFilter) return false
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       if (
@@ -255,8 +293,19 @@ export default function VehicleRegistration() {
   })
   const paginatedRegistrations = filteredRegistrations.slice((regPage - 1) * itemsPerPage, regPage * itemsPerPage)
   const totalRegPages = Math.ceil(filteredRegistrations.length / itemsPerPage)
-  const hasActiveFilters = datePeriod !== 'all' || typeFilter !== 'all' || search.trim() !== ''
-  const clearFilters = () => { setDatePeriod('all'); setTypeFilter('all'); setSearch(''); setRegPage(1) }
+  /* The table only ever loads one status, but the summary counts every row in
+     the system. So the payment and type tiles are scoped to the status on
+     screen: their counts are what clicking them actually reveals. Without this
+     an "Unpaid 120" tile sat above a table showing 8 rows, which reads as a
+     broken page rather than as two different questions. The status tiles stay
+     global — they are navigation, and their count is what you get after the
+     click, because clicking one reloads the table for that status. */
+  const activeStatus = (summary?.by_status ?? []).find(st => st.key === statusFilter)
+  const scopedCount = (axis, key, fallback) =>
+    activeStatus?.[axis]?.[key] ?? (activeStatus ? 0 : fallback)
+
+  const hasActiveFilters = typeFilter !== 'all' || paymentFilter !== 'all' || search.trim() !== ''
+  const clearFilters = () => { setTypeFilter('all'); setPaymentFilter('all'); setSearch(''); setRegPage(1) }
 
   return (
     <>
@@ -275,24 +324,99 @@ export default function VehicleRegistration() {
           label="Registrations Report"
           fileBase="registrations-report"
           fetchBlob={registrationApi.exportRegistrationsReport}
+          extraReports={[{
+            key: 'summary',
+            label: 'Summary PDF',
+            fileBase: 'Registration Summary Report',
+            fetch: registrationApi.exportRegistrationSummaryReport,
+          }]}
         />
+
+        {/* Headline counts — how many have registered, of which type, at which
+            stage. Reads from the summary endpoint, so it covers every status
+            rather than only the one the table happens to be showing. */}
+        <div className="vr-stats">
+          <div className="vr-stat vr-stat--total">
+            <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
+            <span className="vr-stat-label">Total Registrations</span>
+          </div>
+          <div className="vr-stat-group">
+            <p className="vr-stat-group-title">By Status</p>
+            <div className="vr-stat-row">
+              {(summary?.by_status ?? []).map(st => (
+                <StatTile
+                  key={st.key}
+                  variant={st.key}
+                  count={st.count}
+                  label={st.label}
+                  active={statusFilter === st.key}
+                  onSelect={st.key === OTHER_KEY ? null : () => { setStatusFilter(st.key); setRegPage(1) }}
+                  title={`Show ${st.label.toLowerCase()} registrations`}
+                />
+              ))}
+              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+            </div>
+          </div>
+          <div className="vr-stat-group">
+            {/* Payment is a second axis over the same rows, not more statuses —
+                a rejected application can already have been paid, and an exempt
+                one is neither paid nor unpaid. So this row totals to the same
+                number as the status row rather than subdividing it. Selecting a
+                tile drives the same paymentFilter as the dropdown below. */}
+            <p className="vr-stat-group-title">
+              By Fee Payment
+              {activeStatus && <span className="vr-stat-group-scope"> · {activeStatus.label.toLowerCase()} only</span>}
+            </p>
+            <div className="vr-stat-row">
+              {(summary?.by_payment ?? []).map(pm => (
+                <StatTile
+                  key={pm.key}
+                  variant={`pay-${pm.key}`}
+                  count={scopedCount('by_payment', pm.key, pm.count)}
+                  label={pm.label}
+                  active={paymentFilter === pm.key}
+                  onSelect={pm.key === OTHER_KEY ? null : () => {
+                    setPaymentFilter(paymentFilter === pm.key ? 'all' : pm.key); setRegPage(1)
+                  }}
+                  title={activeStatus
+                    ? `Filter to ${pm.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
+                    : `Filter the table to ${pm.label.toLowerCase()} registrations`}
+                />
+              ))}
+              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+            </div>
+          </div>
+          <div className="vr-stat-group">
+            <p className="vr-stat-group-title">
+              By Registrant Type
+              {activeStatus && <span className="vr-stat-group-scope"> · {activeStatus.label.toLowerCase()} only</span>}
+            </p>
+            <div className="vr-stat-row">
+              {(summary?.by_type ?? []).map(t => (
+                <StatTile
+                  key={t.key}
+                  variant="type"
+                  count={scopedCount('by_type', t.key, t.count)}
+                  label={t.label}
+                  active={typeFilter === t.key}
+                  onSelect={t.key === OTHER_KEY ? null : () => {
+                    setTypeFilter(typeFilter === t.key ? 'all' : t.key); setRegPage(1)
+                  }}
+                  title={activeStatus
+                    ? `Filter to ${t.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
+                    : `Filter the table to ${t.label.toLowerCase()} registrations`}
+                />
+              ))}
+              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+            </div>
+          </div>
+        </div>
 
         {/* SECTION: Registrations */}
         <div className="section-container">
           <h2 className="section-title" style={{ marginBottom: 14 }}>Applications</h2>
           <div className="vr-toolbar">
             <div className="vr-toolbar-left">
-              <div className="vr-period-btns">
-                {DATE_PERIODS.map(p => (
-                  <button
-                    key={p.value}
-                    className={`vr-period-btn ${datePeriod === p.value ? 'active' : ''}`}
-                    onClick={() => { setDatePeriod(p.value); setRegPage(1) }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
               <div className="vr-search-wrap">
                 <Search size={14} className="vr-search-icon" />
                 <input
@@ -321,12 +445,26 @@ export default function VehicleRegistration() {
               </select>
               <select
                 className="filter-select"
+                value={paymentFilter}
+                onChange={(e) => { setPaymentFilter(e.target.value); setRegPage(1) }}
+                title="Filter by whether the Vehicle Pass fee has been settled"
+              >
+                <option value="all">All Payments</option>
+                <option value="paid">Paid</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="exempt">Fee Exempt</option>
+              </select>
+              <select
+                className="filter-select"
                 value={statusFilter}
                 onChange={(e) => { setStatusFilter(e.target.value); setRegPage(1) }}
               >
                 <option value="pending">Pending Review</option>
                 <option value="accepted">Accepted</option>
                 <option value="rejected">Rejected</option>
+                {/* The counts strip includes expired, and its tile drives this
+                    select — without the option the dropdown would blank out. */}
+                <option value="expired">Expired</option>
               </select>
               {hasActiveFilters && (
                 <button className="vr-clear-btn" onClick={clearFilters} title="Clear filters">
@@ -344,12 +482,13 @@ export default function VehicleRegistration() {
                   <th>Plate Number</th>
                   <th>Schedule</th>
                   <th>Submitted</th>
+                  <th>Payment</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <TableLoaderRow colSpan={7} label="Loading registrations…" />}
+                {loading && <TableLoaderRow colSpan={8} label="Loading registrations…" />}
                 {!loading && paginatedRegistrations.map(r => (
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
@@ -357,6 +496,11 @@ export default function VehicleRegistration() {
                     <td className="token-link">{r.plate_number}</td>
                     <td>{formatSchedule(r)}</td>
                     <td>{format(new Date(r.created_at), 'PP')}</td>
+                    <td>
+                      <span className={`payment-badge payment-${r.payment_status || 'unpaid'}`}>
+                        {PAYMENT_LABELS[r.payment_status] || 'Unpaid'}
+                      </span>
+                    </td>
                     <td>
                       <span className={`status-badge status-${r.status}`}>
                         {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
@@ -374,7 +518,7 @@ export default function VehicleRegistration() {
                 ))}
                 {!loading && filteredRegistrations.length === 0 && (
                   <tr className="empty-row">
-                    <td colSpan="7">No {statusFilter} registrations found{datePeriod !== 'all' ? ' for this period' : ''}.</td>
+                    <td colSpan="8">No {statusFilter} registrations found{hasActiveFilters ? ' for these filters' : ''}.</td>
                   </tr>
                 )}
               </tbody>
@@ -522,6 +666,101 @@ export default function VehicleRegistration() {
                 )}
               </div>
 
+              {/* Assessment form — the enrolment proof. A link rather than a preview:
+                  most of these are PDFs, and the scans that aren't are unreadable at
+                  thumbnail size anyway. Students only, but rendered for every applicant
+                  who actually attached one. */}
+              {(selectedReg.registrant_type === 'student' || selectedReg.assessment_form) && (
+                <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                  <div className="detail-label">Assessment Form</div>
+                  {selectedReg.assessment_form ? (
+                    <a
+                      href={selectedReg.assessment_form}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open the assessment form in a new tab"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 13 }}
+                    >
+                      <Maximize2 size={12} />
+                      {decodeURIComponent(selectedReg.assessment_form.split('/').pop())}
+                    </a>
+                  ) : (
+                    <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic' }}>
+                      Not provided
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Payment ──
+                  Always rendered: "no receipt submitted" is the single most
+                  useful thing this panel can tell a reviewer, and an absent
+                  section reads as a missing field rather than an unpaid fee. */}
+              <div className="detail-item" style={{ gridColumn: 'span 2' }}>
+                <div className="detail-label">Payment</div>
+                <div className="detail-value" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <span className={`payment-badge payment-${selectedReg.payment_status || 'unpaid'}`}>
+                    {PAYMENT_LABELS[selectedReg.payment_status] || 'Unpaid'}
+                  </span>
+                  {selectedReg.or_number && (
+                    <span style={{ fontSize: 12, color: '#35576F' }}>
+                      OR No. <strong style={{ fontFamily: 'monospace' }}>{selectedReg.or_number}</strong>
+                    </span>
+                  )}
+                  {selectedReg.amount_paid != null && (
+                    <span style={{ fontSize: 12, color: '#35576F' }}>
+                      ₱{Number(selectedReg.amount_paid).toFixed(2)}
+                    </span>
+                  )}
+                  {selectedReg.paid_at && (
+                    <span style={{ fontSize: 12, color: '#64839C' }}>
+                      {format(new Date(selectedReg.paid_at), 'PP')}
+                    </span>
+                  )}
+                </div>
+
+                {selectedReg.or_receipt_image ? (
+                  <a
+                    href={selectedReg.or_receipt_image}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open the receipt full size in a new tab"
+                    style={{ display: 'inline-block', marginTop: 8 }}
+                  >
+                    {/\.pdf$/i.test(selectedReg.or_receipt_image) ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                        <Maximize2 size={12} /> View receipt (PDF)
+                      </span>
+                    ) : (
+                      <>
+                        <img
+                          src={selectedReg.or_receipt_image}
+                          alt="Official receipt"
+                          style={{ maxWidth: 260, maxHeight: 180, borderRadius: 8, border: '1px solid #D3E1EC', display: 'block' }}
+                        />
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: '#6B8CA6' }}>
+                          <Maximize2 size={11} /> Click to view full size
+                        </span>
+                      </>
+                    )}
+                  </a>
+                ) : selectedReg.payment_status === 'exempt' ? (
+                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic', marginTop: 6 }}>
+                    No fee due — this department is exempt.
+                  </div>
+                ) : (
+                  <div className="detail-value" style={{ color: '#64839C', fontStyle: 'italic', marginTop: 6 }}>
+                    No receipt uploaded.
+                  </div>
+                )}
+
+                {selectedReg.unpaid_accept_reason && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#B45309', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 10px' }}>
+                    <strong>Approved unpaid:</strong> {selectedReg.unpaid_accept_reason}
+                  </div>
+                )}
+              </div>
+
               {/* Authorized driver — set when the student is a minor / non-driver */}
               {selectedReg.driver_name && (
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
@@ -604,34 +843,81 @@ export default function VehicleRegistration() {
               const originalDays = selectedReg.campus_days || []
               // Up to 3 campus days is the normal allowance; more than 3 is a special case
               const tooManyDays  = daysOverride.length > 3
-              const canAccept    = orValid && (!tooManyDays || specialCaseReason.trim())
+              // Fee-exempt applicants were never issued a receipt, so demanding
+              // an OR number used to mean inventing one to enable the button.
+              const feeExempt    = selectedReg.payment_status === 'exempt'
+              // No receipt at all: the pass can still be granted, but only with
+              // a stated reason, and the row keeps saying unpaid afterwards.
+              // The backend falls back to the OR already on the row when the
+              // field is left blank, so a cleared box is not an unpaid approval.
+              const storedOr     = (selectedReg.or_number || '').trim()
+              const acceptUnpaid = !feeExempt && !orNumber.trim() && !storedOr
+              // Leaving the prefilled number untouched is always allowed. Older
+              // rows (and walk-ins) can carry an OR shorter than 6 digits, which
+              // orValid rejects — without this the reviewer could neither fix it
+              // nor approve it, and the application was stuck for good.
+              const orUnchanged  = !!storedOr && orNumber.trim() === storedOr
+              const orAcceptable = orValid || orUnchanged
+              const canAccept    = (feeExempt || orAcceptable || acceptUnpaid)
+                && (!acceptUnpaid || unpaidReason.trim())
+                && (!tooManyDays || specialCaseReason.trim())
               return (
                 <div className="accept-inline-section">
                   <h3 className="accept-inline-title">
                     <Receipt size={15} /> Accept Registration
                   </h3>
                   <p className="accept-inline-desc">
-                    Confirm that <strong>{selectedReg.full_name}</strong> has paid the Vehicle Pass fee and enter their Official Receipt number.
+                    {feeExempt
+                      ? <>No Vehicle Pass fee is due from <strong>{selectedReg.full_name}</strong> — their department is exempt.</>
+                      : selectedReg.payment_status === 'paid'
+                        ? <>Check the Official Receipt below against the photo <strong>{selectedReg.full_name}</strong> uploaded, then approve.</>
+                        : <><strong>{selectedReg.full_name}</strong> has not submitted a receipt. Enter their OR number if they brought it to the counter.</>}
                   </p>
 
-                  <div className="form-group">
-                    <label className="form-label">
-                      Official Receipt (OR) Number <span className="required">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={7}
-                      className={`form-input${orValid ? ' input-valid' : ''}`}
-                      value={orNumber}
-                      onChange={(e) => setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7))}
-                      placeholder="e.g. 1380093"
-                      disabled={submitting}
-                    />
-                    <p className="form-hint">
-                      Issued by the Accounting Office upon payment of ₱{selectedReg.registrant_type === 'employee' ? '150.00 (50% employee discount)' : '300.00'}
-                    </p>
-                  </div>
+                  {!feeExempt && (
+                    <div className="form-group">
+                      <label className="form-label">
+                        Official Receipt (OR) Number {!acceptUnpaid && <span className="required">*</span>}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={7}
+                        className={`form-input${orValid ? ' input-valid' : ''}`}
+                        value={orNumber}
+                        onChange={(e) => setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7))}
+                        placeholder="e.g. 1380093"
+                        disabled={submitting}
+                      />
+                      <p className="form-hint">
+                        {selectedReg.payment_status === 'paid'
+                          ? 'Prefilled from the receipt the applicant uploaded — correct it only if it does not match the image above.'
+                          : `Issued by the Accounting Office upon payment of ₱${selectedReg.registrant_type === 'employee' ? '150.00 (50% employee discount)' : '300.00'}`}
+                      </p>
+                    </div>
+                  )}
+
+                  {acceptUnpaid && (
+                    <div className="form-group special-case-reason-group">
+                      <label className="form-label special-case-reason-label">
+                        <AlertCircle size={13} />
+                        Reason for Approving Unpaid <span className="required">*</span>
+                      </label>
+                      <p className="form-hint special-case-added-hint">
+                        No Official Receipt is on file. The pass will be issued, but the
+                        application stays marked <strong>Unpaid</strong> so the fee can still be
+                        collected — give a reason for approving it now.
+                      </p>
+                      <textarea
+                        className="form-textarea"
+                        rows={2}
+                        value={unpaidReason}
+                        onChange={(e) => setUnpaidReason(e.target.value)}
+                        placeholder="e.g. Accounting Office closed; OR to be presented on Monday…"
+                        disabled={submitting}
+                      />
+                    </div>
+                  )}
 
                   {selectedReg.registrant_type === 'student' && (
                     <div className="form-group">
@@ -712,7 +998,15 @@ export default function VehicleRegistration() {
                       className="btn-success"
                       onClick={() => setShowAcceptConfirm(true)}
                       disabled={submitting || !canAccept}
-                      title={!orValid ? 'Enter a valid OR number to enable' : tooManyDays && !specialCaseReason.trim() ? 'Provide a reason for granting more than 3 days' : ''}
+                      title={
+                        acceptUnpaid && !unpaidReason.trim()
+                          ? 'Enter the OR number, or give a reason for approving this application unpaid'
+                          : !feeExempt && !acceptUnpaid && !orAcceptable
+                            ? 'Enter a valid OR number to enable'
+                            : tooManyDays && !specialCaseReason.trim()
+                              ? 'Provide a reason for granting more than 3 days'
+                              : ''
+                      }
                     >
                       {submitting ? 'Processing…' : <><Check size={16} /> Confirm &amp; Accept</>}
                     </button>

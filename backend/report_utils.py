@@ -168,8 +168,16 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
     canvas.restoreState()
 
 
-def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows, col_widths_mm):
-    """Build a landscape A4 PDF with the SLC letterhead, brand table and footer."""
+def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows,
+                         col_widths_mm, extra_tables=()):
+    """Build a landscape A4 PDF with the SLC letterhead, brand table and footer.
+
+    `extra_tables` appends further titled tables below the first, each a dict of
+    {title, headers, rows, col_widths_mm}. A report that counts the same rows
+    along two different axes needs them kept apart: side by side in one row, the
+    two sets of columns would each sum to the total, inviting a reader to add
+    them all together and get twice the real figure.
+    """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -205,27 +213,38 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     sub_style = ParagraphStyle('sub', fontName='Helvetica', fontSize=9,
                                textColor=colors.HexColor('#666666'))
 
-    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]
-    data = [[Paragraph(esc(h), head_style) for h in headers]]
-    for row in rows:
-        data.append([Paragraph(esc(c), cell_style) for c in row])
-    if len(data) == 1:
-        data.append([Paragraph('No records match the selected filters.', cell_style)]
-                    + [Paragraph('', cell_style) for _ in range(len(headers) - 1)])
+    section_style = ParagraphStyle('section', fontName='Helvetica-Bold', fontSize=10,
+                                   textColor=navy, spaceBefore=0, spaceAfter=0)
 
-    table = Table(data, colWidths=[w * mm for w in col_widths_mm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), brand),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 1), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
-        ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
-    ]))
-    story.append(table)
+    def build_table(t_headers, t_rows, t_widths):
+        data = [[Paragraph(esc(h), head_style) for h in t_headers]]
+        for row in t_rows:
+            data.append([Paragraph(esc(c), cell_style) for c in row])
+        if len(data) == 1:
+            data.append([Paragraph('No records match the selected filters.', cell_style)]
+                        + [Paragraph('', cell_style) for _ in range(len(t_headers) - 1)])
+
+        table = Table(data, colWidths=[w * mm for w in t_widths], repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), brand),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
+            ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
+        ]))
+        return table
+
+    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]
+    story.append(build_table(headers, rows, col_widths_mm))
+    for extra in extra_tables:
+        story.append(Spacer(1, 7 * mm))
+        story.append(Paragraph(esc(extra['title']), section_style))
+        story.append(Spacer(1, 3 * mm))
+        story.append(build_table(extra['headers'], extra['rows'], extra['col_widths_mm']))
     doc.build(story, onFirstPage=draw_frame, onLaterPages=draw_frame)
     return resp

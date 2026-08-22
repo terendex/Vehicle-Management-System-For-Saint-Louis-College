@@ -45,7 +45,13 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
             'or_number', 'reviewed_at', 'rejection_reason',
             'system_student_id', 'system_employee_id',
             'is_special_case', 'special_case_reason',
-            'drivers_license_image',   # set only by UploadLicenseImageView
+            'drivers_license_image',   # set only by UploadRegistrationDocumentsView
+            'assessment_form',         # set only by UploadRegistrationDocumentsView
+            # Payment is recorded by the applicant's receipt upload and by the
+            # accept flow — never by the submission payload, which would let an
+            # application mark itself paid and skip the Accounting Office.
+            'payment_status', 'or_receipt_image', 'amount_paid', 'paid_at',
+            'payment_token', 'unpaid_accept_reason',
             'created_at',
         )
 
@@ -95,6 +101,12 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         # instance.department is a FK: without select_related('department') on
         # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
+        # payment_token is the secret in the applicant's receipt-upload link.
+        # This serializer feeds the CDSO queue and the vehicle profile a guard
+        # can open, so anyone with either view could otherwise read a stranger's
+        # token and file a receipt against their registration. The pending email
+        # is the only place the token is ever meant to appear.
+        data.pop('payment_token', None)
         return data
 
 

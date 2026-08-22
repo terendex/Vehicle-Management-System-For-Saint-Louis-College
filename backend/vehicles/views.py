@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 import cv2
 from django.db import transaction
-from django.db.models import Q, Value
+from django.db.models import Count, Q, Value
 from django.db.models.functions import Lower, Replace, Upper
 from django.http import StreamingHttpResponse, HttpResponse
 from rest_framework import viewsets, permissions
@@ -783,6 +783,7 @@ async def parking_stream_view(request, pk):
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import VehicleRegistration
@@ -1117,6 +1118,33 @@ def _registration_ban(plate_number, email, student_id, employee_id, conduction_n
     return None
 
 
+def _normalize_department(data):
+    """Map the form's department label onto the model's department_type.
+
+    The form sends a human-readable label ("Teaching", "Cleaning and Services");
+    the column stores the choice value. Driven off DepartmentType rather than an
+    if/elif chain, which silently fell through to None for any label it did not
+    know — so a new department would have been accepted and stored blank.
+
+    Mutates `data` in place and returns the resolved department_type (or '').
+    Shared by the public form and the CDSO walk-in: the walk-in path did not map
+    the label at all, so a walk-in employee's department never reached the row,
+    and with it the fee exemption never applied.
+    """
+    dept_raw = data.pop('department', None)
+    if isinstance(dept_raw, list):
+        dept_raw = dept_raw[0] if dept_raw else None
+
+    dept_label_to_value = {
+        label: value for value, label in VehicleRegistration.DepartmentType.choices
+    }
+    data['department'] = None
+    dept_value = dept_label_to_value.get(dept_raw, '')
+    if dept_value:
+        data['department_type'] = dept_value
+    return dept_value
+
+
 def _license_db_conflict(drivers_license):
     """
     The DB has a partial unique index (uniq_active_registration_drivers_license):
@@ -1230,11 +1258,37 @@ class AcceptRegistrationView(APIView):
             return Response({"error": ban, "registration_banned": True},
                             status=status.HTTP_403_FORBIDDEN)
 
-        or_number = request.data.get('or_number', '').strip()
-        if not or_number:
-            return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
-        if not or_number.isdigit() or len(or_number) > 7:
+        # ── Payment gate ──
+        # An Official Receipt number is the payment record, wherever it came
+        # from: the applicant now files their own (number + receipt photo, via
+        # the link in their pending email), but a reviewer keying one in at the
+        # counter for somebody who brought the paper instead counts just the
+        # same. The request value wins over the stored one so CDSO can correct a
+        # typo it spots against the uploaded image.
+        exempt    = registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT
+        or_number = (request.data.get('or_number') or '').strip() or (registration.or_number or '').strip()
+
+        if exempt:
+            # Nothing was owed, so there is no receipt to demand. Requiring one
+            # here used to force CDSO to invent an OR number for fee-exempt
+            # staff before the accept button would enable.
+            or_number = ''
+        elif or_number and (not or_number.isdigit() or len(or_number) > 7):
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Approving with no receipt at all is allowed, but never silently: the
+        # reason is stored on the registration so a pass issued against an
+        # unsettled fee always carries its own justification.
+        unpaid        = not exempt and not or_number
+        unpaid_reason = (request.data.get('unpaid_accept_reason') or '').strip()
+        if unpaid and not unpaid_reason:
+            return Response(
+                {"error": "unpaid_acceptance_requires_reason",
+                 "detail": f"{registration.full_name} has not submitted an Official Receipt. "
+                           f"Enter the OR number, or give a reason for approving this "
+                           f"application while the fee is still unpaid."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # A plate flagged by a 3rd-offense fee violation requires additional
         # review before it can be registered again. CDSO must explicitly
@@ -1342,6 +1396,20 @@ class AcceptRegistrationView(APIView):
                 registration.system_employee_id = f"SLC-EMP-{padded_id}"
 
             registration.or_number = or_number
+            if unpaid:
+                # payment_status stays UNPAID on purpose. The pass is issued, but
+                # the fee is still owed — flipping it to paid here would erase the
+                # one fact Accounting needs to chase, and the reason would then be
+                # the only trace that money never changed hands.
+                registration.unpaid_accept_reason = unpaid_reason
+            elif not exempt and registration.payment_status != VehicleRegistration.PaymentStatus.PAID:
+                # An OR number reached us without going through the applicant's
+                # upload — a walk-in who brought the paper to the counter. Same
+                # proof, so it is recorded the same way; only the receipt image
+                # is missing.
+                registration.payment_status = VehicleRegistration.PaymentStatus.PAID
+                registration.amount_paid    = registration.pass_fee()
+                registration.paid_at        = timezone.now()
             registration.user = user        # direct FK to account
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
 
@@ -1372,10 +1440,19 @@ class AcceptRegistrationView(APIView):
 
             # Refresh user to get generated user_code
             user.refresh_from_db()
+            # A bare "OR: " told a later reader nothing about why a pass was
+            # issued without a receipt. This is the permanent record of that
+            # decision, so it says which of the two reasons applied.
+            if exempt:
+                or_note = 'OR: n/a (fee exempt)'
+            elif unpaid:
+                or_note = f'OR: none — approved unpaid: {unpaid_reason}'
+            else:
+                or_note = f'OR: {or_number}'
             audit(request, AuditLog.Action.RECORD_UPDATED,
                   f"Registration accepted | Plate: {registration.plate_number} | "
                   f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
-                  f"OR: {or_number} | By: {request.user.full_name}",
+                  f"{or_note} | By: {request.user.full_name}",
                   target_user=user)
         system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
@@ -1475,11 +1552,23 @@ class CdsoDirectRegisterView(APIView):
         if registrant_type not in ('student', 'employee', 'fetcher'):
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
+        data = dict(request.data)
+
+        # Resolved before the receipt check, not after: Cleaning and Services
+        # staff pay nothing, so there is no Official Receipt to demand from them.
+        # Asking anyway meant CDSO had to invent a number to register a walk-in
+        # from that department.
+        department_type = _normalize_department(data)
+        exempt = VehicleRegistration.is_fee_exempt(registrant_type, department_type)
+
         or_number = request.data.get('or_number', '').strip()
-        if not or_number:
-            return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not or_number.isdigit() or len(or_number) > 7:
-            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
+        if exempt:
+            or_number = ''
+        else:
+            if not or_number:
+                return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not or_number.isdigit() or len(or_number) > 7:
+                return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1:1 guard — plate, email and student/employee ID must not already have an active
         # registration (also blocks an email already tied to an existing account)
@@ -1501,8 +1590,6 @@ class CdsoDirectRegisterView(APIView):
         license_error = _license_db_conflict(request.data.get('drivers_license', ''))
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
-
-        data = dict(request.data)
 
         # Walk-ins go through the same campus-day rules as the online form.
         # This path validated none of them: day names were stored unchecked, and
@@ -1540,6 +1627,16 @@ class CdsoDirectRegisterView(APIView):
                 status=VehicleRegistration.Status.ACCEPTED,
                 or_number=or_number,
                 reviewed_at=timezone.now(),
+                # A walk-in is registered at the counter with the receipt in
+                # hand — there is no unpaid window to model for this path. An
+                # exempt walk-in never had a receipt to bring, so it is recorded
+                # as exempt rather than as a payment that never happened.
+                payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
+                                else VehicleRegistration.PaymentStatus.PAID),
+                paid_at=(None if exempt else timezone.now()),
+                # Computed from the resolved department rather than read back off
+                # the saved row, which would cost a second SystemSettings query.
+                amount_paid=VehicleRegistration.fee_for(registrant_type, department_type),
             )
 
             # Build user profile fields
@@ -1780,24 +1877,7 @@ class PublicOpenRegistrationView(APIView):
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
 
         data = dict(request.data)
-
-        # The form sends department as a human-readable label ("Teaching",
-        # "Non-Teaching", "Services", "Cleaning"). Map it to department_type and
-        # clear the FK field so the serializer doesn't choke.
-        #
-        # Driven off DepartmentType rather than an if/elif chain: the chain
-        # silently fell through to department=None for any label it did not
-        # know, so a new department would have been accepted and stored blank.
-        dept_raw = data.pop('department', None)
-        if isinstance(dept_raw, list):
-            dept_raw = dept_raw[0] if dept_raw else None
-
-        dept_label_to_value = {
-            label: value for value, label in VehicleRegistration.DepartmentType.choices
-        }
-        data['department'] = None
-        if dept_raw in dept_label_to_value:
-            data['department_type'] = dept_label_to_value[dept_raw]
+        department_type = _normalize_department(data)
 
         # Strip fields that are not model columns (e.g. form-only UI fields)
         for extra in ('last_name', 'first_name', 'middle_name',
@@ -1899,9 +1979,17 @@ class PublicOpenRegistrationView(APIView):
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
+            # Cleaning and Services staff owe nothing, so they never pass through
+            # the Accounting Office and have no receipt to upload. Resolved from
+            # the request rather than read back off the saved row: it costs no
+            # query, and it rides along in the INSERT instead of a second UPDATE.
+            exempt = VehicleRegistration.is_fee_exempt(registrant_type, department_type)
             registration = serializer.save(
                 registrant_type=registrant_type,
                 source=VehicleRegistration.Source.PUBLIC,
+                payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
+                                else VehicleRegistration.PaymentStatus.UNPAID),
+                amount_paid=(Decimal('0.00') if exempt else None),
             )
             # The submission itself stands whether or not the acknowledgement
             # email gets out — but the failure is logged rather than swallowed.
@@ -1927,23 +2015,37 @@ class PublicOpenRegistrationView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UploadLicenseImageView(APIView):
-    """Public follow-up step to PublicOpenRegistrationView — attaches a photo of the
-    driver's license to a just-submitted registration. Kept as a separate multipart
-    request so the main JSON registration payload (with its nested campus_days /
-    fetcher_students structures) doesn't have to be reworked into form-data."""
+class UploadRegistrationDocumentsView(APIView):
+    """Public follow-up step to PublicOpenRegistrationView — attaches the applicant's
+    supporting documents (driver's license photo, assessment form) to a just-submitted
+    registration. Kept as a separate multipart request so the main JSON registration
+    payload (with its nested campus_days / fetcher_students structures) doesn't have
+    to be reworked into form-data.
+
+    Both files are optional individually, but at least one has to be present —
+    a request carrying neither is a client bug, not a no-op worth recording."""
     permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser, FormParser]
+
+    # Mirrors the model's FileExtensionValidator on assessment_form. Checked here
+    # too so the applicant gets a plain 400 instead of a 500 from full_clean.
+    ASSESSMENT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
 
     def post(self, request):
         registration_id = request.data.get('registration_id')
         email = (request.data.get('email') or '').strip()
         image = request.FILES.get('image')
+        assessment = request.FILES.get('assessment_form')
 
         if not registration_id or not email:
             return Response({"error": "registration_id and email are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not image:
-            return Response({"error": "No image uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        if not image and not assessment:
+            return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        if assessment and assessment.name.lower().rsplit('.', 1)[-1] not in self.ASSESSMENT_EXTENSIONS:
+            return Response(
+                {"error": "The assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             registration = VehicleRegistration.objects.get(
@@ -1954,9 +2056,139 @@ class UploadLicenseImageView(APIView):
         except VehicleRegistration.DoesNotExist:
             return Response({"error": "Registration not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        registration.drivers_license_image = image
-        registration.save(update_fields=['drivers_license_image'])
-        return Response({"message": "License image uploaded."}, status=status.HTTP_200_OK)
+        updated = []
+        if image:
+            registration.drivers_license_image = image
+            updated.append('drivers_license_image')
+        if assessment:
+            registration.assessment_form = assessment
+            updated.append('assessment_form')
+        registration.save(update_fields=updated)
+        return Response({"message": "Documents uploaded.", "uploaded": updated}, status=status.HTTP_200_OK)
+
+
+# The old name, kept so the previously built frontend bundle's
+# /register/license-image/ calls keep resolving to the same handler.
+UploadLicenseImageView = UploadRegistrationDocumentsView
+
+
+# ──────────────────────────────────────────────
+# Public receipt upload (applicant-driven proof of payment)
+# ──────────────────────────────────────────────
+
+def _payment_registration(token):
+    """Resolve a receipt-upload token to a still-reviewable registration.
+
+    Only PENDING rows are reachable: once CDSO has accepted or rejected the
+    application the receipt on file is part of the decision, and letting the
+    link keep overwriting it would rewrite the evidence after the fact.
+    """
+    if not token:
+        return None
+    try:
+        return VehicleRegistration.objects.get(
+            payment_token=token,
+            status=VehicleRegistration.Status.PENDING,
+        )
+    except (VehicleRegistration.DoesNotExist, ValueError, ValidationError):
+        # ValueError/ValidationError: a malformed token is a bad link, not a 500.
+        return None
+
+
+class RegistrationPaymentView(APIView):
+    """The applicant's own proof-of-payment step.
+
+    They pay at the Accounting Office, then follow the link in their pending
+    email to upload the Official Receipt themselves — CDSO verifies the image
+    against the number at review time instead of re-keying it at a counter.
+
+    Authorised by the unguessable payment_token alone. The (id, email) pair the
+    document upload uses is not a secret any more: school addresses are now
+    <8-digit ID>@slc-sflu.edu.ph and registration ids are sequential.
+    """
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    RECEIPT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
+    RECEIPT_MAX_BYTES  = 5 * 1024 * 1024
+
+    def get(self, request):
+        """Everything the upload page needs to render, and nothing more.
+
+        Deliberately not the full registration: this endpoint is reachable by
+        anyone holding the link, so it returns what the applicant already knows
+        about their own application, not the record CDSO sees.
+        """
+        registration = _payment_registration(request.query_params.get('token'))
+        if registration is None:
+            return Response(
+                {"error": "This payment link is no longer valid. It may have expired, "
+                          "or your application may already have been reviewed."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({
+            "full_name":       registration.full_name,
+            "plate_number":    registration.plate_number or registration.conduction_number,
+            "registrant_type": registration.registrant_type,
+            "amount_due":      str(registration.pass_fee()),
+            "payment_status":  registration.payment_status,
+            "or_number":       registration.or_number,
+            "has_receipt":     bool(registration.or_receipt_image),
+        })
+
+    def post(self, request):
+        registration = _payment_registration(request.data.get('token'))
+        if registration is None:
+            return Response(
+                {"error": "This payment link is no longer valid. It may have expired, "
+                          "or your application may already have been reviewed."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Exempt applicants have nothing to pay and so nothing to prove. Told
+        # plainly rather than letting them hunt for a receipt that never existed.
+        if registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT:
+            return Response(
+                {"error": "No payment is required for this application — your department is "
+                          "exempt from the Vehicle Pass fee. Just proceed to the CDSO Office."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        or_number = (request.data.get('or_number') or '').strip()
+        receipt   = request.FILES.get('receipt')
+
+        # Same shape the accept flow has always enforced, applied at the point
+        # the number is actually typed instead of days later at the counter.
+        if not or_number:
+            return Response({"error": "Official Receipt (OR) number is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not or_number.isdigit() or len(or_number) > 7:
+            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not receipt:
+            return Response({"error": "A photo or scan of the Official Receipt is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if receipt.name.lower().rsplit('.', 1)[-1] not in self.RECEIPT_EXTENSIONS:
+            return Response({"error": "The receipt must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if receipt.size > self.RECEIPT_MAX_BYTES:
+            return Response({"error": "Please keep the receipt under 5MB."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        registration.or_number        = or_number
+        registration.or_receipt_image = receipt
+        # Snapshot of what was owed at the moment of payment — see the field.
+        registration.amount_paid      = registration.pass_fee()
+        registration.paid_at          = timezone.now()
+        registration.payment_status   = VehicleRegistration.PaymentStatus.PAID
+        registration.save(update_fields=[
+            'or_number', 'or_receipt_image', 'amount_paid', 'paid_at', 'payment_status',
+        ])
+        return Response(
+            {"message": "Receipt received. Your application is now queued for CDSO review.",
+             "payment_status": registration.payment_status},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ──────────────────────────────────────────────
@@ -2552,6 +2784,45 @@ def _serialize_period(p):
     }
 
 
+def _clean_period_payload(data, *, partial=False, current=None):
+    """Validate a registration-period payload for create (all fields) or edit.
+
+    `partial` keeps any field the caller left out at its `current` value, so a
+    PATCH that only moves the end date does not have to resend the label.
+    Returns (cleaned, errors) — cleaned is only complete when errors is empty.
+    """
+    from datetime import datetime as _dt
+
+    def _as_date(raw):
+        return _dt.strptime(str(raw), '%Y-%m-%d').date()
+
+    errors = {}
+    cleaned = {}
+
+    if 'label' in data or not partial:
+        label = (data.get('label') or '').strip()
+        if not label:
+            errors['label'] = 'Label is required.'
+        cleaned['label'] = label
+    else:
+        cleaned['label'] = current.label
+
+    for field in ('start_date', 'end_date'):
+        if field in data or not partial:
+            try:
+                cleaned[field] = _as_date(data.get(field))
+            except (ValueError, TypeError):
+                errors[field] = 'Required. Use YYYY-MM-DD.'
+        else:
+            cleaned[field] = getattr(current, field)
+
+    if errors:
+        return None, errors
+    if cleaned['end_date'] < cleaned['start_date']:
+        return None, {'end_date': 'End date must be on or after start date.'}
+    return cleaned, {}
+
+
 class RegistrationPeriodListCreateView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
@@ -2562,34 +2833,42 @@ class RegistrationPeriodListCreateView(APIView):
         return Response([_serialize_period(p) for p in RegistrationPeriod.objects.all()])
 
     def post(self, request):
-        from datetime import datetime as _dt
-        label      = (request.data.get('label') or '').strip()
-        start_raw  = request.data.get('start_date')
-        end_raw    = request.data.get('end_date')
-        errors = {}
-        if not label:
-            errors['label'] = 'Label is required.'
-
-        start = end = None
-        try:
-            start = _dt.strptime(str(start_raw), '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            errors['start_date'] = 'Required. Use YYYY-MM-DD.'
-        try:
-            end = _dt.strptime(str(end_raw), '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            errors['end_date'] = 'Required. Use YYYY-MM-DD.'
-
+        cleaned, errors = _clean_period_payload(request.data)
         if errors:
             return Response(errors, status=400)
-        if end < start:
-            return Response({'end_date': 'End date must be on or after start date.'}, status=400)
+        label, start, end = cleaned['label'], cleaned['start_date'], cleaned['end_date']
 
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Registration period added | {period.label} ({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
         return Response(_serialize_period(period), status=201)
+
+
+class RegistrationPeriodDetailView(APIView):
+    """Edit a registration period in place — including the active one.
+
+    A window that is already running is the one most likely to need a change:
+    the deadline gets extended, or the label was picked wrong. Editing it beats
+    archiving and re-creating, which would leave a duplicate row behind.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def patch(self, request, pk):
+        period = get_object_or_404(RegistrationPeriod, pk=pk)
+        before = f"{period.label} ({period.start_date} to {period.end_date})"
+        cleaned, errors = _clean_period_payload(request.data, partial=True, current=period)
+        if errors:
+            return Response(errors, status=400)
+
+        period.label      = cleaned['label']
+        period.start_date = cleaned['start_date']
+        period.end_date   = cleaned['end_date']
+        period.save(update_fields=['label', 'start_date', 'end_date'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration period edited | {before} -> {period.label} "
+              f"({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
+        return Response(_serialize_period(period))
 
 
 class RegistrationPeriodActivateView(APIView):
@@ -2807,6 +3086,173 @@ class RegistrationReportPdfView(APIView):
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
             col_widths_mm=[10, 30, 30, 60, 40, 40, 27],
+        )
+
+
+OTHER_KEY = 'other'
+
+
+def _registration_counts(qs):
+    """Cross-tab of registrant type x status and type x payment, with totals.
+
+    Payment is a second, independent axis rather than more `Status` values (see
+    PaymentStatus on the model), so it is counted into its own grid over the
+    same rows: both grids total to the same number.
+
+    One GROUP BY for the whole grid — the page shows every status at once but
+    the list itself only ever loads one, so the numbers cannot be counted off
+    the rows on screen.
+
+    Every row lands in exactly one cell, so `total`, `by_type` and `by_status`
+    always reconcile with each other and with the table. `choices` is not a
+    database constraint, so a legacy or hand-edited row can carry a value that
+    is no longer in either enum; those fall into an explicit "Other" bucket that
+    is reported only when it has rows. Dropping them instead would make the
+    report's total disagree with the rows printed above it, which reads as a
+    broken report rather than as odd data.
+    """
+    type_labels    = dict(VehicleRegistration.RegistrantType.choices)
+    status_labels  = dict(VehicleRegistration.Status.choices)
+    payment_labels = dict(VehicleRegistration.PaymentStatus.choices)
+    types     = list(VehicleRegistration.RegistrantType.values)
+    statuses  = list(VehicleRegistration.Status.values)
+    payments  = list(VehicleRegistration.PaymentStatus.values)
+
+    # Every cell exists up front, including the Other row and column, so the
+    # accumulate loop never has to branch on a missing key.
+    known_types = set(types)
+    grid = {t: {st: 0 for st in statuses + [OTHER_KEY]} for t in types + [OTHER_KEY]}
+    pay_grid = {t: {pm: 0 for pm in payments + [OTHER_KEY]} for t in types + [OTHER_KEY]}
+    # Status x payment as well, so the page can scope the payment tiles to the
+    # status the table is actually showing. Free: the GROUP BY below already
+    # carries all three columns, so this is a third accumulation over rows we
+    # have in hand, not another query.
+    status_pay_grid = {st: {pm: 0 for pm in payments + [OTHER_KEY]}
+                       for st in statuses + [OTHER_KEY]}
+
+    seen_other_type = seen_other_status = seen_other_payment = False
+    for row in (qs.values('registrant_type', 'status', 'payment_status')
+                  .annotate(n=Count('id'))):
+        t  = row['registrant_type'] if row['registrant_type'] in known_types else OTHER_KEY
+        st = row['status'] if row['status'] in status_labels else OTHER_KEY
+        pm = row['payment_status'] if row['payment_status'] in payment_labels else OTHER_KEY
+        seen_other_type    = seen_other_type    or t  == OTHER_KEY
+        seen_other_status  = seen_other_status  or st == OTHER_KEY
+        seen_other_payment = seen_other_payment or pm == OTHER_KEY
+        grid[t][st] += row['n']
+        pay_grid[t][pm] += row['n']
+        status_pay_grid[st][pm] += row['n']
+
+    if seen_other_type:
+        types.append(OTHER_KEY)
+        type_labels[OTHER_KEY] = 'Other'
+    if seen_other_status:
+        statuses.append(OTHER_KEY)
+        status_labels[OTHER_KEY] = 'Other'
+    if seen_other_payment:
+        payments.append(OTHER_KEY)
+        payment_labels[OTHER_KEY] = 'Other'
+
+    by_type    = {t: sum(grid[t][st] for st in statuses) for t in types}
+    by_status  = {st: sum(grid[t][st] for t in types) for st in statuses}
+    by_payment = {pm: sum(pay_grid[t][pm] for t in types) for pm in payments}
+    return {
+        'types':          types,
+        'statuses':       statuses,
+        'payments':       payments,
+        'type_labels':    type_labels,
+        'status_labels':  status_labels,
+        'payment_labels': payment_labels,
+        'grid':           grid,
+        'pay_grid':       pay_grid,
+        'status_pay_grid': status_pay_grid,
+        'by_type':        by_type,
+        'by_status':      by_status,
+        'by_payment':     by_payment,
+        'total':          sum(by_type.values()),
+    }
+
+
+class RegistrationSummaryView(APIView):
+    """Headline counts for the registration management page — admin/CDSO."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        counts = _registration_counts(VehicleRegistration.objects.all())
+        type_labels    = counts['type_labels']
+        status_labels  = counts['status_labels']
+        payment_labels = counts['payment_labels']
+        return Response({
+            'total': counts['total'],
+            # Each status carries its own payment and type split. The table only
+            # ever loads one status, so the payment and type tiles scope their
+            # counts to it — a tile reading 120 above a table showing 8 rows is
+            # read as a broken page, not as two different questions.
+            'by_status': [
+                {'key': st, 'label': status_labels.get(st, st), 'count': counts['by_status'][st],
+                 'by_payment': {pm: counts['status_pay_grid'][st][pm]
+                                for pm in counts['payments']},
+                 'by_type': {t: counts['grid'][t][st] for t in counts['types']}}
+                for st in counts['statuses']
+            ],
+            'by_payment': [
+                {'key': pm, 'label': payment_labels.get(pm, pm), 'count': counts['by_payment'][pm]}
+                for pm in counts['payments']
+            ],
+            'by_type': [
+                {'key': t, 'label': type_labels.get(t, t), 'count': counts['by_type'][t],
+                 'by_status': counts['grid'][t], 'by_payment': counts['pay_grid'][t]}
+                for t in counts['types']
+            ],
+        })
+
+
+class RegistrationSummaryReportPdfView(APIView):
+    """Branded PDF of how many registered, broken down by registrant type and status."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        from report_utils import branded_pdf_response, report_filename
+        qs, desc = _filter_registrations_report(request)
+        counts = _registration_counts(qs)
+        type_labels = counts['type_labels']
+
+        def section(axis_keys, axis_labels, cells, totals):
+            """One type-by-axis table: a row per registrant type, then the
+            all-types row. The type column carries the label, so the rest of
+            the landscape width is shared evenly by the count columns."""
+            headers = (['Registrant Type']
+                       + [axis_labels.get(k, k) for k in axis_keys] + ['Total'])
+            rows = [[type_labels.get(t, t)]
+                    + [cells[t][k] for k in axis_keys]
+                    + [counts['by_type'][t]]
+                    for t in counts['types']]
+            rows.append(['ALL TYPES']
+                        + [totals[k] for k in axis_keys] + [counts['total']])
+            n = len(axis_keys)
+            return headers, rows, [60] + [(267 - 60 - 30) / n if n else 0] * n + [30]
+
+        status_headers, status_rows, status_widths = section(
+            counts['statuses'], counts['status_labels'], counts['grid'], counts['by_status'])
+        pay_headers, pay_rows, pay_widths = section(
+            counts['payments'], counts['payment_labels'], counts['pay_grid'], counts['by_payment'])
+
+        subtitle = (('; '.join(desc) if desc else 'All records')
+                    + f" · {counts['total']} registrations")
+        return branded_pdf_response(
+            filename=report_filename('Registration Summary Report', 'pdf'),
+            report_title='Vehicle Registration Summary Report',
+            subtitle=subtitle,
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=status_headers,
+            rows=status_rows,
+            col_widths_mm=status_widths,
+            extra_tables=[{
+                'title': 'Vehicle Pass Fee — by registrant type',
+                'headers': pay_headers,
+                'rows': pay_rows,
+                'col_widths_mm': pay_widths,
+            }],
         )
 
 

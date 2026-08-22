@@ -1,0 +1,393 @@
+/* ============================================================
+   Receipt upload — the applicant's own proof-of-payment step,
+   reached from the link in their pending registration email.
+
+   Shares the registration form's palette and page shell so the
+   two feel like one flow; the lockup inside .paypage-header
+   comes from styles/slc-header.css like every other page.
+   ============================================================ */
+
+.paypage {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, #EEF4F9 0%, #D3E1EC 50%, #EEF4F9 100%);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: #12293F;
+}
+
+/* The logo + name lockup inside comes from styles/slc-header.css */
+.paypage-header {
+  width: 100%;
+  background: #FFFFFF;
+  border-bottom: 2.5px solid #03396C;
+  padding-left: clamp(0.75rem, 4vw, 2rem);
+  padding-right: clamp(0.75rem, 4vw, 2rem);
+  display: flex;
+  align-items: center;
+  box-shadow: 0 1px 3px rgba(3, 57, 108, 0.06);
+}
+
+.paypage-main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+}
+
+.paypage-card {
+  width: 100%;
+  max-width: 560px;
+  background: #FFFFFF;
+  border: 1px solid #D3E1EC;
+  border-radius: 14px;
+  box-shadow: 0 6px 28px rgba(3, 57, 108, 0.08);
+  padding: clamp(1.25rem, 4vw, 2rem);
+}
+
+.paypage-card--center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* --- Head --- */
+.paypage-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
+.paypage-icon {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.paypage-icon--brand { background: #E8F1F9; color: #03396C; }
+.paypage-icon--ok    { background: #ECFDF5; color: #059669; width: 76px; height: 76px; border-radius: 50%; }
+.paypage-icon--warn  { background: #FEF3C7; color: #B45309; width: 76px; height: 76px; border-radius: 50%; }
+
+.paypage-title {
+  font-size: clamp(1.15rem, 3vw, 1.4rem);
+  font-weight: 700;
+  color: #03396C;
+  margin: 0 0 0.3rem;
+  line-height: 1.3;
+}
+
+.paypage-title--left { text-align: left; }
+
+.paypage-muted {
+  color: #5A7A93;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.paypage-muted--small { font-size: 0.8rem; }
+
+/* --- Amount --- */
+.paypage-amount {
+  background: linear-gradient(135deg, #03396C 0%, #0A4E8F 100%);
+  color: #FFFFFF;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+}
+
+.paypage-amount-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.paypage-amount-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.paypage-amount-note {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+/* --- Notes --- */
+.paypage-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  background: #F3F8FC;
+  border: 1px solid #D3E1EC;
+  border-radius: 9px;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #35576F;
+  margin-bottom: 1rem;
+}
+
+.paypage-note svg { flex-shrink: 0; margin-top: 2px; color: #0A4E8F; }
+
+.paypage-note--ok {
+  background: #ECFDF5;
+  border-color: #A7F3D0;
+  color: #065F46;
+}
+
+.paypage-note--ok svg { color: #059669; }
+
+/* --- Form --- */
+.paypage-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.paypage-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.paypage-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #12293F;
+}
+
+.paypage-req { color: #C62828; }
+
+.paypage-input {
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 9px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: #12293F;
+  background: #FFFFFF;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.paypage-input:focus {
+  outline: none;
+  border-color: #0A4E8F;
+  box-shadow: 0 0 0 3px rgba(10, 78, 143, 0.12);
+}
+
+.paypage-input:disabled { background: #F3F8FC; color: #7C99AF; }
+
+.paypage-input--error { border-color: #C62828; }
+
+.paypage-hint {
+  font-size: 0.74rem;
+  color: #6B8CA6;
+  line-height: 1.55;
+}
+
+.paypage-error-msg {
+  font-size: 0.75rem;
+  color: #C62828;
+  font-weight: 600;
+}
+
+/* --- Upload --- */
+.paypage-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px dashed #A9C6DC;
+  border-radius: 10px;
+  background: #F8FBFD;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.paypage-upload:hover { border-color: #0A4E8F; background: #F3F8FC; }
+
+.paypage-upload-input { display: none; }
+
+.paypage-upload-icon { color: #0A4E8F; flex-shrink: 0; }
+
+.paypage-upload-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.paypage-upload-text strong { font-size: 0.85rem; color: #03396C; }
+.paypage-upload-text span   { font-size: 0.73rem; color: #6B8CA6; }
+
+.paypage-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.7rem;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F8FBFD;
+}
+
+.paypage-preview-img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #D3E1EC;
+  flex-shrink: 0;
+}
+
+.paypage-preview-noimg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6B8CA6;
+  background: #EEF4F9;
+}
+
+.paypage-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.paypage-preview-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #12293F;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paypage-preview-size { font-size: 0.73rem; color: #6B8CA6; }
+
+.paypage-preview-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #D3E1EC;
+  border-radius: 7px;
+  background: #FFFFFF;
+  color: #6B8CA6;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.paypage-preview-remove:hover { color: #C62828; border-color: #F0B4B4; }
+.paypage-preview-remove:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- Actions --- */
+.paypage-submit-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  background: #FEF2F2;
+  border: 1px solid #FCA5A5;
+  border-radius: 9px;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.82rem;
+  color: #B91C1C;
+  line-height: 1.55;
+}
+
+.paypage-submit-error svg { flex-shrink: 0; margin-top: 2px; }
+
+.paypage-btn-submit {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border: none;
+  border-radius: 10px;
+  background: #03396C;
+  color: #FFFFFF;
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.paypage-btn-submit:hover:not(:disabled) { background: #0A4E8F; }
+.paypage-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.paypage-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 9px;
+  background: #FFFFFF;
+  color: #03396C;
+  font-size: 0.83rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.paypage-btn-ghost:hover { background: #F3F8FC; border-color: #A9C6DC; }
+
+/* --- Success summary --- */
+.paypage-summary {
+  width: 100%;
+  background: #F3F8FC;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.paypage-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  font-size: 0.82rem;
+  text-align: left;
+}
+
+.paypage-summary-row span   { color: #5A7A93; }
+.paypage-summary-row strong { color: #12293F; text-align: right; }
+
+/* --- Spinner --- */
+.paypage-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #D3E1EC;
+  border-top-color: #03396C;
+  border-radius: 50%;
+  animation: paypage-spin 0.8s linear infinite;
+}
+
+@keyframes paypage-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paypage-spinner { animation-duration: 2.4s; }
+}

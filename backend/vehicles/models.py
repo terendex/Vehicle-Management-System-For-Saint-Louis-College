@@ -4,7 +4,7 @@ from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Value
 from django.db.models.functions import Lower, Replace, Upper
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import FileExtensionValidator, MinValueValidator, MaxValueValidator
 
 
 class ReferenceItem(models.Model):
@@ -111,6 +111,20 @@ class VehicleRegistration(models.Model):
         # the plate/email/ID/license for the person to register again.
         EXPIRED  = 'expired',  'Expired'
 
+    class PaymentStatus(models.TextChoices):
+        """Whether the Vehicle Pass fee has been settled.
+
+        Deliberately a second axis rather than more `Status` values. A
+        registration can be rejected *after* the applicant already paid (a
+        refund case), and a fee-exempt applicant is neither unpaid nor paid —
+        neither fact fits in a single enum with pending/accepted, and the
+        active-registration uniqueness constraints below key off `status`, so
+        widening it would quietly release plates that must stay held.
+        """
+        UNPAID = 'unpaid', 'Unpaid'
+        PAID   = 'paid',   'Paid'
+        EXEMPT = 'exempt', 'Exempt'
+
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
@@ -183,6 +197,17 @@ class VehicleRegistration(models.Model):
     age             = models.PositiveIntegerField(null=True, blank=True)
     drivers_license = models.CharField(max_length=100, blank=True)
     drivers_license_image = models.ImageField(upload_to='licenses/', null=True, blank=True)
+    # Proof the applicant is genuinely enrolled/employed: the registrar's
+    # assessment form. A FileField rather than an ImageField because students
+    # usually attach the PDF the portal hands them, and only sometimes a photo
+    # of the printed copy — the extension validator is what keeps the field
+    # from accepting arbitrary uploads.
+    assessment_form = models.FileField(
+        upload_to='assessments/', null=True, blank=True,
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
     campus_days     = models.JSONField(default=list)
     schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
@@ -241,6 +266,33 @@ class VehicleRegistration(models.Model):
     or_number        = models.CharField(max_length=100, blank=True)
     source           = models.CharField(max_length=20, choices=Source.choices, default=Source.PUBLIC)
 
+    # ── Payment ──
+    # The applicant pays at the Accounting Office, then uploads the Official
+    # Receipt themselves through the link in their pending email; CDSO verifies
+    # the image against or_number at review time rather than re-keying it.
+    payment_status   = models.CharField(
+        max_length=20, choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID, db_index=True,
+    )
+    or_receipt_image = models.FileField(
+        upload_to='receipts/', null=True, blank=True,
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
+    # Snapshot, not a lookup: vehicle_pass_fee is admin-configurable, so reading
+    # the live setting would retroactively rewrite what past applicants paid the
+    # moment the fee changes.
+    amount_paid      = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    paid_at          = models.DateTimeField(null=True, blank=True)
+    # Unguessable handle for the public receipt-upload page. The document upload
+    # endpoint keys on (id, email), which stopped being much of a secret once
+    # school emails became <8-digit ID>@slc-sflu.edu.ph against sequential ids.
+    payment_token    = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    # Set when CDSO approves a registration that is still unpaid. Required in
+    # that case, so an issued pass with no receipt on file always says why.
+    unpaid_accept_reason = models.TextField(blank=True)
+
     # Special case — set when admin grants days beyond the original request
     is_special_case      = models.BooleanField(default=False)
     special_case_reason  = models.TextField(blank=True)
@@ -253,6 +305,12 @@ class VehicleRegistration(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        # Minted on first save and never rotated — the link in the pending email
+        # has to keep working for as long as the registration is reviewable.
+        if not self.payment_token:
+            self.payment_token = uuid.uuid4()
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = list(kwargs['update_fields']) + ['payment_token']
         # Canonicalize so both the application-layer conflict checks and the
         # DB unique constraints below compare like-for-like values.
         self.plate_number = _normalize_plate(self.plate_number)
@@ -263,8 +321,20 @@ class VehicleRegistration(models.Model):
         self.drivers_license = (self.drivers_license or '').strip().upper()
         super().save(*args, **kwargs)
 
-    def pass_fee(self, settings_obj=None) -> Decimal:
-        """What this applicant owes for their vehicle pass.
+    @classmethod
+    def is_fee_exempt(cls, registrant_type, department_type='') -> bool:
+        """Whether this applicant owes nothing at all for a vehicle pass.
+
+        Answerable without a row and without touching the database, which is
+        what the CDSO walk-in path needs: it decides whether to demand an
+        Official Receipt number before there is a registration to ask.
+        """
+        return (registrant_type == 'employee'
+                and (department_type or '') in cls.FEE_EXEMPT_DEPARTMENTS)
+
+    @classmethod
+    def fee_for(cls, registrant_type, department_type='', settings_obj=None) -> Decimal:
+        """What an applicant of this type and department owes.
 
         Single source of truth for the amount. The figure used to be worked out
         in the React form alone, which meant the price a person was told and the
@@ -273,15 +343,21 @@ class VehicleRegistration(models.Model):
 
         Services and Cleaning staff pay nothing — they are exempt outright, not
         discounted, so this returns 0 regardless of the configured employee rate.
+
+        Pass `settings_obj` when the caller already holds one: every miss is a
+        SystemSettings.get(), which is an uncached get_or_create round trip.
         """
+        if cls.is_fee_exempt(registrant_type, department_type):
+            return Decimal('0.00')
         if settings_obj is None:
             settings_obj = SystemSettings.get()
-
-        if self.registrant_type == 'employee':
-            if (self.department_type or '') in self.FEE_EXEMPT_DEPARTMENTS:
-                return Decimal('0.00')
+        if registrant_type == 'employee':
             return settings_obj.vehicle_pass_fee_employee
         return settings_obj.vehicle_pass_fee
+
+    def pass_fee(self, settings_obj=None) -> Decimal:
+        """What this applicant owes — see fee_for, which this delegates to."""
+        return self.fee_for(self.registrant_type, self.department_type, settings_obj)
 
     def __str__(self):
         return f"{self.full_name} - {self.plate_number} ({self.status})"

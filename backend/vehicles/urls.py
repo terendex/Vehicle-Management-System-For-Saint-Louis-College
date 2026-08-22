@@ -16,7 +16,10 @@ urlpatterns = [
     path('register/status/',         views.RegistrationStatusView.as_view(),          name='registration-status'),
     path('register/schedule-slots/', views.ScheduleSlotsView.as_view(),               name='schedule-slots'),
     path('register/availability/',   views.RegistrationAvailabilityView.as_view(),    name='registration-availability'),
-    path('register/license-image/',  views.UploadLicenseImageView.as_view(),          name='upload-license-image'),
+    path('register/documents/',      views.UploadRegistrationDocumentsView.as_view(), name='upload-registration-documents'),
+    path('register/payment/',        views.RegistrationPaymentView.as_view(),        name='registration-payment'),
+    # Legacy path - the already-built frontend bundle still posts here.
+    path('register/license-image/',  views.UploadRegistrationDocumentsView.as_view(), name='upload-license-image'),
 
     # CDSO walk-in direct registration (auto-accepted, no pending)
     path('register/direct/', views.CdsoDirectRegisterView.as_view(), name='direct-registration'),
@@ -35,6 +38,8 @@ urlpatterns = [
     # Registration management (Admin/CDSO)
     path('registrations/report/excel/',    views.RegistrationReportExcelView.as_view(),  name='registration-report-excel'),
     path('registrations/report/pdf/',       views.RegistrationReportPdfView.as_view(),    name='registration-report-pdf'),
+    path('registrations/report/summary-pdf/', views.RegistrationSummaryReportPdfView.as_view(), name='registration-summary-report-pdf'),
+    path('registrations/summary/',         views.RegistrationSummaryView.as_view(),      name='registration-summary'),
     path('registrations/pending/',         views.PendingRegistrationsListView.as_view(), name='list-pending-registrations'),
     path('registrations/<int:pk>/accept/', views.AcceptRegistrationView.as_view(),       name='accept-registration'),
     path('registrations/<int:pk>/reject/', views.RejectRegistrationView.as_view(),       name='reject-registration'),
@@ -53,6 +58,7 @@ urlpatterns = [
     # Registration period management (admin/CDSO)
     path('registration-periods/',              views.RegistrationPeriodListCreateView.as_view(),  name='registration-periods'),
     path('registration-periods/<int:pk>/activate/', views.RegistrationPeriodActivateView.as_view(), name='registration-period-activate'),
+    path('registration-periods/<int:pk>/',      views.RegistrationPeriodDetailView.as_view(),      name='registration-period-detail'),
 
     # Supplier management (admin only)
     path('suppliers/',                             views.SupplierListCreateView.as_view(), name='supplier-list'),

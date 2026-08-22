@@ -8,7 +8,7 @@ import {
 import { toast } from 'sonner'
 import {
   getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
-  getRegistrationPeriods, createRegistrationPeriod,
+  getRegistrationPeriods, createRegistrationPeriod, updateRegistrationPeriod,
   activateRegistrationPeriod, deactivateRegistrationPeriod,
 } from '../../api/vehicles'
 import api from '../../api/axios'
@@ -17,23 +17,22 @@ import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/* Registration windows are always named for a school year and a term, so the
+/* Registration windows are named for the school year they belong to, so the
    label is picked rather than typed. Typing it produced four different names
    for the same thing — 'test', 'test 2', 'S.Y 26-27' and 'SY 26-27' — which is
-   no help at all when you are looking down the archived list a year later. */
-const PERIOD_TERMS = ['First Semester', 'Second Semester', 'Summer']
-
+   no help at all when you are looking down the archived list a year later.
+   The window is opened once per school year, not once per term, so the label
+   carries the year alone — a term in it only invited a second window that the
+   registration rules never actually recognised. */
 function periodLabelOptions(today = new Date()) {
   // The school year rolls over in June: register in April and you are still
   // finishing the year that began the previous June, so the label has to be
   // that year's, not the calendar year's.
   const startYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1
-  const options = []
-  for (const offset of [0, 1]) {
+  return [-1, 0, 1, 2].map((offset) => {
     const from = startYear + offset
-    for (const term of PERIOD_TERMS) options.push(`S.Y. ${from}–${from + 1} ${term}`)
-  }
-  return options
+    return `S.Y. ${from}–${from + 1}`
+  })
 }
 
 const DAY_LABELS = [
@@ -251,7 +250,8 @@ export default function RuleConstraints() {
   // Registration periods
   const [periods,        setPeriods]        = useState([])
   const [periodsLoading, setPeriodsLoading] = useState(true)
-  const [showAddPeriod,  setShowAddPeriod]  = useState(false)
+  // null when closed, { mode: 'add' } or { mode: 'edit', id } while open
+  const [periodEditor,   setPeriodEditor]   = useState(null)
   const EMPTY_PERIOD = { label: '', start_date: '', end_date: '' }
   const [periodForm,     setPeriodForm]     = useState(EMPTY_PERIOD)
   const [periodErrors,   setPeriodErrors]   = useState({})
@@ -350,9 +350,28 @@ export default function RuleConstraints() {
     }
   }
 
-  const handleAddPeriod = async () => {
+  const openAddPeriod = () => {
+    setPeriodEditor({ mode: 'add' })
+    setPeriodForm(EMPTY_PERIOD)
+    setPeriodErrors({})
+  }
+
+  const openEditPeriod = (p) => {
+    setPeriodEditor({ mode: 'edit', id: p.id })
+    setPeriodForm({ label: p.label, start_date: p.start_date, end_date: p.end_date })
+    setPeriodErrors({})
+  }
+
+  const closePeriodEditor = () => {
+    setPeriodEditor(null)
+    setPeriodForm(EMPTY_PERIOD)
+    setPeriodErrors({})
+  }
+
+  const handleSavePeriod = async () => {
+    const editing = periodEditor?.mode === 'edit'
     const errors = {}
-    if (!periodForm.label.trim())      errors.label      = 'Select a school year and term.'
+    if (!periodForm.label.trim())      errors.label      = 'Select a school year.'
     if (!periodForm.start_date)        errors.start_date = 'Start date is required.'
     if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
@@ -362,16 +381,31 @@ export default function RuleConstraints() {
 
     setSavingPeriod(true)
     try {
-      const { data } = await createRegistrationPeriod(periodForm)
-      setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
-      setPeriodForm(EMPTY_PERIOD)
-      setPeriodErrors({})
-      setShowAddPeriod(false)
-      toast.success('Registration period created and set as active.')
+      if (editing) {
+        const { data } = await updateRegistrationPeriod(periodEditor.id, periodForm)
+        setPeriods(prev => prev.map(p => (p.id === data.id ? data : p)))
+        toast.success('Registration period updated.')
+      } else {
+        const { data } = await createRegistrationPeriod(periodForm)
+        setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
+        toast.success('Registration period created and set as active.')
+      }
+      closePeriodEditor()
     } catch (err) {
+      /* Only a payload that actually names form fields can be shown against
+         them. A PATCH can also come back as {detail: …} — the period was
+         archived by someone else, or the session lost its permission — and
+         routing that into the field errors would render nothing at all,
+         leaving the save looking like it silently did nothing. */
       const d = err.response?.data
-      if (d && typeof d === 'object') setPeriodErrors(d)
-      else toast.error('Failed to create registration period.')
+      const fieldErrors = d && typeof d === 'object' && !Array.isArray(d)
+        ? Object.fromEntries(Object.entries(d).filter(([k]) => k in EMPTY_PERIOD))
+        : {}
+      if (Object.keys(fieldErrors).length) {
+        setPeriodErrors(fieldErrors)
+      } else {
+        toast.error(d?.detail || `Failed to ${editing ? 'update' : 'create'} registration period.`)
+      }
     } finally {
       setSavingPeriod(false)
     }
@@ -464,61 +498,82 @@ export default function RuleConstraints() {
               <CalendarRange size={17} />
               Vehicle Registration Period
             </span>
-            <button className="rc-btn rc-btn-primary rc-btn-sm" onClick={() => { setShowAddPeriod(v => !v); setPeriodForm(EMPTY_PERIOD); setPeriodErrors({}) }}>
+            <button
+              className="rc-btn rc-btn-primary rc-btn-sm"
+              onClick={() => (periodEditor?.mode === 'add' ? closePeriodEditor() : openAddPeriod())}
+            >
               <Plus size={14} /> New Period
             </button>
           </div>
           <div className="rc-section-body">
-            {/* Add form */}
-            {showAddPeriod && (
-              <div className="rc-period-form">
-                <div className="rc-period-form-fields">
-                  <div className="rc-reg-field" style={{ flex: 2 }}>
-                    <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
-                    <select
-                      className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
-                      value={periodForm.label}
-                      onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
-                    >
-                      <option value="">Select a school year and term…</option>
-                      {periodLabelOptions().map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                    {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
+            {/* Add / edit form */}
+            {periodEditor && (() => {
+              const editing = periodEditor.mode === 'edit'
+              /* An older window's label is no longer in the rolling option list,
+                 and a running window's start date is in the past — neither may
+                 be dropped just because the form was reopened to move the end
+                 date, so both are carried into the inputs as they stand. */
+              const rolling = periodLabelOptions()
+              const labelOptions = periodForm.label && !rolling.includes(periodForm.label)
+                ? [periodForm.label, ...rolling]
+                : rolling
+              return (
+                <div className="rc-period-form">
+                  <p className="rc-period-form-title">
+                    {editing
+                      ? <><Pencil size={13} /> Editing period</>
+                      : <><Plus size={13} /> New registration period</>}
+                  </p>
+                  <div className="rc-period-form-fields">
+                    <div className="rc-reg-field" style={{ flex: 2 }}>
+                      <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
+                      <select
+                        className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
+                        value={periodForm.label}
+                        onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
+                      >
+                        <option value="">Select a school year…</option>
+                        {labelOptions.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                      {periodErrors.label && <span className="rc-field-error">{periodErrors.label}</span>}
+                    </div>
+                    <div className="rc-reg-field">
+                      <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
+                      <input
+                        type="date"
+                        className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
+                        value={periodForm.start_date}
+                        min={editing ? undefined : new Date().toISOString().slice(0, 10)}
+                        onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
+                      />
+                      {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
+                    </div>
+                    <div className="rc-reg-field">
+                      <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
+                      <input
+                        type="date"
+                        className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
+                        value={periodForm.end_date}
+                        min={periodForm.start_date || undefined}
+                        onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
+                      />
+                      {periodErrors.end_date && <span className="rc-field-error">{periodErrors.end_date}</span>}
+                    </div>
                   </div>
-                  <div className="rc-reg-field">
-                    <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
-                    <input
-                      type="date"
-                      className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
-                      value={periodForm.start_date}
-                      min={new Date().toISOString().slice(0, 10)}
-                      onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
-                    />
-                    {periodErrors.start_date && <span className="rc-field-error">{periodErrors.start_date}</span>}
-                  </div>
-                  <div className="rc-reg-field">
-                    <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
-                    <input
-                      type="date"
-                      className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
-                      value={periodForm.end_date}
-                      min={periodForm.start_date || undefined}
-                      onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
-                    />
-                    {periodErrors.end_date && <span className="rc-field-error">{periodErrors.end_date}</span>}
+                  <div className="rc-period-form-actions">
+                    <button className="rc-btn rc-btn-secondary" onClick={closePeriodEditor}>Cancel</button>
+                    <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
+                      {savingPeriod
+                        ? <Loader2 size={14} className="rc-spin" />
+                        : editing ? <Pencil size={14} /> : <Plus size={14} />}
+                      {savingPeriod ? 'Saving…' : editing ? 'Save Changes' : 'Save & Activate'}
+                    </button>
                   </div>
                 </div>
-                <div className="rc-period-form-actions">
-                  <button className="rc-btn rc-btn-secondary" onClick={() => setShowAddPeriod(false)}>Cancel</button>
-                  <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleAddPeriod}>
-                    {savingPeriod ? <Loader2 size={14} className="rc-spin" /> : <Plus size={14} />}
-                    {savingPeriod ? 'Saving…' : 'Save & Activate'}
-                  </button>
-                </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* Periods table */}
             {periodsLoading ? (
@@ -556,25 +611,39 @@ export default function RuleConstraints() {
                               : <span className="rc-period-badge rc-period-badge--archived"><Archive size={11} /> Archived</span>}
                           </td>
                           <td>
-                            {ended ? null : isActive ? (
-                              <button
-                                className="rc-btn rc-btn-secondary rc-btn-sm"
-                                disabled={togglingId === p.id}
-                                onClick={() => setConfirmAction({ type: 'deactivatePeriod', id: p.id, period: p })}
-                              >
-                                {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <Archive size={12} />}
-                                Deactivate
-                              </button>
-                            ) : (
-                              <button
-                                className="rc-btn rc-btn-primary rc-btn-sm"
-                                disabled={togglingId === p.id}
-                                onClick={() => setConfirmAction({ type: 'activatePeriod', id: p.id, period: p })}
-                              >
-                                {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <CheckCircle size={12} />}
-                                Set Active
-                              </button>
-                            )}
+                            <div className="rc-period-actions">
+                              {/* Editable while it is still running — a deadline
+                                  that has to move is the whole reason to touch a
+                                  live window, and archiving to re-create one only
+                                  leaves a duplicate row behind. */}
+                              {!ended && (
+                                <button
+                                  className="rc-btn rc-btn-secondary rc-btn-sm"
+                                  onClick={() => openEditPeriod(p)}
+                                >
+                                  <Pencil size={12} /> Edit
+                                </button>
+                              )}
+                              {ended ? null : isActive ? (
+                                <button
+                                  className="rc-btn rc-btn-secondary rc-btn-sm"
+                                  disabled={togglingId === p.id}
+                                  onClick={() => setConfirmAction({ type: 'deactivatePeriod', id: p.id, period: p })}
+                                >
+                                  {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <Archive size={12} />}
+                                  Deactivate
+                                </button>
+                              ) : (
+                                <button
+                                  className="rc-btn rc-btn-primary rc-btn-sm"
+                                  disabled={togglingId === p.id}
+                                  onClick={() => setConfirmAction({ type: 'activatePeriod', id: p.id, period: p })}
+                                >
+                                  {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <CheckCircle size={12} />}
+                                  Set Active
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )

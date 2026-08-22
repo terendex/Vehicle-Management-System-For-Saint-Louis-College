@@ -1229,6 +1229,27 @@
   margin-bottom: 18px;
 }
 
+.rc-period-form-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #2E4C63;
+  margin: 0 0 12px;
+}
+
+/* Edit sits beside Deactivate / Set Active, so the cell needs to hold a pair
+   without stretching the row on a narrow screen. */
+.rc-period-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .rc-period-form-fields {
   display: flex;
   gap: 12px;
