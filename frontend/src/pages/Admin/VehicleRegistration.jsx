@@ -49,7 +49,13 @@ function formatSchedule(entity) {
 const OTHER_KEY = 'other'
 
 function StatTile({ variant, count, label, active, onSelect, title }) {
-  const className = `vr-stat vr-stat--sm vr-stat--${variant} ${active ? 'active' : ''}`
+  // A bucket holding nothing is greyed out: on a line of ten tiles the empty
+  // ones would otherwise shout their zero as loudly as the one real count.
+  const className = [
+    'vr-stat', 'vr-stat--sm', `vr-stat--${variant}`,
+    count === 0 ? 'vr-stat--zero' : '',
+    active ? 'active' : '',
+  ].filter(Boolean).join(' ')
   if (!onSelect) {
     return (
       <div className={`${className} vr-stat--static`} title={`${label} — not a filter`}>
@@ -59,7 +65,13 @@ function StatTile({ variant, count, label, active, onSelect, title }) {
     )
   }
   return (
-    <button type="button" className={className} onClick={onSelect} title={title}>
+    <button
+      type="button"
+      className={className}
+      onClick={onSelect}
+      title={title}
+      aria-pressed={active}
+    >
       <span className="vr-stat-value">{count}</span>
       <span className="vr-stat-label">{label}</span>
     </button>
@@ -309,6 +321,10 @@ export default function VehicleRegistration() {
   const scopedCount = (axis, key, fallback) =>
     activeStatus?.[axis]?.[key] ?? (activeStatus ? 0 : fallback)
 
+  // An empty status leaves the refine panel with nothing to say, so it collapses
+  // to a single line instead of holding open a full-height band for one sentence.
+  const isRefineEmpty = !!activeStatus && activeStatus.count === 0
+
   const hasActiveFilters = typeFilter !== 'all' || paymentFilter !== 'all' || search.trim() !== ''
   const clearFilters = () => { setTypeFilter('all'); setPaymentFilter('all'); setSearch(''); setRegPage(1) }
 
@@ -368,7 +384,7 @@ export default function VehicleRegistration() {
             </div>
           </div>
 
-          <div className="vr-stats-refine">
+          <div className={`vr-stats-refine${isRefineEmpty ? ' vr-stats-refine--empty' : ''}`}>
             <p className="vr-stats-refine-head">
               <SlidersHorizontal size={12} />
               Refine
@@ -378,9 +394,9 @@ export default function VehicleRegistration() {
             </p>
 
             {/* Six zeroes under an empty status is noise, not information. */}
-            {activeStatus && activeStatus.count === 0 ? (
+            {isRefineEmpty ? (
               <p className="vr-stats-refine-empty">
-                No {activeStatus.label.toLowerCase()} registrations to break down.
+                Nothing to break down — no registrations at this stage.
               </p>
             ) : (
               <div className="vr-stats-refine-body">

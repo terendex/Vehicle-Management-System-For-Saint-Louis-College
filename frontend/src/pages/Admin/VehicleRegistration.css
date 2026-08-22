@@ -586,6 +586,17 @@
   background: #F7FAFC;
 }
 
+/* An empty status has nothing to break down, so the panel folds onto one line
+   rather than reserving a full-height band to hold a single sentence. */
+.vr-stats-refine--empty {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-style: dashed;
+  background: transparent;
+}
+
 .vr-stats-refine-head {
   display: flex;
   align-items: center;
@@ -593,7 +604,9 @@
   margin: 0;
   font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.2px;
   color: #64839C;
+  flex-shrink: 0;
 }
 
 .vr-stats-refine-head svg { color: #8AA5BC; flex-shrink: 0; }
@@ -618,8 +631,15 @@
 .vr-stats-refine-empty {
   margin: 0;
   font-size: 12px;
-  font-style: italic;
   color: #7C99AF;
+}
+
+/* On the collapsed one-line form the message trails the header, so it needs a
+   separator; stacked on a narrow screen it is its own line and must not. */
+.vr-stats-refine--empty .vr-stats-refine-empty::before {
+  content: ' b7';
+  margin-right: 8px;
+  color: #B7C9D8;
 }
 
 .vr-stat-group {
@@ -645,7 +665,13 @@
   flex-wrap: wrap;
 }
 
+/* Every tile carries its own accent colour; the shared rules below read it out
+   of --tile-accent, so a variant declares its colour once instead of restating
+   it for the value, the rail, the ring and the hover border. */
 .vr-stat {
+  --tile-accent: #03396C;
+  --tile-tint: #EEF4F9;
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -659,17 +685,44 @@
   font-family: inherit;
 }
 
+/* A colour rail down the edge. Ten near-identical white boxes on one line get
+   read one number at a time; the rail lets the row be scanned by colour first,
+   and is what carries the selected state at a glance. */
+.vr-stat::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 10px 0 0 10px;
+  background: var(--tile-accent);
+  opacity: 0.3;
+  transition: opacity 0.15s, width 0.15s;
+}
+
 /* Every small tile is also a filter shortcut, so it has to look pressable. */
 button.vr-stat {
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s, transform 0.15s;
 }
-button.vr-stat:hover { border-color: #7FA6C4; background: #F7FAFC; }
+button.vr-stat:hover {
+  border-color: var(--tile-accent);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(3, 57, 108, 0.10);
+}
+button.vr-stat:hover::before { opacity: 0.7; }
+button.vr-stat:active { transform: translateY(0); }
+button.vr-stat:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
 button.vr-stat.active {
-  border-color: #03396C;
-  background: #EEF4F9;
-  box-shadow: inset 0 0 0 1px #03396C;
+  border-color: var(--tile-accent);
+  background: var(--tile-tint);
+  box-shadow: inset 0 0 0 1px var(--tile-accent);
 }
+button.vr-stat.active::before { opacity: 1; width: 4px; }
 
 /* The "other" tile reports anomalous rows so the counts still add up; it is
    deliberately inert, so it must not look pressable. */
@@ -677,22 +730,22 @@ button.vr-stat.active {
   border-style: dashed;
   opacity: 0.85;
 }
+.vr-stat--static::before { display: none; }
 
 .vr-stat--sm {
-  padding: 9px 14px;
-  min-width: 88px;
+  padding: 9px 14px 9px 16px;
+  min-width: 92px;
 }
 
 /* On the panel's tint a plain white tile would float; the firmer border keeps
    it reading as a control rather than a gap in the background. */
 .vr-stats-refine .vr-stat { border-color: #CBDCEA; }
-.vr-stats-refine button.vr-stat:hover { border-color: #7FA6C4; background: #fff; }
 
 .vr-stat-value {
   font-size: 24px;
   font-weight: 800;
   line-height: 1.05;
-  color: #03396C;
+  color: var(--tile-accent);
   font-variant-numeric: tabular-nums;
 }
 
@@ -706,24 +759,37 @@ button.vr-stat.active {
 }
 
 .vr-stat--total {
-  background: #03396C;
+  background: linear-gradient(135deg, #03396C 0%, #04508F 100%);
   border-color: #03396C;
   align-self: flex-end;
+  padding: 13px 20px;
+  box-shadow: 0 3px 10px rgba(3, 57, 108, 0.18);
 }
+.vr-stat--total::before { display: none; }
 .vr-stat--total .vr-stat-value { color: #fff; font-size: 28px; }
 .vr-stat--total .vr-stat-label { color: #C7DCEC; }
 
 /* Status tints match the table's status badges so the same word reads the
    same colour whether it is a count or a row. */
-.vr-stat--pending  .vr-stat-value { color: #8A6B00; }
-.vr-stat--accepted .vr-stat-value { color: #12915A; }
-.vr-stat--rejected .vr-stat-value { color: #C62828; }
-.vr-stat--expired  .vr-stat-value { color: #64839C; }
+.vr-stat--pending  { --tile-accent: #8A6B00; --tile-tint: #FCF5E3; }
+.vr-stat--accepted { --tile-accent: #12915A; --tile-tint: #E9F6F0; }
+.vr-stat--rejected { --tile-accent: #C62828; --tile-tint: #FCECEC; }
+.vr-stat--expired  { --tile-accent: #64839C; --tile-tint: #EEF3F8; }
 
 /* Fee tints: unpaid is the one that wants chasing, exempt is a non-event. */
-.vr-stat--pay-unpaid .vr-stat-value { color: #C62828; }
-.vr-stat--pay-paid   .vr-stat-value { color: #12915A; }
-.vr-stat--pay-exempt .vr-stat-value { color: #64839C; }
+.vr-stat--pay-unpaid { --tile-accent: #C62828; --tile-tint: #FCECEC; }
+.vr-stat--pay-paid   { --tile-accent: #12915A; --tile-tint: #E9F6F0; }
+.vr-stat--pay-exempt { --tile-accent: #64839C; --tile-tint: #EEF3F8; }
+
+/* Last, so it beats the variant tints above: an empty bucket is a fact, not a
+   headline, and draining its colour lets the one count that does have rows
+   behind it carry the line. */
+.vr-stat--zero {
+  --tile-accent: #9DB2C4;
+  --tile-tint: #F1F5F9;
+}
+.vr-stat--zero .vr-stat-label { color: #7C99AF; }
+.vr-stat--zero::before { opacity: 0.18; }
 
 .vr-stat-placeholder {
   align-self: center;
@@ -739,6 +805,11 @@ button.vr-stat.active {
   .vr-stats-refine-body { gap: 12px; }
   /* Stacked groups need no vertical rule between them. */
   .vr-stat-divider { display: none; }
+  /* Only a wide viewport fits the header and the sentence on one line. */
+  .vr-stats-refine--empty { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .vr-stats-refine--empty .vr-stats-refine-empty::before { content: none; }
+  /* Tiles share the width evenly rather than leaving a ragged last row. */
+  .vr-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }
 }
 
 .vr-search-wrap {
