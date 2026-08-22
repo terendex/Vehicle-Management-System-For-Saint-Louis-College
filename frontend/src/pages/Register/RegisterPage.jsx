@@ -200,7 +200,10 @@ const SCHEDULE_GROUPS = [
 
 // Fetcher registrations must list at least one student being fetched.
 // Same info as a student registration except email, contact number and age.
-const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '' }
+// assessment is the student's own enrolment proof (a File, never sent in the
+// JSON payload) — a fetcher is not enrolled, so their application proves nothing
+// about the students they collect.
+const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '', assessment: null }
 
 /* Levels that can never be self-driven — the "who drives" choice is skipped and a
    parent, guardian, or authorized driver is always registered as the driver.
@@ -582,28 +585,40 @@ export default function RegisterPage() {
      No preview: half of these are PDFs, and the ones that aren't are dense
      scans that read as noise at thumbnail size. The filename chip is enough
      for the applicant to confirm they picked the right file. */
-  const handleAssessmentChange = (e) => {
+  // Shared by the applicant's own assessment and by each fetched student's:
+  // same file rules, same messages, one place to change them.
+  const pickAssessmentFile = (e) => {
     const file = e.target.files?.[0]
     // Let the user re-pick the same file after removing it
     e.target.value = ''
-    if (!file) return
+    if (!file) return null
 
     // Some browsers report an empty type for HEIC; fall back to the extension.
     const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
     if (!ASSESSMENT_FILE_TYPES.includes(file.type) && !extOk) {
       notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
-      return
+      return null
     }
     if (file.size > ASSESSMENT_FILE_MAX_BYTES) {
       notify.error(`That file is ${formatFileSize(file.size)}. Please keep it under ${ASSESSMENT_FILE_MAX_MB}MB.`, { title: 'File too large' })
-      return
+      return null
     }
 
-    setAssessmentFile(file)
+    return file
+  }
+
+  const handleAssessmentChange = (e) => {
+    const file = pickAssessmentFile(e)
+    if (file) setAssessmentFile(file)
   }
 
   const clearAssessmentFile = () => {
     setAssessmentFile(null)
+  }
+
+  const handleFetcherAssessmentChange = (index, e) => {
+    const file = pickAssessmentFile(e)
+    if (file) updateFetcherStudent(index, 'assessment', file)
   }
 
   // Release the last object URL when the form unmounts
@@ -778,6 +793,11 @@ export default function RegisterPage() {
         if (!st.full_name.trim() || !st.student_id.trim() || !st.student_level) {
           problems.push(`Student #${i + 1}: full name, student ID and education level are required.`)
         }
+        // Same reason a student applicant cannot skip theirs: without it there
+        // is nothing for CDSO to check the enrolment against.
+        if (!st.assessment) {
+          problems.push(`Student #${i + 1}: attach their assessment form.`)
+        }
       })
     }
 
@@ -825,6 +845,8 @@ export default function RegisterPage() {
         // Fetcher classification + students being fetched
         fetcher_type:     registrantType === 'fetcher' ? fetcherType : '',
         fetcher_students: registrantType === 'fetcher'
+          // Text only: the assessment File is uploaded separately, against
+          // this same index, by uploadRegistrationDocuments below.
           ? fetcherStudents.map(s => ({
               full_name:     s.full_name.trim(),
               student_id:    s.student_id.trim(),
@@ -845,13 +867,20 @@ export default function RegisterPage() {
       // applicant switched registrant type, it is dropped rather than filed
       // against a registration nobody will look for it on.
       const assessment = registrantType === 'student' ? assessmentFile : null
-      if ((licenseImage || assessment) && result?.id) {
+      // One per fetched student, keyed by their position in fetcher_students —
+      // that index is what pairs the file with the student on the review screen.
+      const fetcherAssessments = registrantType === 'fetcher'
+        ? fetcherStudents.map(st => st.assessment || null)
+        : []
+      const hasFetcherAssessment = fetcherAssessments.some(Boolean)
+      if ((licenseImage || assessment || hasFetcherAssessment) && result?.id) {
         // Best-effort — a failed upload shouldn't block the (already submitted)
         // registration, but the applicant is told so they can bring the physical copies.
         try {
           await registrationApi.uploadRegistrationDocuments(result.id, payload.email, {
             license: licenseImage,
             assessment,
+            fetcherAssessments,
           })
         } catch (uploadErr) {
           setLicenseUploadFailed(true)
@@ -2036,7 +2065,8 @@ export default function RegisterPage() {
                 <hr className="divider" />
                 <h3 className="section-heading">Students to Fetch <span className="required">*</span></h3>
                 <p className="field-hint" style={{ display: 'block', marginBottom: 12 }}>
-                  List at least one student you will be fetching. Use "Add another student" if you fetch more than one.
+                  List at least one student you will be fetching, and attach each one's assessment
+                  form. Use "Add another student" if you fetch more than one.
                 </p>
                 {fetcherStudents.map((s, i) => (
                   <div key={i} className="fetcher-student-card">
@@ -2068,7 +2098,7 @@ export default function RegisterPage() {
                           type="text"
                           value={s.student_id}
                           onChange={e => updateFetcherStudent(i, 'student_id', e.target.value)}
-                          placeholder="e.g. 2024-00123"
+                          placeholder={FIELD_PATTERNS.student_id.hint}
                         />
                       </div>
                       <div className="form-group">
@@ -2091,6 +2121,50 @@ export default function RegisterPage() {
                           onChange={e => updateFetcherStudent(i, 'program_year', e.target.value)}
                           placeholder="e.g. BSIT - 3 or Grade 7"
                         />
+                      </div>
+
+                      {/* Enrolment proof for this student. No preview, for the
+                          same reason as the applicant's own: most are PDFs and
+                          the rest are dense scans. */}
+                      <div className="form-group col-span-2">
+                        <label>Assessment Form <span className="required">*</span></label>
+                        {!s.assessment ? (
+                          <label className="license-upload">
+                            <input
+                              type="file"
+                              accept={ASSESSMENT_FILE_TYPES.join(',')}
+                              onChange={e => handleFetcherAssessmentChange(i, e)}
+                              className="license-upload-input"
+                            />
+                            <Upload size={18} className="license-upload-icon" />
+                            <span className="license-upload-text">
+                              <strong>Choose a file</strong>
+                              <span>JPG, PNG, WEBP, HEIC or PDF · up to {ASSESSMENT_FILE_MAX_MB}MB</span>
+                            </span>
+                          </label>
+                        ) : (
+                          <div className="license-preview">
+                            <div className="license-preview-img license-preview-noimg">
+                              <FileText size={20} />
+                            </div>
+                            <div className="license-preview-meta">
+                              <span className="license-preview-name" title={s.assessment.name}>{s.assessment.name}</span>
+                              <span className="license-preview-size">{formatFileSize(s.assessment.size)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="license-preview-remove"
+                              onClick={() => updateFetcherStudent(i, 'assessment', null)}
+                              aria-label={`Remove assessment form for student #${i + 1}`}
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                        )}
+                        <span className="field-hint">
+                          This student's latest registrar's assessment form — what confirms they
+                          are enrolled at SLC.
+                        </span>
                       </div>
                     </div>
                   </div>

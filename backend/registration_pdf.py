@@ -131,9 +131,8 @@ def _documents_story(registration, content_width, head_style, note_style):
     frame_w = cell_w - 4 * mm      # padding inside the cell
     frame_h = 62 * mm
 
-    cells = []
-    for title, field_name in DOCUMENT_FIELDS:
-        data, note = _read_document(getattr(registration, field_name, None))
+    def cell(title, file_field):
+        data, note = _read_document(file_field)
         body = None
         if data:
             try:
@@ -146,7 +145,20 @@ def _documents_story(registration, content_width, head_style, note_style):
                 note = 'Could not be printed'
         if body is None:
             body = Paragraph(note or 'Not provided', missing_style)
-        cells.append([Paragraph(title, caption_style), body])
+        return [Paragraph(title, caption_style), body]
+
+    cells = [cell(title, getattr(registration, field_name, None))
+             for title, field_name in DOCUMENT_FIELDS]
+
+    # A fetcher's own assessment slot is always empty — they are not enrolled.
+    # What proves the trip is each listed student's own form, so those follow
+    # the shared uploads, captioned with the student they belong to.
+    if registration.registrant_type == 'fetcher':
+        by_index = {a.student_index: a.assessment_form
+                    for a in registration.fetcher_assessments.all()}
+        for i, student in enumerate(registration.fetcher_students or []):
+            name = (student.get('full_name') if isinstance(student, dict) else '') or f'Student #{i + 1}'
+            cells.append(cell(f'Assessment Form — {name}', by_index.get(i)))
 
     rows = [cells[i:i + 2] for i in range(0, len(cells), 2)]
     if rows and len(rows[-1]) == 1:

@@ -154,6 +154,57 @@ def _qr_public_url(registration, png):
         return None
 
 
+REGISTRANT_TYPE_LABELS = {
+    'student':  'Student',
+    'employee': 'Employee',
+    'fetcher':  'Fetcher / Drop & Go',
+}
+
+
+def registrant_type_label(registration):
+    """'Fetcher / Drop & Go', not the raw 'fetcher' the column stores."""
+    kind = registration.registrant_type or ''
+    return REGISTRANT_TYPE_LABELS.get(kind, kind.capitalize())
+
+
+def _fetcher_student_lines(registration):
+    """One readable line per student a fetcher collects, e.g.
+    'DELA CRUZ, JUAN - ID 23100174 - Grade 7'. Empty list if there are none."""
+    lines = []
+    for i, student in enumerate(registration.fetcher_students or [], start=1):
+        if not isinstance(student, dict):
+            continue
+        bits = [student.get('full_name') or f'Student #{i}']
+        if student.get('student_id'):
+            bits.append(f"ID {student['student_id']}")
+        if student.get('program_year'):
+            bits.append(student['program_year'])
+        lines.append(' - '.join(bits))
+    return lines
+
+
+def _fetcher_rows(registration, pad='7px'):
+    """Identity rows for a fetcher: what they are classified as, and who they
+    collect. Without these the application summary a fetcher receives is the
+    only one with nothing in it that is specific to their application."""
+    fetcher_type = (registration.get_fetcher_type_display()
+                    if registration.fetcher_type else '')
+    rows = (
+        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;width:150px;">Classification</td>'
+        f'<td style="padding:{pad} 0;font-weight:600;">{esc_or_dash(fetcher_type)}</td></tr>'
+    )
+    lines = _fetcher_student_lines(registration)
+    if not lines:
+        return rows
+    listed = '<br />'.join(esc(line) for line in lines)
+    label = 'Student to Fetch' if len(lines) == 1 else 'Students to Fetch'
+    rows += (
+        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;vertical-align:top;">{label}</td>'
+        f'<td style="padding:{pad} 0;font-weight:600;line-height:1.7;">{listed}</td></tr>'
+    )
+    return rows
+
+
 def _authorized_driver_row(registration, pad='8px'):
     """Table row naming the authorized adult driver — present when the
     registrant is a minor / non-driving student. Empty string otherwise."""
@@ -210,34 +261,40 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     system_id = esc_or_dash(registration.system_student_id or registration.system_employee_id)
 
     # Build identity rows based on registrant type (no nested f-strings)
-    if registration.registrant_type == 'student':
-        id_label  = 'Student ID'
-        id_value  = esc_or_dash(registration.student_id)
-        id2_label = 'Program &amp; Year'
-        id2_value = esc_or_dash(registration.program_year)
+    if registration.registrant_type == 'fetcher':
+        # A fetcher has neither an employee ID nor a department, and the old
+        # else-branch labelled their blank columns as both — an approval email
+        # that read "Employee ID: —, Department: —" to every fetcher.
+        identity_rows = _fetcher_rows(registration, pad='8px')
     else:
-        id_label  = 'Employee ID'
-        id_value  = esc_or_dash(registration.employee_id)
-        id2_label = 'Department'
-        id2_value = esc_or_dash(department_label(registration))
+        if registration.registrant_type == 'student':
+            id_label  = 'Student ID'
+            id_value  = esc_or_dash(registration.student_id)
+            id2_label = 'Program &amp; Year'
+            id2_value = esc_or_dash(registration.program_year)
+        else:
+            id_label  = 'Employee ID'
+            id_value  = esc_or_dash(registration.employee_id)
+            id2_label = 'Department'
+            id2_value = esc_or_dash(department_label(registration))
 
-    identity_rows = (
-        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
-        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">{id2_label}</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{id2_value}</td></tr>'
-    )
+        identity_rows = (
+            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
+            f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
+            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">{id2_label}</td>'
+            f'<td style="padding:8px 0;font-weight:600;">{id2_value}</td></tr>'
+        )
 
     # Campus days row (only for students) — built separately to avoid nested f-string
     if registration.registrant_type == 'student':
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
                                       if registration.campus_days else '')
-        campus_days_row = (
-            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
-            f'<td style="padding:8px 0;font-weight:600;">{campus_days_str}</td></tr>'
-        )
     else:
-        campus_days_row = ''
+        campus_days_str = 'Any campus day (Monday to Saturday)'
+    campus_days_row = (
+        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
+        f'<td style="padding:8px 0;font-weight:600;">{campus_days_str}</td></tr>'
+    )
 
     # Portal account ID (use table layout — flex not supported in many email clients)
     portal_id_display   = esc_or_dash(user_code)
@@ -250,7 +307,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     email_val           = esc(registration.email)
     plate_val           = esc_or_dash(registration.plate_number)
     vehicle_type_val    = esc(registration.vehicle_type)
-    registrant_type_val = esc(registration.registrant_type)
+    registrant_type_val = esc(registrant_type_label(registration))
     temp_password_val   = esc(temp_password)
 
     html_message = f"""
@@ -424,8 +481,13 @@ def send_pending_email(registration):
         )
         schedule_row = ''
     else:  # fetcher
-        id_rows = ''
-        schedule_row = ''
+        # Classification and the students being collected are this application's
+        # identity, the way a student ID or a department is for the other two.
+        id_rows = _fetcher_rows(registration)
+        schedule_row = (
+            '<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
+            '<td style="padding:7px 0;font-weight:600;">Any campus day (Monday to Saturday)</td></tr>'
+        )
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)
@@ -437,9 +499,7 @@ def send_pending_email(registration):
     color_val        = esc_or_dash(registration.vehicle_color)
     conduction_val   = esc_or_dash(registration.conduction_number)
 
-    type_label = {'student': 'Student', 'employee': 'Employee', 'fetcher': 'Fetcher / Drop & Go'}.get(
-        registration.registrant_type, registration.registrant_type.capitalize()
-    )
+    type_label = registrant_type_label(registration)
     ref_number = f"REG-{str(registration.pk).zfill(6)}"
 
     # ── Payment call-to-action ──
@@ -589,6 +649,11 @@ def send_pending_email(registration):
     """
 
     type_display = type_label
+    student_lines = _fetcher_student_lines(registration)
+    fetched_text = ''
+    if student_lines:
+        listed = '\n'.join(f"  - {line}" for line in student_lines)
+        fetched_text = f"Students to fetch:\n{listed}\n\n"
     send_mail(
         subject=f"SLC Vehicle Registration Received — {ref_number} (Pending Review)",
         message=(
@@ -598,6 +663,7 @@ def send_pending_email(registration):
             f"Plate Number:  {registration.plate_number}\n"
             f"Type:          {type_display}\n"
             f"Submitted:     {submitted_at}\n\n"
+            f"{fetched_text}"
             f"{payment_text}"
             f"You will be notified by email once a decision has been made.\n\n"
             f"Saint Louis College Smart Parking and Vehicle Verification System"

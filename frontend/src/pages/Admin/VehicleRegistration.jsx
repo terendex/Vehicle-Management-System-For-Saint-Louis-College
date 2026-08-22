@@ -821,6 +821,23 @@ export default function VehicleRegistration() {
                     </div>
                   )}
 
+                  {/* A fetcher proves nothing about their own enrolment — the
+                      documents that matter are the ones for the students they
+                      collect, one tile each so a missing form is visible against
+                      the name it belongs to. */}
+                  {selectedReg.registrant_type === 'fetcher'
+                    && (selectedReg.fetcher_students || []).map((s, i) => (
+                      <div className="vr-attach-cell" key={i}>
+                        <div className="detail-label">
+                          Assessment Form — {s.full_name || `Student #${i + 1}`}
+                        </div>
+                        <AttachmentPreview
+                          url={s.assessment_form}
+                          alt={`Assessment form of ${s.full_name || `student #${i + 1}`}`}
+                        />
+                      </div>
+                    ))}
+
                   {/* The receipt is an upload like the other two and belongs on
                       the same row. What it means for the fee stays in Payment
                       below — the badge and OR number are the reviewer's answer

@@ -115,6 +115,22 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         for name in self.DOCUMENT_FIELDS:
             data[name] = signed_document_url(getattr(instance, name), request)
+        # A fetcher's students each attach their own enrolment proof. The files
+        # live in their own table (FetcherStudentAssessment) but the reviewer
+        # reads them per student, so each one is folded into the entry it
+        # belongs to rather than handed over as a separate list to re-pair.
+        # Prefetch 'fetcher_assessments' on the queryset or this costs a query
+        # per row.
+        students = data.get('fetcher_students')
+        if isinstance(students, list) and students:
+            by_index = {a.student_index: a for a in instance.fetcher_assessments.all()}
+            data['fetcher_students'] = [
+                {**entry,
+                 'assessment_form': signed_document_url(
+                     by_index[i].assessment_form, request) if i in by_index else None}
+                if isinstance(entry, dict) else entry
+                for i, entry in enumerate(students)
+            ]
         # payment_token is the secret in the applicant's receipt-upload link.
         # This serializer feeds the CDSO queue and the vehicle profile a guard
         # can open, so anyone with either view could otherwise read a stranger's

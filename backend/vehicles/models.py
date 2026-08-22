@@ -428,6 +428,62 @@ class VehicleRegistration(models.Model):
         ]
 
 
+class FetcherStudentAssessment(models.Model):
+    """The enrolment proof for one student named on a fetcher registration.
+
+    A fetcher is not enrolled themselves, so their own application proves
+    nothing about the students they collect — each listed student carries their
+    own assessment form, the same document a student applicant attaches.
+
+    Kept in its own table rather than inside VehicleRegistration.fetcher_students
+    (a JSONField): a file needs real storage handling — extension validation, a
+    signed URL for the reviewer, deletion when the row goes — and a JSON value
+    gets none of that. student_index is the position in that list, so the two
+    stay paired without the JSON having to hold anything but text.
+    """
+    id            = models.BigAutoField(primary_key=True, db_column='fetcher_student_assessment_id')
+    registration  = models.ForeignKey(
+        VehicleRegistration, on_delete=models.CASCADE,
+        related_name='fetcher_assessments',
+    )
+    student_index = models.PositiveIntegerField()
+    assessment_form = models.FileField(
+        upload_to='assessments/fetcher/',
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
+    uploaded_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tbl_fetcher_student_assessment'
+        ordering = ['student_index']
+        # One document per listed student: a re-upload replaces what is on file
+        # rather than leaving the reviewer two copies with no way to tell which
+        # one the applicant meant.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['registration', 'student_index'],
+                name='uniq_fetcher_assessment_per_student',
+            ),
+        ]
+
+    def student(self):
+        """The fetcher_students entry this document belongs to, or None."""
+        students = self.registration.fetcher_students or []
+        if 0 <= self.student_index < len(students):
+            entry = students[self.student_index]
+            return entry if isinstance(entry, dict) else None
+        return None
+
+    def student_name(self):
+        entry = self.student() or {}
+        return entry.get('full_name') or f'Student #{self.student_index + 1}'
+
+    def __str__(self):
+        return f"Assessment for {self.student_name()} (registration {self.registration_id})"
+
+
 class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'

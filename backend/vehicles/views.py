@@ -786,7 +786,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import VehicleRegistration
+from .models import FetcherStudentAssessment, VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
@@ -864,13 +864,15 @@ class PendingRegistrationsListView(APIView):
 
     def get(self, request):
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
-        # select_related pulls the department in the same SELECT, and the
+        # select_related pulls the department in the same SELECT, prefetch_related
+        # collects every fetcher's per-student assessments in one more, and the
         # prebuilt block-count map replaces one COUNT per row with one query for
-        # the page — together they turn a 2N+1 query pattern into a flat 2.
+        # the page — together they turn a 3N+1 query pattern into a flat 3.
         registrations = list(
             VehicleRegistration.objects
             .filter(status=status_filter)
             .select_related('department')
+            .prefetch_related('fetcher_assessments')
             .order_by('-created_at')
         )
         return Response(VehicleRegistrationSerializer(
@@ -2078,14 +2080,39 @@ class UploadRegistrationDocumentsView(APIView):
     payload (with its nested campus_days / fetcher_students structures) doesn't have
     to be reworked into form-data.
 
-    Both files are optional individually, but at least one has to be present —
-    a request carrying neither is a client bug, not a no-op worth recording."""
+    A fetcher is not enrolled themselves, so the enrolment proofs for the students
+    they collect arrive here too — one file per listed student, as
+    `fetcher_assessment_<index>`, the index being the position in fetcher_students.
+
+    Every file is optional individually, but at least one has to be present —
+    a request carrying none is a client bug, not a no-op worth recording."""
     permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser, FormParser]
 
     # Mirrors the model's FileExtensionValidator on assessment_form. Checked here
     # too so the applicant gets a plain 400 instead of a 500 from full_clean.
     ASSESSMENT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
+    FETCHER_ASSESSMENT_PREFIX = 'fetcher_assessment_'
+
+    def _fetcher_assessments(self, request):
+        """The per-student files, as ({student_index: uploaded_file}, error).
+
+        A field name that is not `prefix + digits` is reported rather than
+        silently skipped: a quietly dropped attachment reads to the applicant
+        as one that was accepted.
+        """
+        files = {}
+        for key in request.FILES:
+            if not key.startswith(self.FETCHER_ASSESSMENT_PREFIX):
+                continue
+            suffix = key[len(self.FETCHER_ASSESSMENT_PREFIX):]
+            if not suffix.isdigit():
+                return None, "Malformed attachment field '%s'." % key
+            files[int(suffix)] = request.FILES[key]
+        return files, None
+
+    def _bad_extension(self, upload):
+        return upload.name.lower().rsplit('.', 1)[-1] not in self.ASSESSMENT_EXTENSIONS
 
     def post(self, request):
         registration_id = request.data.get('registration_id')
@@ -2093,15 +2120,25 @@ class UploadRegistrationDocumentsView(APIView):
         image = request.FILES.get('image')
         assessment = request.FILES.get('assessment_form')
 
+        fetcher_files, field_error = self._fetcher_assessments(request)
+        if field_error:
+            return Response({"error": field_error}, status=status.HTTP_400_BAD_REQUEST)
+
         if not registration_id or not email:
             return Response({"error": "registration_id and email are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not image and not assessment:
+        if not image and not assessment and not fetcher_files:
             return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
-        if assessment and assessment.name.lower().rsplit('.', 1)[-1] not in self.ASSESSMENT_EXTENSIONS:
+        if assessment and self._bad_extension(assessment):
             return Response(
                 {"error": "The assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        for upload in fetcher_files.values():
+            if self._bad_extension(upload):
+                return Response(
+                    {"error": "Each student's assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         try:
             registration = VehicleRegistration.objects.get(
@@ -2112,6 +2149,15 @@ class UploadRegistrationDocumentsView(APIView):
         except VehicleRegistration.DoesNotExist:
             return Response({"error": "Registration not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # An index with no student behind it would file a document the review
+        # screen has no row to show it against.
+        listed = len(registration.fetcher_students or [])
+        if any(not 0 <= i < listed for i in fetcher_files):
+            return Response(
+                {"error": "An assessment form was sent for a student who is not on this registration."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         updated = []
         if image:
             registration.drivers_license_image = image
@@ -2119,7 +2165,19 @@ class UploadRegistrationDocumentsView(APIView):
         if assessment:
             registration.assessment_form = assessment
             updated.append('assessment_form')
-        registration.save(update_fields=updated)
+        if updated:
+            registration.save(update_fields=updated)
+
+        for index, upload in sorted(fetcher_files.items()):
+            # update_or_create, not create: a retried upload replaces the file
+            # on record instead of tripping the uniqueness constraint that keeps
+            # the reviewer looking at exactly one document per student.
+            FetcherStudentAssessment.objects.update_or_create(
+                registration=registration, student_index=index,
+                defaults={'assessment_form': upload},
+            )
+            updated.append('%s%d' % (self.FETCHER_ASSESSMENT_PREFIX, index))
+
         return Response({"message": "Documents uploaded.", "uploaded": updated}, status=status.HTTP_200_OK)
 
 
