@@ -558,12 +558,68 @@
 
 /* ── Headline counts ─────────────────────────────────────────────────────── */
 
+/* Two tiers. The primary line answers "how many, at what stage" and is the
+   only one that changes which rows load; the refine panel below narrows
+   whatever that line selected. Making the second tier a bounded, tinted
+   surface is what stops ten identical tiles reading as one flat strip. */
 .vr-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.vr-stats-primary {
   display: flex;
   align-items: stretch;
   gap: 14px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+}
+
+.vr-stats-refine {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #DCE7F0;
+  border-radius: 12px;
+  background: #F7FAFC;
+}
+
+.vr-stats-refine-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64839C;
+}
+
+.vr-stats-refine-head svg { color: #8AA5BC; flex-shrink: 0; }
+.vr-stats-refine-head strong { color: #35576F; font-weight: 700; }
+
+.vr-stats-refine-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+/* Separates the two refinement axes without another heading. Hidden once the
+   row wraps, where a vertical rule between stacked groups reads as a stray mark. */
+.vr-stat-divider {
+  align-self: stretch;
+  width: 1px;
+  background: #DCE7F0;
+  margin: 2px 0;
+}
+
+.vr-stats-refine-empty {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: #7C99AF;
 }
 
 .vr-stat-group {
@@ -580,15 +636,6 @@
   letter-spacing: 0.6px;
   text-transform: uppercase;
   color: #64839C;
-}
-
-/* The status these counts are scoped to. Lighter and un-bolded so the group
-   still reads as one label rather than two competing ones. */
-.vr-stat-group-scope {
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  color: #8AA5BC;
-  text-transform: none;
 }
 
 .vr-stat-row {
@@ -636,6 +683,11 @@ button.vr-stat.active {
   min-width: 88px;
 }
 
+/* On the panel's tint a plain white tile would float; the firmer border keeps
+   it reading as a control rather than a gap in the background. */
+.vr-stats-refine .vr-stat { border-color: #CBDCEA; }
+.vr-stats-refine button.vr-stat:hover { border-color: #7FA6C4; background: #fff; }
+
 .vr-stat-value {
   font-size: 24px;
   font-weight: 800;
@@ -682,7 +734,11 @@ button.vr-stat.active {
 
 @media (max-width: 720px) {
   .vr-stats { gap: 10px; }
+  .vr-stats-primary { gap: 10px; }
   .vr-stat--total { align-self: stretch; }
+  .vr-stats-refine-body { gap: 12px; }
+  /* Stacked groups need no vertical rule between them. */
+  .vr-stat-divider { display: none; }
 }
 
 .vr-search-wrap {

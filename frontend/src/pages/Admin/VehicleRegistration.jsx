@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { registrationApi } from '../../api/registration'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2 } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
@@ -332,83 +332,100 @@ export default function VehicleRegistration() {
           }]}
         />
 
-        {/* Headline counts — how many have registered, of which type, at which
-            stage. Reads from the summary endpoint, so it covers every status
-            rather than only the one the table happens to be showing. */}
+        {/* Two tiers, because the axes are not peers. Status is navigation: it
+            decides which rows the table loads, so it sits on the primary line
+            with the total. Payment and registrant type only narrow whatever
+            status is already on screen, so they are grouped into one panel
+            underneath that states the scope once instead of tagging each
+            heading with it. */}
         <div className="vr-stats">
-          <div className="vr-stat vr-stat--total">
-            <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
-            <span className="vr-stat-label">Total Registrations</span>
-          </div>
-          <div className="vr-stat-group">
-            <p className="vr-stat-group-title">By Status</p>
-            <div className="vr-stat-row">
-              {(summary?.by_status ?? []).map(st => (
-                <StatTile
-                  key={st.key}
-                  variant={st.key}
-                  count={st.count}
-                  label={st.label}
-                  active={statusFilter === st.key}
-                  onSelect={st.key === OTHER_KEY ? null : () => { setStatusFilter(st.key); setRegPage(1) }}
-                  title={`Show ${st.label.toLowerCase()} registrations`}
-                />
-              ))}
-              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+          <div className="vr-stats-primary">
+            <div className="vr-stat vr-stat--total">
+              <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
+              <span className="vr-stat-label">Total Registrations</span>
+            </div>
+            <div className="vr-stat-group">
+              <p className="vr-stat-group-title">By Status</p>
+              <div className="vr-stat-row">
+                {(summary?.by_status ?? []).map(st => (
+                  <StatTile
+                    key={st.key}
+                    variant={st.key}
+                    count={st.count}
+                    label={st.label}
+                    active={statusFilter === st.key}
+                    onSelect={st.key === OTHER_KEY ? null : () => { setStatusFilter(st.key); setRegPage(1) }}
+                    title={`Show ${st.label.toLowerCase()} registrations`}
+                  />
+                ))}
+                {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+              </div>
             </div>
           </div>
-          <div className="vr-stat-group">
-            {/* Payment is a second axis over the same rows, not more statuses —
-                a rejected application can already have been paid, and an exempt
-                one is neither paid nor unpaid. So this row totals to the same
-                number as the status row rather than subdividing it. Selecting a
-                tile drives the same paymentFilter as the dropdown below. */}
-            <p className="vr-stat-group-title">
-              By Fee Payment
-              {activeStatus && <span className="vr-stat-group-scope"> · {activeStatus.label.toLowerCase()} only</span>}
+
+          <div className="vr-stats-refine">
+            <p className="vr-stats-refine-head">
+              <SlidersHorizontal size={12} />
+              Refine
+              {activeStatus
+                ? <> within <strong>{activeStatus.label.toLowerCase()}</strong></>
+                : <> the table</>}
             </p>
-            <div className="vr-stat-row">
-              {(summary?.by_payment ?? []).map(pm => (
-                <StatTile
-                  key={pm.key}
-                  variant={`pay-${pm.key}`}
-                  count={scopedCount('by_payment', pm.key, pm.count)}
-                  label={pm.label}
-                  active={paymentFilter === pm.key}
-                  onSelect={pm.key === OTHER_KEY ? null : () => {
-                    setPaymentFilter(paymentFilter === pm.key ? 'all' : pm.key); setRegPage(1)
-                  }}
-                  title={activeStatus
-                    ? `Filter to ${pm.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
-                    : `Filter the table to ${pm.label.toLowerCase()} registrations`}
-                />
-              ))}
-              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
-            </div>
-          </div>
-          <div className="vr-stat-group">
-            <p className="vr-stat-group-title">
-              By Registrant Type
-              {activeStatus && <span className="vr-stat-group-scope"> · {activeStatus.label.toLowerCase()} only</span>}
-            </p>
-            <div className="vr-stat-row">
-              {(summary?.by_type ?? []).map(t => (
-                <StatTile
-                  key={t.key}
-                  variant="type"
-                  count={scopedCount('by_type', t.key, t.count)}
-                  label={t.label}
-                  active={typeFilter === t.key}
-                  onSelect={t.key === OTHER_KEY ? null : () => {
-                    setTypeFilter(typeFilter === t.key ? 'all' : t.key); setRegPage(1)
-                  }}
-                  title={activeStatus
-                    ? `Filter to ${t.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
-                    : `Filter the table to ${t.label.toLowerCase()} registrations`}
-                />
-              ))}
-              {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
-            </div>
+
+            {/* Six zeroes under an empty status is noise, not information. */}
+            {activeStatus && activeStatus.count === 0 ? (
+              <p className="vr-stats-refine-empty">
+                No {activeStatus.label.toLowerCase()} registrations to break down.
+              </p>
+            ) : (
+              <div className="vr-stats-refine-body">
+                <div className="vr-stat-group">
+                  <p className="vr-stat-group-title">Fee Payment</p>
+                  <div className="vr-stat-row">
+                    {(summary?.by_payment ?? []).map(pm => (
+                      <StatTile
+                        key={pm.key}
+                        variant={`pay-${pm.key}`}
+                        count={scopedCount('by_payment', pm.key, pm.count)}
+                        label={pm.label}
+                        active={paymentFilter === pm.key}
+                        onSelect={pm.key === OTHER_KEY ? null : () => {
+                          setPaymentFilter(paymentFilter === pm.key ? 'all' : pm.key); setRegPage(1)
+                        }}
+                        title={activeStatus
+                          ? `Filter to ${pm.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
+                          : `Filter the table to ${pm.label.toLowerCase()} registrations`}
+                      />
+                    ))}
+                    {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+                  </div>
+                </div>
+
+                <div className="vr-stat-divider" aria-hidden="true" />
+
+                <div className="vr-stat-group">
+                  <p className="vr-stat-group-title">Registrant Type</p>
+                  <div className="vr-stat-row">
+                    {(summary?.by_type ?? []).map(t => (
+                      <StatTile
+                        key={t.key}
+                        variant="type"
+                        count={scopedCount('by_type', t.key, t.count)}
+                        label={t.label}
+                        active={typeFilter === t.key}
+                        onSelect={t.key === OTHER_KEY ? null : () => {
+                          setTypeFilter(typeFilter === t.key ? 'all' : t.key); setRegPage(1)
+                        }}
+                        title={activeStatus
+                          ? `Filter to ${t.label.toLowerCase()} among ${activeStatus.label.toLowerCase()} registrations`
+                          : `Filter the table to ${t.label.toLowerCase()} registrations`}
+                      />
+                    ))}
+                    {!summary && <span className="vr-stat-placeholder">Loading counts…</span>}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
