@@ -987,6 +987,14 @@ def _email_conflict(email, qs):
         return "This email address already has an active registration."
     # An email tied to an existing *live* account can't start a new pass. Archived
     # (expired) accounts keep their email but must not block re-registration.
+    #
+    # __iexact, not an exact match: BaseUserManager.normalize_email only
+    # lower-cases the *domain*, so a live account may be stored as
+    # `Juan@slc.edu.ph` while the registration holds the fully-lowercased
+    # `juan@slc.edu.ph`. An exact match missed that pair and let the flow run on
+    # into create_user(), where uniq_active_user_email turned it into a 500
+    # instead of this readable 400. AcceptRegistrationView used to repeat this
+    # very query a second time for the same reason; this one already covers it.
     if User.objects.filter(email__iexact=email_norm, is_archived=False).exists():
         return "This email address is already tied to an existing account."
     return None
@@ -1329,15 +1337,6 @@ class AcceptRegistrationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # __iexact, not an exact match: BaseUserManager.normalize_email only
-        # lower-cases the *domain*, so a live account may be stored as
-        # `Juan@slc.edu.ph` while the registration holds the fully-lowercased
-        # `juan@slc.edu.ph`. An exact match missed that pair and let the flow run
-        # on into create_user(), where uniq_active_user_email turned it into a
-        # 500 instead of this readable 400.
-        if User.objects.filter(email__iexact=registration.email, is_archived=False).exists():
-             return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
-
         # One transaction: without it a failure part-way through (most likely the
         # Vehicle upsert hitting uniq_vehicle_plate_number) left the just-created
         # User committed but orphaned — no registration, no vehicle. That account
@@ -1438,8 +1437,9 @@ class AcceptRegistrationView(APIView):
             user.schedule    = registration.schedule or user.schedule
             user.save(update_fields=['campus_days', 'schedule'])
 
-            # Refresh user to get generated user_code
-            user.refresh_from_db()
+            # No refresh_from_db() here: User.save() assigns self.user_code
+            # before writing it, so the in-memory instance already carries it.
+            # Re-reading the row cost a round trip to fetch what we just set.
             # A bare "OR: " told a later reader nothing about why a pass was
             # issued without a receipt. This is the permanent record of that
             # decision, so it says which of the two reasons applied.
@@ -1672,8 +1672,8 @@ class CdsoDirectRegisterView(APIView):
             registration.user = user
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
             registration.save()
-
-            user.refresh_from_db()
+            # user.user_code is already populated in memory — see the note in
+            # AcceptRegistrationView.
         system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
 
         try:
