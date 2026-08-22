@@ -1519,7 +1519,10 @@ export default function RegisterPage() {
                   placeholder={FIELD_PATTERNS.email.hint}
                   className={formErrors.email || dupErrors.email ? 'input-error' : ''}
                 />
-                {!formErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
+                {(formErrors.email || dupErrors.email) && (
+                  <span className="field-error-msg">{formErrors.email || dupErrors.email}</span>
+                )}
+                {!formErrors.email && !dupErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
               </div>
 
               {/* Student-specific */}
