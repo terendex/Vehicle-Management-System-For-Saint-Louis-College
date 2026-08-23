@@ -760,7 +760,7 @@ export default function SecurityEntryManagement() {
   // inside logs the exit. Returns the response data so callers can react.
   const runPlateCheck = async (plate) => {
     if (!isValidPlateNumber(plate)) {
-      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. ABC 1234).')
+      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. AAA 0000).')
       return null
     }
     setLoading(true)
@@ -992,7 +992,7 @@ export default function SecurityEntryManagement() {
                     setPlateInput(/^SLC/i.test(raw.trim()) ? raw.toUpperCase() : formatPlateNumber(raw))
                     setExitResult(null)
                   }}
-                  placeholder="E.G. ABC 123"
+                  placeholder="E.G. AAA 000"
                   style={{
                     flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #D3E1EC',
                     borderRadius: 9, fontSize: 14, fontWeight: 700, letterSpacing: 2,

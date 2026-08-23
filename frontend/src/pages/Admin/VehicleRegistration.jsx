@@ -1020,7 +1020,7 @@ export default function VehicleRegistration() {
                         className={`form-input${orValid ? ' input-valid' : ''}`}
                         value={orNumber}
                         onChange={(e) => setOrNumber(e.target.value.replace(/\D/g, '').slice(0, 7))}
-                        placeholder="e.g. 1380093"
+                        placeholder="e.g. 1234567"
                         disabled={submitting}
                       />
                       <p className="form-hint">

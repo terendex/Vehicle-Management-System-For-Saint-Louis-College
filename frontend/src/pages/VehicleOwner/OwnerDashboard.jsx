@@ -303,7 +303,7 @@ export default function OwnerDashboard() {
               type="text"
               value={swapValue}
               onChange={e => setSwapValue(e.target.value.toUpperCase())}
-              placeholder="e.g. ABC 1234"
+              placeholder="e.g. AAA 0000"
               autoFocus
             />
             <div className="od-modal-actions">

@@ -121,7 +121,7 @@ function AddEventModal({ onClose, onCreated }) {
               <input
                 ref={plateRef}
                 className={`ev-text-input ev-plate-field${plateError ? ' ev-input-error' : ''}`}
-                placeholder="e.g. ABC 123"
+                placeholder="e.g. AAA 000"
                 value={plateInput}
                 onChange={e => {
                   const formatted = formatPlateNumber(e.target.value)
@@ -134,7 +134,7 @@ function AddEventModal({ onClose, onCreated }) {
                 <Plus size={15} /> Add
               </button>
             </div>
-            <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
             {plates.length > 0 && (
               <div className="ev-plate-tags">
                 {plates.map(p => (
@@ -389,7 +389,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
-            <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
 
           {localPlates.length === 0 ? (
             <p className="ev-no-plates">No organizer plates added yet.</p>

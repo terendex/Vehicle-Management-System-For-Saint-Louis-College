@@ -112,7 +112,7 @@ function AddSupplierModal({ onClose, onCreated }) {
               <input
                 ref={plateRef}
                 className={`sp-text-input sp-plate-field${plateError ? ' sp-input-error' : ''}`}
-                placeholder="e.g. ABC 123"
+                placeholder="e.g. AAA 000"
                 value={plateInput}
                 onChange={e => {
                   const formatted = formatPlateNumber(e.target.value)
@@ -125,7 +125,7 @@ function AddSupplierModal({ onClose, onCreated }) {
                 <Plus size={15} /> Add
               </button>
             </div>
-            <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            <span className="sp-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
             {plates.length > 0 && (
               <div className="sp-plate-tags">
                 {plates.map(p => (
@@ -315,7 +315,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
             <input
               ref={plateRef}
               className={`sp-text-input sp-plate-field${plateError ? ' sp-input-error' : ''}`}
-              placeholder="Enter plate number (e.g. ABC 123)"
+              placeholder="Enter plate number (e.g. AAA 000)"
               value={plateInput}
               onChange={e => {
                 const formatted = formatPlateNumber(e.target.value)
@@ -330,7 +330,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
-            <span className="sp-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
+            <span className="sp-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
 
           {plates.length === 0 ? (
             <p className="sp-no-plates">No plates registered yet. Add one above.</p>
@@ -472,7 +472,7 @@ function ScheduledVisitsSection({ suppliers }) {
         </div>
         <div className="sp-field">
           <label className="sp-label">Plate <span className="sp-label-optional">(optional)</span></label>
-          <input className="sp-text-input" value={form.plate_number} onChange={e => setForm(f => ({ ...f, plate_number: e.target.value }))} placeholder="e.g. ABC 1234" />
+          <input className="sp-text-input" value={form.plate_number} onChange={e => setForm(f => ({ ...f, plate_number: e.target.value }))} placeholder="e.g. AAA 0000" />
         </div>
         <div className="sp-field" style={{ gridColumn: 'span 2' }}>
           <label className="sp-label">Purpose <span className="sp-label-optional">(optional)</span></label>

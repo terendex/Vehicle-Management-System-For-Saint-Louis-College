@@ -440,7 +440,7 @@ export default function RegisterPage() {
     plate_number: {
       validate: isValidPlateNumber,
       message: 'Invalid Philippine plate number format',
-      hint: 'e.g. ABC 1234 · AB 1234 · N123BC · ABC123',
+      hint: 'e.g. AAA 0000 · AA 0000 · A000AA · AAA000',
     },
     // Fetchers are outsiders — anything that looks like an email will do.
     // Everyone else has to use their SLC address.
@@ -455,7 +455,7 @@ export default function RegisterPage() {
           regex: SCHOOL_EMAIL_REGEX,
           describe: (value) => describeEmail(value, { school: true }),
           message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
-          hint: `e.g. 23100174@${SCHOOL_EMAIL_DOMAIN}`,
+          hint: `e.g. 12345678@${SCHOOL_EMAIL_DOMAIN}`,
         },
     conduction_number: {
       regex: /^[A-Z0-9]{5,12}$/i,
@@ -465,29 +465,29 @@ export default function RegisterPage() {
     contact_number: {
       regex: /^\+639\d{9}$/,
       message: 'Enter the 10 digits after +63, starting with 9',
-      hint: 'e.g. 9171234567',
+      hint: 'e.g. 9123456789',
     },
     driver_contact: {
       regex: /^\+639\d{9}$/,
       message: 'Enter the 10 digits after +63, starting with 9',
-      hint: 'e.g. 9171234567',
+      hint: 'e.g. 9123456789',
     },
     drivers_license: {
       // LTO format: 1 office letter + 2-digit district + dash + 2-digit year + dash + 6-digit serial
-      // e.g. N01-20-123456  (Non-prof, district 01, year 2020, serial 123456)
+      // Mask shown to the user: A00-00-000000
       regex: /^[A-Z]\d{2}-\d{2}-\d{6}$/i,
-      message: 'Invalid LTO license number. Use format: N01-20-123456',
-      hint: 'e.g. N01-20-123456',
+      message: 'Invalid LTO license number. Use format: A00-00-000000',
+      hint: 'e.g. A00-00-000000',
     },
     student_id: {
       regex: /^\d{8}$/,
-      message: 'Invalid student ID. Must be 8 digits (e.g. 23100174)',
-      hint: 'e.g. 23100174',
+      message: 'Invalid student ID. Must be 8 digits (e.g. 12345678)',
+      hint: 'e.g. 12345678',
     },
     employee_id: {
       regex: /^\d{8}$/,
-      message: 'Invalid employee ID. Must be 8 digits (e.g. 23100174)',
-      hint: 'e.g. 23100174',
+      message: 'Invalid employee ID. Must be 8 digits (e.g. 12345678)',
+      hint: 'e.g. 12345678',
     },
   }
 
@@ -1752,10 +1752,10 @@ export default function RegisterPage() {
                     value={toDisplayMobile(formData.contact_number)}
                     onChange={handleInputChange}
                     required
-                    placeholder="9171234567"
+                    placeholder="9123456789"
                   />
                 </div>
-                <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
+                <span className="field-hint">10 digits after +63 — e.g. 9123456789</span>
               </div>
 
               <div className="form-group">
@@ -1921,10 +1921,10 @@ export default function RegisterPage() {
                         name="driver_contact"
                         value={toDisplayMobile(formData.driver_contact)}
                         onChange={handleInputChange}
-                        placeholder="9171234567"
+                        placeholder="9123456789"
                       />
                     </div>
-                    <span className="field-hint">10 digits after +63 — e.g. 9171234567</span>
+                    <span className="field-hint">10 digits after +63 — e.g. 9123456789</span>
                   </div>
                 </>
               ) : (
