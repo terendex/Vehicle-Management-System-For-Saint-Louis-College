@@ -538,94 +538,98 @@ export default function UserManagement() {
             <p>{search ? 'Try a different search term.' : 'Click "Add User" to create the first account.'}</p>
           </div>
         ) : (
-          <table className="um-table">
-            <thead>
-              <tr>
-                <th>User ID</th>
-                <th>Full Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#5C7B92', fontWeight: 600 }}>
-                      {u.user_code || `#${u.id}`}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="um-user-cell">
-                      <div className={`um-user-avatar ${roleBadgeClass(u)}`}>
-                        {u.full_name.charAt(0).toUpperCase()}
-                      </div>
-                      <span className="um-user-name">{u.full_name}</span>
-                    </div>
-                  </td>
-                  <td>{u.email || '—'}</td>
-                  <td>
-                    <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
-                  </td>
-                  <td>
-                    <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
-                      <span className="status-dot" />
-                      {u.is_active ? 'Active' : 'Disabled'}
-                    </span>
-                  </td>
-                  {/* QR lives in View Profile — no column here */}
-                  <td>
-                    <button
-                      className="um-action-btn"
-                      onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
-                    >
-                      <MoreVertical size={16} />
-                    </button>
-                    {activeMenu === u.id && menuAnchor && createPortal(
-                      <div
-                        ref={menuRef}
-                        className="um-actions-dropdown"
-                        style={menuAnchor.style}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
-                          <Eye size={15} /> View Profile
-                        </button>
-                        {u.role === 'security' && (
-                          <button
-                            className="um-dropdown-item view"
-                            disabled={badgeLocked(u)}
-                            title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                            onClick={() => { closeMenu(); openQrModal(u) }}
-                          >
-                            {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
-                          </button>
-                        )}
-                        {u.role !== 'security' && (
-                          <button
-                            className="um-dropdown-item view"
-                            title="Clear this user's authenticator so they can pair a new phone"
-                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
-                          >
-                            <Smartphone size={15} /> Reset 2FA
-                          </button>
-                        )}
-                        <button
-                          className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
-                          onClick={() => { openToggle(u); closeMenu() }}
-                        >
-                          {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
-                        </button>
-                      </div>,
-                      document.body
-                    )}
-                  </td>
+          /* Only the table scrolls sideways — the tabs, toolbar and pager
+             above and below it stay put on a narrow screen. */
+          <div className="um-table-scroll">
+            <table className="um-table">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Full Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#5C7B92', fontWeight: 600 }}>
+                        {u.user_code || `#${u.id}`}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="um-user-cell">
+                        <div className={`um-user-avatar ${roleBadgeClass(u)}`}>
+                          {u.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="um-user-name">{u.full_name}</span>
+                      </div>
+                    </td>
+                    <td>{u.email || '—'}</td>
+                    <td>
+                      <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
+                    </td>
+                    <td>
+                      <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
+                        <span className="status-dot" />
+                        {u.is_active ? 'Active' : 'Disabled'}
+                      </span>
+                    </td>
+                    {/* QR lives in View Profile — no column here */}
+                    <td>
+                      <button
+                        className="um-action-btn"
+                        onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                      {activeMenu === u.id && menuAnchor && createPortal(
+                        <div
+                          ref={menuRef}
+                          className="um-actions-dropdown"
+                          style={menuAnchor.style}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
+                            <Eye size={15} /> View Profile
+                          </button>
+                          {u.role === 'security' && (
+                            <button
+                              className="um-dropdown-item view"
+                              disabled={badgeLocked(u)}
+                              title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                              onClick={() => { closeMenu(); openQrModal(u) }}
+                            >
+                              {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
+                            </button>
+                          )}
+                          {u.role !== 'security' && (
+                            <button
+                              className="um-dropdown-item view"
+                              title="Clear this user's authenticator so they can pair a new phone"
+                              onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
+                            >
+                              <Smartphone size={15} /> Reset 2FA
+                            </button>
+                          )}
+                          <button
+                            className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
+                            onClick={() => { openToggle(u); closeMenu() }}
+                          >
+                            {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
+                          </button>
+                        </div>,
+                        document.body
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {!loading && users.length > 0 && totalPages > 1 && (

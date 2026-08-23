@@ -642,3 +642,51 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Mobile: page gutter, header and chart chrome --- */
+@media (max-width: 640px) {
+  .ad-page {
+    padding: 16px;
+  }
+
+  .ad-title {
+    font-size: 20px;
+  }
+
+  /* Refresh and the "updated" stamp take their own row under the title
+     rather than compressing it into a two-line wrap. */
+  .ad-header {
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+  }
+
+  .ad-refresh-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .ad-chart-head {
+    padding: 12px 14px 10px;
+  }
+
+  .ad-chart-body {
+    padding: 12px 12px 14px;
+  }
+
+  .ad-activity-card-head,
+  .ad-activity-item {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .ad-page {
+    padding: 12px;
+  }
+
+  .ad-title {
+    font-size: 18px;
+  }
+}

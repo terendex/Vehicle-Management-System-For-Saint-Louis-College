@@ -403,3 +403,54 @@
 @media (max-width: 768px) {
   .gm-grid { grid-template-columns: 1fr; }
 }
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .gm-page {
+    gap: 1.1rem;
+  }
+
+  .gm-page-title {
+    font-size: 1.25rem;
+  }
+
+  /* The badge and refresh take their own row under the heading rather
+     than pushing the subtitle into a two-line wrap. */
+  .gm-page-actions {
+    width: 100%;
+  }
+
+  .gm-page-actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* auto-fill's 340px track is wider than the phone it is on, so the
+     card overflowed its own grid. One per row, sized to the screen. */
+  .gm-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .gm-card-head {
+    padding: 0.85rem 1rem;
+    flex-wrap: wrap;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .gm-page-title {
+    font-size: 1.1rem;
+  }
+
+  /* Three counters side by side leave ~90px each; stacking two-up keeps
+     the numbers and their labels on one line apiece. */
+  .gm-stats {
+    flex-wrap: wrap;
+  }
+
+  .gm-stat {
+    flex: 1 1 50%;
+  }
+}

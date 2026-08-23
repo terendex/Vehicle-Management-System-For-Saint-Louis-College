@@ -848,3 +848,83 @@
 }
 .ss-confirm-list:empty { display: none; }
 .ss-confirm-list strong { color: #16334A; }
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The 960 and 720 rules above already split the two-column sections and
+   stack each setting row. These add the phone: the gate and notice list
+   items, the fixed-width inputs and the confirmation dialogs. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .ss-page {
+    gap: 1rem;
+  }
+
+  .ss-title {
+    font-size: 1.2rem;
+  }
+
+  /* Setting rows are already stacked at 720; the controls inside them
+     stop holding a fixed width so a number field or a select fills the
+     line it was given rather than sitting in one corner of it. */
+  .ss-row-control {
+    width: 100%;
+  }
+
+  .ss-input,
+  .ss-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Gate name over its action — side by side, a gate labelled with an id
+     and a tag left the button squeezed against the right edge. */
+  .ss-gate-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .ss-gate-btn {
+    width: 100%;
+  }
+
+  .ss-list-head--split {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Dialogs fill the phone and scroll if the body runs long. */
+  .ss-overlay {
+    padding: 10px;
+  }
+
+  .ss-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    padding: 24px 18px 20px;
+  }
+
+  .ss-modal-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .ss-modal-btn {
+    flex: 1 1 130px;
+    padding: 8px 16px;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .ss-title {
+    font-size: 1.1rem;
+  }
+
+  .ss-modal-btn {
+    flex: 1 1 100%;
+  }
+}

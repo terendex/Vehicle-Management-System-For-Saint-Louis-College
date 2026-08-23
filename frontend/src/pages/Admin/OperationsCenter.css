@@ -639,3 +639,73 @@
 .oc-confiscated {
   margin-top: 20px;
 }
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The 1200/1024/768 rules above collapse the main grid, the gate column
+   and the bottom row. These finish the job on a phone: the header, the
+   stat strip and the pagers under each list. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .oc-page {
+    gap: 14px;
+  }
+
+  .oc-title {
+    font-size: 20px;
+  }
+
+  /* Refresh drops under the title instead of squeezing the subtitle,
+     which carries the "Updated N ago" stamp people actually read. */
+  .oc-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .oc-refresh-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .oc-stats-row {
+    gap: 8px;
+  }
+
+  .oc-stat-card {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .oc-stat-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .oc-stat-val {
+    font-size: 1.2rem;
+  }
+
+  /* Count above, controls below — on one line the "Showing x–y of z"
+     text and the two arrows collided at around 380px. */
+  .oc-pager {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .oc-pager-controls {
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .oc-title {
+    font-size: 18px;
+  }
+
+  .oc-stats-row {
+    grid-template-columns: 1fr;
+  }
+}

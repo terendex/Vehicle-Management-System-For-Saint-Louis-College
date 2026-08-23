@@ -1412,3 +1412,87 @@
   color: #8A6B00;
 }
 .rc-confirm-btn--warning:hover { background: #FDF0BE; }
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The 900 and 700 rules above fold the access grid and the section
+   heads. These carry it to a phone: the schedule entry cards, the
+   paired time fields and the two dialog footers. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .rc-page {
+    gap: 1.1rem;
+  }
+
+  .rc-title {
+    font-size: 1.2rem;
+  }
+
+  .rc-section-head {
+    padding: 1rem 1.1rem;
+    flex-wrap: wrap;
+  }
+
+  /* An entry card is an icon, a label, a time window and its actions on
+     one line. Below this the actions wrap under the rest rather than
+     compressing the rule name they belong to. */
+  .rc-entry-card {
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    gap: 10px;
+  }
+
+  /* From/To sit on their own lines — side by side each time input was
+     narrower than the time it displays. */
+  .rc-field-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* Dialogs fill the phone and scroll; the schedule form is taller than
+     a landscape viewport. */
+  .rc-modal,
+  .rc-confirm-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .rc-confirm-modal {
+    padding: 24px 18px 20px;
+  }
+
+  .rc-modal-body {
+    padding: 1.1rem;
+  }
+
+  .rc-modal-foot {
+    flex-wrap: wrap;
+    padding-left: 1.1rem;
+    padding-right: 1.1rem;
+  }
+
+  /* The confirm dialog draws its own gutter, so this row only wraps. */
+  .rc-confirm-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .rc-modal-foot > .rc-btn,
+  .rc-confirm-actions > .rc-confirm-btn {
+    flex: 1 1 130px;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .rc-title {
+    font-size: 1.1rem;
+  }
+
+  .rc-modal-foot > .rc-btn,
+  .rc-confirm-actions > .rc-confirm-btn {
+    flex: 1 1 100%;
+  }
+}

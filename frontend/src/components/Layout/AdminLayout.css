@@ -518,3 +518,43 @@
     padding-top: 4.25rem;
   }
 }
+
+/* --- Mobile: tighter content gutter --- */
+@media (max-width: 640px) {
+  .admin-content {
+    padding: 1rem;
+    padding-top: 4rem;
+  }
+
+  .admin-content--fill {
+    padding: 0.5rem;
+    padding-top: 4rem;
+  }
+
+  /* The drawer stops short of the full width so the backdrop stays
+     visible and tappable — a full-bleed panel leaves no obvious way
+     back out of it. */
+  .admin-sidebar {
+    width: min(280px, 86vw);
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .admin-menu-toggle {
+    top: 8px;
+    left: 8px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .admin-content {
+    padding: 0.75rem;
+    padding-top: 3.5rem;
+  }
+
+  .admin-content--fill {
+    padding: 0.5rem;
+    padding-top: 3.5rem;
+  }
+}

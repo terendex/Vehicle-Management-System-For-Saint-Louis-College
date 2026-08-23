@@ -196,8 +196,15 @@
   border-radius: 14px;
   border: 1px solid #D3E1EC;
   box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
-  overflow-x: auto;
   position: relative;
+}
+
+/* The sideways scroll belongs to the table alone. It used to sit on the
+   container, so dragging a wide table also dragged the role tabs, the
+   search box and the pager off screen — the controls you need most on a
+   narrow screen were the first things to leave it. */
+.um-table-scroll {
+  overflow-x: auto;
 }
 
 /* Round the table header corners so they follow the card border-radius */
@@ -1449,3 +1456,173 @@
 
 /* The inline QR column was removed — QR is reached from View Profile. */
 
+
+/* ── Responsive ──────────────────────────────────────────────────
+   Three stat cards, a role tab strip, a search + filter toolbar and a
+   seven-column table. The tabs already scroll on their own; the rest
+   is unstacked here in the order it stops fitting. */
+
+/* --- Tablet --- */
+@media (max-width: 900px) {
+  /* Add User drops under the title and takes the row it is given. */
+  .um-header-actions {
+    width: 100%;
+  }
+
+  .um-add-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* Cards keep their icon-beside-number shape but stop insisting on the
+     20px/24px padding that made three of them overflow the row. */
+  .um-stat-card {
+    padding: 16px 18px;
+    gap: 12px;
+  }
+}
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .um-stats-bar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  /* Two up, then the third takes the full width below them. */
+  .um-stat-card {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .um-table-toolbar {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .um-role-tabs {
+    padding: 0 12px;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .um-header-left h1 {
+    font-size: 20px;
+  }
+
+  .um-header-left p {
+    font-size: 13px;
+  }
+
+  .um-stat-card {
+    flex: 1 1 100%;
+    padding: 14px 16px;
+  }
+
+  .um-stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .um-stat-info span {
+    font-size: 20px;
+  }
+
+  /* Search over filter, both full width — the status select was fixed at
+     170px, which left the search box too narrow to show a typed name. */
+  .um-table-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .um-table-toolbar .um-search-wrapper {
+    width: 100%;
+  }
+
+  .um-filter-group {
+    width: 100%;
+  }
+
+  .um-filter-group .um-form-select {
+    width: 100%;
+    flex: 1;
+  }
+
+  /* Seven columns of account detail need a real width; .um-table-scroll
+     carries them sideways rather than crushing every cell. */
+  .um-table {
+    min-width: 780px;
+  }
+
+  .um-table th,
+  .um-table td {
+    padding: 10px 12px;
+  }
+
+  .um-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .um-pagination-controls {
+    justify-content: center;
+  }
+
+  /* Modals fill the phone. The overlay had no padding at all, so a 500px
+     card on a 360px screen sat edge to edge with its corners cut. */
+  .um-modal-overlay {
+    padding: 10px;
+  }
+
+  .um-modal,
+  .um-modal--profile,
+  .um-modal--wide {
+    max-width: 100%;
+    max-height: 92vh;
+  }
+
+  .um-modal-header,
+  .um-modal-body,
+  .um-modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  /* Paired form fields and the profile's two-column read-out both stack —
+     a 1fr 1fr split on a phone leaves each side too narrow for its value. */
+  .um-form-grid-2,
+  .um-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .um-col-span-2 {
+    grid-column: span 1;
+  }
+
+  .um-modal-footer > button {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .um-header-left h1 {
+    font-size: 18px;
+  }
+
+  .um-role-tab {
+    padding: 12px 14px;
+  }
+
+  .um-modal-footer > button {
+    flex: 1 1 100%;
+  }
+
+  .um-reg-type-btn {
+    flex: 1 1 100%;
+  }
+}

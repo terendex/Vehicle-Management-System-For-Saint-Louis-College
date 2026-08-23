@@ -955,3 +955,173 @@
   font-size: 10.5px;
   color: #7C99B0;
 }
+
+/* ── Responsive ──────────────────────────────────────────────────
+   Cameras are the one admin screen people genuinely use on a phone —
+   standing at the gate with the device in hand. So the feed grid and
+   the PTZ pad get real attention here, not just a narrower gutter. */
+
+/* --- Tablet --- */
+@media (max-width: 900px) {
+  .device-management-page {
+    padding: 16px;
+  }
+
+  /* Add Camera / Refresh drop under the title and split the row. */
+  .page-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .page-header-actions .btn-primary,
+  .page-header-actions .btn-outline {
+    flex: 1 1 150px;
+    justify-content: center;
+  }
+
+  /* Stat cards were min-width:130px in a wrapping flex row, which left a
+     ragged last line. Sharing the row equally reads as one strip. */
+  .dm-stat-card {
+    flex: 1 1 130px;
+    padding: 16px 18px;
+  }
+}
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .device-management-page {
+    padding: 12px;
+  }
+
+  .section-header {
+    padding: 14px 16px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  /* One feed per row below this: two 300px columns plus the grid gap
+     no longer fit, and a cropped second column is worse than a stack. */
+  .dm-feeds-grid {
+    grid-template-columns: 1fr;
+    padding: 14px;
+    gap: 14px;
+  }
+
+  /* The RTSP URL is a diagnostic, not something to read at a glance —
+     it gives its width back to the name and status columns. */
+  .dm-rtsp-cell {
+    max-width: 160px;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .device-management-page {
+    padding: 4px 0 0;
+  }
+
+  .page-title {
+    font-size: 20px;
+  }
+
+  .dm-stats-row {
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .dm-stat-card {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+    padding: 14px 12px;
+  }
+
+  .dm-stat-value {
+    font-size: 22px;
+  }
+
+  .dm-stat-label {
+    font-size: 11px;
+  }
+
+  /* The camera table carries eight columns of connection detail. The floor
+     sits above what those columns naturally ask for, so .table-container
+     scrolls the table rather than the cells compressing to fit — a lower
+     floor than the natural width squeezes it instead of scrolling it. */
+  .data-table {
+    min-width: 940px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 10px 12px;
+  }
+
+  /* Modal fills the phone rather than floating in the middle of it. */
+  .modal-overlay {
+    padding: 10px;
+    align-items: flex-end;
+  }
+
+  .modal-content,
+  .modal-content.modal-sm {
+    max-width: 100%;
+    max-height: 92vh;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  /* Paired fields (host/port, user/pass) stack — side by side they leave
+     each input too narrow for the value it holds. */
+  .dm-field-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .modal-footer {
+    flex-wrap: wrap;
+  }
+
+  .modal-footer > * {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+
+  /* Entry / Parking assignment buttons keep their side-by-side pairing —
+     they are a two-way choice and read better as one control. */
+  .dm-assignment-row {
+    gap: 8px;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .page-title {
+    font-size: 18px;
+  }
+
+  .dm-stat-card {
+    flex: 1 1 100%;
+  }
+
+  .page-header-actions .btn-primary,
+  .page-header-actions .btn-outline {
+    flex: 1 1 100%;
+  }
+
+  /* Touch targets grow as the screen shrinks — this pad is driven by a
+     thumb, and 34px is below the comfortable minimum. */
+  .dm-ptz-dpad {
+    grid-template-columns: repeat(3, 40px);
+    grid-template-rows: repeat(3, 40px);
+  }
+
+  .dm-ptz-overlay {
+    bottom: 10px;
+    right: 10px;
+  }
+}

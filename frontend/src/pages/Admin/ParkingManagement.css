@@ -1180,3 +1180,87 @@
   .pm-stat-icon { width: 32px; height: 32px; }
   .pm-stat-val  { font-size: 1.2rem; }
 }
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The blocks above fold the stats grid and stack the camera column.
+   These take it down to a phone: the page gutter, the header actions
+   and the modals, whose overlay carried no padding at all. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .pm-page {
+    padding: 1rem;
+  }
+
+  .pm-title {
+    font-size: 18px;
+  }
+
+  /* Actions drop under the title and share the row evenly rather than
+     holding their full width against a shrinking header. */
+  .pm-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    flex-shrink: 1;
+  }
+
+  .pm-header-actions .pm-btn {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+
+  /* The overlay had no padding, so a 400px modal on a 360px screen sat
+     edge to edge. It now insets and scrolls if the body runs long. */
+  .pm-overlay {
+    padding: 10px;
+  }
+
+  .pm-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .pm-modal--centered {
+    padding: 24px 18px 20px;
+  }
+
+  .pm-modal-body {
+    padding: 16px;
+  }
+
+  .pm-modal-footer {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+
+  .pm-modal-footer .pm-btn {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+
+  .pm-cat-toggle {
+    flex-wrap: wrap;
+  }
+
+  .pm-cat-toggle > * {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .pm-page {
+    padding: 0.75rem;
+  }
+
+  .pm-stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pm-header-actions .pm-btn,
+  .pm-modal-footer .pm-btn {
+    flex: 1 1 100%;
+  }
+}

@@ -527,3 +527,148 @@
   color: #5C7B92;
   font-size: 12.5px;
 }
+
+/* ── Responsive ──────────────────────────────────────────────────
+   AdminLayout already collapses the sidebar at 900px and swaps its
+   own gutter, so these steps only tighten what this page owns: the
+   header actions, the two toolbar rows, the table and the pager.
+
+   The page adds 24px of padding inside admin-content's own 2rem.
+   That double gutter is fine on a desktop but eats a phone, so it
+   is unwound as the screen narrows rather than doubled down on. */
+
+/* --- Tablet --- */
+@media (max-width: 900px) {
+  .al-page {
+    padding: 16px;
+  }
+
+  /* Export + count sit under the title instead of fighting it for
+     the same row; full width so the two buttons split it evenly. */
+  .al-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .al-export-btn {
+    flex: 1 1 140px;
+    justify-content: center;
+  }
+}
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .al-page {
+    padding: 12px;
+  }
+
+  /* The separators only read as separators on one line. Once the row
+     wraps they float mid-air, so they come out and the label carries
+     the grouping instead. */
+  .al-sep {
+    display: none;
+  }
+
+  .al-toolbar-row {
+    gap: 8px;
+  }
+
+  .al-search-wrapper {
+    flex: 1 1 100%;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .al-page {
+    padding: 4px 0 0;
+  }
+
+  .al-title {
+    font-size: 20px;
+  }
+
+  .al-subtitle {
+    font-size: 13px;
+  }
+
+  .al-stats-badge {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  /* Each filter control takes the full row: a 2-up wrap left the date
+     inputs at ~120px, which is narrower than the date text itself. */
+  .al-filter-item,
+  .al-daterange,
+  .al-form-select,
+  .al-date-input {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .al-daterange {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .al-daterange .al-date-input {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .al-period-btns {
+    width: 100%;
+  }
+
+  .al-period-btn {
+    flex: 1;
+  }
+
+  /* Four columns of log detail cannot compress into a phone; the table
+     keeps a usable width and the container scrolls it instead. Without
+     the min-width the cells squeeze until the timestamp clips. */
+  .al-table {
+    min-width: 720px;
+  }
+
+  .al-table th,
+  .al-table td {
+    padding: 10px 12px;
+  }
+
+  /* Count above, controls below — side by side they collide at ~380px. */
+  .al-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    text-align: center;
+    padding: 12px 14px;
+  }
+
+  .al-pagination-controls {
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .al-title {
+    font-size: 18px;
+  }
+
+  .al-toolbar {
+    padding: 10px;
+  }
+
+  .al-export-btn {
+    flex: 1 1 100%;
+  }
+
+  .al-table th,
+  .al-table td {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+}
