@@ -269,6 +269,17 @@ export default function ParkingManagement({ embedded = false }) {
     ?? (selZone?.camera != null ? camIndex.byId.get(selZone.camera)?.name : null)
     ?? null
 
+  // Everything in the panel is conditional, and with one camera on a zone in
+  // Live View every condition is false — which rendered an empty bordered box
+  // under the feed. Work out whether it holds anything before drawing it.
+  const camPanelHasContent = Boolean(
+    activeCamUnzoned ||
+    camZoneMismatch ||
+    parkingCams.length !== 1 ||     // 0 shows a note, 2+ shows the picker
+    !selZone ||                     // the "create a zone" hint
+    mode === 'edit'                 // capture + scoring method
+  )
+
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
     setLoading(true)
@@ -1064,11 +1075,35 @@ export default function ParkingManagement({ embedded = false }) {
               {/* The live picture. Registered per lens, so a stacked dual-lens
                   camera shows the one view being worked on rather than both
                   squeezed into a 16:9 box. */}
+              {/* Hidden, and deliberately the WHOLE frame.
+                  The visible canvas above shows one lens, but a reference image
+                  captured from that would be a single view — while every bay
+                  coordinate, and the editor's own lens cropping, is expressed
+                  against the full stacked frame. Capturing the crop would make
+                  the picture and the geometry disagree by exactly one lens.
+                  CameraContext keys canvases by pane, so a full-frame one and a
+                  per-lens one coexist and both receive frames. */}
+              {pkActiveCam && (
+                <canvas
+                  style={{ display: 'none' }}
+                  ref={el => {
+                    registerPkCanvas(pkActiveCam.id, el)
+                    camCanvasRefs.current[pkActiveCam.id] = el
+                  }}
+                />
+              )}
+
               {mode === 'live' && (
                 pkActiveCam ? (
                   <canvas
                     className="pm-canvas-live"
-                    ref={el => registerPkCanvas(pkActiveCam.id, el, lensCount > 1 ? lensIdx : undefined)}
+                    // Always an explicit pane, never undefined. `pane == null` is the
+                    // FULL_FRAME key, which the hidden capture canvas above already
+                    // holds — passing undefined here would make the two overwrite
+                    // each other on a single-lens camera and leave one of them
+                    // dark. With one lens the loop draws pane 0 and the whole
+                    // frame identically, so this costs nothing.
+                    ref={el => registerPkCanvas(pkActiveCam.id, el, lensIdx)}
                   />
                 ) : (
                   <div className="pm-canvas-no-img">
@@ -1367,7 +1402,7 @@ export default function ParkingManagement({ embedded = false }) {
             the bigger one was not the live one. The main canvas is the live
             view now, which leaves this as what it should always have been:
             the controls and status for the camera being watched, under it. */}
-        {showCamPanel && (
+        {showCamPanel && camPanelHasContent && (
         <div className="pm-cam-panel">
             {/* ── Is this camera zoned? ──
                 Every camera can have its own zone (and more than one), but
@@ -1424,7 +1459,11 @@ export default function ParkingManagement({ embedded = false }) {
               </p>
             )}
 
-            {parkingCams.length > 0 && selZone && (
+            {/* Setup, not monitoring: capturing a reference image and choosing
+                how bays are scored are both things you do while laying a zone
+                out. On the Live View they were permanent clutter under a feed
+                someone is watching. */}
+            {parkingCams.length > 0 && selZone && mode === 'edit' && (
               <button
                 className="pm-btn pm-btn--primary"
                 style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
@@ -1441,7 +1480,7 @@ export default function ParkingManagement({ embedded = false }) {
                 The detector is the default. The baseline method needs no
                 model at all, but it only works while the camera stays put —
                 it judges each bay against a picture of that same bay empty. */}
-            {selZone && (
+            {selZone && mode === 'edit' && (
               <div className="pm-method-box">
                 <div className="pm-method-head">
                   <SlidersHorizontal size={12} /> Bay Detection
