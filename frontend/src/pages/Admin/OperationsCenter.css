@@ -217,6 +217,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Pushed to the trailing edge, the spot the camera dropdown used to hold. */
+  margin-left: auto;
   padding: 0 8px;
   background: #FFFFFF;
   border: 1px solid #CFE0EE;
@@ -285,7 +287,9 @@
 .oc-cam-viewport:fullscreen .oc-cam-fs { top: 16px; right: 16px; }
 
 @media (max-width: 720px) {
-  .oc-cam-search { width: 100%; }
+  /* Own row on a narrow panel: auto-margin plus a full width would otherwise
+     leave the chips and the box fighting for one line. */
+  .oc-cam-search { margin-left: 0; width: 100%; }
   .oc-cam-search input { width: 100%; flex: 1; }
 }
 .oc-cam-overlay {
