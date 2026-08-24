@@ -95,7 +95,8 @@ export default function ParkingManagement({ embedded = false }) {
   const [methodSaving,   setMethodSaving]   = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
 
-  const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
+  const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook,
+          registerCanvas: registerPkCanvas, paneCounts: livePaneCounts } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
   const [camQuery, setCamQuery] = useState('')
   // The reference image URL is signed and expires, so "it loaded an hour ago"
@@ -119,6 +120,11 @@ export default function ParkingManagement({ embedded = false }) {
 
   // Strip only. The canvases above stay mounted for every camera — filtering
   // them would unregister a live feed and force it to reconnect.
+  // How many views this camera actually sends, as measured by the render
+  // loop from the frame itself — not guessed from the reference image,
+  // which may not exist yet when no zone has been created.
+  const livePanes = pkActiveCam ? (livePaneCounts[pkActiveCam.id] ?? 1) : 1
+
   const camQ = camQuery.trim().toLowerCase()
   const shownCams = camQ
     ? parkingCams.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
@@ -159,6 +165,12 @@ export default function ParkingManagement({ embedded = false }) {
   // Identical rule to lens_layout.lens_count() on the backend and lensCount()
   // in CameraContext: taller than wide, and the halves are widescreen.
   const lensCount = (() => {
+    // The live frame is the better witness: it is measured by the render loop
+    // from the picture the camera is actually sending, and it exists before any
+    // reference image does. Deriving this from the reference image alone meant a
+    // zone that had never captured one showed both lenses stacked in Live View —
+    // the very thing the lens split exists to prevent.
+    if (livePanes > 1) return livePanes
     if (!imgDims) return 1
     const { w, h } = imgDims
     if (!w || !h || h <= w) return 1
@@ -824,14 +836,30 @@ export default function ParkingManagement({ embedded = false }) {
           <div className="pm-canvas-area" style={{ flex: 1, minWidth: 0 }}>
             {/* No zone yet, but the camera still belongs on screen: choosing
                 which camera to draw a zone for is exactly what you need to see
-                to do. This used to be the sidebar's job. */}
-            <div className="pm-canvas-wrapper">
-              {pkActiveCam ? (
-                <canvas
-                  className="pm-canvas-live"
-                  ref={el => registerPkCanvas(pkActiveCam.id, el)}
-                />
-              ) : (
+                to do. This used to be the sidebar's job.
+
+                One tile per lens, never the raw stacked frame. A dual-lens unit
+                packs two unrelated scenes into one picture, and showing it whole
+                squeezes both into a 16:9 box — neither view is usable, and it
+                reads as one broken camera rather than two working ones. */}
+            {pkActiveCam ? (
+              <div className={`pm-live-panes${livePanes > 1 ? ' pm-live-panes--split' : ''}`}>
+                {Array.from({ length: livePanes }, (_, i) => (
+                  <div className="pm-live-pane" key={i}>
+                    <div className="pm-canvas-wrapper">
+                      <canvas
+                        className="pm-canvas-live"
+                        ref={el => registerPkCanvas(pkActiveCam.id, el, livePanes > 1 ? i : undefined)}
+                      />
+                    </div>
+                    {livePanes > 1 && (
+                      <span className="pm-live-pane-tag">Lens {i + 1}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="pm-canvas-wrapper">
                 <div className="pm-canvas-no-img">
                   <ParkingCircle size={26} />
                   <p className="pm-canvas-no-img-title">
@@ -841,8 +869,8 @@ export default function ParkingManagement({ embedded = false }) {
                     Connect a parking camera to see it here.
                   </p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
             <div className="pm-legend">
               <span className="pm-legend-note">
                 {loading ? 'Loading…' : 'Pick a zone above, or create one for this camera below.'}

@@ -399,6 +399,43 @@
   -webkit-user-drag: none;
 }
 
+/* ── One tile per lens ───────────────────────────────────────────────────
+   A dual-lens unit sends two unrelated scenes stacked into one frame. Shown
+   whole it is squeezed into a single 16:9 box — both halves distorted, and it
+   reads as one broken camera rather than two working ones. Side by side, each
+   gets its own 16:9 viewport at half the width, which is both undistorted and
+   smaller than the single oversized tile it replaces. */
+.pm-live-panes {
+  display: grid;
+  gap: 10px;
+}
+.pm-live-panes--split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pm-live-pane {
+  position: relative;
+  min-width: 0;
+}
+.pm-live-pane-tag {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(4, 18, 31, 0.72);
+  color: #C7DDEE;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+/* Stack them on a narrow screen: two half-width 16:9 tiles side by side get
+   too small to judge a parking bay by. */
+@media (max-width: 900px) {
+  .pm-live-panes--split { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* The live picture in the main canvas. Sized exactly like the reference image
    it replaced, so the SVG bay overlay lines up with either background without
    knowing which one is behind it. */
