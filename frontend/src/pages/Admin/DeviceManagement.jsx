@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
   ShieldCheck, ParkingCircle, RefreshCw, Wifi, WifiOff, Loader2, Video, Activity,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Home, Move,
+  Search, Maximize2, Minimize2,
 } from 'lucide-react'
 import { toast } from '../../components/Feedback/notify'
 import { camerasApi } from '../../api/cameras'
@@ -393,7 +394,26 @@ export default function DeviceManagement() {
   const [nextName,   setNextName]   = useState(null)
   const [modal,      setModal]      = useState(null)
   const [pingStates, setPingStates] = useState({})
-  const [ptzActive,  setPtzActive]  = useState({})
+  const [query,      setQuery]      = useState('')
+
+  // Which pane of a camera currently shows the PTZ panel, keyed by camera id.
+  // A pane index rather than a boolean: PTZ belongs to the *device*, but the
+  // controls have to be reachable from whichever view you are looking at —
+  // including a single lens blown up to fullscreen, where the other tiles are
+  // not on screen at all. Storing the pane keeps exactly one panel open, so
+  // the camera never receives two sets of commands at once.
+  const [ptzPane, setPtzPane] = useState({})
+
+  // Cameras that answered "PTZ unavailable". Kept so a fixed-lens camera stops
+  // offering a control that can only ever fail — the backend has no capability
+  // flag, so the first refusal is the only signal there is.
+  const [ptzUnsupported, setPtzUnsupported] = useState(() => new Set())
+
+  // Fullscreen is driven through the browser's own API on the existing tile
+  // rather than by re-rendering the feed somewhere else: the canvas stays
+  // mounted, so the stream keeps drawing and never has to reconnect.
+  const [fsKey, setFsKey] = useState(null)
+  const feedCardRefs = useRef({})
 
   const {
     cameras:        streamCams,
@@ -456,15 +476,70 @@ export default function DeviceManagement() {
     try {
       await camerasApi.ptz(dbCam.id, command, 0.5)
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'PTZ not supported by this camera')
+      const msg = err?.response?.data?.error || 'PTZ not supported by this camera'
+      // "PTZ unavailable" is the backend's verdict after it has probed every
+      // HTTP port, ONVIF path and the CGI fallback — a settled answer about
+      // the device, not a transient error. Stop offering the control rather
+      // than letting it fail on every press.
+      if (/unavailable|not supported/i.test(msg)) {
+        setPtzUnsupported(prev => {
+          if (prev.has(dbCam.id)) return prev
+          const next = new Set(prev)
+          next.add(dbCam.id)
+          return next
+        })
+        setPtzPane(p => ({ ...p, [sc.id]: undefined }))
+      }
+      toast.error(msg)
     }
   }, [cameras])
+
+  // Browser-driven fullscreen, so Esc and the OS chrome behave as users expect.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setFsKey(null)
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  const toggleFullscreen = useCallback(async key => {
+    const el = feedCardRefs.current[key]
+    if (!el) return
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+        // Switching straight from one tile to another: the change event clears
+        // fsKey, so only re-enter when a *different* tile was asked for.
+        if (fsKey !== key) {
+          await el.requestFullscreen()
+          setFsKey(key)
+        }
+        return
+      }
+      await el.requestFullscreen()
+      setFsKey(key)
+    } catch {
+      toast.error('Fullscreen was blocked by the browser.')
+    }
+  }, [fsKey])
 
   const handlePtzStop = useCallback(async (sc) => {
     const dbCam = cameras.find(c => c.name === sc.name)
     if (!dbCam) return
     camerasApi.ptz(dbCam.id, 'stop', 0).catch(() => {})
   }, [cameras])
+
+  // Search across the fields someone would actually recognise a camera by.
+  // Assignment is matched on its label rather than its stored value so typing
+  // "entry" or "parking" narrows the list the same way the badges read.
+  const q = query.trim().toLowerCase()
+  const matchedCams = q
+    ? cameras.filter(c => [
+        c.name, c.ip, c.device_id, c.gate_id,
+        c.assignment === 'entry' ? 'entry' : 'parking',
+      ].some(field => String(field ?? '').toLowerCase().includes(q)))
+    : cameras
 
   const entryCams   = cameras.filter(c => c.assignment === 'entry')
   const parkingCams = cameras.filter(c => c.assignment === 'parking')
@@ -510,6 +585,35 @@ export default function DeviceManagement() {
         <div className="section-container" style={{ marginBottom: 24 }}>
           <div className="section-header">
             <h2 className="section-title">Cameras</h2>
+            {cameras.length > 0 && (
+              <div className="dm-search">
+                <Search size={14} className="dm-search-icon" />
+                <input
+                  type="search"
+                  className="dm-search-input"
+                  placeholder="Search name, IP, device ID…"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  aria-label="Search cameras"
+                />
+                {q && (
+                  <>
+                    <span className="dm-search-count">
+                      {matchedCams.length} of {cameras.length}
+                    </span>
+                    <button
+                      type="button"
+                      className="dm-search-clear"
+                      onClick={() => setQuery('')}
+                      title="Clear search"
+                      aria-label="Clear search"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -526,6 +630,15 @@ export default function DeviceManagement() {
                 <Plus size={15} /> Add First Device
               </button>
             </div>
+          ) : matchedCams.length === 0 ? (
+            <div className="dm-empty">
+              <Search size={36} className="dm-empty-icon" />
+              <p className="dm-empty-title">No cameras match “{query.trim()}”</p>
+              <p className="dm-empty-sub">Try part of a camera name, an IP address, or a device ID.</p>
+              <button className="btn-outline btn-sm" onClick={() => setQuery('')}>
+                <X size={14} /> Clear search
+              </button>
+            </div>
           ) : (
             <div className="table-container">
               <table className="data-table">
@@ -540,7 +653,7 @@ export default function DeviceManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {cameras.map(cam => {
+                  {matchedCams.map(cam => {
                     const sc = getStreamCam(cam)
                     const connected = !!sc
                     const live = sc?.streamConnected
@@ -643,12 +756,25 @@ export default function DeviceManagement() {
                 const dbCam = cameras.find(c => c.name === sc.name)
                 const dotCls = sc.streamConnected ? 'live' : sc.wsActive ? 'connecting' : 'offline'
                 // A dual-lens camera sends both views inside one frame, so it
-                // gets one viewport per view. The controls below act on the
-                // device, not the view, so they stay on the first tile only —
-                // two Disconnect buttons for one camera would just be a trap.
+                // gets one viewport per view. Only Disconnect stays on the
+                // first tile — two Disconnect buttons for one camera would be a
+                // trap. Fullscreen is per-view by nature, and PTZ has to be
+                // reachable from whichever view is on screen, so both appear on
+                // every tile.
                 const lenses = paneCounts[sc.id] ?? 1
-                return Array.from({ length: lenses }, (_, pane) => (
-                  <div key={`${sc.id}:${pane}`} className="dm-feed-card">
+                return Array.from({ length: lenses }, (_, pane) => {
+                  const key = `${sc.id}:${pane}`
+                  const isFs = fsKey === key
+                  // PTZ drives the whole device, so every view of it offers the
+                  // control — a lens on its own in fullscreen would otherwise
+                  // be unsteerable. Only cameras that have not already refused.
+                  const canPtz = dbCam && !ptzUnsupported.has(dbCam.id)
+                  return (
+                  <div
+                    key={key}
+                    ref={el => { feedCardRefs.current[key] = el }}
+                    className="dm-feed-card"
+                  >
                     <div className="dm-feed-header">
                       <span className="dm-feed-name">
                         <span className={`dm-feed-dot ${dotCls}`} />
@@ -657,23 +783,33 @@ export default function DeviceManagement() {
                       </span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {dbCam && <AssignmentBadge value={dbCam.assignment} gateId={dbCam?.gate_id} />}
+                        {canPtz && (
+                          <button
+                            className={`dm-feed-ptz-toggle${ptzPane[sc.id] === pane ? ' dm-feed-ptz-toggle--on' : ''}`}
+                            onClick={() => setPtzPane(p => ({
+                              ...p, [sc.id]: p[sc.id] === pane ? undefined : pane,
+                            }))}
+                            title="PTZ Controls"
+                          >
+                            <Move size={13} />
+                          </button>
+                        )}
+                        <button
+                          className="dm-feed-fs"
+                          onClick={() => toggleFullscreen(key)}
+                          title={isFs ? 'Exit fullscreen' : 'Fullscreen'}
+                          aria-label={isFs ? 'Exit fullscreen' : 'Fullscreen'}
+                        >
+                          {isFs ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                        </button>
                         {pane === 0 && (
-                          <>
-                            <button
-                              className={`dm-feed-ptz-toggle${ptzActive[sc.id] ? ' dm-feed-ptz-toggle--on' : ''}`}
-                              onClick={() => setPtzActive(p => ({ ...p, [sc.id]: !p[sc.id] }))}
-                              title="PTZ Controls"
-                            >
-                              <Move size={13} />
-                            </button>
-                            <button
-                              className="dm-feed-disconnect"
-                              onClick={() => disconnectCamera(sc.id)}
-                              title="Disconnect"
-                            >
-                              <WifiOff size={13} />
-                            </button>
-                          </>
+                          <button
+                            className="dm-feed-disconnect"
+                            onClick={() => disconnectCamera(sc.id)}
+                            title="Disconnect"
+                          >
+                            <WifiOff size={13} />
+                          </button>
                         )}
                       </div>
                     </div>
@@ -697,7 +833,7 @@ export default function DeviceManagement() {
                           )}
                         </div>
                       )}
-                      {pane === 0 && ptzActive[sc.id] && (
+                      {ptzPane[sc.id] === pane && (
                         <div className="dm-ptz-overlay">
                           <div className="dm-ptz-panel">
                             <span className="dm-ptz-label">PTZ</span>
@@ -743,7 +879,8 @@ export default function DeviceManagement() {
                       )}
                     </div>
                   </div>
-                ))
+                  )
+                })
               })}
             </div>
           )}
