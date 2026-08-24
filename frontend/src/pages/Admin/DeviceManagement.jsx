@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Camera, Plus, Pencil, Trash2, X, Eye, EyeOff,
@@ -10,6 +10,7 @@ import { toast } from '../../components/Feedback/notify'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -409,11 +410,7 @@ export default function DeviceManagement() {
   // flag, so the first refusal is the only signal there is.
   const [ptzUnsupported, setPtzUnsupported] = useState(() => new Set())
 
-  // Fullscreen is driven through the browser's own API on the existing tile
-  // rather than by re-rendering the feed somewhere else: the canvas stays
-  // mounted, so the stream keeps drawing and never has to reconnect.
-  const [fsKey, setFsKey] = useState(null)
-  const feedCardRefs = useRef({})
+  const fs = useFullscreen()
 
   const {
     cameras:        streamCams,
@@ -494,35 +491,9 @@ export default function DeviceManagement() {
     }
   }, [cameras])
 
-  // Browser-driven fullscreen, so Esc and the OS chrome behave as users expect.
-  useEffect(() => {
-    const onChange = () => {
-      if (!document.fullscreenElement) setFsKey(null)
-    }
-    document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
-
   const toggleFullscreen = useCallback(async key => {
-    const el = feedCardRefs.current[key]
-    if (!el) return
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen()
-        // Switching straight from one tile to another: the change event clears
-        // fsKey, so only re-enter when a *different* tile was asked for.
-        if (fsKey !== key) {
-          await el.requestFullscreen()
-          setFsKey(key)
-        }
-        return
-      }
-      await el.requestFullscreen()
-      setFsKey(key)
-    } catch {
-      toast.error('Fullscreen was blocked by the browser.')
-    }
-  }, [fsKey])
+    if (!(await fs.toggle(key))) toast.error('Fullscreen was blocked by the browser.')
+  }, [fs])
 
   const handlePtzStop = useCallback(async (sc) => {
     const dbCam = cameras.find(c => c.name === sc.name)
@@ -764,7 +735,7 @@ export default function DeviceManagement() {
                 const lenses = paneCounts[sc.id] ?? 1
                 return Array.from({ length: lenses }, (_, pane) => {
                   const key = `${sc.id}:${pane}`
-                  const isFs = fsKey === key
+                  const isFs = fs.isFullscreen(key)
                   // PTZ drives the whole device, so every view of it offers the
                   // control — a lens on its own in fullscreen would otherwise
                   // be unsteerable. Only cameras that have not already refused.
@@ -772,7 +743,7 @@ export default function DeviceManagement() {
                   return (
                   <div
                     key={key}
-                    ref={el => { feedCardRefs.current[key] = el }}
+                    ref={fs.setRef(key)}
                     className="dm-feed-card"
                   >
                     <div className="dm-feed-header">

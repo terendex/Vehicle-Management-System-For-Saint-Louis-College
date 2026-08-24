@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
-  DoorOpen, Ban, ScanLine,
+  DoorOpen, Ban, ScanLine, Maximize2, Minimize2,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -12,6 +12,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import QrScanModal from '../../components/QrScanModal'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
@@ -593,8 +594,19 @@ export default function SecurityEntryManagement() {
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
+  const [camQuery, setCamQuery] = useState('')
   const rtspCameras = cameras.filter(c => c.assignment === 'entry')
   const rtspActiveCam = rtspCameras.find(c => c.id === rtspActiveCamId) ?? rtspCameras[0] ?? null
+  const fs = useFullscreen()
+
+  // Only the thumbnail strip is filtered. Every camera's canvas stays mounted
+  // in the viewport above — hidden, but registered with the stream context —
+  // so narrowing this list must never remove one, or searching would tear down
+  // a live feed and force a reconnect.
+  const camQ = camQuery.trim().toLowerCase()
+  const shownCams = camQ
+    ? rtspCameras.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
+    : rtspCameras
   const rtspResults = results.filter(r => rtspCameras.some(c => c.id === r._camId))
 
   useEffect(() => {
@@ -884,7 +896,19 @@ export default function SecurityEntryManagement() {
             </div>
 
             {/* Viewport */}
-            <div className="em-viewport" style={{ background: '#04121F', minHeight: 280, position: 'relative' }}>
+            <div className="em-viewport" ref={fs.setRef('cctv')} style={{ background: '#04121F', minHeight: 280, position: 'relative' }}>
+              {rtspCameras.length > 0 && (
+                <button
+                  className="em-cam-fs"
+                  onClick={async () => {
+                    if (!(await fs.toggle('cctv'))) toast.error('Fullscreen was blocked by the browser.')
+                  }}
+                  title={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
+                  aria-label={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
+                >
+                  {fs.isFullscreen('cctv') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                </button>
+              )}
               {rtspCameras.length > 0 ? (
                 <div style={{ position: 'relative', width: '100%', minHeight: 260 }}>
                   {rtspCameras.map((cam, idx) => (
@@ -959,10 +983,41 @@ export default function SecurityEntryManagement() {
               )}
             </div>
 
+            {/* Camera search — only worth the space once there are several */}
+            {rtspCameras.length > 1 && (
+              <div className="em-cam-search">
+                <Search size={13} className="em-cam-search-icon" />
+                <input
+                  type="search"
+                  placeholder="Search cameras…"
+                  value={camQuery}
+                  onChange={e => setCamQuery(e.target.value)}
+                  aria-label="Search cameras"
+                />
+                {camQ && (
+                  <>
+                    <span className="em-cam-search-count">{shownCams.length}/{rtspCameras.length}</span>
+                    <button
+                      type="button"
+                      className="em-cam-search-clear"
+                      onClick={() => setCamQuery('')}
+                      title="Clear search"
+                      aria-label="Clear search"
+                    >
+                      <X size={12} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Camera thumbnail strip */}
             {rtspCameras.length > 1 && (
               <div className="em-cam-thumbnails" style={{ borderTop: '1px solid #0F2A47' }}>
-                {rtspCameras.map(cam => (
+                {shownCams.length === 0 && (
+                  <div className="em-cam-thumb-none">No cameras match “{camQuery.trim()}”</div>
+                )}
+                {shownCams.map(cam => (
                   <div
                     key={`thumb-${cam.id}`}
                     className={`em-cam-thumb ${rtspActiveCamId === cam.id ? 'active' : ''}`}

@@ -4,7 +4,7 @@ import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
-  VideoOff,
+  VideoOff, Search, Maximize2, Minimize2,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -13,6 +13,7 @@ import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import './ParkingManagement.css'
 
 const CAT_OPTS = [
@@ -93,8 +94,17 @@ export default function ParkingManagement({ embedded = false }) {
 
   const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
+  const [camQuery, setCamQuery] = useState('')
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
   const pkActiveCam = parkingCams.find(c => c.id === pkActiveCamId) ?? parkingCams[0] ?? null
+  const camFs = useFullscreen()
+
+  // Strip only. The canvases above stay mounted for every camera — filtering
+  // them would unregister a live feed and force it to reconnect.
+  const camQ = camQuery.trim().toLowerCase()
+  const shownCams = camQ
+    ? parkingCams.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
+    : parkingCams
 
   useEffect(() => {
     if (!pkActiveCamId && parkingCams.length > 0) setPkActiveCam(parkingCams[0].id)
@@ -1111,9 +1121,19 @@ export default function ParkingManagement({ embedded = false }) {
               </div>
 
               {/* Main camera view — shows active cam at full size */}
-              <div className="pm-cam-main-wrap">
+              <div className="pm-cam-main-wrap" ref={camFs.setRef('parking')}>
                 {parkingCams.length > 0 ? (
                   <>
+                    <button
+                      className="pm-cam-fs"
+                      onClick={async () => {
+                        if (!(await camFs.toggle('parking'))) toast.error('Fullscreen was blocked by the browser.')
+                      }}
+                      title={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                      aria-label={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                    >
+                      {camFs.isFullscreen('parking') ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                    </button>
                     {parkingCams.map((cam, idx) => (
                       <div
                         key={cam.id}
@@ -1275,8 +1295,33 @@ export default function ParkingManagement({ embedded = false }) {
 
               {/* Thumbnail strip — only when 2+ cameras */}
               {parkingCams.length > 1 && (
+                <div className="pm-cam-search">
+                  <Search size={13} className="pm-cam-search-icon" />
+                  <input
+                    type="search"
+                    placeholder="Search cameras…"
+                    value={camQuery}
+                    onChange={e => setCamQuery(e.target.value)}
+                    aria-label="Search parking cameras"
+                  />
+                  {camQ && (
+                    <>
+                      <span className="pm-cam-search-count">{shownCams.length}/{parkingCams.length}</span>
+                      <button type="button" className="pm-cam-search-clear"
+                        onClick={() => setCamQuery('')} title="Clear search" aria-label="Clear search">
+                        <X size={12} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {parkingCams.length > 1 && (
                 <div className="pm-cam-thumb-strip">
-                  {parkingCams.map(cam => {
+                  {shownCams.length === 0 && (
+                    <div className="pm-cam-thumb-none">No cameras match “{camQuery.trim()}”</div>
+                  )}
+                  {shownCams.map(cam => {
                     const dev     = deviceCamFor(cam)
                     const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
                     return (

@@ -4,7 +4,7 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from '../../components/Feedback/notify'
@@ -12,6 +12,7 @@ import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitor
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import TableLoader from '../../components/TableLoader'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import './OperationsCenter.css'
@@ -197,6 +198,8 @@ function CameraMonitor() {
   const [devices,   setDevices]   = useState([])   // registered cameras (from the API)
   const [scope,     setScope]     = useState('all')
   const [selectedId, setSelectedId] = useState(null) // Camera.id from the API
+  const [camQuery,  setCamQuery]  = useState('')
+  const fs = useFullscreen()
 
   const camScopeLabel = (cam) => {
     if (cam.assignment === 'parking') return 'Parking'
@@ -219,7 +222,14 @@ function CameraMonitor() {
 
   const camScopes = buildCamScopes(gates, gateLabel)
   const scopes    = camScopes.filter(s => s.key === 'all' || devices.some(s.match))
-  const visible   = devices.filter(camScopes.find(s => s.key === scope)?.match ?? (() => true))
+  const inScope   = devices.filter(camScopes.find(s => s.key === scope)?.match ?? (() => true))
+  // Search narrows within the active scope rather than replacing it, so the
+  // gate tabs and the box compose instead of fighting each other.
+  const camQ      = camQuery.trim().toLowerCase()
+  const visible   = camQ
+    ? inScope.filter(c => [c.name, c.ip, c.device_id, camScopeLabel(c)]
+        .some(f => String(f ?? '').toLowerCase().includes(camQ)))
+    : inScope
 
   // Keep the selection inside the current filter.
   const selected = visible.find(c => c.id === selectedId) ?? visible[0] ?? null
@@ -274,6 +284,28 @@ function CameraMonitor() {
             ))}
           </div>
 
+          <div className="oc-cam-search">
+            <Search size={13} className="oc-cam-search-icon" />
+            <input
+              type="search"
+              placeholder="Search cameras…"
+              value={camQuery}
+              onChange={e => setCamQuery(e.target.value)}
+              aria-label="Search cameras"
+            />
+            {camQ && (
+              <button
+                type="button"
+                className="oc-cam-search-clear"
+                onClick={() => setCamQuery('')}
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
           <label className="oc-cam-picker">
             <span className="oc-cam-picker-lbl">Camera</span>
             <select
@@ -281,7 +313,9 @@ function CameraMonitor() {
               onChange={e => setSelectedId(Number(e.target.value))}
               disabled={visible.length === 0}
             >
-              {visible.length === 0 && <option value="">No cameras in this filter</option>}
+              {visible.length === 0 && (
+                <option value="">{camQ ? 'No cameras match' : 'No cameras in this filter'}</option>
+              )}
               {visible.map(c => (
                 <option key={c.id} value={c.id}>{c.name} — {camScopeLabel(c)}</option>
               ))}
@@ -290,7 +324,7 @@ function CameraMonitor() {
         </div>
       )}
 
-      <div className="oc-cam-viewport">
+      <div className="oc-cam-viewport" ref={fs.setRef('monitor')}>
         {selected ? (
           <>
             {/* Keyed by stream URL so switching cameras remounts the canvas
@@ -310,6 +344,16 @@ function CameraMonitor() {
               <span className={`oc-cam-dot ${isLive ? 'live' : 'wait'}`} />
               {selected.name} — {camScopeLabel(selected)}
             </div>
+            <button
+              className="oc-cam-fs"
+              onClick={async () => {
+                if (!(await fs.toggle('monitor'))) toast.error('Fullscreen was blocked by the browser.')
+              }}
+              title={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+              aria-label={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+            >
+              {fs.isFullscreen('monitor') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
           </>
         ) : (
           <div className="oc-cam-empty">

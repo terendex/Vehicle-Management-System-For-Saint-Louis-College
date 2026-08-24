@@ -907,6 +907,97 @@
   overflow: hidden;
 }
 
+/* ─── Camera search above the strip ───────────────────────────── */
+
+.pm-cam-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0;
+  padding: 0 8px;
+  background: #0A2340;
+  border: 1px solid #123351;
+  border-radius: 7px;
+}
+.pm-cam-search:focus-within { border-color: #2E8CCB; }
+.pm-cam-search-icon { color: #5C7B92; flex-shrink: 0; }
+.pm-cam-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #D3E1EC;
+}
+.pm-cam-search input::placeholder { color: #5C7B92; }
+.pm-cam-search input::-webkit-search-cancel-button { display: none; }
+.pm-cam-search-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: #5C7B92;
+  white-space: nowrap;
+}
+.pm-cam-search-clear {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #5C7B92;
+  cursor: pointer;
+}
+.pm-cam-search-clear:hover { color: #E88080; background: rgba(232, 128, 128, 0.12); }
+
+.pm-cam-thumb-none {
+  color: #5C7B92;
+  font-size: 11px;
+  padding: 8px 2px;
+}
+
+/* ─── Fullscreen the parking feed ─────────────────────────────── */
+
+.pm-cam-fs {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(2, 12, 21, 0.7);
+  color: #C7DDEE;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pm-cam-fs:hover { background: rgba(2, 12, 21, 0.95); color: #FFFFFF; }
+
+/* In the sidebar the canvas is full-width with a min-height; filling the
+   screen needs the opposite — bounded on both axes and centred. */
+.pm-cam-main-wrap:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm-cam-main-wrap:fullscreen > div {
+  width: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+}
+.pm-cam-main-wrap:fullscreen canvas {
+  width: auto !important;
+  max-width: 100vw;
+  max-height: 100vh;
+  min-height: 0;
+}
+
 .pm-cam-main-wrap canvas {
   display: block;
   width: 100%;
