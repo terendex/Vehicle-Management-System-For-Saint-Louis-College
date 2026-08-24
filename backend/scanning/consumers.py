@@ -1053,7 +1053,22 @@ class _StreamWorker:
 
     FRAME_INTERVAL = 1.0 / 20   # 20 fps cap for network/CPU budget
     MAX_RETRIES    = 5
-    RETRY_DELAY    = 2.0
+
+    # Reconnect backoff, doubling from RETRY_DELAY up to RETRY_DELAY_CAP.
+    #
+    # A flat 2 s retry could not reconnect to the campus Yoosee at all. Cheap
+    # firmware reboots when its RTSP server is pushed, and once it does, ICMP
+    # comes back immediately while RTSP needs roughly 21 s more to bind. Six
+    # attempts 2 s apart therefore spent every one of them inside the boot
+    # window, gave up ~11 s before the camera was ready, and reported a URL or
+    # network fault that did not exist. Worse, each attempt was several more
+    # connections into a device mid-boot, which is what re-triggered the reset:
+    # the retry loop was feeding the crash it existed to recover from.
+    #
+    # Doubling reaches ~60 s over the same five retries, so the last attempts
+    # land well after the stream is available again.
+    RETRY_DELAY     = 2.0
+    RETRY_DELAY_CAP = 30.0
 
     def __init__(self, rtsp_url: str):
         self.rtsp_url   = rtsp_url
@@ -1124,6 +1139,11 @@ class _StreamWorker:
                     except Exception: pass
             loop.call_soon_threadsafe(_put)
 
+    @classmethod
+    def _backoff(cls, retry: int) -> float:
+        """Seconds to wait before reconnect attempt number `retry` (0-based)."""
+        return min(cls.RETRY_DELAY * (2 ** retry), cls.RETRY_DELAY_CAP)
+
     def _run(self, stop: threading.Event):
         # `stop` is this generation's Event, passed in rather than read off self:
         # a later subscribe swaps self._stop for a fresh one, and an older thread
@@ -1137,8 +1157,12 @@ class _StreamWorker:
             cap = RtspStreamConsumer._open_cap(self.rtsp_url)
             if not cap or not cap.isOpened():
                 if cap: cap.release()
+                delay = self._backoff(retry)
                 retry += 1
-                _t.sleep(self.RETRY_DELAY)
+                # Interruptible: a subscriber leaving should not wait out a
+                # 30 s sleep before the thread notices it has been stopped.
+                if stop.wait(delay):
+                    break
                 continue
 
             retry = 0
@@ -1184,7 +1208,14 @@ class _StreamWorker:
                             'message': 'Stream timed out (no frames received).'})
                 drain_stop.set()
                 cap_released.wait(35)
+                # Back off here too. A stream that opened and then stopped
+                # producing frames is the *other* face of the firmware reset,
+                # and reconnecting instantly walks straight back into a camera
+                # that is still on its way down.
+                delay = self._backoff(retry)
                 retry += 1
+                if stop.wait(delay):
+                    break
                 continue
 
             try:
@@ -1207,8 +1238,11 @@ class _StreamWorker:
 
         if retry > self.MAX_RETRIES:
             self._push({'type': 'error',
-                        'message': 'Cannot connect to RTSP stream. '
-                                   'Check the URL and ensure the backend has network access to the camera.'})
+                        'message': 'Cannot connect to RTSP stream. If the camera '
+                                   'answers ping but not video, it may have reset — '
+                                   'some units need up to a minute after a reboot '
+                                   'before RTSP accepts connections again. '
+                                   'Otherwise check the URL and the network route.'})
 
         # A worker whose capture thread has given up must not stay in the pool.
         # It used to, whenever a subscriber was still attached, and the next

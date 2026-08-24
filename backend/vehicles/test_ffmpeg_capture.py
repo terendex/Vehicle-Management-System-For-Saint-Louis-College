@@ -64,6 +64,13 @@ class BackendSelectionTests(SimpleTestCase):
 
     URL = 'rtsp://admin:secret@10.0.0.5:554/onvif1'
 
+    def setUp(self):
+        # open_capture remembers hosts that could not survive the OpenCV probe,
+        # and every test here shares one URL. Without this, whichever test ran
+        # first decided the backend for all the others.
+        ffmpeg_capture.reset_backend_memo()
+        self.addCleanup(ffmpeg_capture.reset_backend_memo)
+
     def test_opencv_is_used_when_it_can_actually_decode(self):
         """The fast path must stay the fast path — no subprocess for a camera
         OpenCV handles, or every working camera pays for the fallback."""
