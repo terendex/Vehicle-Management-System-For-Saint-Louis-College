@@ -99,6 +99,17 @@ export default function ParkingManagement({ embedded = false }) {
   // is not a guarantee it loads now. Tracked per zone id: switching zones must
   // not carry one zone's failure over to the next.
   const [imgFailedFor, setImgFailedFor] = useState(null)
+  // Both keyed by zone id rather than reset in an effect: a different zone is a
+  // different question — its image may be single-lens, or the same lens may not
+  // be the right one — and deriving the answer avoids a reset that would run
+  // one render after the zone already changed.
+  //
+  // imgDims: natural size of the reference image, so the editor can tell a
+  // stacked dual-lens frame from an ordinary one (the backend's own test).
+  // lensSel: which view is being worked on; absent = not chosen yet, a state
+  // the editor refuses to draw in.
+  const [imgDimsFor, setImgDimsFor] = useState({})
+  const [lensSelFor, setLensSelFor] = useState({})
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
   const pkActiveCam = parkingCams.find(c => c.id === pkActiveCamId) ?? parkingCams[0] ?? null
   const camFs = useFullscreen()
@@ -139,6 +150,31 @@ export default function ParkingManagement({ embedded = false }) {
   // Scoped to the zone that actually failed, so selecting another zone shows
   // its own image rather than inheriting the previous one's error.
   const imgFailed = !!selZone && imgFailedFor === selZone.id
+  const imgDims  = selZone ? (imgDimsFor[selZone.id] ?? null) : null
+  const lensView = selZone ? (lensSelFor[selZone.id] ?? null) : null
+
+  // Identical rule to lens_layout.lens_count() on the backend and lensCount()
+  // in CameraContext: taller than wide, and the halves are widescreen.
+  const lensCount = (() => {
+    if (!imgDims) return 1
+    const { w, h } = imgDims
+    if (!w || !h || h <= w) return 1
+    return w / (h / 2) >= 1.6 ? 2 : 1
+  })()
+  const lensIdx = lensCount > 1 ? (lensView ?? 0) : 0
+  // Drawing is blocked until a view is picked, so a bay can never be defined
+  // against the seam between two lenses.
+  const needsLensChoice = lensCount > 1 && lensView == null
+
+  // Bay geometry is stored normalised against the WHOLE frame — the detector
+  // returns full-frame boxes and `bay_occupancy._rect_for` reads them that way.
+  // So the lens view is a viewport, not a coordinate system: the SVG viewBox
+  // shows one band and pointer input is mapped back out of it, leaving every
+  // stored coordinate full-frame. Cropping the saved image instead would have
+  // silently moved every bay to the seam.
+  const toFullFrame = (pt) => (
+    lensCount > 1 ? { x: pt.x, y: (pt.y + lensIdx) / lensCount } : pt
+  )
 
   // ── Which camera is this zone (and this feed) actually about? ────
   //
@@ -459,8 +495,9 @@ export default function ParkingManagement({ embedded = false }) {
   // ── SVG drawing (edit mode) ─────────────────────────────────────
   const onMouseDown = (e) => {
     if (mode !== 'edit' || tool !== 'box') return
+    if (needsLensChoice) return          // no view picked: a bay would straddle the seam
     e.preventDefault()
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     dragStart.current = pt
     dragging.current  = false
     setSelDraft(null)
@@ -468,11 +505,11 @@ export default function ParkingManagement({ embedded = false }) {
 
   const onMouseMove = (e) => {
     if (mode === 'edit' && tool === 'pen') {
-      if (penPoints.length > 0) setPenCursor(svgPt(e, svgEl.current))
+      if (penPoints.length > 0) setPenCursor(toFullFrame(svgPt(e, svgEl.current)))
       return
     }
     if (!dragStart.current) return
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     const dx = Math.abs(pt.x - dragStart.current.x)
     const dy = Math.abs(pt.y - dragStart.current.y)
     if (dx > DRAG_MIN || dy > DRAG_MIN) dragging.current = true
@@ -486,7 +523,7 @@ export default function ParkingManagement({ embedded = false }) {
   const onMouseUp = (e) => {
     if (tool !== 'box') return
     if (!dragStart.current) return
-    const pt          = svgPt(e, svgEl.current)
+    const pt          = toFullFrame(svgPt(e, svgEl.current))
     const wasDragging = dragging.current
     const rb          = rbRef.current
 
@@ -547,8 +584,9 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   const onSvgClick = (e) => {
+    if (needsLensChoice) return
     if (mode !== 'edit' || tool !== 'pen') return
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     if (penPoints.length >= 3 && Math.hypot(pt.x - penPoints[0].x, pt.y - penPoints[0].y) < 0.02) {
       finalizePenShape(penPoints)
       setPenPoints([])
@@ -795,6 +833,21 @@ export default function ParkingManagement({ embedded = false }) {
                   </button>
                 </div>
 
+                {lensCount > 1 && (
+                  <div className="pm-lens-picker" role="group" aria-label="Camera view">
+                    <span className="pm-lens-label">View</span>
+                    {Array.from({ length: lensCount }, (_, i) => (
+                      <button
+                        key={i}
+                        className={`pm-lens-btn${lensView === i ? ' pm-lens-btn--active' : ''}`}
+                        onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
+                      >
+                        Lens {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="pm-cam-assign">
                   <Video size={13} />
                   <select
@@ -951,8 +1004,19 @@ export default function ParkingManagement({ embedded = false }) {
                   className="pm-canvas-img"
                   draggable={false}
                   alt=""
+                  /* Stretch to lensCount x height and slide the wanted band
+                     into the wrapper, which clips. object-fit is `fill`, so the
+                     band fills the viewport exactly as the viewBox expects. */
+                  style={lensCount > 1 ? {
+                    height: `${lensCount * 100}%`,
+                    top: `${-lensIdx * 100}%`,
+                    bottom: 'auto',
+                  } : undefined}
                   onError={() => setImgFailedFor(selZone.id)}
-                  onLoad={() => setImgFailedFor(f => (f === selZone.id ? null : f))}
+                  onLoad={e => {
+                    setImgFailedFor(f => (f === selZone.id ? null : f))
+                    setImgDimsFor(m => ({ ...m, [selZone.id]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }))
+                  }}
                 />
               ) : (
                 <div className="pm-canvas-no-img">
@@ -982,11 +1046,37 @@ export default function ParkingManagement({ embedded = false }) {
                 </div>
               )}
 
+              {/* One view at a time, and the choice comes first.
+                  A stacked frame is two unrelated scenes; a bay drawn across
+                  the join describes neither, and the geometry is stored against
+                  the whole frame so nothing downstream would flag it. */}
+              {needsLensChoice && (
+                <div className="pm-lens-prompt">
+                  <LayoutGrid size={26} />
+                  <p className="pm-lens-prompt-title">This camera has {lensCount} views</p>
+                  <p className="pm-lens-prompt-sub">
+                    {selZone.camera_name || 'This camera'} stacks {lensCount} pictures into one
+                    frame. Pick the view this zone covers — you can set up the other one
+                    afterwards.
+                  </p>
+                  <div className="pm-lens-prompt-actions">
+                    {Array.from({ length: lensCount }, (_, i) => (
+                      <button key={i} className="pm-btn pm-btn--primary" onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}>
+                        Lens {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* SVG overlay */}
               <svg
                 ref={svgEl}
                 className="pm-canvas-svg"
-                viewBox="0 0 1 1"
+                /* One band of the full frame. Every bay is stored in
+                   full-frame coordinates, so narrowing the viewBox is all it
+                   takes to show a single lens — no geometry is rewritten. */
+                viewBox={lensCount > 1 ? `0 ${lensIdx / lensCount} 1 ${1 / lensCount}` : '0 0 1 1'}
                 preserveAspectRatio="none"
                 style={{ cursor: mode === 'edit' ? 'crosshair' : 'default' }}
                 onMouseDown={onMouseDown}

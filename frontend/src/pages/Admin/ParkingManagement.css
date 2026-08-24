@@ -399,6 +399,80 @@
   -webkit-user-drag: none;
 }
 
+/* ── Choosing a view on a multi-lens camera ──────────────────────────────
+   A dual-lens unit stacks two unrelated scenes into one frame. Bays are stored
+   against the whole frame, so one drawn across the join is geometrically valid
+   and completely wrong — nothing downstream can catch it. The editor therefore
+   shows one view at a time and will not draw until one is chosen. */
+
+.pm-lens-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: #EEF4F9;
+  border: 1px solid #CFE0EE;
+  border-radius: 8px;
+}
+.pm-lens-label {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5C7B92;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pm-lens-btn {
+  padding: 5px 11px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: #35576F;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pm-lens-btn:hover { background: #DCE9F3; }
+.pm-lens-btn--active {
+  background: #03396C;
+  color: #FFFFFF;
+}
+
+.pm-lens-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(4, 18, 31, 0.82);
+  backdrop-filter: blur(3px);
+}
+.pm-lens-prompt svg { color: #5CA9DC; }
+.pm-lens-prompt-title {
+  margin: 0;
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 700;
+}
+.pm-lens-prompt-sub {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #A9C6DC;
+}
+.pm-lens-prompt-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 /* The empty/failed canvas state.
    Previously one line of italic grey text floating in a large dark void, with
    no indication of what to do about it — and when the image 404s the browser
