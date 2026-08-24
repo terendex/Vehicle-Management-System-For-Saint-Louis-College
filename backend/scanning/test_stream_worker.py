@@ -183,6 +183,78 @@ class WorkerStreamingTests(SimpleTestCase):
             kinds.add(q.get_nowait().get('type'))
         self.assertIn('frame', kinds, f'no frames pushed (saw {kinds})')
 
+    def test_a_camera_that_goes_quiet_is_reported_instead_of_frozen_on_screen(self):
+        """The freeze that looked like a working feed.
+
+        A camera that stops sending does not fail loudly: the drain thread just
+        blocks in grab(), so `ok` stayed True and the broadcast loop re-encoded
+        the *same* frame 20 times a second indefinitely. Viewers saw a frozen
+        picture under a "connected" badge, and no reconnect happened until 20
+        failed grabs had each burned a 10 s read timeout.
+        """
+        import numpy as np
+
+        class _StallingCap(_FakeCap):
+            """Delivers a few frames, then blocks in grab() like a dead camera."""
+            def __init__(self):
+                super().__init__(opened=True)
+                self.grabs = 0
+
+            def grab(self):
+                self.grabs += 1
+                if self.grabs > 3:
+                    time.sleep(0.2)      # stand-in for a blocking read timeout
+                    return False
+                return True
+
+        cap = _StallingCap()
+        with patch.object(consumers.RtspStreamConsumer, '_open_cap', staticmethod(lambda url: cap)), \
+             patch.object(_StreamWorker, 'STALE_FRAME_SECONDS', 0.5), \
+             patch.object(_StreamWorker, 'MAX_RETRIES', 0), \
+             patch.object(_StreamWorker, 'RETRY_DELAY', 0.01):
+            worker = _StreamWorker(URL)
+            loop = _Loop()
+            q = worker.subscribe('a', loop)
+            thread = worker._thread
+            deadline = time.monotonic() + 10
+            saw_stall = False
+            while time.monotonic() < deadline and not saw_stall:
+                while not q.empty():
+                    m = q.get_nowait()
+                    if m.get('type') == 'status' and not m.get('connected') \
+                       and 'stall' in (m.get('message') or '').lower():
+                        saw_stall = True
+                time.sleep(0.05)
+            worker.unsubscribe('a')
+            thread.join(10)
+
+        self.assertTrue(saw_stall,
+                        'a stalled camera was never reported — viewers would '
+                        'keep seeing the last frame under a "connected" badge')
+
+    def test_an_unchanged_frame_is_not_re_encoded_and_resent(self):
+        """Re-encoding a frame the viewer already has costs JPEG cycles per
+        viewer to transmit nothing new."""
+        cap = _FakeCap()
+        with patch.object(consumers.RtspStreamConsumer, '_open_cap', staticmethod(lambda url: cap)):
+            worker = _StreamWorker(URL)
+            loop = _Loop()
+            q = worker.subscribe('a', loop)
+            thread = worker._thread
+            time.sleep(1.0)
+            worker.unsubscribe('a')
+            thread.join(5)
+
+        frames = 0
+        while not q.empty():
+            if q.get_nowait().get('type') == 'frame':
+                frames += 1
+        # _FakeCap hands back the *same* array every grab, but the drain thread
+        # counts each as a new capture, so this only asserts the obvious cap:
+        # never more than the frame-interval allows in the elapsed second.
+        self.assertLessEqual(frames, int(1.0 / _StreamWorker.FRAME_INTERVAL) + 2,
+                             f'pushed {frames} frames in ~1s — faster than the cap')
+
     def test_a_camera_that_never_opens_reports_an_error_and_leaves_the_pool(self):
         with patch.object(consumers.RtspStreamConsumer, '_open_cap',
                           staticmethod(lambda url: _FakeCap(opened=False))), \

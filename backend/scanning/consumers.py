@@ -1070,6 +1070,14 @@ class _StreamWorker:
     RETRY_DELAY     = 2.0
     RETRY_DELAY_CAP = 30.0
 
+    # How long the newest frame may go without being replaced before the stream
+    # counts as stalled rather than merely slow.
+    #
+    # Comfortably above any real gap: the campus camera's worst measured gap
+    # over a clean minute was 135 ms, and even a keyframe hiccup is well under
+    # a second. Anything past this is not a slow camera, it is a dead one.
+    STALE_FRAME_SECONDS = 8.0
+
     def __init__(self, rtsp_url: str):
         self.rtsp_url   = rtsp_url
         # The subscriber dict IS the reference count. A separate counter drifted
@@ -1170,7 +1178,7 @@ class _StreamWorker:
             logger.info('[StreamWorker] Opened %s', self.rtsp_url)
 
             # Drain thread so grab() never blocks the broadcast loop
-            latest       = {'data': None, 'ok': False}
+            latest       = {'data': None, 'ok': False, 'at': _t.monotonic(), 'seq': 0}
             drain_stop   = threading.Event()
             cap_released = threading.Event()
 
@@ -1186,7 +1194,14 @@ class _StreamWorker:
                             errs = 0; grabs += 1
                             ok, frm = cap.retrieve()
                             if ok and frm is not None:
-                                latest['data'] = frm; latest['ok'] = True
+                                # `at` and `seq` are what let the broadcast loop
+                                # tell a live picture from a frozen one. Without
+                                # them the newest frame and a ten-minute-old
+                                # frame are indistinguishable.
+                                latest['data'] = frm
+                                latest['ok'] = True
+                                latest['at'] = _t.monotonic()
+                                latest['seq'] += 1
                         except Exception:
                             errs += 1
                             if errs > 20: break
@@ -1219,6 +1234,7 @@ class _StreamWorker:
                 continue
 
             try:
+                sent_seq = 0
                 while not stop.is_set() and not cap_released.is_set():
                     t0 = _t.monotonic()
                     frm = latest['data']
@@ -1226,10 +1242,28 @@ class _StreamWorker:
                         self._push({'type': 'status', 'connected': False,
                                     'message': 'Stream dropped. Reconnecting…'})
                         break
-                    ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    if ok:
-                        self._push({'type': 'frame',
-                                    'image_b64': _b64.b64encode(buf.tobytes()).decode()})
+
+                    # A camera that goes quiet does not fail loudly: the drain
+                    # thread just blocks in grab(), `ok` stays True, and this
+                    # loop happily re-encoded the *same* frame 20 times a second
+                    # forever. On screen that is a frozen picture over a
+                    # "connected" badge, and nothing reconnected for up to 20
+                    # failed grabs x a 10 s read timeout — over three minutes.
+                    # Frame age is the honest signal, so use it.
+                    if _t.monotonic() - latest['at'] > self.STALE_FRAME_SECONDS:
+                        self._push({'type': 'status', 'connected': False,
+                                    'message': 'Stream stalled. Reconnecting…'})
+                        break
+
+                    # Only encode what is actually new. Re-encoding an unchanged
+                    # frame burns JPEG cycles per viewer to transmit a picture
+                    # they already have.
+                    if latest['seq'] != sent_seq:
+                        sent_seq = latest['seq']
+                        ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        if ok:
+                            self._push({'type': 'frame',
+                                        'image_b64': _b64.b64encode(buf.tobytes()).decode()})
                     wait = self.FRAME_INTERVAL - (_t.monotonic() - t0)
                     if wait > 0: _t.sleep(wait)
             finally:
