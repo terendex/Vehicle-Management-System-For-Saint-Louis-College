@@ -73,3 +73,47 @@ class LensIndexTests(APITestCase):
         self.assertEqual(
             sorted(ParkingSpace.objects.filter(zone=self.zone)
                    .values_list('lens_index', flat=True)), [0, 1])
+
+
+class ZoneLensTests(APITestCase):
+    """A zone covers ONE view of its camera, and remembers which.
+
+    Without this the editor asked again every visit, and the answer it needed
+    lived only in the browser — so which scene a zone's bays were drawn against
+    was not recorded anywhere.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email='zone-lens@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+        self.client.force_authenticate(self.admin)
+        self.cam = Camera.objects.create(
+            cam_number=902, name='Cam Z', ip='10.0.0.8', device_id='d8',
+            rtsp_url='rtsp://10.0.0.8/onvif1', assignment='parking')
+
+    def test_zone_stores_the_view_it_covers(self):
+        r = self.client.post('/api/vehicles/parking-zones/', {
+            'name': 'Bay B', 'vehicle_category': 'car',
+            'camera': self.cam.id, 'lens_index': 1}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['lens_index'], 1)
+        self.assertEqual(ParkingZone.objects.get(pk=r.data['id']).lens_index, 1)
+
+    def test_it_defaults_to_the_first_view(self):
+        """Single-lens cameras, and every zone created before this existed."""
+        r = self.client.post('/api/vehicles/parking-zones/', {
+            'name': 'Bay A', 'vehicle_category': 'car', 'camera': self.cam.id},
+            format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['lens_index'], 0)
+
+    def test_two_zones_can_share_a_camera_on_different_views(self):
+        """The whole point: one dual-lens camera watches two places."""
+        for name, lens in (('Left', 0), ('Right', 1)):
+            r = self.client.post('/api/vehicles/parking-zones/', {
+                'name': name, 'vehicle_category': 'car',
+                'camera': self.cam.id, 'lens_index': lens}, format='json')
+            self.assertEqual(r.status_code, 201, r.data)
+        got = sorted(ParkingZone.objects.filter(camera=self.cam)
+                     .values_list('name', 'lens_index'))
+        self.assertEqual(got, [('Left', 0), ('Right', 1)])

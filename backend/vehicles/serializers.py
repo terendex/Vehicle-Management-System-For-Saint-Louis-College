@@ -208,7 +208,7 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = ParkingZone
-        fields = ['id', 'name', 'vehicle_category', 'camera', 'camera_name', 'reference_image',
+        fields = ['id', 'name', 'vehicle_category', 'lens_index', 'camera', 'camera_name', 'reference_image',
                   'reference_image_url', 'capacity_override', 'space_count',
                   'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
                   'category_capacity', 'category_occupied', 'category_available',

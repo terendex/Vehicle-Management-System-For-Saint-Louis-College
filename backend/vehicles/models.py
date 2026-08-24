@@ -526,6 +526,16 @@ class ParkingZone(models.Model):
     id                = models.BigAutoField(primary_key=True, db_column='parking_zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
+    # Which view of its camera this zone covers.
+    #
+    # A dual-lens unit stacks two unrelated scenes into one frame, so one camera
+    # watches two places and each wants its own zone. Recording it here rather
+    # than asking the editor every session is what makes the choice stick: the
+    # bays were drawn against one of those scenes and are meaningless against
+    # the other. 0 for every single-lens camera, so existing zones need no
+    # backfill. Like ParkingSpace.lens_index this is a tag, not a coordinate
+    # space — geometry stays normalised against the whole frame.
+    lens_index        = models.PositiveSmallIntegerField(default=0)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
     # The empty-lot reference the classic scorer measures against. Separate from
     # reference_image, which is the picture the admin draws bays on and may well

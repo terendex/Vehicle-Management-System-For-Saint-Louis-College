@@ -125,6 +125,16 @@ export default function ParkingManagement({ embedded = false }) {
   // which may not exist yet when no zone has been created.
   const livePanes = pkActiveCam ? (livePaneCounts[pkActiveCam.id] ?? 1) : 1
 
+  // For the create-zone modal: the camera being picked there is not necessarily
+  // the one on screen. Matched by name because CameraContext keys live feeds by
+  // its own id, not the Camera row's.
+  const newZoneLensCount = (() => {
+    const dev = deviceCams.find(c => String(c.id) === String(newZone.camera))
+    if (!dev) return 1
+    const live = parkingCams.find(c => c.name === dev.name)
+    return live ? (livePaneCounts[live.id] ?? 1) : 1
+  })()
+
   const camQ = camQuery.trim().toLowerCase()
   const shownCams = camQ
     ? parkingCams.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
@@ -160,7 +170,12 @@ export default function ParkingManagement({ embedded = false }) {
   // its own image rather than inheriting the previous one's error.
   const imgFailed = !!selZone && imgFailedFor === selZone.id
   const imgDims  = selZone ? (imgDimsFor[selZone.id] ?? null) : null
-  const lensView = selZone ? (lensSelFor[selZone.id] ?? null) : null
+  // The zone remembers which view it covers, so the editor opens on it instead
+  // of asking again every visit. A switch made on screen still wins for this
+  // session — it is how you check the other view without editing the zone.
+  const lensView = selZone
+    ? (lensSelFor[selZone.id] ?? (selZone.lens_index != null ? selZone.lens_index : null))
+    : null
 
   // Identical rule to lens_layout.lens_count() on the backend and lensCount()
   // in CameraContext: taller than wide, and the halves are widescreen.
@@ -359,11 +374,12 @@ export default function ParkingManagement({ embedded = false }) {
       const z = await zoneApi.create({
         ...newZone,
         camera: newZone.camera ? Number(newZone.camera) : null,
+        lens_index: Number(newZone.lens_index ?? 0),
       })
       setZones(p => [...p, { ...z, spaces: [] }])
       setSelId(z.id)
       setShowNew(false)
-      setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '' })
+      setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '', lens_index: 0 })
       setMode('edit')
     } catch {
       setShowNew(false)
@@ -1593,6 +1609,35 @@ export default function ParkingManagement({ embedded = false }) {
                 <p className="pm-modal-note">
                   No parking cameras registered yet — add one in Device Management, then assign it here.
                 </p>
+              )}
+
+              {/* Which view of the camera. Only asked for a camera that is
+                  actually sending more than one — a stacked dual-lens unit
+                  watches two different places, and a zone covers one of them.
+                  Asked here so the answer is stored with the zone instead of
+                  being re-picked in the editor every session. */}
+              {newZoneLensCount > 1 && (
+                <>
+                  <label className="pm-modal-label" style={{ marginTop: 16 }}>
+                    Camera View <span className="pm-req">*</span>
+                  </label>
+                  <div className="pm-lens-picker" style={{ width: 'fit-content' }}>
+                    {Array.from({ length: newZoneLensCount }, (_, i) => (
+                      <button
+                        type="button"
+                        key={i}
+                        className={`pm-lens-btn${Number(newZone.lens_index ?? 0) === i ? ' pm-lens-btn--active' : ''}`}
+                        onClick={() => setNewZone(p => ({ ...p, lens_index: i }))}
+                      >
+                        Lens {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="pm-modal-note">
+                    This camera sends {newZoneLensCount} views in one frame. The zone covers the
+                    one you pick — create a second zone for the other.
+                  </p>
+                </>
               )}
             </div>
             <div className="pm-modal-footer">
