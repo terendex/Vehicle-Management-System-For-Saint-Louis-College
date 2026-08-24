@@ -511,28 +511,64 @@ def _try_cv2(url: str, open_timeout_ms: int):
 _PREFER_FFMPEG: dict[str, float] = {}
 _MEMO_LOCK = threading.Lock()
 MEMO_TTL_SECONDS = 3600.0
+_MEMO_CACHE_PREFIX = 'ffmpeg_backend:'
+
+
+def _cache_get(key: str) -> bool:
+    """Read the shared note, if a cache is configured and reachable.
+
+    Learning costs a camera reset, so the answer is worth keeping across
+    restarts — otherwise every deploy or crash re-crashes the camera to find
+    out what it already knew. Cache trouble is never fatal here: the in-process
+    dict still works, so a missing Redis just means re-learning once.
+    """
+    try:
+        from django.core.cache import cache
+        return bool(cache.get(_MEMO_CACHE_PREFIX + key))
+    except Exception:
+        return False
+
+
+def _cache_set(key: str, value: bool) -> None:
+    try:
+        from django.core.cache import cache
+        if value:
+            cache.set(_MEMO_CACHE_PREFIX + key, True, int(MEMO_TTL_SECONDS))
+        else:
+            cache.delete(_MEMO_CACHE_PREFIX + key)
+    except Exception:
+        pass
 
 
 def _prefers_ffmpeg(key: str) -> bool:
     with _MEMO_LOCK:
         seen = _PREFER_FFMPEG.get(key)
-        if seen is None:
-            return False
-        if time.monotonic() - seen > MEMO_TTL_SECONDS:
+        if seen is not None:
+            if time.monotonic() - seen <= MEMO_TTL_SECONDS:
+                return True
             del _PREFER_FFMPEG[key]
-            return False
+
+    # Not known locally — a previous run may still have recorded it.
+    if _cache_get(key):
+        with _MEMO_LOCK:
+            _PREFER_FFMPEG[key] = time.monotonic()
         return True
+    return False
 
 
 def _remember_ffmpeg(key: str) -> None:
     with _MEMO_LOCK:
         _PREFER_FFMPEG[key] = time.monotonic()
+    _cache_set(key, True)
 
 
 def reset_backend_memo() -> None:
     """Forget which backend each host needs. For tests and manual recovery."""
     with _MEMO_LOCK:
+        keys = list(_PREFER_FFMPEG)
         _PREFER_FFMPEG.clear()
+    for key in keys:
+        _cache_set(key, False)
 
 # How long to wait for a host that stopped listening during the OpenCV stage.
 REBOOT_WAIT_SECONDS = 40

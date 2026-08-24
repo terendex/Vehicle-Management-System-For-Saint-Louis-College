@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from vehicles import ffmpeg_capture
 
@@ -59,6 +59,15 @@ class _FakeCv2Cap:
         self.released = True
 
 
+# The backend memo is also written to the shared cache so a restart does not
+# have to re-learn it by crashing a camera. Tests must not read or write the
+# real one: a note left in Redis by an earlier run would otherwise decide the
+# backend for a later run, which is a test that passes or fails depending on
+# what happened yesterday.
+@override_settings(CACHES={'default': {
+    'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    'LOCATION': 'ffmpeg-capture-tests',
+}})
 class BackendSelectionTests(SimpleTestCase):
     """Which backend `open_capture` picks, and why."""
 
@@ -142,6 +151,69 @@ class BackendSelectionTests(SimpleTestCase):
              patch.object(ffmpeg_capture, 'is_available', return_value=False):
             got = ffmpeg_capture.open_capture(self.URL)
         self.assertFalse(got.isOpened())
+
+    # ── remembering hosts the OpenCV probe knocks over ──────────────────────
+
+    def _crash_during_probe(self):
+        """One open_capture against a host that stops listening mid-probe."""
+        with patch.object(ffmpeg_capture, '_try_cv2', return_value=None), \
+             patch.object(ffmpeg_capture, 'is_available', return_value=True), \
+             patch.object(ffmpeg_capture, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(ffmpeg_capture, 'REBOOT_WAIT_SECONDS', 0), \
+             patch.object(ffmpeg_capture, 'POST_REBOOT_SETTLE_SECONDS', 0), \
+             patch.object(ffmpeg_capture, '_listening', return_value=False), \
+             patch.object(ffmpeg_capture, 'FFmpegCapture'):
+            ffmpeg_capture.open_capture(self.URL)
+
+    def test_a_host_that_dies_during_the_probe_is_remembered_even_though_the_open_failed(self):
+        """The learning has to key off the crash, not off a later success.
+
+        The fallback usually fails on the very pass that crashed the camera —
+        it is rebooting and still holding the sessions OpenCV left, so it
+        answers 4XX. Recording only on success would mean never learning, and
+        re-crashing the camera on every single open.
+        """
+        self._crash_during_probe()
+        self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_a_remembered_host_skips_the_opencv_stage_entirely(self):
+        """Which is the whole point: no second camera reset to re-learn."""
+        self._crash_during_probe()
+        with patch.object(ffmpeg_capture, '_try_cv2') as tried, \
+             patch.object(ffmpeg_capture, 'is_available', return_value=True), \
+             patch.object(ffmpeg_capture, 'FFmpegCapture'):
+            ffmpeg_capture.open_capture(self.URL)
+        tried.assert_not_called()
+
+    def test_a_healthy_camera_is_never_marked_and_keeps_the_fast_path(self):
+        """A camera OpenCV can decode must not be pushed onto the subprocess."""
+        cap = _FakeCv2Cap(opens=True, frames=True)
+        with patch.object(ffmpeg_capture, '_try_cv2', return_value=cap):
+            ffmpeg_capture.open_capture(self.URL)
+        self.assertFalse(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_the_note_is_recovered_from_the_cache_after_a_restart(self):
+        """A restart must not re-learn by crashing the camera again."""
+        self._crash_during_probe()
+        # Simulate a fresh process: the shared note survives, the dict does not.
+        with ffmpeg_capture._MEMO_LOCK:
+            ffmpeg_capture._PREFER_FFMPEG.clear()
+        self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_an_unreachable_cache_never_breaks_opening(self):
+        """Redis is optional here; losing it costs a re-learn, not a camera."""
+        def boom(*a, **k):
+            raise RuntimeError('redis down')
+
+        with patch('django.core.cache.cache.get', side_effect=boom), \
+             patch('django.core.cache.cache.set', side_effect=boom):
+            self._crash_during_probe()
+            # Still remembered in-process, and nothing raised.
+            self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+                ffmpeg_capture._host_key(self.URL)))
 
 
 class PrimedCaptureTests(SimpleTestCase):
