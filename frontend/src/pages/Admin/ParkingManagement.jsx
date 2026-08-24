@@ -95,6 +95,10 @@ export default function ParkingManagement({ embedded = false }) {
   const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
   const [camQuery, setCamQuery] = useState('')
+  // The reference image URL is signed and expires, so "it loaded an hour ago"
+  // is not a guarantee it loads now. Tracked per zone id: switching zones must
+  // not carry one zone's failure over to the next.
+  const [imgFailedFor, setImgFailedFor] = useState(null)
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
   const pkActiveCam = parkingCams.find(c => c.id === pkActiveCamId) ?? parkingCams[0] ?? null
   const camFs = useFullscreen()
@@ -132,6 +136,9 @@ export default function ParkingManagement({ embedded = false }) {
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
 
   const selZone = zones.find(z => z.id === selId) ?? null
+  // Scoped to the zone that actually failed, so selecting another zone shows
+  // its own image rather than inheriting the previous one's error.
+  const imgFailed = !!selZone && imgFailedFor === selZone.id
 
   // ── Which camera is this zone (and this feed) actually about? ────
   //
@@ -844,10 +851,12 @@ export default function ParkingManagement({ embedded = false }) {
                   </div>
                 )}
 
-                {mode === 'edit' && tool === 'box' && (
-                  <span className="pm-edit-hint">Click-drag on the image to draw a space box</span>
-                )}
-
+                {/* No box hint here: the footer already says "Click-drag to
+                    draw · click a box to rename or delete" for this tool, and
+                    saying it twice only widened an already crowded toolbar. The
+                    pen hint below stays because it is stateful — it counts the
+                    points placed and says how to close the shape, which the
+                    footer cannot. */}
                 {mode === 'edit' && tool === 'pen' && (
                   <>
                     <span className="pm-edit-hint">
@@ -931,14 +940,45 @@ export default function ParkingManagement({ embedded = false }) {
 
             {/* Canvas */}
             <div className="pm-canvas-wrapper">
-              {/* Background: reference image OR placeholder */}
-              {selZone.reference_image_url ? (
-                <img src={selZone.reference_image_url} className="pm-canvas-img" draggable={false} alt="" />
+              {/* Background: reference image OR placeholder.
+                  `imgFailed` matters as much as the missing case: the URL is
+                  signed and expires, so a page left open overnight comes back
+                  to a dead link. Without onError that renders as a broken-image
+                  glyph on an empty void — no hint that a refresh fixes it. */}
+              {selZone.reference_image_url && !imgFailed ? (
+                <img
+                  src={selZone.reference_image_url}
+                  className="pm-canvas-img"
+                  draggable={false}
+                  alt=""
+                  onError={() => setImgFailedFor(selZone.id)}
+                  onLoad={() => setImgFailedFor(f => (f === selZone.id ? null : f))}
+                />
               ) : (
                 <div className="pm-canvas-no-img">
-                  {mode === 'edit'
-                    ? 'No image yet — draw boxes directly or upload a reference photo'
-                    : 'No reference image. Switch to Edit Layout to upload one.'}
+                  {imgFailed ? (
+                    <>
+                      <AlertTriangle size={26} />
+                      <p className="pm-canvas-no-img-title">Reference image could not be loaded</p>
+                      <p className="pm-canvas-no-img-sub">
+                        The link may have expired. Refresh to get a fresh one, or
+                        capture a new image from the live feed.
+                      </p>
+                      <button className="pm-btn pm-btn--outline" onClick={loadZones}>
+                        <RefreshCw size={13} /> Refresh
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Camera size={26} />
+                      <p className="pm-canvas-no-img-title">No reference image yet</p>
+                      <p className="pm-canvas-no-img-sub">
+                        {mode === 'edit'
+                          ? 'Draw boxes directly, upload a photo, or capture one from the live feed.'
+                          : 'Switch to Edit Layout to add one.'}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
 

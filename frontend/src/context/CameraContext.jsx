@@ -70,10 +70,13 @@ export function CameraProvider({ children }) {
   // Mutable refs — never cause re-renders, survive page navigation
   const wsMap     = useRef({})
   const canvasMap = useRef({})
-  const frameMap  = useRef({})
+  const frameMap  = useRef({})   // id → the newest *decoded* frame, safe to draw
+  const decodeMap = useRef({})   // id → bool: a decode is in flight for this camera
+  const queuedMap = useRef({})   // id → newest base64 arrived while decoding
   const trackMap  = useRef({})
   const smoothMap = useRef({})
   const rafMap    = useRef({})
+  const loopErrMap = useRef({}) // id → already logged a render-loop error
   const paneCountMap = useRef({}) // id → pane count, mirrors paneCounts inside the RAF loop
   const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
   const gateMap   = useRef({}) // id → gate_id the camera covers (used to tag scan logs)
@@ -86,6 +89,54 @@ export function CameraProvider({ children }) {
 
   // Ref that always holds the latest _connect function (needed for self-referential reconnect)
   const connectRef = useRef(null)
+
+  // ── Frame intake ─────────────────────────────────────────────────────────
+  // Decode one frame at a time per camera, and only publish it once it has
+  // actually decoded.
+  //
+  // Two bugs lived in the obvious version (`frameMap[id] = new Image()` right
+  // after setting .src). The render loop only paints an image once
+  // `complete && naturalWidth > 0`, so assigning an *undecoded* image makes the
+  // newest frame unpaintable — and if frames keep arriving faster than they
+  // decode, the slot is perpetually undecoded and the canvas sticks on the last
+  // good picture forever. Background tabs are exactly that case: browsers
+  // deprioritise image decoding for hidden documents while the socket keeps
+  // delivering, so switching away and back froze the feed.
+  //
+  // Holding at most one decode in flight also stops a hidden tab from queueing
+  // thousands of Image decodes it will never show. A frame that arrives mid
+  // decode replaces the queued one rather than joining a backlog: for a live
+  // feed only the newest picture is worth anything.
+  const acceptFrame = useCallback((camId, b64) => {
+    // `start` recurses instead of acceptFrame calling itself: a useCallback
+    // const cannot reference its own binding from inside its initialiser.
+    const start = (payload) => {
+      decodeMap.current[camId] = true
+
+      const img = new Image()
+      const done = () => {
+        decodeMap.current[camId] = false
+        const next = queuedMap.current[camId]
+        if (next) {
+          queuedMap.current[camId] = null
+          start(next)
+        }
+      }
+      img.onload = () => {
+        // Publish only now: a stale but drawable frame beats a fresh blank one.
+        frameMap.current[camId] = img
+        done()
+      }
+      img.onerror = done
+      img.src = `data:image/jpeg;base64,${payload}`
+    }
+
+    if (decodeMap.current[camId]) {
+      queuedMap.current[camId] = b64        // newest wins; older one is dropped
+      return
+    }
+    start(b64)
+  }, [])
 
   // ── Canvas registration (pages call this on mount/unmount) ───────────────
   // A camera may need more than one canvas. A dual-lens unit sends both of its
@@ -114,11 +165,23 @@ export function CameraProvider({ children }) {
     if (!trackMap.current[camId]) trackMap.current[camId] = new Map()
     if (!smoothMap.current[camId]) smoothMap.current[camId] = new Map()
 
+    // Every path out of this function must reschedule, so the body is wrapped
+    // and the next frame is queued in `finally`.
+    //
+    // Before, the only `requestAnimationFrame(draw)` for the normal path was
+    // the last statement, so *any* throw above it killed the chain for good —
+    // and `startRenderLoop` refuses to restart a loop whose rafMap entry is
+    // still set, so nothing ever revived it. A page reload was the only cure.
+    // That is precisely the reported failure: switch browser tabs, come back,
+    // frozen forever. Chrome discards a backgrounded tab's canvas backing
+    // store under memory pressure, `getContext('2d')` then returns null, and
+    // the first `ctx.clearRect` throws.
     const draw = () => {
+      try {
       const panes = canvasMap.current[camId]
       // No canvas registered (page navigated away) — keep looping, draw when back
       if (!panes || Object.keys(panes).length === 0) {
-        rafMap.current[camId] = requestAnimationFrame(draw); return
+        return
       }
 
       const img   = frameMap.current[camId]
@@ -165,7 +228,11 @@ export function CameraProvider({ children }) {
         if (canvas.width !== fw) canvas.width  = fw
         if (canvas.height !== ch) canvas.height = ch
 
+        // null when the browser has thrown the backing store away, which it
+        // does to hidden tabs. Skip this pane rather than throwing; the next
+        // frame gets a fresh context once the tab is visible again.
         const ctx = canvas.getContext('2d')
+        if (!ctx) continue
         ctx.clearRect(0, 0, fw, ch)
 
         if (ready) {
@@ -211,7 +278,16 @@ export function CameraProvider({ children }) {
         }
       }
 
-      rafMap.current[camId] = requestAnimationFrame(draw)
+      } catch (err) {
+        // One bad frame must not end the feed. Logged once per camera so a
+        // recurring fault is visible without flooding the console at 60 fps.
+        if (!loopErrMap.current[camId]) {
+          loopErrMap.current[camId] = true
+          console.error('[camera] render loop error (recovering)', err)
+        }
+      } finally {
+        rafMap.current[camId] = requestAnimationFrame(draw)
+      }
     }
     rafMap.current[camId] = requestAnimationFrame(draw)
   }, [])
@@ -225,6 +301,11 @@ export function CameraProvider({ children }) {
       canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
     }
     delete frameMap.current[camId]
+    // An in-flight decode's onload would otherwise repopulate frameMap for a
+    // camera that has just been stopped, painting a ghost frame onto the next
+    // feed to reuse the canvas.
+    delete decodeMap.current[camId]
+    delete queuedMap.current[camId]
     delete trackMap.current[camId]
     delete smoothMap.current[camId]
     delete paneCountMap.current[camId]
@@ -294,9 +375,7 @@ export function CameraProvider({ children }) {
       try {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'frame') {
-          const img = new Image()
-          img.src = `data:image/jpeg;base64,${msg.image_b64}`
-          frameMap.current[camId] = img
+          acceptFrame(camId, msg.image_b64)
           return
         }
         if (msg.type === 'status') {
@@ -362,7 +441,7 @@ export function CameraProvider({ children }) {
       // Auto-reconnect if camera is still tracked (not removed by the user)
       if (urlToIdMap.current[rtspUrl] === camId) scheduleReconnect(camId, rtspUrl)
     }
-  }, [startRenderLoop, stopRenderLoop, scheduleReconnect])
+  }, [startRenderLoop, stopRenderLoop, scheduleReconnect, acceptFrame])
 
   // Keep ref in sync so ws.onclose callbacks always call the latest _connect
   connectRef.current = _connect

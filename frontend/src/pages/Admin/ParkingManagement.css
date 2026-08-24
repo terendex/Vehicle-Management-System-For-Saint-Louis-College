@@ -399,17 +399,41 @@
   -webkit-user-drag: none;
 }
 
+/* The empty/failed canvas state.
+   Previously one line of italic grey text floating in a large dark void, with
+   no indication of what to do about it — and when the image 404s the browser
+   draws its broken-image glyph in the corner instead, which reads as a bug
+   rather than a prompt. This gives the state an icon, a title, one line of
+   guidance and, where there is one, the action that resolves it. */
 .pm-canvas-no-img {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #4A6B85;
-  font-size: 13px;
-  font-style: italic;
+  gap: 10px;
+  color: #5C7B92;
   text-align: center;
   padding: 24px;
+}
+.pm-canvas-no-img svg { color: #3E6280; }
+
+.pm-canvas-no-img-title {
+  margin: 0;
+  color: #C7DDEE;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pm-canvas-no-img-sub {
+  margin: 0;
+  max-width: 380px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7E9BB2;
+}
+.pm-canvas-no-img .pm-btn {
+  margin-top: 4px;
 }
 
 .pm-canvas-svg {

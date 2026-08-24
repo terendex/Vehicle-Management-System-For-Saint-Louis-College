@@ -71,6 +71,32 @@ class SignedDocumentUrlTests(TestCase):
                          'http://testserver/media/receipts/r.jpg')
 
 
+class ParkingZoneReferenceImageTests(TestCase):
+    """The zone editor draws bays on this image; a dead URL means a blank canvas.
+
+    It used to be handed out as the bucket's public URL, which only answers
+    while public access is on — and R2 ships with that off. Measured on the
+    campus bucket: the object read fine over the S3 API while the public host
+    did not answer at all, so the editor showed a broken thumbnail with nothing
+    to draw on.
+    """
+
+    def test_reference_image_is_signed_like_the_documents(self):
+        from vehicles.serializers import ParkingZoneSerializer
+        field, client = _bucket_field(name='parking_zones/zone-10-capture.jpg')
+        zone = SimpleNamespace(reference_image=field)
+        url = ParkingZoneSerializer().get_reference_image_url(zone)
+        self.assertIn('X-Amz-Signature', url)
+        self.assertNotIn('public.example', url)
+        _, params, _ = client.calls[0]
+        self.assertEqual(params['Key'], 'parking_zones/zone-10-capture.jpg')
+
+    def test_a_zone_without_an_image_has_no_url(self):
+        from vehicles.serializers import ParkingZoneSerializer
+        zone = SimpleNamespace(reference_image=None)
+        self.assertIsNone(ParkingZoneSerializer().get_reference_image_url(zone))
+
+
 class RegistrationDocumentSerializationTests(APITestCase):
     """The serializer must hand out the fetchable URL, not the stored key."""
 

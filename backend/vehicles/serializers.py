@@ -288,12 +288,17 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         return obj.camera.name if obj.camera else None
 
     def get_reference_image_url(self, obj):
-        if not obj.reference_image:
-            return None
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(obj.reference_image.url)
-        return obj.reference_image.url
+        """Signed, for the same reason the registration documents are.
+
+        The bucket's public host only works while public access is on, and R2
+        ships with the development URL turned off — measured here: the object
+        reads fine over the S3 API (78 KB) while the public host does not
+        answer at all, which on screen is the zone editor's broken thumbnail
+        with nothing to draw bays on. `signed_document_url` already handles
+        this, including the local-storage case, so use it rather than a second
+        way of doing the same thing.
+        """
+        return signed_document_url(obj.reference_image, self.context.get('request'))
 
     # ── Zone/bay facts (drawn map + camera) ───────────────────────────────────
     #
