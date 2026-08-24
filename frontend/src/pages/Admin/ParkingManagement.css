@@ -412,6 +412,29 @@
   background: #04121F;
 }
 
+/* ── The camera panel, beneath the picture ───────────────────────────────
+   Was a right-hand sidebar carrying its own live feed. That put two camera
+   views on one screen with the *smaller* one live and the big one a still
+   photo, which is what made the main view look frozen. The live feed is the
+   main canvas now, so what remains here is status and controls for it: is this
+   camera zoned, capture a reference image, how bays are scored, and which
+   camera to watch. Full width, because it is no longer competing with the
+   picture for horizontal space. */
+.pm-cam-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #FFFFFF;
+  border: 1px solid #E3EDF5;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Inside the panel these sit in a row rather than stacked in a narrow column. */
+.pm-cam-panel .pm-method-box { margin-top: 0; }
+.pm-cam-panel .pm-cam-thumb-strip { padding-bottom: 0; }
+
 /* ── Camera options, under the picture ───────────────────────────────────── */
 
 .pm-cam-bar {
