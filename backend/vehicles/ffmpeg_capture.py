@@ -68,6 +68,25 @@ READ_TIMEOUT_SECONDS = 10
 # before declaring the open a failure.
 EXIT_DRAIN_SECONDS = 0.75
 
+# Socket-I/O timeout handed to ffmpeg itself, in seconds.
+#
+# This is the difference between a child that cleans itself up and one that
+# outlives everything. The RTSP demuxer's `-timeout` defaults to **0, meaning
+# wait forever**, so an ffmpeg that never gets a stream never exits — and it
+# never notices its parent died either, because a process that produces no
+# frames never writes to the pipe and so never sees EPIPE.
+#
+# Measured on this campus: 46 orphaned ffmpeg processes had accumulated, every
+# one of them parentless, every one still holding a session against a camera
+# that serves only a couple at a time. That is what a "freezing" live feed
+# actually was — the real viewer queued behind dozens of ghosts.
+#
+# It doubles as a stall guard for a healthy stream: a live feed delivers frames
+# continuously, so this only fires when the camera has genuinely stopped
+# talking, and then exiting is exactly right — the reader reports the failure
+# and the stream worker reconnects.
+SOCKET_TIMEOUT_SECONDS = 30
+
 # Ceiling on the pixels pushed through the raw pipe, per frame.
 #
 # This backend moves *uncompressed* bgr24, so a frame costs w*h*3 bytes on the
@@ -141,6 +160,47 @@ def _no_window() -> dict:
     return {}
 
 
+def _is_network_url(url: str) -> bool:
+    """True for inputs that reach ffmpeg over a socket rather than the disk."""
+    return bool(re.match(r'^(rtsp|rtsps|rtmp|rtmps|http|https|udp|tcp|rtp)://',
+                         (url or '').strip(), re.I))
+
+
+def _kill_tree(proc) -> None:
+    """End `proc` *and any process it started*.
+
+    Killing just the handle we hold is not enough, because the thing we launch
+    is frequently not the thing doing the work. `shutil.which('ffmpeg')` on
+    Windows commonly resolves to a launcher stub — the Chocolatey shim here is
+    392 KB against the real binary's 99 MB — which spawns the actual encoder as
+    a *child*. `terminate()` then kills the stub and leaves real ffmpeg running,
+    parentless, still holding its RTSP session.
+
+    That is how 46 orphaned ffmpeg processes accumulated against one camera,
+    and a session-limited camera queues the live viewer behind every one of
+    them. `taskkill /T` walks the tree; POSIX has no stub problem, so the
+    ordinary terminate/kill escalation stays.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == 'nt':
+        try:
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                           capture_output=True, timeout=10, **_no_window())
+            proc.wait(timeout=3)
+            return
+        except Exception:
+            pass        # fall through to the generic escalation
+    for step in (proc.terminate, proc.kill):
+        if proc.poll() is not None:
+            return
+        try:
+            step()
+            proc.wait(timeout=3)
+        except Exception:
+            pass
+
+
 class FFmpegCapture:
     """A `cv2.VideoCapture` work-alike backed by an ffmpeg subprocess.
 
@@ -197,8 +257,19 @@ class FFmpegCapture:
             # only the newest frame and drops the rest, which is where this
             # backend's low latency actually comes from.
             '-an',                      # audio never helps and often hurts
-            '-i', url,
         ]
+        # Bound the child's own socket waits. Left at the demuxer default of
+        # "wait forever", an ffmpeg that never gets a stream never exits — and
+        # never notices this process died either, because one that produces no
+        # frames never writes to the pipe and so never sees EPIPE.
+        #
+        # Only for network inputs: `-timeout` is a protocol option, and the
+        # file protocol has no such thing — passing it to a local path fails
+        # the open outright with "Option timeout not found", which would break
+        # every test that reads a generated clip.
+        if _is_network_url(url):
+            cmd += ['-timeout', str(int(SOCKET_TIMEOUT_SECONDS * 1_000_000))]
+        cmd += ['-i', url]
         # Shrink before the pipe, never after: the whole point is to not push
         # the bytes through it. A frame that is already within budget passes
         # through untouched.
@@ -381,14 +452,7 @@ class FFmpegCapture:
         proc, self._proc = self._proc, None
         if proc is None:
             return
-        for step in (proc.terminate, proc.kill):
-            if proc.poll() is not None:
-                break
-            try:
-                step()
-                proc.wait(timeout=3)
-            except Exception:
-                pass
+        _kill_tree(proc)
         # The pipes are deliberately NOT closed here. Both pump threads sit
         # blocked in read()/readline() on these handles, and closing a handle
         # out from under a blocked reader hangs the *closing* thread on

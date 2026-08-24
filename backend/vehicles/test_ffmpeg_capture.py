@@ -216,6 +216,76 @@ class BackendSelectionTests(SimpleTestCase):
                 ffmpeg_capture._host_key(self.URL)))
 
 
+class ChildLifetimeTests(SimpleTestCase):
+    """That an ffmpeg child cannot outlive the process that started it.
+
+    Both halves of this were live on campus at once, and together they left 46
+    orphaned ffmpeg processes holding sessions against a camera that serves
+    only a couple — which is what a "freezing" live feed actually was.
+    """
+
+    def test_network_inputs_get_a_socket_timeout(self):
+        """Without it the RTSP demuxer waits forever and never exits."""
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value=None):
+            cap = ffmpeg_capture.FFmpegCapture('rtsp://10.0.0.5/onvif1')
+        self.assertIsNone(cap._proc)      # no binary: nothing spawned
+
+        seen = {}
+
+        def record(cmd, **kw):
+            seen['cmd'] = cmd
+            raise RuntimeError('stop here — the argv is all this asserts on')
+
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value='ffmpeg'), \
+             patch('subprocess.Popen', side_effect=record):
+            ffmpeg_capture.FFmpegCapture('rtsp://10.0.0.5/onvif1')
+        self.assertIn('-timeout', seen['cmd'])
+        # Must precede -i: it is an input option, not an output one.
+        self.assertLess(seen['cmd'].index('-timeout'), seen['cmd'].index('-i'))
+
+    def test_file_inputs_do_not_get_one(self):
+        """`-timeout` is protocol-specific; the file protocol rejects it
+        outright with "Option timeout not found", failing the open."""
+        seen = {}
+
+        def record(cmd, **kw):
+            seen['cmd'] = cmd
+            raise RuntimeError('argv captured')
+
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value='ffmpeg'), \
+             patch('subprocess.Popen', side_effect=record):
+            ffmpeg_capture.FFmpegCapture(r'C:\clips\sample.mp4')
+        self.assertNotIn('-timeout', seen['cmd'])
+
+    def test_is_network_url_covers_the_schemes_that_matter(self):
+        for url in ('rtsp://h/x', 'RTSP://h/x', 'http://h/x', 'rtmp://h/x', 'udp://h:1'):
+            self.assertTrue(ffmpeg_capture._is_network_url(url), url)
+        for url in ('/var/clips/a.mp4', r'C:\clips\a.mp4', 'a.mp4', ''):
+            self.assertFalse(ffmpeg_capture._is_network_url(url), url)
+
+    def test_release_kills_the_whole_tree_not_just_the_handle(self):
+        """`which('ffmpeg')` often finds a launcher stub that spawns the real
+        binary as a child; terminating only our handle leaves that child alive
+        and parentless, still holding its RTSP session."""
+        calls = []
+
+        class _Proc:
+            pid = 4321
+            def poll(self): return None
+            def wait(self, timeout=None): return 0
+            def terminate(self): calls.append('terminate')
+            def kill(self): calls.append('kill')
+
+        with patch('os.name', 'nt'), \
+             patch('subprocess.run', side_effect=lambda *a, **k: calls.append(a[0])):
+            ffmpeg_capture._kill_tree(_Proc())
+
+        self.assertTrue(calls, 'nothing was killed')
+        argv = calls[0]
+        self.assertEqual(argv[:3], ['taskkill', '/F', '/T'])
+        self.assertIn('4321', argv)
+
+
 class PrimedCaptureTests(SimpleTestCase):
     def test_the_proving_frame_is_replayed_rather_than_thrown_away(self):
         inner = _FakeCv2Cap()
