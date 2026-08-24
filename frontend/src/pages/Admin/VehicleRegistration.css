@@ -561,33 +561,37 @@
 /* The total and the refine panel share one line: the total is a single tile
    and the panel is a short row of them, so stacking left a full-width band of
    empty space beside each. Making the panel a bounded, tinted surface is what
-   keeps it reading as a second tier rather than more tiles on the same strip. */
+   keeps it reading as a second tier rather than more tiles on the same strip.
+
+   The tiles themselves are the user-management stat card: white surface, tinted
+   icon chip, uppercase label over the number. Same anatomy, one size down for
+   the refine row, so the two admin pages read as one system. */
 .vr-stats {
   display: flex;
   align-items: stretch;
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 16px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
 }
 
 .vr-stats-primary {
   display: flex;
   align-items: stretch;
-  gap: 14px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
 .vr-stats-refine {
   /* Takes the width the total tile does not, and drops to its own line rather
      than squeezing the tiles below a readable width. */
-  flex: 1 1 460px;
+  flex: 1 1 560px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 12px 16px;
   border: 1px solid #DCE7F0;
-  border-radius: 12px;
+  border-radius: 14px;
   background: #F7FAFC;
 }
 
@@ -650,7 +654,7 @@
 .vr-stat-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -666,58 +670,57 @@
 .vr-stat-row {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 /* Every tile carries its own accent colour; the shared rules below read it out
    of --tile-accent, so a variant declares its colour once instead of restating
-   it for the value, the rail, the ring and the hover border. */
+   it for the chip, the tint and the selected ring. */
 .vr-stat {
   --tile-accent: #03396C;
-  --tile-tint: #EEF4F9;
-  position: relative;
+  --tile-tint: #EAF2F8;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 12px 18px;
-  min-width: 104px;
-  border-radius: 10px;
-  border: 1.5px solid #D3E1EC;
-  background: #fff;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  min-width: 160px;
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  background: #FFFFFF;
   text-align: left;
   font-family: inherit;
+  transition: all 0.2s ease;
 }
 
-/* A colour rail down the edge. Ten near-identical white boxes on one line get
-   read one number at a time; the rail lets the row be scanned by colour first,
-   and is what carries the selected state at a glance. */
-.vr-stat::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: 10px 0 0 10px;
-  background: var(--tile-accent);
-  opacity: 0.3;
-  transition: opacity 0.15s, width 0.15s;
+/* The icon chip is what the row is scanned by: six white cards holding only a
+   number get read one digit at a time, and it also carries the tile's colour
+   now that the number itself is the same navy on every card. */
+.vr-stat-chip {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tile-tint);
+  color: var(--tile-accent);
+}
+
+.vr-stat-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* Every small tile is also a filter shortcut, so it has to look pressable. */
-button.vr-stat {
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s, transform 0.15s;
-}
+button.vr-stat { cursor: pointer; }
 button.vr-stat:hover {
-  border-color: var(--tile-accent);
-  transform: translateY(-1px);
-  box-shadow: 0 3px 8px rgba(3, 57, 108, 0.10);
+  border-color: #BDD4E5;
+  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.06);
 }
-button.vr-stat:hover::before { opacity: 0.7; }
-button.vr-stat:active { transform: translateY(0); }
 button.vr-stat:focus-visible {
   outline: 2px solid #03396C;
   outline-offset: 2px;
@@ -727,7 +730,7 @@ button.vr-stat.active {
   background: var(--tile-tint);
   box-shadow: inset 0 0 0 1px var(--tile-accent);
 }
-button.vr-stat.active::before { opacity: 1; width: 4px; }
+button.vr-stat.active .vr-stat-chip { background: #FFFFFF; }
 
 /* The "other" tile reports anomalous rows so the counts still add up; it is
    deliberately inert, so it must not look pressable. */
@@ -735,48 +738,52 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
   border-style: dashed;
   opacity: 0.85;
 }
-.vr-stat--static::before { display: none; }
 
 .vr-stat--sm {
-  padding: 9px 14px 9px 16px;
-  min-width: 92px;
+  gap: 10px;
+  padding: 11px 16px;
+  min-width: 148px;
 }
+.vr-stat--sm .vr-stat-chip { width: 34px; height: 34px; border-radius: 9px; }
 
 /* On the panel's tint a plain white tile would float; the firmer border keeps
    it reading as a control rather than a gap in the background. */
 .vr-stats-refine .vr-stat { border-color: #CBDCEA; }
 
-.vr-stat-value {
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1.05;
-  color: var(--tile-accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.vr-stat--sm .vr-stat-value { font-size: 19px; }
-
 .vr-stat-label {
-  font-size: 11px;
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
-  color: #4A6B85;
+  color: #64839C;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   white-space: nowrap;
 }
 
-.vr-stat--total {
-  background: linear-gradient(135deg, #03396C 0%, #04508F 100%);
-  border-color: #03396C;
-  align-self: stretch;
-  padding: 13px 20px;
-  box-shadow: 0 3px 10px rgba(3, 57, 108, 0.18);
+.vr-stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #0B2340;
+  font-variant-numeric: tabular-nums;
 }
-.vr-stat--total::before { display: none; }
-.vr-stat--total .vr-stat-value { color: #fff; font-size: 28px; }
-.vr-stat--total .vr-stat-label { color: #C7DCEC; }
+
+.vr-stat--sm .vr-stat-label { font-size: 11px; }
+.vr-stat--sm .vr-stat-value { font-size: 20px; }
+
+/* The headline count is the same card, one size up — it leads the row the way
+   Total Users does, not by being a different kind of object. */
+.vr-stat--total {
+  align-self: stretch;
+  min-width: 210px;
+  padding: 16px 22px;
+}
+.vr-stat--total .vr-stat-chip { width: 44px; height: 44px; border-radius: 12px; }
+.vr-stat--total .vr-stat-value { font-size: 26px; }
 
 /* Fee tints: unpaid is the one that wants chasing, exempt is a non-event. */
-.vr-stat--pay-unpaid { --tile-accent: #C62828; --tile-tint: #FCECEC; }
-.vr-stat--pay-paid   { --tile-accent: #12915A; --tile-tint: #E9F6F0; }
+.vr-stat--pay-unpaid { --tile-accent: #C62828; --tile-tint: #FCEDED; }
+.vr-stat--pay-paid   { --tile-accent: #0F7A5A; --tile-tint: #E6F5EF; }
 .vr-stat--pay-exempt { --tile-accent: #64839C; --tile-tint: #EEF3F8; }
 
 /* Last, so it beats the variant tints above: an empty bucket is a fact, not a
@@ -786,8 +793,8 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
   --tile-accent: #9DB2C4;
   --tile-tint: #F1F5F9;
 }
-.vr-stat--zero .vr-stat-label { color: #7C99AF; }
-.vr-stat--zero::before { opacity: 0.18; }
+.vr-stat--zero .vr-stat-label { color: #90A8BC; }
+.vr-stat--zero .vr-stat-value { color: #7C99AF; }
 
 .vr-stat-placeholder {
   align-self: center;
@@ -797,8 +804,8 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
 }
 
 @media (max-width: 720px) {
-  .vr-stats { flex-direction: column; gap: 10px; }
-  .vr-stats-primary { gap: 10px; }
+  .vr-stats { flex-direction: column; gap: 12px; }
+  .vr-stats-primary { gap: 12px; }
   .vr-stat--total { align-self: stretch; }
   .vr-stats-refine-body { gap: 12px; }
   /* Stacked groups need no vertical rule between them. */
@@ -807,7 +814,9 @@ button.vr-stat.active::before { opacity: 1; width: 4px; }
   .vr-stats-refine--empty { flex-direction: column; align-items: flex-start; gap: 4px; }
   .vr-stats-refine--empty .vr-stats-refine-empty::before { content: none; }
   /* Tiles share the width evenly rather than leaving a ragged last row. */
-  .vr-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }
+  .vr-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .vr-stat--sm { min-width: 0; }
+  .vr-stat-label { white-space: normal; }
 }
 
 .vr-search-wrap {

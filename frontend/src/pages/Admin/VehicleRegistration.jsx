@@ -4,7 +4,7 @@ import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal, FileText, Paperclip } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal, FileText, Paperclip, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
@@ -48,19 +48,35 @@ function formatSchedule(entity) {
 // the page on an empty table it could not explain.
 const OTHER_KEY = 'other'
 
-function StatTile({ variant, count, label, active, onSelect, title }) {
+/* Each tile names its axis with an icon, the way the user-management cards do.
+   Six white boxes carrying nothing but a number read as one block of digits;
+   the chip is what lets a reviewer find "unpaid" without reading the labels. */
+const PAYMENT_ICONS = { unpaid: AlertCircle, paid: BadgeCheck, exempt: ShieldCheck }
+const TYPE_ICONS    = { student: GraduationCap, employee: Briefcase, fetcher: Car }
+const FALLBACK_ICON = Users
+
+function StatTile({ variant, icon, count, label, active, onSelect, title }) {
   // A bucket holding nothing is greyed out: on a line of ten tiles the empty
   // ones would otherwise shout their zero as loudly as the one real count.
+  const Icon = icon || FALLBACK_ICON
   const className = [
     'vr-stat', 'vr-stat--sm', `vr-stat--${variant}`,
     count === 0 ? 'vr-stat--zero' : '',
     active ? 'active' : '',
   ].filter(Boolean).join(' ')
+  const body = (
+    <>
+      <span className="vr-stat-chip"><Icon size={18} /></span>
+      <span className="vr-stat-info">
+        <span className="vr-stat-label">{label}</span>
+        <span className="vr-stat-value">{count}</span>
+      </span>
+    </>
+  )
   if (!onSelect) {
     return (
       <div className={`${className} vr-stat--static`} title={`${label} — not a filter`}>
-        <span className="vr-stat-value">{count}</span>
-        <span className="vr-stat-label">{label}</span>
+        {body}
       </div>
     )
   }
@@ -72,8 +88,7 @@ function StatTile({ variant, count, label, active, onSelect, title }) {
       title={title}
       aria-pressed={active}
     >
-      <span className="vr-stat-value">{count}</span>
-      <span className="vr-stat-label">{label}</span>
+      {body}
     </button>
   )
 }
@@ -476,8 +491,11 @@ export default function VehicleRegistration() {
         <div className="vr-stats">
           <div className="vr-stats-primary">
             <div className="vr-stat vr-stat--total">
-              <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
-              <span className="vr-stat-label">Total Registrations</span>
+              <span className="vr-stat-chip"><ClipboardList size={20} /></span>
+              <span className="vr-stat-info">
+                <span className="vr-stat-label">Total Registrations</span>
+                <span className="vr-stat-value">{summary ? summary.total : '—'}</span>
+              </span>
             </div>
           </div>
 
@@ -505,6 +523,7 @@ export default function VehicleRegistration() {
                         <StatTile
                           key={pm.key}
                           variant={`pay-${pm.key}`}
+                          icon={PAYMENT_ICONS[pm.key]}
                           count={scopedCount('by_payment', pm.key, pm.count)}
                           label={pm.label}
                           active={paymentFilter === pm.key}
@@ -530,6 +549,7 @@ export default function VehicleRegistration() {
                       <StatTile
                         key={t.key}
                         variant="type"
+                        icon={TYPE_ICONS[t.key]}
                         count={scopedCount('by_type', t.key, t.count)}
                         label={t.label}
                         active={typeFilter === t.key}
