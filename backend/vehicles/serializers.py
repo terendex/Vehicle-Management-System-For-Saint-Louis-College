@@ -158,7 +158,8 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ParkingSpace
         fields = ['id', 'zone', 'space_number', 'vehicle_category',
-                  'x1', 'y1', 'x2', 'y2', 'points', 'is_occupied', 'occupied_by', 'updated_at']
+                  'x1', 'y1', 'x2', 'y2', 'points', 'lens_index',
+                  'is_occupied', 'occupied_by', 'updated_at']
 
     def get_vehicle_category(self, obj):
         return obj.zone.vehicle_category if obj.zone else None

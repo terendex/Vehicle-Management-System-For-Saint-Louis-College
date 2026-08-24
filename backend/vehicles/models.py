@@ -790,6 +790,17 @@ class ParkingSpace(models.Model):
         help_text="Freeform polygon vertices [[x,y], ...] normalized 0-1 (pen tool). "
                    "x1..y2 still holds the bounding box for quick lookups.",
     )
+    # Which view of a multi-lens camera this bay belongs to.
+    #
+    # A dual-lens unit stacks two unrelated scenes into one frame, so a camera
+    # has two independent sets of bays. This tags which set a bay is in; it is
+    # NOT a coordinate space. The geometry above stays normalised against the
+    # WHOLE frame, because that is what the detector returns and what
+    # `bay_occupancy._rect_for` reads — storing lens-local coordinates instead
+    # would mean translating in two more places for no gain. 0 for every
+    # ordinary single-lens camera, which is why it defaults to 0 and why
+    # existing rows need no backfill.
+    lens_index   = models.PositiveSmallIntegerField(default=0)
     is_occupied  = models.BooleanField(default=False)
     occupied_by  = models.CharField(max_length=20, blank=True)
     updated_at   = models.DateTimeField(auto_now=True)

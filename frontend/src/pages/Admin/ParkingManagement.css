@@ -399,6 +399,41 @@
   -webkit-user-drag: none;
 }
 
+/* The live picture in the main canvas. Sized exactly like the reference image
+   it replaced, so the SVG bay overlay lines up with either background without
+   knowing which one is behind it. */
+.pm-canvas-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  background: #04121F;
+}
+
+/* ── Camera options, under the picture ───────────────────────────────────── */
+
+.pm-cam-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: #F7FAFC;
+  border-top: 1px solid #E3EDF5;
+}
+.pm-cam-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pm-cam-bar-icon { color: #5C7B92; flex-shrink: 0; }
+.pm-cam-bar-note {
+  font-size: 11px;
+  color: #7E9BB2;
+}
+
 /* ── Choosing a view on a multi-lens camera ──────────────────────────────
    A dual-lens unit stacks two unrelated scenes into one frame. Bays are stored
    against the whole frame, so one drawn across the join is geometrically valid

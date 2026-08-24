@@ -183,10 +183,19 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                 points = None
                 bbox = {'x1': s.get('x1'), 'y1': s.get('y1'), 'x2': s.get('x2'), 'y2': s.get('y2')}
 
+            # lens_index tags which view of a multi-lens camera the bay is in.
+            # Coerced rather than trusted: it indexes a stacked frame, so a
+            # negative or absurd value would quietly orphan the bay from every
+            # view the editor can show.
+            try:
+                lens_index = max(0, int(s.get('lens_index') or 0))
+            except (TypeError, ValueError):
+                lens_index = 0
+
             space, _ = ParkingSpace.objects.update_or_create(
                 zone=zone,
                 space_number=s['space_number'],
-                defaults={**bbox, 'points': points},
+                defaults={**bbox, 'points': points, 'lens_index': lens_index},
             )
             result.append(space)
 

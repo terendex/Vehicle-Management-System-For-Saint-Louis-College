@@ -552,6 +552,7 @@ export default function ParkingManagement({ embedded = false }) {
       vehicle_category: selZone?.vehicle_category,
       x1: nx1, y1: ny1, x2: nx2, y2: ny2,
       points: null,
+      lens_index: lensIdx,
       is_occupied: false, occupied_by: '',
     }])
     setSelDraft(id)
@@ -577,6 +578,7 @@ export default function ParkingManagement({ embedded = false }) {
       vehicle_category: selZone?.vehicle_category,
       x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
       points: points.map(p => [p.x, p.y]),
+      lens_index: lensIdx,
       is_occupied: false, occupied_by: '',
     }])
     setSelDraft(id)
@@ -614,6 +616,7 @@ export default function ParkingManagement({ embedded = false }) {
       const payload = drafts.map(s => ({
         space_number: s.space_number, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
         points: s.points ?? null,
+        lens_index: s.lens_index ?? 0,
       }))
       const saved   = await zoneApi.saveLayout(selId, payload)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: saved } : z))
@@ -653,7 +656,14 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Derived ─────────────────────────────────────────────────────
-  const spaceList   = mode === 'edit' ? drafts : (selZone?.spaces ?? [])
+  // Slots belong to one view of the camera. Showing another lens's boxes over
+  // this picture would draw them against a scene they were never placed in —
+  // the geometry is full-frame, so they would land somewhere plausible and
+  // wrong. Single-lens cameras have everything at lens 0 and are unaffected.
+  const allSpaces   = mode === 'edit' ? drafts : (selZone?.spaces ?? [])
+  const spaceList   = lensCount > 1
+    ? allSpaces.filter(s => (s.lens_index ?? 0) === lensIdx)
+    : allSpaces
   const selDraftSp  = drafts.find(s => s._id === selDraft)
   const liveSpaces  = selZone?.spaces ?? []
   // Bays are what the camera reads on this zone's map. Free/Occupied come from
@@ -829,42 +839,10 @@ export default function ParkingManagement({ embedded = false }) {
                     className={`pm-mode-btn${mode === 'edit' ? ' pm-mode-btn--active' : ''}`}
                     onClick={() => setMode('edit')}
                   >
-                    <Pencil size={13} /> Edit Layout
+                    <Pencil size={13} /> Edit Parking Slots
                   </button>
                 </div>
 
-                {lensCount > 1 && (
-                  <div className="pm-lens-picker" role="group" aria-label="Camera view">
-                    <span className="pm-lens-label">View</span>
-                    {Array.from({ length: lensCount }, (_, i) => (
-                      <button
-                        key={i}
-                        className={`pm-lens-btn${lensView === i ? ' pm-lens-btn--active' : ''}`}
-                        onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
-                      >
-                        Lens {i + 1}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="pm-cam-assign">
-                  <Video size={13} />
-                  <select
-                    className="pm-cam-assign-select"
-                    value={selZone.camera ?? ''}
-                    onChange={handleAssignCamera}
-                    disabled={assigning}
-                  >
-                    <option value="">No camera assigned</option>
-                    {deviceCams.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {deviceCams.length === 0 && (
-                    <span style={{ color: '#9DB6C9' }}>None registered — add one in Device Management</span>
-                  )}
-                </div>
 
                 {mode === 'live' && selZone.camera != null && (
                   <button
@@ -991,14 +969,37 @@ export default function ParkingManagement({ embedded = false }) {
               </div>
             )}
 
-            {/* Canvas */}
+            {/* Canvas.
+                Live View draws the bays over the *live feed*; only Edit Parking
+                Slots falls back to the still reference image. Drawing on moving
+                video is guesswork, and a "Live View" that was really a photo of
+                the car park read as a frozen feed. */}
             <div className="pm-canvas-wrapper">
+              {/* The live picture. Registered per lens, so a stacked dual-lens
+                  camera shows the one view being worked on rather than both
+                  squeezed into a 16:9 box. */}
+              {mode === 'live' && (
+                pkActiveCam ? (
+                  <canvas
+                    className="pm-canvas-live"
+                    ref={el => registerPkCanvas(pkActiveCam.id, el, lensCount > 1 ? lensIdx : undefined)}
+                  />
+                ) : (
+                  <div className="pm-canvas-no-img">
+                    <VideoOff size={26} />
+                    <p className="pm-canvas-no-img-title">No camera connected</p>
+                    <p className="pm-canvas-no-img-sub">
+                      Assign a camera to {selZone.name} to watch this zone live.
+                    </p>
+                  </div>
+                )
+              )}
               {/* Background: reference image OR placeholder.
                   `imgFailed` matters as much as the missing case: the URL is
                   signed and expires, so a page left open overnight comes back
                   to a dead link. Without onError that renders as a broken-image
                   glyph on an empty void — no hint that a refresh fixes it. */}
-              {selZone.reference_image_url && !imgFailed ? (
+              {mode === 'edit' && selZone.reference_image_url && !imgFailed ? (
                 <img
                   src={selZone.reference_image_url}
                   className="pm-canvas-img"
@@ -1018,7 +1019,7 @@ export default function ParkingManagement({ embedded = false }) {
                     setImgDimsFor(m => ({ ...m, [selZone.id]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }))
                   }}
                 />
-              ) : (
+              ) : mode === 'edit' ? (
                 <div className="pm-canvas-no-img">
                   {imgFailed ? (
                     <>
@@ -1037,14 +1038,12 @@ export default function ParkingManagement({ embedded = false }) {
                       <Camera size={26} />
                       <p className="pm-canvas-no-img-title">No reference image yet</p>
                       <p className="pm-canvas-no-img-sub">
-                        {mode === 'edit'
-                          ? 'Draw boxes directly, upload a photo, or capture one from the live feed.'
-                          : 'Switch to Edit Layout to add one.'}
+                        Draw slots directly, upload a photo, or capture one from the live feed.
                       </p>
                     </>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {/* One view at a time, and the choice comes first.
                   A stacked frame is two unrelated scenes; a bay drawn across
@@ -1208,6 +1207,50 @@ export default function ParkingManagement({ embedded = false }) {
                   <button className="pm-popover-del" onClick={deleteSelDraft} title="Delete space">
                     <Trash2 size={13} />
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Camera options, under the picture rather than above it: the feed
+                is the subject of this screen, and the controls that pick which
+                camera and which of its views you are looking at belong beneath
+                it like the controls of a player. */}
+            <div className="pm-cam-bar">
+              <div className="pm-cam-bar-group">
+                <Video size={14} className="pm-cam-bar-icon" />
+                <select
+                  className="pm-cam-assign-select"
+                  value={selZone.camera ?? ''}
+                  onChange={handleAssignCamera}
+                  disabled={assigning}
+                  aria-label="Camera for this zone"
+                >
+                  <option value="">No camera assigned</option>
+                  {deviceCams.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {assigning && <Loader2 size={13} className="pm-spin" />}
+                {deviceCams.length === 0 && (
+                  <span className="pm-cam-bar-note">None registered — add one in Device Management</span>
+                )}
+              </div>
+
+              {lensCount > 1 && (
+                <div className="pm-lens-picker" role="group" aria-label="Camera view">
+                  <span className="pm-lens-label">View</span>
+                  {Array.from({ length: lensCount }, (_, i) => (
+                    <button
+                      key={i}
+                      className={`pm-lens-btn${lensView === i ? ' pm-lens-btn--active' : ''}`}
+                      onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
+                    >
+                      Lens {i + 1}
+                    </button>
+                  ))}
+                  <span className="pm-cam-bar-note">
+                    {spaceList.length} slot{spaceList.length === 1 ? '' : 's'} on this view
+                  </span>
                 </div>
               )}
             </div>
