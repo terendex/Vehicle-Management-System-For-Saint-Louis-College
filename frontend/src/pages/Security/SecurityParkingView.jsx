@@ -1,13 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
+  Camera, VideoOff, Maximize2, Minimize2,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import { zoneApi } from '../../api/parking'
+import { camerasApi } from '../../api/cameras'
+import { useCameraContext } from '../../context/CameraContext'
+import useFullscreen from '../../hooks/useFullscreen'
 import { overrideEntry } from '../../api/scanning'
 import { createViolation } from '../../api/violations'
 import '../Admin/ParkingManagement.css'
@@ -158,9 +162,20 @@ export default function SecurityParkingView() {
   const [loading,       setLoading]       = useState(true)
   const [showOverride,  setShowOverride]  = useState(false)
   const [showViolation, setShowViolation] = useState(false)
+  // Device Management camera rows, and which zones the detector is running for.
+  const [deviceCams,    setDeviceCams]    = useState([])
+  const [camStatus,     setCamStatus]     = useState({})
+  // The reference image URL is signed and expires, so "it loaded an hour ago"
+  // is no guarantee it loads now. Keyed by zone id: one zone's dead link must
+  // not blank out the next zone's picture.
+  const [imgFailedFor,  setImgFailedFor]  = useState(null)
+  const [imgDimsFor,    setImgDimsFor]    = useState({})
 
-  const selZone   = zones.find(z => z.id === selId) ?? null
-  const camRunning = false
+  const { cameras: allCameras, addCamera, registerCanvas, paneCounts } = useCameraContext()
+  const camFs = useFullscreen()
+
+  const selZone    = zones.find(z => z.id === selId) ?? null
+  const camRunning = !!camStatus[selId]
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -169,6 +184,12 @@ export default function SecurityParkingView() {
       const data = await zoneApi.listAll()
       setZones(data)
       setSelId(id => id ?? data[0]?.id ?? null)
+      // Refetched with the zones, not once on mount: a zone reassigned to a
+      // different camera while a guard has this page open would otherwise keep
+      // drawing bays over the old camera's picture.
+      try {
+        setDeviceCams(await camerasApi.list({ assignment: 'parking' }))
+      } catch { /* keep the cameras already known */ }
     } finally { setLoading(false) }
   }, [])
 
@@ -191,6 +212,17 @@ export default function SecurityParkingView() {
     return () => clearInterval(t)
   }, [refreshZone])
 
+  // Whether the bay detector is running per zone. A GET, so guards may read it;
+  // starting and stopping it stays admin-only.
+  useEffect(() => {
+    const pull = async () => {
+      try { setCamStatus(await zoneApi.getCameraStatus()) } catch { /* silent */ }
+    }
+    pull()
+    const t = setInterval(pull, 8000)
+    return () => clearInterval(t)
+  }, [])
+
   // ── Derived ─────────────────────────────────────────────────────
   // Two different questions, two different sources.
   //
@@ -208,6 +240,60 @@ export default function SecurityParkingView() {
   const isFull       = selZone?.category_is_full   ?? false
   const sumFr        = selZone?.category_available ?? Math.max(0, totalCap - occ)
   const catLabel     = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
+
+  // ── Which camera is this zone watched by? ───────────────────────
+  //
+  // Same three-way join the admin page does, minus the camera picker: a guard
+  // does not choose a feed, the zone does. `zone.camera` is a Device Management
+  // row id, while CameraContext keys its live feeds by a client-side counter,
+  // so the RTSP URL is the only field the two share and it is the join key.
+  // Getting this wrong would put camera B's picture under camera A's bays with
+  // nothing on screen saying so.
+  const deviceById = useMemo(
+    () => new Map(deviceCams.map(d => [d.id, d])),
+    [deviceCams],
+  )
+  const liveByUrl = useMemo(() => {
+    const m = new Map()
+    for (const c of allCameras) {
+      if (c.assignment !== 'parking') continue
+      const url = (c.url || '').trim()
+      if (!m.has(url)) m.set(url, c)
+    }
+    return m
+  }, [allCameras])
+
+  const zoneDeviceCam = selZone?.camera != null ? deviceById.get(selZone.camera) ?? null : null
+  const zoneCam       = zoneDeviceCam ? liveByUrl.get((zoneDeviceCam.rtsp_url || '').trim()) ?? null : null
+
+  // Connect only the selected zone's camera, not every parking camera on
+  // campus. Guards live on the entries screen; opening a stream per zone here
+  // would multiply RTSP sessions on hardware that already reboots under load.
+  // addCamera dedups by URL, so revisiting a zone reuses the open connection.
+  const zoneRtsp = (zoneDeviceCam?.rtsp_url || '').trim()
+  const zoneCamName = zoneDeviceCam?.name || selZone?.camera_name || ''
+  useEffect(() => {
+    if (zoneRtsp) addCamera(zoneCamName, zoneRtsp, 'parking')
+  }, [zoneRtsp, zoneCamName, addCamera])
+
+  // Same lens rule as the admin editor and lens_layout.lens_count() on the
+  // backend. The live frame is the better witness — measured by the render loop
+  // from the picture actually arriving — and it exists even for a zone that
+  // never captured a reference image.
+  const imgFailed  = !!selZone && imgFailedFor === selZone.id
+  const imgDims    = selZone ? (imgDimsFor[selZone.id] ?? null) : null
+  const livePanes  = zoneCam ? (paneCounts[zoneCam.id] ?? 1) : 1
+  const lensCount  = (() => {
+    if (livePanes > 1) return livePanes
+    if (!imgDims) return 1
+    const { w, h } = imgDims
+    if (!w || !h || h <= w) return 1
+    return w / (h / 2) >= 1.6 ? 2 : 1
+  })()
+  // Read-only: the zone already knows which view it covers, so there is nothing
+  // to ask the guard. Bay geometry stays full-frame — the lens is a viewport,
+  // applied by narrowing the SVG viewBox, never by rewriting a coordinate.
+  const lensIdx    = lensCount > 1 ? (selZone?.lens_index ?? 0) : 0
 
   return (
     <>
@@ -342,23 +428,96 @@ export default function SecurityParkingView() {
                 </div>
               </div>
 
-              {/* Canvas */}
-              <div className="pm-canvas-wrapper">
-                {selZone.reference_image_url ? (
+              {/* Canvas.
+                  Bays are drawn over the *live feed*, the same picture the
+                  admin's Live View shows. The still reference image is only the
+                  fallback for a zone with no camera, or one whose feed has not
+                  arrived yet — a guard deciding whether a bay is really free
+                  needs the car, not a photo of the car park taken last term. */}
+              <div className="pm-canvas-wrapper" ref={camFs.setRef('parking')}>
+                {zoneCam && (
+                  <button
+                    className="pm-cam-fs"
+                    onClick={async () => {
+                      if (!(await camFs.toggle('parking'))) toast.error('Fullscreen was blocked by the browser.')
+                    }}
+                    title={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                    aria-label={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                  >
+                    {camFs.isFullscreen('parking') ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                  </button>
+                )}
+
+                {zoneCam ? (
+                  <canvas
+                    className="pm-canvas-live"
+                    /* Always an explicit pane, never undefined — `pane == null`
+                       is the FULL_FRAME key. With one lens the render loop
+                       draws pane 0 and the whole frame identically, so this
+                       costs nothing and keeps a stacked dual-lens camera from
+                       showing both scenes squeezed into one box. */
+                    ref={el => registerCanvas(zoneCam.id, el, lensIdx)}
+                  />
+                ) : selZone.reference_image_url && !imgFailed ? (
                   <img
                     src={selZone.reference_image_url}
                     className="pm-canvas-img"
                     draggable={false}
                     alt=""
+                    /* Stretch to lensCount x height and slide the wanted band
+                       into the wrapper, which clips — matching the viewBox. */
+                    style={lensCount > 1 ? {
+                      height: `${lensCount * 100}%`,
+                      top: `${-lensIdx * 100}%`,
+                      bottom: 'auto',
+                    } : undefined}
+                    onError={() => setImgFailedFor(selZone.id)}
+                    onLoad={e => {
+                      setImgFailedFor(f => (f === selZone.id ? null : f))
+                      setImgDimsFor(m => ({ ...m, [selZone.id]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }))
+                    }}
                   />
                 ) : (
-                  <div className="pm-canvas-no-img">No reference image for this zone.</div>
+                  /* The signed image URL expires, so a page left open overnight
+                     comes back to a dead link. Without this that renders as a
+                     broken-image glyph with no hint that Refresh fixes it. */
+                  <div className="pm-canvas-no-img">
+                    {imgFailed ? (
+                      <>
+                        <AlertTriangle size={26} />
+                        <p className="pm-canvas-no-img-title">Reference image could not be loaded</p>
+                        <p className="pm-canvas-no-img-sub">The link may have expired. Refresh to get a fresh one.</p>
+                        <button className="pm-btn pm-btn--outline" onClick={loadZones}>
+                          <RefreshCw size={13} /> Refresh
+                        </button>
+                      </>
+                    ) : zoneDeviceCam ? (
+                      <>
+                        <VideoOff size={26} />
+                        <p className="pm-canvas-no-img-title">Connecting to {zoneDeviceCam.name}…</p>
+                        <p className="pm-canvas-no-img-sub">
+                          The bay numbers above are live — only the picture is still loading.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={26} />
+                        <p className="pm-canvas-no-img-title">No camera on this zone</p>
+                        <p className="pm-canvas-no-img-sub">
+                          Ask an administrator to assign a camera to {selZone.name}.
+                        </p>
+                      </>
+                    )}
+                  </div>
                 )}
 
-                {/* SVG overlay — read-only (no event handlers) */}
+                {/* SVG overlay — read-only (no event handlers).
+                    One band of the full frame: every bay is stored in
+                    full-frame coordinates, so narrowing the viewBox is all it
+                    takes to show a single lens. */}
                 <svg
                   className="pm-canvas-svg"
-                  viewBox="0 0 1 1"
+                  viewBox={lensCount > 1 ? `0 ${lensIdx / lensCount} 1 ${1 / lensCount}` : '0 0 1 1'}
                   preserveAspectRatio="none"
                 >
                   {liveSpaces.map(s => {
@@ -405,7 +564,12 @@ export default function SecurityParkingView() {
                 <span className="pm-legend-item">
                   <span className="pm-legend-dot pm-legend-dot--occ" />Occupied
                 </span>
-                <span className="pm-legend-note">Auto-refreshes every 8 s</span>
+                {/* Two different rates, and saying so stops a guard reading a
+                    stale bay colour as a dead feed. The picture streams; the
+                    bay verdicts come from the 8-second occupancy poll. */}
+                <span className="pm-legend-note">
+                  {zoneCam ? 'Live picture · bays refresh every 8 s' : 'Auto-refreshes every 8 s'}
+                </span>
               </div>
 
             </div>{/* /pm-canvas-area */}
