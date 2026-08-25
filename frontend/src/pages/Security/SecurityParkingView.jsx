@@ -295,6 +295,17 @@ export default function SecurityParkingView() {
   // applied by narrowing the SVG viewBox, never by rewriting a coordinate.
   const lensIdx    = lensCount > 1 ? (selZone?.lens_index ?? 0) : 0
 
+  // Slots belong to one view of the camera, same filter the admin editor
+  // applies. The viewBox already clips anything outside the band, but a bay
+  // drawn before the lens split existed is tagged lens 0 with geometry spanning
+  // the whole stacked frame — that one would survive the clip and land
+  // somewhere plausible and wrong on the other lens's picture.
+  // Stats deliberately keep counting every lens: bays_occupied is the zone's
+  // map, not this viewport's.
+  const spaceList = lensCount > 1
+    ? liveSpaces.filter(s => (s.lens_index ?? 0) === lensIdx)
+    : liveSpaces
+
   return (
     <>
       <div className="pm-page">
@@ -520,7 +531,7 @@ export default function SecurityParkingView() {
                   viewBox={lensCount > 1 ? `0 ${lensIdx / lensCount} 1 ${1 / lensCount}` : '0 0 1 1'}
                   preserveAspectRatio="none"
                 >
-                  {liveSpaces.map(s => {
+                  {spaceList.map(s => {
                     const x     = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2)
                     const w     = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                     const color = s.is_occupied ? '#D93B3B' : '#1BA968'
