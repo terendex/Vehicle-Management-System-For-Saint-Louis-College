@@ -1048,6 +1048,36 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 # Each consumer subscribes to an asyncio.Queue; the worker thread broadcasts
 # encoded JPEG frames to every live subscriber.
 
+# Cap the picture that goes on the wire, not just the one ffmpeg pipes.
+#
+# The OpenCV backend hands back the camera's native resolution — 2304x1296 on
+# the Imou at Gate 1 — and a JPEG that size is ~1.08 MB of base64 per frame, 20
+# times a second. Frames that big never reached the browser at all: the socket
+# carried "Stream connected." and then nothing, which on screen is a green
+# connected dot over a permanently black canvas. Proven by A/B against the same
+# camera's substream, which is the same code path at 108 KB a frame and streams
+# 168 frames in 18 s.
+#
+# `MAX_PIPE_PIXELS` is the budget the raw-pipe backend already uses, so one
+# number now governs both backends instead of only the one that happened to
+# need it first. Capping pixels rather than width keeps it meaningful for the
+# stacked dual-lens frames too, which are taller than they are wide.
+#
+# Detection runs on this same JPEG, so the boxes it returns are already in the
+# coordinates the browser draws in — the frontend sizes everything from the
+# received image's naturalWidth.
+def _fit_for_wire(frm):
+    import cv2
+    from vehicles.ffmpeg_capture import MAX_PIPE_PIXELS
+
+    h, w = frm.shape[:2]
+    if w * h <= MAX_PIPE_PIXELS:
+        return frm
+    scale = (MAX_PIPE_PIXELS / float(w * h)) ** 0.5
+    return cv2.resize(frm, (max(1, int(w * scale)), max(1, int(h * scale))),
+                      interpolation=cv2.INTER_AREA)
+
+
 class _StreamWorker:
     """Manages a single RTSP capture thread shared across multiple consumers."""
 
@@ -1260,7 +1290,8 @@ class _StreamWorker:
                     # they already have.
                     if latest['seq'] != sent_seq:
                         sent_seq = latest['seq']
-                        ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        ok, buf = cv2.imencode('.jpg', _fit_for_wire(frm),
+                                               [cv2.IMWRITE_JPEG_QUALITY, 85])
                         if ok:
                             self._push({'type': 'frame',
                                         'image_b64': _b64.b64encode(buf.tobytes()).decode()})
