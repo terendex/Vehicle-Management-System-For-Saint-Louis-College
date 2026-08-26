@@ -46,6 +46,14 @@ function ScanRow({ log }) {
       <span className="sd-scan-status" style={{ background: color + '18', color }}>
         {log.status || 'unknown'}
       </span>
+      {/* A completed visit arrives as its entry row with the exit folded in
+          (AccessLogListView), so without this it reads "authorized" long after
+          the vehicle left. */}
+      {log.exited_at && (
+        <span className="sd-scan-status" style={{ background: '#EEF4F9', color: '#2E4C63' }}>
+          exited{log.duration_minutes != null ? ` · ${log.duration_minutes} min` : ''}
+        </span>
+      )}
       <span className="sd-scan-time">{time}</span>
     </div>
   )

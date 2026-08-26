@@ -110,6 +110,15 @@
   text-overflow: ellipsis;
 }
 
+/* The exit badge carries an icon, so it lays out as a row rather than as the
+   plain text `.em-log-badge` assumes. `.em-audit-top` already wraps, so it
+   drops to its own line in a narrow panel instead of squeezing the plate. */
+.em-audit-exit {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .em-audit-time {
   font-size: 10px;
   color: #64839C;

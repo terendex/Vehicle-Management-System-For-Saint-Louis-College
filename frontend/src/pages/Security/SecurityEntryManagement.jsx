@@ -1050,6 +1050,20 @@ export default function SecurityEntryManagement() {
                           <div className="em-audit-top">
                             <span className="em-audit-plate">{log.plate_number || '—'}</span>
                             <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                            {/* One visit is one row: AccessLogListView folds an
+                                exit into the entry it pairs with. Without this
+                                the row keeps reading "Approved for Entry" hours
+                                after the car left, and a guard looking down the
+                                list cannot tell who is still inside. Same badge
+                                the audit log uses, in this panel's relative
+                                time. */}
+                            {log.exited_at && (
+                              <span className="em-log-badge exited em-audit-exit">
+                                <LogOut size={9} />
+                                Exited {timeAgo(log.exited_at)}
+                                {log.duration_minutes != null && ` · ${log.duration_minutes} min inside`}
+                              </span>
+                            )}
                           </div>
                           {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
                             <div className="em-audit-sub">
