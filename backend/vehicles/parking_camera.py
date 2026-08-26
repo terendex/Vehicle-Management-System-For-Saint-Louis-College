@@ -121,17 +121,27 @@ DOUBLE_PARK_AFTER_SECONDS = 12.0
 #     0.55      10     0.37        123           71%
 #     0.60       9     0.33        135           65%
 #
-# 0.45 is where the trade stops paying: it drops phantoms by a quarter for four
-# more missed vehicles, and 0.50 then buys *no* further phantom reduction while
-# losing seven more. Anything above that is bought purely with recall.
+# 0.45 was where that table said the trade stopped paying — and then the campus
+# camera answered the question the validation set could not.
 #
-# The two failures are opposite and both wrong: a phantom marks a free bay
-# taken, a miss marks a taken bay free. Recall is this model's weak side in
-# dense parking (0.65 at this threshold — see the memo on the detector's
-# training state), so raising further trades a small, visible error for a
-# larger, quieter one. If zones start reporting bays free that are not, come
-# back down toward 0.40 rather than up.
-OCCUPANCY_CONF = 0.45
+# Measured on the live feed: the tricycle parked in bay C01 scores **0.27**.
+# Every threshold above that reads the bay as free with a vehicle sitting in it,
+# which is what "the detector does nothing" looked like from the outside. The
+# scene is the hard end of this model's range — dusk, indoors, a tricycle at an
+# angle, half-occluded by a car and a railing — and it is also exactly the kind
+# of scene the campus lots are full of.
+#
+# So the floor is set below what a real parked vehicle here scores, not at the
+# point that looked tidiest on the validation split. The cost is real and known:
+# on that split 0.25-0.30 carries roughly 25 phantom boxes per 27 images against
+# 13 at 0.45. A phantom marks a free bay taken; a miss marks a *taken* bay free
+# and sends someone to a space that is not there. With recall this model's weak
+# side in dense parking, the second is the worse failure and the more likely.
+#
+# If phantom occupancy becomes the complaint, raise it — but re-measure against
+# a real parked vehicle first, the way this number was set, rather than moving
+# it on the validation table alone.
+OCCUPANCY_CONF = 0.25
 
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a

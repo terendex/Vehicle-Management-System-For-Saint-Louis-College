@@ -91,7 +91,6 @@ export default function ParkingManagement({ embedded = false }) {
   const [deviceCams,   setDeviceCams]   = useState([])
   const [camRunning,   setCamRunning]   = useState({})
   const [assigning,    setAssigning]    = useState(false)
-  const [toggling,     setToggling]     = useState(false)
   const [capturing,    setCapturing]    = useState(false)
   const [methodSaving,   setMethodSaving]   = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
@@ -447,24 +446,6 @@ export default function ParkingManagement({ embedded = false }) {
 
   const handleAssignCamera = (e) =>
     assignCamera(e.target.value ? Number(e.target.value) : null)
-
-  const toggleDetection = async () => {
-    if (!selZone) return
-    setToggling(true)
-    try {
-      if (camRunning[selZone.id]) {
-        await zoneApi.stopCamera(selZone.id)
-      } else {
-        await zoneApi.startCamera(selZone.id)
-      }
-      await refreshCamStatus()
-    } catch (err) {
-      setResultModal({
-        type: 'error',
-        message: err?.response?.data?.error || 'Failed to toggle camera detection.',
-      })
-    } finally { setToggling(false) }
-  }
 
   // ── Capture a still frame from the live feed as the reference image ─────
   //
@@ -943,22 +924,16 @@ export default function ParkingManagement({ embedded = false }) {
                 </div>
 
 
+                {/* No on/off switch: a zone with a camera detects, full stop.
+                    The detector is supervised server-side (detection_supervisor)
+                    and comes back by itself after a restart, so a button here
+                    could only ever take it away — and a zone silently switched
+                    off looks exactly like a zone whose camera has failed. What
+                    remains is the status, because "is it running" is a real
+                    question a person needs answered. */}
                 {mode === 'live' && selZone.camera != null && (
-                  <button
-                    className="pm-btn pm-btn--outline"
-                    onClick={toggleDetection}
-                    disabled={toggling}
-                  >
-                    {toggling
-                      ? <Loader2 size={13} className="pm-spin" />
-                      : <Video size={13} />}
-                    {camRunning[selZone.id] ? 'Stop Detection' : 'Start Detection'}
-                  </button>
-                )}
-
-                {mode === 'live' && (
                   <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
-                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Auto-detect off'}
+                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Starting detector…'}
                   </span>
                 )}
 
