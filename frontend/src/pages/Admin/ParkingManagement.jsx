@@ -96,7 +96,7 @@ export default function ParkingManagement({ embedded = false }) {
   const [methodSaving,   setMethodSaving]   = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
 
-  const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook,
+  const { cameras: allCameras, syncCameras: syncPkCameras,
           registerCanvas: registerPkCanvas, paneCounts: livePaneCounts } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
   const [camQuery, setCamQuery] = useState('')
@@ -303,15 +303,28 @@ export default function ParkingManagement({ embedded = false }) {
   // Live-refresh zones/occupancy on parking changes
   useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])
 
-  // Load parking cameras once on mount — persists across navigation
-  useEffect(() => {
+  // The parking feeds, kept in step with Device Management rather than read
+  // once on mount: a camera registered while this page is open should appear,
+  // and one deleted here or from another session must stop streaming instead of
+  // playing on behind a zone that no longer has it.
+  const loadCameras = useCallback(() => {
     camerasApi.list({ assignment: 'parking' })
       .then(cams => {
         setDeviceCams(cams)
-        cams.forEach(c => addPkCamera(c.name, c.rtsp_url, 'parking'))
+        syncPkCameras('parking', cams)
       })
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [syncPkCameras])
+
+  useEffect(() => { loadCameras() }, [loadCameras])
+
+  // Deleting a camera nulls ParkingZone.camera through the collector's bulk
+  // UPDATE, which fires no parkingzone signal — so the zones have to be
+  // refetched from the *camera* event or they go on pointing at a device that
+  // no longer exists.
+  const onCameraChange = useCallback(() => { loadCameras(); loadZones() },
+                                     [loadCameras, loadZones])
+  useLiveUpdates(onCameraChange, 'camera')
 
   // Poll detection (auto-camera) status for all zones
   const refreshCamStatus = useCallback(async () => {

@@ -37,3 +37,18 @@ export function isValidPlateNumber(raw) {
   if (!n) return false
   return PH_PLATE_PATTERNS.some(p => p.test(n))
 }
+
+// A conduction sticker is what a brand-new car carries until its plate arrives,
+// so by definition it is not a valid plate and never will match the patterns
+// above. It has no national format either, so this mirrors the shape the
+// registration form accepts (5–12 alphanumerics) rather than inventing a second
+// rule for the gate to disagree with.
+//
+// Deliberately permissive: the server is the authority. ManualEntryView
+// resolves the typed identifier against real vehicles first and only rejects
+// what matches nothing, so a client-side guess that is too strict does not
+// filter garbage — it locks a guard out of a car that is genuinely registered.
+export function isValidConductionNumber(raw) {
+  const n = (raw || '').replace(/[\s\-_]/g, '').toUpperCase()
+  return /^[A-Z0-9]{5,12}$/.test(n)
+}

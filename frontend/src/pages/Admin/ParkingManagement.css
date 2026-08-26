@@ -1616,3 +1616,69 @@
     flex: 1 1 100%;
   }
 }
+
+
+/* ═══ Fill-height variant (the guard's parking screen) ═══════════════════════
+   Activated by .admin-content--fill on the layout wrapper — see App.jsx. The
+   admin parking page never sets it and is untouched by everything below.
+
+   The rule is the same one the entries screen follows: the picture gives way,
+   the controls do not. A guard reads this at a gate, so the zone tabs, the
+   toolbar and the legend have to be on screen at all times, and the bay map is
+   what shrinks to make that true. */
+
+.admin-content--fill .pm-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  gap: 10px;
+}
+
+/* Everything above the picture keeps its natural height. */
+.admin-content--fill .pm-stats-row,
+.admin-content--fill .pm-stat-caption,
+.admin-content--fill .pm-zone-bar,
+.admin-content--fill .dpa-banner {
+  flex: 0 0 auto;
+}
+
+.admin-content--fill .pm-content-row {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.admin-content--fill .pm-canvas-area {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.admin-content--fill .pm-toolbar,
+.admin-content--fill .pm-legend,
+.admin-content--fill .pm-cam-panel {
+  flex: 0 0 auto;
+}
+
+/* The bay map keeps its ratio while it shrinks.
+ *
+ * It cannot simply be squashed the way the entry viewport can: the bay overlay
+ * is normalised against this box and the picture under it is `object-fit: fill`
+ * precisely so the two always agree. Change the box's proportions and the
+ * picture distorts. So the height is what the flex row hands down, and the
+ * width follows from the ratio — the map ends up centred with the panel's own
+ * background either side, at whatever size fits. */
+.admin-content--fill .pm-canvas-wrapper {
+  flex: 0 1 auto;
+  height: 100%;
+  min-height: 0;
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.admin-content--fill .pm-canvas-placeholder {
+  flex: 1 1 auto;
+  min-height: 0;
+}

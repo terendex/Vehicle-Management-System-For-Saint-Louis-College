@@ -1193,13 +1193,32 @@
 }
 
 /* Viewport fills the full panel width at the camera's 16:9 ratio — the whole
-   frame shows with no cropping and no letterbox bars. The plate form below is
-   kept compact so everything fits on one screen without scrolling. */
+   frame shows with no cropping and no letterbox bars.
+ *
+ * `0 1 auto`, not `0 0 auto`: on a wide screen 16/9 of the full column is
+ * taller than the height left over, and because the card is `overflow: hidden`
+ * whatever does not fit is not scrolled to — it is cut off. What sat below the
+ * video was the plate / conduction lookup and the QR scanner, so on a 1920×1080
+ * laptop the guard's only manual way past a missed plate silently vanished.
+ *
+ * Now the picture is the thing that yields: it holds 16:9 whenever there is
+ * room and shrinks when there is not, letterboxing inside its own black box
+ * (the canvas is already `object-fit: contain`, so nothing is cropped). The
+ * controls below keep their natural height and are always on screen. */
 .admin-content--fill .em-camera-card .em-viewport {
   aspect-ratio: 16 / 9;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   height: auto;
   min-height: 0 !important; /* override inline minHeight: 340 */
+}
+
+/* Everything under the picture is fixed furniture: the camera search, the
+   thumbnail strip, and the plate lookup / QR bar. None of them may be the item
+   that absorbs a height shortfall. */
+.admin-content--fill .em-camera-card .em-cam-search,
+.admin-content--fill .em-camera-card .em-cam-thumbnails,
+.admin-content--fill .em-camera-card .em-plate-bar {
+  flex: 0 0 auto;
 }
 .admin-content--fill .em-camera-card .em-viewport > div,
 .admin-content--fill .em-camera-card .em-viewport > div > div:has(> canvas) {

@@ -174,7 +174,7 @@ export default function SecurityParkingView() {
   const [imgFailedFor,  setImgFailedFor]  = useState(null)
   const [imgDimsFor,    setImgDimsFor]    = useState({})
 
-  const { cameras: allCameras, addCamera, registerCanvas, paneCounts } = useCameraContext()
+  const { cameras: allCameras, addCamera, syncCameras, registerCanvas, paneCounts } = useCameraContext()
   const camFs = useFullscreen()
 
   const selZone    = zones.find(z => z.id === selId) ?? null
@@ -197,6 +197,27 @@ export default function SecurityParkingView() {
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
+  // Camera changes reach this screen too. Pruning only: the effect below opens
+  // just the selected zone's feed on purpose, so this must not connect every
+  // parking camera on campus — it exists so a camera deleted in Device
+  // Management stops playing here rather than streaming on unattached.
+  const refreshCameras = useCallback(() => {
+    camerasApi.list({ assignment: 'parking' })
+      .then(cams => {
+        setDeviceCams(cams)
+        syncCameras('parking', cams, { connect: false })
+      })
+      .catch(() => {})
+  }, [syncCameras])
+
+  // Deleting a camera nulls ParkingZone.camera through the collector's bulk
+  // UPDATE, which fires no parkingzone signal — so the zones have to be
+  // refetched from the *camera* event or they go on pointing at a device that
+  // no longer exists.
+  const onCameraChange = useCallback(() => { refreshCameras(); loadZones() },
+                                     [refreshCameras, loadZones])
+  useLiveUpdates(onCameraChange, 'camera')
 
   // Live-refresh zones/occupancy on parking changes
   useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])

@@ -530,3 +530,57 @@ class DenyEntryAPITests(TestCase):
         client = APIClient()
         resp = client.post('/api/scan/deny/', {'plate_number': 'DNY0004'}, format='json')
         self.assertEqual(resp.status_code, 401)
+
+
+class ConductionNumberLookupTests(TestCase):
+    """A brand-new car carries a conduction sticker, not a plate.
+
+    ManualEntryView has always resolved one — it looks the identifier up before
+    it validates the format — but the guard's field refused to send it, so the
+    only way past a missed detection was blocked for exactly the vehicles whose
+    plates cannot be read: the ones that do not have plates yet. These pin the
+    server half of that path, including the space the input auto-inserts while
+    the guard types.
+    """
+
+    def setUp(self):
+        self.guard = _make_guard('conduction-guard@slc.edu.ph')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+        owner = User.objects.create_user(
+            email='newcar@slc.edu.ph', full_name='New Car Owner',
+            password='SecurePassword123!', role='vehicle_owner',
+            owner_type=User.OwnerType.EMPLOYEE, schedule='ANY',
+        )
+        self.vehicle = Vehicle.objects.create(
+            conduction_number='CS12345A678', vehicle_type=Vehicle.Type.CAR,
+            is_authorized=True, user=owner,
+        )
+
+    def _lookup(self, identifier):
+        return self.client.post('/api/scan/manual-entry/',
+                                {'plate_number': identifier}, format='json')
+
+    def test_conduction_number_identifies_the_vehicle(self):
+        res = self._lookup('CS12345A678')
+        self.assertEqual(res.status_code, 200)
+        # Identified, whatever the schedule rules then decide about entry.
+        self.assertIsNotNone(res.data.get('vehicle'))
+        self.assertEqual(res.data['vehicle']['conduction_number'], 'CS12345A678')
+
+    def test_the_space_the_field_inserts_is_ignored(self):
+        """formatPlateNumber turns "CS12345A678" into "CS 12345A678" as it is
+        typed; the server normalises it back out."""
+        res = self._lookup('CS 12345A678')
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNotNone(res.data.get('vehicle'))
+
+    def test_lowercase_is_accepted(self):
+        res = self._lookup('cs12345a678')
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNotNone(res.data.get('vehicle'))
+
+    def test_free_text_is_still_rejected(self):
+        res = self._lookup('NOT A PLATE')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Invalid plate format', res.data['error'])

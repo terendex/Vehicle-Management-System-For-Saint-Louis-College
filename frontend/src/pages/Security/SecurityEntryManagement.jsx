@@ -24,7 +24,7 @@ import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
-import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
 import './SecurityEntryManagement.css'
 
 
@@ -544,7 +544,7 @@ export default function SecurityEntryManagement() {
 
   const removeFromQueue = (id) => setScanQueue(prev => prev.filter(e => e.id !== id))
 
-  const { cameras, results, addCamera, registerCanvas } = useCameraContext()
+  const { cameras, results, syncCameras, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
   const [camQuery, setCamQuery] = useState('')
   const rtspCameras = cameras.filter(c => c.assignment === 'entry')
@@ -607,17 +607,12 @@ export default function SecurityEntryManagement() {
     })
   }, [rtspResults]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const gateFilter = user?.gate_assignment ? { gate_id: user.gate_assignment } : {}
+  const gateId = user?.gate_assignment
+  const gateFilter = gateId ? { gate_id: gateId } : {}
 
   useEffect(() => {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
     getOffices().then(r => setOffices(r.data?.results ?? r.data ?? [])).catch(() => {})
-    // Only drive the camera(s) for this guard's assigned gate — otherwise a
-    // Gate 4 guard would scan through the Gate 1 camera and every scan would be
-    // tagged gate1, never showing up in the Gate 4 log.
-    camerasApi.list({ assignment: 'entry', ...gateFilter })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, 'entry', { detect: true, gate: c.gate_id })))
-      .catch(() => {})
     getSystemSettings()
       .then(({ data }) => {
         if (data?.scan_dedup_seconds) setDedupSeconds(data.scan_dedup_seconds)
@@ -625,6 +620,24 @@ export default function SecurityEntryManagement() {
       })
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Only drive the camera(s) for this guard's assigned gate — otherwise a Gate 4
+  // guard would scan through the Gate 1 camera and every scan would be tagged
+  // gate1, never showing up in the Gate 4 log.
+  //
+  // Re-run on every camera change rather than once on mount. The roster is not
+  // fixed for the length of a shift: cameras are added, deleted and reassigned
+  // in Device Management while the guard is on this screen, and a feed that has
+  // been deleted must stop playing here instead of streaming on until someone
+  // thinks to reload.
+  const loadCameras = useCallback(() => {
+    camerasApi.list({ assignment: 'entry', ...(gateId ? { gate_id: gateId } : {}) })
+      .then(cams => syncCameras('entry', cams, { detect: true }))
+      .catch(() => {})
+  }, [gateId, syncCameras])
+
+  useEffect(() => { loadCameras() }, [loadCameras])
+  useLiveUpdates(loadCameras, 'camera')
 
   // Follow Open Campus Mode toggles live so the banner appears/disappears
   // without the guard having to reload the page.
@@ -712,8 +725,14 @@ export default function SecurityEntryManagement() {
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
   // inside logs the exit. Returns the response data so callers can react.
   const runPlateCheck = async (plate) => {
-    if (!isValidPlateNumber(plate)) {
-      toast.error('Invalid plate format. Enter a valid Philippine plate (e.g. AAA 0000).')
+    // Conduction numbers get through too. ManualEntryView has accepted them
+    // since it was written — it resolves the identifier before it validates the
+    // format — but this check ran first and answered "invalid plate" without
+    // ever asking the server, so a brand-new car on a conduction sticker could
+    // not be looked up by hand at all.
+    if (!isValidPlateNumber(plate) && !isValidConductionNumber(plate)) {
+      toast.error('Enter a Philippine plate (e.g. AAA 0000) or a conduction number.',
+                  { title: 'Nothing to look up' })
       return null
     }
     setLoading(true)
@@ -964,9 +983,12 @@ export default function SecurityEntryManagement() {
               </div>
             )}
 
-            {/* Combined Plate Input */}
-            <div style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
-              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate Number</span>
+            {/* Combined Plate Input — the manual way in when the detector does
+                not read a plate: type the plate or conduction number, or scan
+                the owner's QR pass. It must never be the thing that gets cut
+                off, hence .em-plate-bar (see the fill-height rules). */}
+            <div className="em-plate-bar" style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
+              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate / Conduction No.</span>
               <form onSubmit={handleCheckEntry} noValidate style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                 <input
                   className="em-plate-input"
@@ -976,7 +998,7 @@ export default function SecurityEntryManagement() {
                     // Visitor slip QRs (SLC-VISITOR:{id}) must not be plate-formatted
                     setPlateInput(/^SLC/i.test(raw.trim()) ? raw.toUpperCase() : formatPlateNumber(raw))
                   }}
-                  placeholder="E.G. AAA 000"
+                  placeholder="E.G. AAA 0000 OR CS12345A678"
                   style={{
                     flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #D3E1EC',
                     borderRadius: 9, fontSize: 14, fontWeight: 700, letterSpacing: 2,

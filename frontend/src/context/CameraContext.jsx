@@ -87,6 +87,10 @@ export function CameraProvider({ children }) {
   // Using a Map instead of a Set so we can look up existing camId by URL
   const urlToIdMap = useRef({})
 
+  // Mirrors `cameras` so syncCameras can read the current roster without being
+  // rebuilt every time a frame flips a connection flag.
+  const camerasRef = useRef([])
+
   // Ref that always holds the latest _connect function (needed for self-referential reconnect)
   const connectRef = useRef(null)
 
@@ -540,6 +544,46 @@ export function CameraProvider({ children }) {
     })
   }, [disconnectCamera])
 
+  useEffect(() => { camerasRef.current = cameras }, [cameras])
+
+  /**
+   * Reconcile the cameras connected under one assignment against the server's
+   * list — the half addCamera never had.
+   *
+   * Pages called addCamera once on mount, so the roster could only ever grow: a
+   * camera deleted, reassigned or re-addressed in Device Management kept
+   * streaming on the guard's screen until somebody reloaded the page. Anything
+   * still connected under `assignment` that the server no longer lists is now
+   * closed.
+   *
+   * Scoped to one assignment deliberately — every page shares this provider, so
+   * syncing the entry roster must not tear down parking's feeds.
+   *
+   * `connect: false` prunes without opening anything, for pages that connect a
+   * subset on purpose (the guard's parking view opens only the zone it is
+   * showing, on hardware that reboots if you open every stream at once).
+   */
+  const syncCameras = useCallback((assignment, list, { detect = false, connect = true } = {}) => {
+    const desired = (list || []).filter(c => (c.rtsp_url || '').trim().startsWith('rtsp://'))
+    const wanted  = new Map(desired.map(c => [c.rtsp_url.trim(), c]))
+
+    if (connect) {
+      desired.forEach(c => addCamera(c.name, c.rtsp_url, assignment, { detect, gate: c.gate_id }))
+    }
+
+    camerasRef.current
+      .filter(c => c.assignment === assignment && !wanted.has(c.url))
+      .forEach(c => removeCamera(c.id))
+
+    // A rename reaches the label too — the thumbnail strip and the camera
+    // search are how a guard picks a feed, and they read this name.
+    setCameras(prev => prev.map(c => {
+      const want = c.assignment === assignment ? wanted.get(c.url) : null
+      const name = (want?.name || '').trim()
+      return name && name !== c.name ? { ...c, name } : c
+    }))
+  }, [addCamera, removeCamera])
+
   // ── Disconnect and clear all cameras ──────────────────────────────────────
   const disconnectAll = useCallback(() => {
     Object.keys(wsMap.current).forEach(id => {
@@ -579,6 +623,7 @@ export function CameraProvider({ children }) {
     <CameraContext.Provider value={{
       cameras,
       addCamera,
+      syncCameras,
       removeCamera,
       disconnectCamera,
       disconnectAll,

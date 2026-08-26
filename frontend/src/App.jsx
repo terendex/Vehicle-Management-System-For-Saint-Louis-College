@@ -80,8 +80,11 @@ function RoleShell() {
   const { user } = useAuthStore()
   const { pathname } = useLocation()
   const Layout = LAYOUT_BY_ROLE[user?.role] || OwnerLayout
-  // The security entries screen wants the full-height variant.
-  const fillHeight = Layout === SecurityLayout && pathname.endsWith('/entries')
+  // The guard's two working screens want the full-height variant: both are
+  // watched at a gate rather than read at a desk, and a guard should not have
+  // to scroll to reach a control while a vehicle waits at the barrier.
+  const fillHeight = Layout === SecurityLayout
+    && (pathname.endsWith('/entries') || pathname.endsWith('/parking'))
   return (
     <Layout fillHeight={fillHeight}>
       {/* Keyed on the path so recovering from a broken page is a navigation

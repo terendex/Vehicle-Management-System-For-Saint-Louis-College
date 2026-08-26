@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import './SecurityDashboard.css'
+import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import SecurityLayout from '../../components/Layout/SecurityLayout'
 import { usersApi } from '../../api/users'
 import { getAccessLogs } from '../../api/scanning'
@@ -61,14 +62,28 @@ function ScanRow({ log }) {
 
 function CameraMonitor() {
   const token = localStorage.getItem('access_token') || ''
-  const { cameras, activeCamId, setActiveCamId, activeCam, addCamera, registerCanvas } =
+  const { cameras, activeCamId, setActiveCamId, activeCam, addCamera, removeCamera, registerCanvas } =
     useMultiRtspStream(token)
 
-  useEffect(() => {
+  // This panel drives its own streams (useMultiRtspStream, not CameraContext),
+  // so it needs its own reconciliation: connect what the server lists, close
+  // what it no longer does. Read through a ref so the callback survives frame
+  // updates without resubscribing.
+  const camsRef = useRef(cameras)
+  useEffect(() => { camsRef.current = cameras }, [cameras])
+
+  const loadCameras = useCallback(() => {
     camerasApi.list({ assignment: 'entry' })
-      .then(cams => cams.forEach(c => addCamera(c.name, c.rtsp_url, c.gate_id)))
+      .then(cams => {
+        cams.forEach(c => addCamera(c.name, c.rtsp_url, c.gate_id))
+        const wanted = new Set(cams.map(c => (c.rtsp_url || '').trim()))
+        camsRef.current.filter(c => !wanted.has(c.url)).forEach(c => removeCamera(c.id))
+      })
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [addCamera, removeCamera])
+
+  useEffect(() => { loadCameras() }, [loadCameras])
+  useLiveUpdates(loadCameras, 'camera')
 
   const isLive = cameras.some(c => c.streamConnected)
 
