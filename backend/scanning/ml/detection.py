@@ -188,7 +188,7 @@ def _get_plate_yolo():
         _broadcast_status("warming_up", "Warming up plate detector…")
         log.info("[DETECT] Warming up plate detector (compiling JIT graph)…")
         dummy = np.zeros((480, 640, 3), np.uint8)
-        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.15, verbose=False)
+        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=_CONF_PLATE, verbose=False)
         log.info("[DETECT] Plate-detector warm-up complete.")
 
         # No vehicle-detector pre-load here.  This loader runs for the gate, and
@@ -267,7 +267,29 @@ def _get_vehicle_yolo():
 
 
 # Per-class confidence minimums
-_CONF_PLATE   = 0.15   # raised from 0.05 — was generating false positives on truck bodies
+#
+# _CONF_PLATE went 0.05 → 0.15 (false plates on truck bodies) → 0.40. The last
+# step was measured by sweeping the plate detector over its own 515-image
+# validation split at the settings this module runs (imgsz 640, half,
+# `_preprocess_adaptive`), matching at IoU 0.5:
+#
+#     conf    P      R      F1     FP   missed plates
+#     0.15  0.979  1.000  0.989   11         0
+#     0.25  0.983  0.996  0.989    9         2
+#     0.40  0.987  0.994  0.990    7         3      ← F1 peak
+#     0.60  0.986  0.986  0.986    7         7
+#
+# Above 0.40 nothing more is gained: the remaining 7 false boxes score high and
+# survive any threshold, so raising further only costs plates. The val set is
+# plate close-ups and understates the gain — the failure that prompted this was
+# a tricycle's diamond-plate bumper boxed at 20% on a live gate frame, which no
+# image in the set resembles.
+#
+# The asymmetry is what justifies trading 0.6% recall for a third fewer false
+# boxes: a plate missed on one frame is re-read on the next (the tracker votes
+# across frames before locking a read), while a false box opens a track and
+# runs OCR on a car's bodywork.
+_CONF_PLATE   = 0.40
 # Only detect_vehicles() reads this, and its one caller (parking occupancy)
 # overrides it — see OCCUPANCY_CONF in vehicles/parking_camera.py for why a
 # dense overview needs a stricter floor than this default.

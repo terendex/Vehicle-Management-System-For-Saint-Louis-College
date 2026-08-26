@@ -106,15 +106,32 @@ DOUBLE_PARK_AFTER_SECONDS = 12.0
 # model too and a spurious box there cost nothing. The gate is plate-only now,
 # so parking is the only caller — but the default stays permissive and this
 # override is what parking is actually tuned on. A parking overview is the
-# dense case: low-confidence boxes pile up and inflate the count. On the
-# 27-image parking validation split the detector counted 114% of the vehicles
-# actually present at 0.15 — every extra box marks a free bay occupied.
+# dense case: low-confidence boxes pile up and inflate the count.
 #
-# Measured mean per-image count error on that split: 35.6% at 0.15, 18.5% at
-# 0.30, 23.3% at 0.40. 0.40 finds 83% of vehicles versus 94% at 0.30, so it
-# trades over-counting for under-counting — bays read free while a car sits in
-# them. Raise toward 0.30 if zones start reporting phantom vacancies.
-OCCUPANCY_CONF = 0.40
+# Swept over the 27-image parking validation split (326 labelled vehicles)
+# through detect_vehicles() itself, so NMS and the size/aspect filters are in
+# play. False boxes are split by what they sit on, because only one kind can
+# take a bay: a *phantom* is a box on empty ground, while a second box on a car
+# already counted changes no bay's verdict.
+#
+#     conf   phantoms  /img   vehicles missed   found%
+#     0.40      18     0.67        109           80%
+#     0.45      13     0.48        113           76%
+#     0.50      13     0.48        120           74%
+#     0.55      10     0.37        123           71%
+#     0.60       9     0.33        135           65%
+#
+# 0.45 is where the trade stops paying: it drops phantoms by a quarter for four
+# more missed vehicles, and 0.50 then buys *no* further phantom reduction while
+# losing seven more. Anything above that is bought purely with recall.
+#
+# The two failures are opposite and both wrong: a phantom marks a free bay
+# taken, a miss marks a taken bay free. Recall is this model's weak side in
+# dense parking (0.65 at this threshold — see the memo on the detector's
+# training state), so raising further trades a small, visible error for a
+# larger, quieter one. If zones start reporting bays free that are not, come
+# back down toward 0.40 rather than up.
+OCCUPANCY_CONF = 0.45
 
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a
