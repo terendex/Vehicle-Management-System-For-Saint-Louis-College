@@ -452,6 +452,18 @@
   gap: 0.75rem;
 }
 
+/* The guard's lookup result is a dialog, not a card in the column — see
+   ResultModal in SecurityEntryManagement.jsx. `.em-result` still supplies the
+   frame and the per-status colours; this only sizes it inside `.em-overlay`,
+   and lets a long result (owner + vehicle + violations + actions) scroll
+   rather than run off a laptop screen. */
+.em-result-dialog {
+  width: 100%;
+  max-width: 380px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
 .em-result.authorized { border-left: 4px solid #14A374; }
 .em-result.denied     { border-left: 4px solid #D93B3B; }
 .em-result.wrong_day  { border-left: 4px solid #D93B3B; }

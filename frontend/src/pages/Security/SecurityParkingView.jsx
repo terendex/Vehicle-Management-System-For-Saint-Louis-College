@@ -8,6 +8,7 @@ import {
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
+import BayOccupantModal from '../../components/BayOccupant'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
@@ -157,6 +158,8 @@ function IssueViolationModal({ onClose }) {
 }
 
 export default function SecurityParkingView() {
+  // Which occupied bay the guard asked about, if any.
+  const [bayLookup,     setBayLookup]     = useState(null)
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
   const [loading,       setLoading]       = useState(true)
@@ -522,7 +525,10 @@ export default function SecurityParkingView() {
                   </div>
                 )}
 
-                {/* SVG overlay — read-only (no event handlers).
+                {/* SVG overlay. Bays are not editable here — the geometry
+                    belongs to Parking Management — but an occupied one answers
+                    who is in it, because the plate painted on the rectangle is
+                    the only thing this screen knew about the car.
                     One band of the full frame: every bay is stored in
                     full-frame coordinates, so narrowing the viewBox is all it
                     takes to show a single lens. */}
@@ -536,8 +542,14 @@ export default function SecurityParkingView() {
                     const w     = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                     const color = s.is_occupied ? '#D93B3B' : '#1BA968'
                     const fill  = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
+                    const known = s.is_occupied && !!s.occupied_by
                     return (
-                      <g key={s.id}>
+                      <g
+                        key={s.id}
+                        onClick={known ? () => setBayLookup(s) : undefined}
+                        style={known ? { cursor: 'pointer' } : undefined}
+                      >
+                        {known && <title>{`${s.occupied_by} — click for details`}</title>}
                         <rect
                           x={x} y={y} width={w} height={h}
                           fill={fill} stroke={color} strokeWidth={0.003} rx={0.004}
@@ -600,6 +612,14 @@ export default function SecurityParkingView() {
 
       {showViolation && (
         <IssueViolationModal onClose={() => setShowViolation(false)} />
+      )}
+
+      {bayLookup && (
+        <BayOccupantModal
+          space={bayLookup}
+          zoneName={selZone?.name}
+          onClose={() => setBayLookup(null)}
+        />
       )}
 
     </>

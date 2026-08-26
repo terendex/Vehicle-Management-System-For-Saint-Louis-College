@@ -9,6 +9,7 @@ import {
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
+import { BayOccupantDetails } from '../../components/BayOccupant'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
@@ -669,6 +670,9 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Space click (live mode) ─────────────────────────────────────
+  // An occupied bay opens as a question — who is in it — with freeing it as
+  // the action underneath. It used to open straight into "Mark as free?" over
+  // a bare plate, which asked for a decision without showing what it was about.
   const onSpaceClick = (sp) => {
     if (mode !== 'live') return
     if (sp.is_occupied) setSpaceOp({ type: 'free',   space: sp })
@@ -1718,18 +1722,16 @@ export default function ParkingManagement({ embedded = false }) {
         </div>
       )}
 
-      {/* ── Modal: Free ── */}
+      {/* ── Modal: occupied bay ── */}
       {spaceOp?.type === 'free' && (
         <div className="pm-overlay" onClick={() => setSpaceOp(null)}>
-          <div className="pm-modal" onClick={e => e.stopPropagation()}>
+          <div className="pm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="pm-modal-header">
-              <span>Free Up Space {spaceOp.space.space_number}</span>
+              <span>Space {spaceOp.space.space_number} — Occupied</span>
               <button className="pm-modal-close" onClick={() => setSpaceOp(null)}><X size={16} /></button>
             </div>
             <div className="pm-modal-body">
-              <p className="pm-modal-msg">
-                Occupied by <strong>{spaceOp.space.occupied_by}</strong>. Mark as free?
-              </p>
+              <BayOccupantDetails plate={spaceOp.space.occupied_by} />
             </div>
             <div className="pm-modal-footer">
               <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>

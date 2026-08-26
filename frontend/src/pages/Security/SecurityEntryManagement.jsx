@@ -316,98 +316,43 @@ function DenyEntryModal({ plate, onClose, onDenied }) {
   )
 }
 
-// ─── CircleCountdown ───────────────────────────────────────────────────────────
-function CircleCountdown({ duration = 5, onDismiss }) {
-  const R = 18
-  const circumference = +(2 * Math.PI * R).toFixed(2) // 113.1
-  const [progress, setProgress] = useState(0) // 0 → 1
-  const rafRef  = useRef(null)
-  const startRef = useRef(null)
-
-  useEffect(() => {
-    startRef.current = performance.now()
-    const tick = (now) => {
-      const t = Math.min((now - startRef.current) / (duration * 1000), 1)
-      setProgress(t)
-      if (t < 1) rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [duration])
-
-  // green (#1BA968) → yellow (#E0B00C) → red (#D93B3B)
-  let r, g, b
-  if (progress < 0.5) {
-    const p = progress * 2
-    r = Math.round(34  + (245 - 34)  * p)
-    g = Math.round(197 + (158 - 197) * p)
-    b = Math.round(94  + (11  - 94)  * p)
-  } else {
-    const p = (progress - 0.5) * 2
-    r = Math.round(245 + (239 - 245) * p)
-    g = Math.round(158 + (68  - 158) * p)
-    b = Math.round(11  + (68  - 11)  * p)
-  }
-  const color = `rgb(${r},${g},${b})`
-  const secsLeft = Math.ceil(duration * (1 - progress))
-
-  return (
-    <div
-      title="Cooldown — click to dismiss"
-      onClick={onDismiss}
-      style={{ position: 'relative', width: 44, height: 44, cursor: 'pointer', flexShrink: 0 }}
-    >
-      <svg width="44" height="44" style={{ transform: 'rotate(-90deg)', display: 'block' }}>
-        <circle cx="22" cy="22" r={R} fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="3.5" />
-        <circle
-          cx="22" cy="22" r={R}
-          fill="none"
-          stroke={color}
-          strokeWidth="3.5"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * progress}
-          strokeLinecap="round"
-        />
-      </svg>
-      <div style={{
-        position: 'absolute', inset: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, fontWeight: 700, color,
-        pointerEvents: 'none',
-      }}>
-        {secsLeft > 0 ? secsLeft : ''}
-      </div>
-    </div>
-  )
-}
-
-// ─── ResultCard ────────────────────────────────────────────────────────────────
-function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardName, cooldownKey, cooldownActive, dedupSeconds, onDismiss, onPause, onResume }) {
+// ─── ResultModal ───────────────────────────────────────────────────────────────
+/**
+ * The answer to a plate lookup — typed, scanned from a QR, or read off a camera.
+ *
+ * This used to be a card in the right-hand column that faded itself out after
+ * the dedup window. A guard who looks down at a plate for two seconds came back
+ * to an empty panel with no way to re-read who the car belonged to, which is
+ * the same reason nothing else in this system is transient any more (see
+ * components/Feedback/notify.js). So the lookup is a dialog now: it stays until
+ * it is acknowledged, and the next one in the queue takes its place.
+ */
+function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, guardName, onDismiss, queued = 0 }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
   const [showDeny,     setShowDeny]     = useState(false)
 
-  // Opening a modal pauses the card's auto-dismiss so the form can't vanish
-  const openVisitor   = () => { setShowVisitor(true);   onPause?.() }
-  const closeVisitor  = () => { setShowVisitor(false);  onResume?.() }
-  const openOverride  = () => { setShowOverride(true);  onPause?.() }
-  const closeOverride = () => { setShowOverride(false); onResume?.() }
-  const openDeny      = () => { setShowDeny(true);      onPause?.() }
-  const closeDeny     = () => { setShowDeny(false);     onResume?.() }
+  // Visitor pass / override / deny open on top of this dialog. While one of
+  // them is up it owns the keyboard and the backdrop — dismissing the result
+  // underneath would tear the form off the screen mid-entry.
+  const nestedOpen = showVisitor || showOverride || showDeny
 
-  if (!result) return (
-    <div className="em-card em-result em-result-idle-compact">
-      <div className="em-idle-compact-inner">
-        <div className="em-result-icon" style={{ width: 36, height: 36, borderRadius: 8, background: '#F4F8FB', flexShrink: 0 }}>
-          <Search size={16} style={{ color: '#64839C' }} />
-        </div>
-        <div>
-          <p className="em-result-status" style={{ color: '#64839C', margin: 0 }}>AWAITING LOOKUP</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#BDD4E5' }}>Type a plate and press Check Entry</p>
-        </div>
-      </div>
-    </div>
-  )
+  // Capture phase with stopImmediatePropagation, like FeedbackHost: the page
+  // underneath (fullscreen viewport, QR scanner) listens for Escape too, and
+  // one press must close the dialog only. A notify dialog raised on top of
+  // this one registers its own capture listener first and wins, so an error
+  // message never dismisses the result it is reporting on.
+  useEffect(() => {
+    if (nestedOpen) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      onDismiss?.()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [nestedOpen, onDismiss])
 
   const { Icon, label, cls } = getMeta(result.status)
   const owner     = result.vehicle?.user
@@ -418,127 +363,150 @@ function ResultCard({ result, offices, onPassCreated, onOverride, onDeny, guardN
 
   return (
     <>
-      <div className={`em-card em-result ${cls}`}>
-        <div className={`em-result-banner ${cls}`} style={{ position: 'relative' }}>
-          {cooldownActive && (
-            <div style={{ position: 'absolute', top: 8, right: 8 }}>
-              <CircleCountdown key={cooldownKey} duration={dedupSeconds} onDismiss={onDismiss} />
+      <div
+        className="em-overlay"
+        onClick={(e) => e.target === e.currentTarget && onDismiss?.()}
+      >
+        <div className={`em-card em-result em-result-dialog ${cls}`} role="dialog" aria-modal="true"
+          aria-label={`${label} — ${result.plate_number || 'unknown plate'}`}>
+          <div className={`em-result-banner ${cls}`} style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="em-modal-close"
+              style={{ position: 'absolute', top: 8, right: 8 }}
+              onClick={() => onDismiss?.()}
+              title="Dismiss"
+              aria-label="Dismiss"
+            >
+              <X size={15} />
+            </button>
+            <div className="em-result-icon"><Icon size={20} /></div>
+            <div className="em-result-text">
+              <p className="em-result-status">{label}</p>
+              <p className="em-result-plate">{result.plate_number || '—'}</p>
             </div>
-          )}
-          <div className="em-result-icon"><Icon size={20} /></div>
-          <div className="em-result-text">
-            <p className="em-result-status">{label}</p>
-            <p className="em-result-plate">{result.plate_number || '—'}</p>
           </div>
-        </div>
-        <div className="em-result-body">
-          <p className="em-result-msg">{result.message}</p>
-          {result.constraint && (
-            <div className="em-constraint-info">
-              <AlertTriangle size={13} style={{ flexShrink: 0 }} />
-              <span>Rule: <strong>{result.constraint}</strong></span>
-            </div>
-          )}
-          {!isVisitor && owner && (
-            <div className="em-result-rows">
-              {owner.full_name && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Owner</span>
-                  <span className="em-result-row-value">{owner.full_name}</span>
-                </div>
-              )}
-              {owner.owner_type && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Type</span>
-                  <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
-                    {owner.owner_type.replace('_', ' ')}
-                  </span>
-                </div>
-              )}
-              {vehicle && (vehicle.vehicle_type || vehicle.color) && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Vehicle</span>
-                  <span className="em-result-row-value">
-                    {[vehicle.vehicle_type, vehicle.color].filter(Boolean).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' · ')}
-                  </span>
-                </div>
-              )}
-              {result.has_violations && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Violations</span>
-                  <span className="em-violation-pill"><AlertTriangle size={10} /> Unresolved violations</span>
-                </div>
-              )}
-              {result.already_inside && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Warning</span>
-                  <span className="em-violation-pill" style={{ background: '#FDF0BE', border: '1px solid #F7E08A', color: '#7A5C00' }}>
-                    <AlertTriangle size={10} /> Already inside — no exit logged
-                  </span>
-                </div>
-              )}
-              {result.organizer_event && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Organizer</span>
-                  <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
-                    <Star size={10} /> {result.organizer_event.name}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-          {isVisitor && (owner?.full_name || result.organizer_event) && (
-            <div className="em-result-rows">
-              {owner?.full_name && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Owner</span>
-                  <span className="em-result-row-value">{owner.full_name}</span>
-                </div>
-              )}
-              {result.organizer_event && (
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Organizer</span>
-                  <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
-                    <Star size={10} /> {result.organizer_event.name}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
-            {isVisitor && (
-              <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={openVisitor}>
-                <UserPlus size={14} /> Create Visitor Pass
-              </button>
+          <div className="em-result-body">
+            <p className="em-result-msg">{result.message}</p>
+            {result.constraint && (
+              <div className="em-constraint-info">
+                <AlertTriangle size={13} style={{ flexShrink: 0 }} />
+                <span>Rule: <strong>{result.constraint}</strong></span>
+              </div>
             )}
-            {isVisitor && (
-              <button className="em-btn" style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}
-                onClick={openDeny}>
-                <Ban size={14} /> Deny Entry
-              </button>
+            {!isVisitor && owner && (
+              <div className="em-result-rows">
+                {owner.full_name && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Owner</span>
+                    <span className="em-result-row-value">{owner.full_name}</span>
+                  </div>
+                )}
+                {owner.owner_type && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Type</span>
+                    <span className="em-result-row-value" style={{ textTransform: 'capitalize' }}>
+                      {owner.owner_type.replace('_', ' ')}
+                    </span>
+                  </div>
+                )}
+                {vehicle && (vehicle.vehicle_type || vehicle.color) && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Vehicle</span>
+                    <span className="em-result-row-value">
+                      {[vehicle.vehicle_type, vehicle.color].filter(Boolean).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {result.has_violations && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Violations</span>
+                    <span className="em-violation-pill"><AlertTriangle size={10} /> Unresolved violations</span>
+                  </div>
+                )}
+                {result.already_inside && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Warning</span>
+                    <span className="em-violation-pill" style={{ background: '#FDF0BE', border: '1px solid #F7E08A', color: '#7A5C00' }}>
+                      <AlertTriangle size={10} /> Already inside — no exit logged
+                    </span>
+                  </div>
+                )}
+                {result.organizer_event && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Organizer</span>
+                    <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
+                      <Star size={10} /> {result.organizer_event.name}
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
-            {isDeniable && (
-              <button className="em-btn" style={{ width: '100%', background: '#8A6B00', color: '#fff', border: 'none', justifyContent: 'center' }}
-                onClick={openOverride}>
-                <Shield size={14} /> Override Entry
-              </button>
+            {isVisitor && (owner?.full_name || result.organizer_event) && (
+              <div className="em-result-rows">
+                {owner?.full_name && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Owner</span>
+                    <span className="em-result-row-value">{owner.full_name}</span>
+                  </div>
+                )}
+                {result.organizer_event && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Organizer</span>
+                    <span className="em-violation-pill" style={{ background: '#EAF2F8', border: '1px solid #BDD4E5', color: '#084A85' }}>
+                      <Star size={10} /> {result.organizer_event.name}
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
+              {isVisitor && (
+                <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
+                  <UserPlus size={14} /> Create Visitor Pass
+                </button>
+              )}
+              {isVisitor && (
+                <button className="em-btn" style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}
+                  onClick={() => setShowDeny(true)}>
+                  <Ban size={14} /> Deny Entry
+                </button>
+              )}
+              {isDeniable && (
+                <button className="em-btn" style={{ width: '100%', background: '#8A6B00', color: '#fff', border: 'none', justifyContent: 'center' }}
+                  onClick={() => setShowOverride(true)}>
+                  <Shield size={14} /> Override Entry
+                </button>
+              )}
+              {/* The dialog is the acknowledgement — nothing clears it on a timer.
+                  Saying how many are behind it stops a queue of scans reading as
+                  one dialog that will not close. */}
+              <button
+                className="em-btn em-btn-primary"
+                style={{ width: '100%', justifyContent: 'center', marginTop: 2 }}
+                onClick={() => onDismiss?.()}
+                autoFocus
+              >
+                <CheckCircle size={14} />
+                {queued > 0 ? `Acknowledge — ${queued} more waiting` : 'Acknowledge'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {showVisitor && (
         <VisitorPassModal plate={result.plate_number} offices={offices}
-          onClose={closeVisitor} onCreated={onPassCreated} guardName={guardName} />
+          onClose={() => setShowVisitor(false)} onCreated={onPassCreated} guardName={guardName} />
       )}
       {showOverride && (
         <OverrideModal plate={result.plate_number}
-          onClose={closeOverride}
+          onClose={() => setShowOverride(false)}
           onOverridden={() => onOverride?.()} />
       )}
       {showDeny && (
         <DenyEntryModal plate={result.plate_number}
-          onClose={closeDeny}
+          onClose={() => setShowDeny(false)}
           onDenied={() => { onDeny?.(); onDismiss?.() }} />
       )}
     </>
@@ -553,8 +521,7 @@ export default function SecurityEntryManagement() {
 
   const [plateInput, setPlateInput]   = useState('')
   const [loading, setLoading]         = useState(false)
-  const [scanQueue, setScanQueue]     = useState([]) // [{id, result, cooldownKey}]
-  const [exitResult, setExitResult]   = useState(null)
+  const [scanQueue, setScanQueue]     = useState([]) // [{id, result}] — head is on screen
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
@@ -563,34 +530,19 @@ export default function SecurityEntryManagement() {
   const [openCampus, setOpenCampus]     = useState(false)
   const [showExitScanner, setShowExitScanner] = useState(false) // camera exit-QR scanner
   const [exitScanBusy, setExitScanBusy]       = useState(false)
-  const queueTimers = useRef(new Map()) // queue entry id → auto-dismiss timeout
-
-  const addToQueue = (r, secs = dedupSeconds) => {
+  // Results queue in arrival order and are shown one at a time — the head is
+  // the dialog on screen, acknowledging it brings up the next. Oldest first,
+  // because at a lane the car still at the barrier is the one scanned first.
+  //
+  // The cap is what stops a camera that keeps re-reading the same lorry from
+  // handing the guard an unbounded stack to click through; the plate/status
+  // dedup in the scan effect below keeps it from filling in the first place.
+  const addToQueue = (r) => {
     const id = Date.now() + Math.random()
-    setScanQueue(prev => [{ id, result: r, cooldownKey: id, paused: false, secs }, ...prev].slice(0, 4))
-    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), secs * 1000))
+    setScanQueue(prev => [...prev, { id, result: r }].slice(-4))
   }
 
-  const removeFromQueue = (id) => {
-    clearTimeout(queueTimers.current.get(id))
-    queueTimers.current.delete(id)
-    setScanQueue(prev => prev.filter(e => e.id !== id))
-  }
-
-  // Pause the auto-dismiss while a modal (visitor pass / override) is open so
-  // the card can't vanish mid-form; resume restarts the full countdown.
-  const pauseQueueEntry = (id) => {
-    clearTimeout(queueTimers.current.get(id))
-    queueTimers.current.delete(id)
-    setScanQueue(prev => prev.map(e => e.id === id ? { ...e, paused: true } : e))
-  }
-
-  const resumeQueueEntry = (id) => {
-    clearTimeout(queueTimers.current.get(id))
-    setScanQueue(prev => prev.map(e => e.id === id
-      ? { ...e, paused: false, cooldownKey: Date.now() } : e))
-    queueTimers.current.set(id, setTimeout(() => removeFromQueue(id), dedupSeconds * 1000))
-  }
+  const removeFromQueue = (id) => setScanQueue(prev => prev.filter(e => e.id !== id))
 
   const { cameras, results, addCamera, registerCanvas } = useCameraContext()
   const [rtspActiveCamId, setRtspActiveCam] = useState(null)
@@ -641,12 +593,6 @@ export default function SecurityEntryManagement() {
       const timeoutId = setTimeout(() => scanCooldown.current.delete(r.plate_number), dedupSeconds * 1000)
       scanCooldown.current.set(r.plate_number, { status: r.status, timeoutId })
       addToQueue(r)
-      const m = getMeta(r.status)
-      if (r.allowed) {
-        toast.success(`Entry approved: ${r.plate_number}`)
-      } else {
-        toast.error(`${m.label}: ${r.plate_number}`)
-      }
       // Previously-scanned re-checks are informational — card only, kept out of recent scans
       if (r.status !== 'already_inside') {
         setLogs(prev => [{
@@ -737,8 +683,7 @@ export default function SecurityEntryManagement() {
       const d = res.data
       const dur = d.duration_minutes
 
-      // Show the "Exited" result card + green banner, exactly like a plate exit
-      setExitResult(d)
+      // Raises the same "Exited" dialog a plate exit does
       addToQueue({
         plate_number: d.plate_number,
         status: 'exited',
@@ -755,10 +700,6 @@ export default function SecurityEntryManagement() {
         gate_id: user?.gate_assignment,
       }, ...prev].slice(0, 20))
 
-      toast.success(`Visitor exit recorded for ${d.plate_number}${dur != null ? ` — inside for ${dur} min` : ''}.`)
-      if (d.overstay_minutes > 0) {
-        toast.warning(`${d.plate_number} overstayed by ${d.overstay_minutes} min.`, { duration: 8000 })
-      }
       refreshAll()
       return true
     } catch (err) {
@@ -776,27 +717,17 @@ export default function SecurityEntryManagement() {
       return null
     }
     setLoading(true)
-    setExitResult(null)
     try {
       const res = await manualEntry({ plate_number: plate })
       // Cooldown/window responses report their true remaining time — the card's
       // ring counts down from that instead of restarting at the full duration
-      addToQueue(res.data, res.data.retry_after_seconds || dedupSeconds)
-      const m = getMeta(res.data.status)
-      if (res.data.status === 'exited') {
-        // The check action doubles as the exit action once a vehicle is inside
-        setExitResult(res.data)
-        const dur = res.data.duration_minutes
-        toast.success(dur != null ? `Exit recorded for ${plate} — inside for ${dur} min.` : `Exit recorded for ${plate}.`)
-        if (res.data.overstay_minutes > 0) {
-          toast.warning(`${plate} overstayed by ${res.data.overstay_minutes} min.`, { duration: 8000 })
-        }
-        refreshAll()
-      } else if (res.data.allowed) {
-        toast.success(`Entry approved: ${plate}`)
-      } else {
-        toast.error(`${m.label}: ${plate}`)
-      }
+      // The dialog raised here IS the acknowledgement — it carries the status,
+      // the plate, the server's message and the owner, so a second bare
+      // "Entry approved" alert on top of it would only be one more thing to
+      // click past. Failures that never reach a dialog still alert below.
+      addToQueue(res.data)
+      // The check action doubles as the exit action once a vehicle is inside
+      if (res.data.status === 'exited') refreshAll()
       // Previously-scanned re-checks are informational — card only, kept out of recent scans
       if (res.data.status !== 'already_inside') {
         setLogs(prev => [{
@@ -861,7 +792,6 @@ export default function SecurityEntryManagement() {
     // records the visitor's exit — visitor exits are QR-only, never by plate.
     if (raw.startsWith('SLC-VISITOR:')) {
       setLoading(true)
-      setExitResult(null)
       await recordVisitorExit(raw)
       setPlateInput('')
       setLoading(false)
@@ -1045,7 +975,6 @@ export default function SecurityEntryManagement() {
                     const raw = e.target.value
                     // Visitor slip QRs (SLC-VISITOR:{id}) must not be plate-formatted
                     setPlateInput(/^SLC/i.test(raw.trim()) ? raw.toUpperCase() : formatPlateNumber(raw))
-                    setExitResult(null)
                   }}
                   placeholder="E.G. AAA 000"
                   style={{
@@ -1077,54 +1006,12 @@ export default function SecurityEntryManagement() {
               <p style={{ margin: '6px 0 0', fontSize: 11, color: '#64839C', textAlign: 'center' }}>
                 Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
               </p>
-              {exitResult && (
-                <div style={{ marginTop: 8, padding: '7px 10px', background: '#EFF9F5', border: '1px solid #C4E8D9', borderRadius: 7, fontSize: 12, color: '#0A5C43' }}>
-                  <strong>{exitResult.plate_number}</strong> exited
-                  {exitResult.duration_minutes != null && <> · inside <strong>{exitResult.duration_minutes} min</strong></>}
-                  {exitResult.overstay_minutes > 0 && (
-                    <> · <span style={{ color: '#C62828', fontWeight: 700 }}>overstayed {exitResult.overstay_minutes} min</span></>
-                  )}
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Right panel */}
+          {/* Right panel — the lookup result is a dialog now (see ResultModal
+              at the foot of this component), so the column is the log. */}
           <div className="em-right">
-            {scanQueue.length === 0 ? (
-              <ResultCard
-                result={null}
-                offices={offices}
-                onPassCreated={refreshAll}
-                onOverride={refreshAll}
-                onDeny={refreshAll}
-                guardName={user?.full_name}
-                cooldownKey={0}
-                cooldownActive={false}
-                dedupSeconds={dedupSeconds}
-                onDismiss={() => {}}
-              />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {scanQueue.map(item => (
-                  <ResultCard
-                    key={item.id}
-                    result={item.result}
-                    offices={offices}
-                    onPassCreated={refreshAll}
-                    onOverride={refreshAll}
-                    onDeny={refreshAll}
-                    guardName={user?.full_name}
-                    cooldownKey={item.cooldownKey}
-                    cooldownActive={!item.paused}
-                    dedupSeconds={item.secs ?? dedupSeconds}
-                    onDismiss={() => removeFromQueue(item.id)}
-                    onPause={() => pauseQueueEntry(item.id)}
-                    onResume={() => resumeQueueEntry(item.id)}
-                  />
-                ))}
-              </div>
-            )}
 
             {/* Recent scans */}
             <div className="em-card em-audit-card">
@@ -1247,6 +1134,20 @@ export default function SecurityEntryManagement() {
         <div className="em-confiscated">
           <ConfiscatedAccounts />
         </div>
+
+        {scanQueue[0] && (
+          <ResultModal
+            key={scanQueue[0].id}
+            result={scanQueue[0].result}
+            offices={offices}
+            onPassCreated={refreshAll}
+            onOverride={refreshAll}
+            onDeny={refreshAll}
+            guardName={user?.full_name}
+            onDismiss={() => removeFromQueue(scanQueue[0].id)}
+            queued={scanQueue.length - 1}
+          />
+        )}
 
         {showExitScanner && (
           <QrScanModal

@@ -1,12 +1,19 @@
 """
 detection.py — YOLOv8 detection for Philippine vehicles.
 
-Two independent models:
+Two independent models, each owned by one part of the system:
 - Plate detector  (runs/plate_detector/weights/best.pt)  — license plates only,
-  trained specifically for Philippine plates.  Required for the pipeline.
+  trained specifically for Philippine plates.  This is the *entire* entry-gate
+  pipeline: detect_plates() loads nothing else.
 - Vehicle detector (runs/vehicle_detector/weights/best.pt) — a single unified
-  "vehicle" class (cars, motorcycles, buses, trucks… all one class).
-  Optional: until it is trained the pipeline runs in plate-only mode.
+  "vehicle" class (cars, motorcycles, buses, trucks… all one class).  Used only
+  by parking occupancy, through detect_vehicles().
+
+The gate decides on a plate; a vehicle box never contributed to that decision,
+it only drew a second rectangle on the overlay and cost an extra inference (a
+tiled one on high-res frames) on every gate frame.  Keeping the two models on
+separate entry points means the gate never loads the vehicle weights and
+parking never loads the plate weights.
 
 Uses the model's own class names at runtime so a retrained model with a
 different class list never silently misclassifies.  If weights are missing
@@ -75,8 +82,8 @@ _plate_load_attempted   = False
 _INFER_LOCK = threading.Lock()
 
 # ── ML loading status broadcast ────────────────────────────────────────────────
-# stage values: "idle" | "loading_plate_yolo" | "warming_up" | "loading_yolo"
-#               | "loading_ocr" | "ready"
+# stage values: "idle" | "loading_plate_yolo" | "warming_up" | "loading_ocr"
+#               | "ready"
 _ml_status: tuple[str, str] = ("idle", "")
 _ml_listeners: list = []
 _ml_listeners_lock = threading.Lock()
@@ -184,11 +191,9 @@ def _get_plate_yolo():
         _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=0.15, verbose=False)
         log.info("[DETECT] Plate-detector warm-up complete.")
 
-        _broadcast_status("loading_yolo", "Loading vehicle detector…")
-        try:
-            _get_vehicle_yolo()
-        except Exception as _ve:
-            log.warning("[DETECT] Vehicle-detector pre-load skipped: %s", _ve)
+        # No vehicle-detector pre-load here.  This loader runs for the gate, and
+        # the gate is plate-only; parking loads the vehicle weights lazily on its
+        # first frame instead of the gate holding them in VRAM unused.
 
         _broadcast_status("loading_ocr", "Loading OCR engine…")
         try:
@@ -263,12 +268,10 @@ def _get_vehicle_yolo():
 
 # Per-class confidence minimums
 _CONF_PLATE   = 0.15   # raised from 0.05 — was generating false positives on truck bodies
+# Only detect_vehicles() reads this, and its one caller (parking occupancy)
+# overrides it — see OCCUPANCY_CONF in vehicles/parking_camera.py for why a
+# dense overview needs a stricter floor than this default.
 _CONF_VEHICLE = 0.15   # raised from 0.10
-
-# Vehicle bounding-box detection activates automatically once the retrained
-# single-class weights exist at VEHICLE_WEIGHTS_PATH.  Set to False to force
-# plate-only mode even with weights present.
-DETECT_VEHICLES = True
 
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
@@ -436,27 +439,30 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
 def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                   try_rotation: bool = True) -> list[dict]:
     """
-    Detect license plates (and vehicles, when the vehicle model exists) in an image.
+    Detect license plates in an image — the entry-gate detector.
 
-    Uses two specialised models:
-    - plate_detector   (runs/plate_detector/weights/best.pt)   — license plates only,
-      trained specifically for Philippine plates.  Required.
-    - vehicle_detector (runs/vehicle_detector/weights/best.pt) — a single unified
-      "vehicle" class for tracking bboxes.  Optional until trained.
+    Plate weights only (runs/plate_detector/weights/best.pt), trained
+    specifically for Philippine plates.  The vehicle detector is deliberately
+    not consulted: the gate identifies a vehicle by its plate, so a car-body box
+    changed no decision here while costing a second full inference — plus a
+    tiled sweep on high-res frames — on every frame of every gate camera.
+    Vehicle boxes live in detect_vehicles(), which parking occupancy calls.
 
     Handles all conditions via:
     - Adaptive preprocessing  (dark/night/glare/dim)
     - Multi-rotation fallback (tilted cameras / angled plates) — skip with try_rotation=False
-    - GPU tiled pass          (high-res frames, GPU only)
+
+    `conf` is accepted for call-site compatibility and ignored: it only ever
+    reached the vehicle passes, and callers that raise it (reader.py passes
+    0.25) were never asking for a stricter *plate* threshold.  Plates are held
+    to _CONF_PLATE here and again in _parse_boxes.
     """
-    plate_model   = _get_plate_yolo()
-    vehicle_model = _get_vehicle_yolo() if DETECT_VEHICLES else None
-    if plate_model is None and vehicle_model is None:
+    plate_model = _get_plate_yolo()
+    if plate_model is None:
         return []
 
     h, w = img.shape[:2]
-    gpu   = is_gpu_available()
-    imgsz = 1280 if gpu else 960
+    gpu = is_gpu_available()
 
     # Preprocessing is pure NumPy/OpenCV — fully thread-safe, runs outside the lock.
     img_proc = _preprocess_adaptive(img)
@@ -468,43 +474,16 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
     # buffers.  GPU inference is serialised by CUDA anyway, so this lock adds no
     # throughput penalty in practice.
     with _INFER_LOCK:
-        # ── Pass 1: dedicated plate detector → license plates only ────────────
-        if plate_model is not None:
-            plate_res = plate_model.predict(
-                img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
-                half=gpu, imgsz=640,
-            )
-            plate_dets = _parse_boxes(plate_res, img, w, h, plate_model)
-            all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
+        # ── Plate pass ────────────────────────────────────────────────────────
+        plate_res = plate_model.predict(
+            img_proc, conf=_CONF_PLATE, verbose=False, max_det=100,
+            half=gpu, imgsz=640,
+        )
+        plate_dets = _parse_boxes(plate_res, img, w, h, plate_model)
+        all_dets.extend(d for d in plate_dets if d["class_name"] == "license_plate")
 
-        # ── Pass 2: vehicle detector → unified "vehicle" bboxes ───────────────
-        if vehicle_model is not None:
-            res = vehicle_model.predict(img_proc, conf=conf, verbose=False, max_det=200,
-                                        half=gpu, imgsz=imgsz)
-            all_dets.extend(
-                d for d in _parse_boxes(res, img, w, h, vehicle_model)
-                if d["class_name"] != "license_plate"
-            )
-
-        # ── GPU: tiled pass for high-res frames ───────────────────────────────
-        if vehicle_model is not None and gpu and (w > 1280 or h > 960):
-            tile, overlap = 640, 0.2
-            stride = int(tile * (1 - overlap))
-            for y0 in range(0, h, stride):
-                for x0 in range(0, w, stride):
-                    x2t, y2t = min(x0 + tile, w), min(y0 + tile, h)
-                    patch = img_proc[y0:y2t, x0:x2t]
-                    ph, pw = patch.shape[:2]
-                    if pw < 64 or ph < 64:
-                        continue
-                    tile_res = vehicle_model.predict(patch, conf=conf, verbose=False,
-                                                     max_det=50, half=True, imgsz=640)
-                    all_dets.extend(_parse_boxes(tile_res, img, w, h, vehicle_model,
-                                                 offset_x=x0, offset_y=y0))
-
-        # ── Rotation fallback (plates only) ───────────────────────────────────
-        if (try_rotation and plate_model is not None
-                and not any(d["class_name"] == "license_plate" for d in all_dets)):
+        # ── Rotation fallback ─────────────────────────────────────────────────
+        if try_rotation and not all_dets:
             center = (w // 2, h // 2)
             for angle in [20, -20, 40, -40, 60, -60]:
                 M = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -514,7 +493,8 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                 rot_res = plate_model.predict(_preprocess_adaptive(img_rot), conf=_CONF_PLATE,
                                               verbose=False, max_det=100,
                                               half=gpu, imgsz=640)
-                rot_dets = _parse_boxes(rot_res, img_rot, w, h, plate_model)
+                rot_dets = [d for d in _parse_boxes(rot_res, img_rot, w, h, plate_model)
+                            if d["class_name"] == "license_plate"]
 
                 if rot_dets:
                     M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
@@ -537,8 +517,7 @@ def detect_plates(img: np.ndarray, conf: float = _CONF_PLATE,
                         d["_xyxy"] = (nx1, ny1, nx2, ny2)
 
                     all_dets.extend(rot_dets)
-                    if any(d["class_name"] == "license_plate" for d in rot_dets):
-                        break
+                    break
 
     all_dets = _nms(all_dets)
 

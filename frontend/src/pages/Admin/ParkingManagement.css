@@ -786,6 +786,74 @@
   line-height: 1.6;
 }
 
+/* ── Bay occupant lookup ──────────────────────────────────────
+   Used by both parking screens through components/BayOccupant.jsx: the guard's
+   view opens it as its own dialog, Parking Management shows it above the
+   Mark Free action. */
+.pm-bay-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pm-bay-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.pm-bay-label { color: #5C7B92; flex-shrink: 0; }
+
+.pm-bay-value {
+  color: #0B2340;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
+}
+
+.pm-bay-value--cap { text-transform: capitalize; }
+
+.pm-bay-plate {
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+/* The lookup's own states — waiting, unreachable, or a plate nobody
+   registered. They sit inside the dialog that asked the question, so they are
+   not a page status strip. */
+.pm-bay-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4A6B85;
+}
+
+.pm-bay-note--warn { color: #8A6B00; }
+
+.pm-bay-retry { margin-left: auto; }
+
+.pm-bay-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #FDF0BE;
+  border: 1px solid #F7E08A;
+  color: #7A5C00;
+}
+
+.pm-bay-pill--ok  { background: #D6F0E6; border-color: #B6E3D2; color: #0F7A5A; }
+.pm-bay-pill--bad { background: #FADEDE; border-color: #F3C0C0; color: #C62828; }
+
 .pm-modal-footer {
   display: flex;
   align-items: center;

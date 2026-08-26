@@ -2,6 +2,10 @@ import api from './axios'
 
 export const getVehicles       = ()     => api.get('/vehicles/')
 export const getVehicleProfile = (id)   => api.get(`/vehicles/${id}/profile/`)
+// Same profile, addressed by plate or conduction number instead of row id, and
+// without recording anything — parking bays know a plate and nothing else.
+export const lookupVehicleByPlate = (plate) =>
+  api.get('/vehicles/by-plate/', { params: { plate } })
 
 export const getRuleConstraints = (params) => api.get('/vehicles/rules/', { params })
 export const createRuleConstraint = (data) => api.post('/vehicles/rules/', data)

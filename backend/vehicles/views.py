@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from rest_framework import status as drf_status
 from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event, ScheduledVisit
+from .models import _normalize_plate
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
 from . import parking_camera
 
@@ -42,14 +43,17 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
               f"Plate: {vehicle.plate_number} | By: {request.user.full_name}")
         return Response({'plate': vehicle.plate_number, 'is_authorized': vehicle.is_authorized})
 
-    @action(detail=True, methods=['get'])
-    def profile(self, request, pk=None):
-        """Return full vehicle profile: owner, latest registration, active and resolved violations."""
+    @staticmethod
+    def _profile_payload(vehicle):
+        """Owner, latest accepted registration and violations for one vehicle.
+
+        Shared by `profile` (by row id) and `by_plate` (by a typed or detected
+        plate) so the two can never drift into telling a guard different things
+        about the same car.
+        """
         from violations.serializers import ViolationSerializer
         from .models import VehicleRegistration
         from .serializers import VehicleRegistrationSerializer
-
-        vehicle = self.get_object()
 
         # Latest accepted registration — FK-linked first, then plate fallback for legacy records
         reg = (
@@ -63,12 +67,40 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         active_violations   = vehicle.violations.filter(is_resolved=False).order_by('-issued_at')
         resolved_violations = vehicle.violations.filter(is_resolved=True).order_by('-issued_at')
 
-        return Response({
+        return {
             'vehicle':             VehicleSerializer(vehicle).data,
             'registration':        VehicleRegistrationSerializer(reg).data if reg else None,
             'active_violations':   ViolationSerializer(active_violations, many=True).data,
             'resolved_violations': ViolationSerializer(resolved_violations, many=True).data,
-        })
+        }
+
+    @action(detail=True, methods=['get'])
+    def profile(self, request, pk=None):
+        """Return full vehicle profile: owner, latest registration, active and resolved violations."""
+        return Response(self._profile_payload(self.get_object()))
+
+    @action(detail=False, methods=['get'], url_path='by-plate')
+    def by_plate(self, request):
+        """Same profile, found by plate or conduction number instead of row id.
+
+        Parking needs this: a bay carries only the plate the detector read off
+        the car, and asking who that is must not record anything. The obvious
+        alternative — /scan/manual-entry/ — answers the same question but logs
+        a gate entry as a side effect, which would put a car through the
+        barrier because someone clicked a parking space.
+
+        A plate nobody registered is a normal answer here, not an error: the
+        lot is full of visitors and delivery vehicles. It comes back as
+        `found: false` so the caller can say so plainly.
+        """
+        identifier = request.query_params.get('plate', '')
+        vehicle = Vehicle.resolve(identifier)
+        if vehicle is None:
+            return Response({
+                'found': False,
+                'plate': _normalize_plate(identifier),
+            })
+        return Response({'found': True, **self._profile_payload(vehicle)})
 
 class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     """Campus schedule rules. Read by any signed-in role; changed only by the

@@ -102,9 +102,11 @@ DOUBLE_PARK_AFTER_SECONDS = 12.0
 
 # Detector confidence for occupancy, overriding detection._CONF_VEHICLE (0.15).
 #
-# 0.15 is tuned for the gate, where a missed vehicle is a missed entry and a
-# spurious box costs nothing. A parking overview is the opposite problem: the
-# frame is dense, so low-confidence boxes pile up and inflate the count. On the
+# 0.15 is the vehicle detector's own default, set back when the gate ran that
+# model too and a spurious box there cost nothing. The gate is plate-only now,
+# so parking is the only caller — but the default stays permissive and this
+# override is what parking is actually tuned on. A parking overview is the
+# dense case: low-confidence boxes pile up and inflate the count. On the
 # 27-image parking validation split the detector counted 114% of the vehicles
 # actually present at 0.15 — every extra box marks a free bay occupied.
 #
