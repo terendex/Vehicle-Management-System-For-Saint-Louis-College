@@ -143,6 +143,12 @@ DOUBLE_PARK_AFTER_SECONDS = 12.0
 # it on the validation table alone.
 OCCUPANCY_CONF = 0.25
 
+# How much bigger than this zone's largest bay a single detection may be before
+# it is treated as junk rather than as a vehicle. See _plausible(): the floor
+# above is low enough to see real vehicles in a dim scene, which is also low
+# enough to let through one box drawn around half the picture.
+MAX_VEHICLE_BAY_RATIO = 4.0
+
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a
 # straddle must persist seconds before it counts — so running the model ten
@@ -914,9 +920,45 @@ class ParkingCameraThread(threading.Thread):
             for t in self._tracker.tracks.values()
         ]
 
+    def _plausible(self, dets: list) -> list:
+        """Drop boxes too big to be one vehicle standing in one of these bays.
+
+        Lowering the confidence floor far enough to see a vehicle in a dim,
+        cluttered scene also lets through the detector's worst habit there:
+        one box thrown around most of the frame — a carport, a doorway, an
+        air-conditioner and a staircase called a "vehicle" at 0.27. It covers
+        every bay it touches, so it reads as a full lot, and it is the most
+        convincing kind of wrong because the bays it lights up are real.
+
+        The bays themselves give the scale, so this needs no per-camera tuning:
+        a vehicle parked in a bay is about the size of that bay, give or take
+        the angle. MAX_VEHICLE_BAY_RATIO is deliberately loose — a car across
+        two bays is still ~3x one of them, and double-parking detection depends
+        on those surviving.
+        """
+        biggest = max(
+            (abs(sp.x2 - sp.x1) * abs(sp.y2 - sp.y1)
+             for sp in (self._spaces or []) if sp.x1 is not None),
+            default=0.0,
+        )
+        if biggest <= 0:
+            return dets   # no drawn bays yet — nothing to judge scale against
+
+        cap = biggest * MAX_VEHICLE_BAY_RATIO
+        kept = []
+        for d in dets:
+            b = d.get('bbox') or {}
+            area = float(b.get('width', 0)) * float(b.get('height', 0))
+            if area > cap:
+                log.debug("[ParkingCam] zone %s: ignoring %.0f%%-of-frame box "
+                          "(%.1fx the largest bay)", self.zone_id, area * 100, area / biggest)
+                continue
+            kept.append(d)
+        return kept
+
     def _track(self, frame: np.ndarray, now: float) -> list:
         """Run the detector and fold the result into this zone's tracker."""
-        vehicles = self._tracker.update(self._detect(frame), now)
+        vehicles = self._tracker.update(self._plausible(self._detect(frame)), now)
         self._remember(vehicles, now)
         return vehicles
 
