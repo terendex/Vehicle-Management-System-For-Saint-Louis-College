@@ -114,7 +114,7 @@ export default function ParkingManagement({ embedded = false }) {
   // the editor refuses to draw in.
   // The detector's own boxes for the selected zone — the evidence behind the
   // bay colours, so "why is that bay still green" has an answer on screen.
-  const [detections, setDetections] = useState([])
+  const [detections, setDetections] = useState(null)
   const [imgDimsFor, setImgDimsFor] = useState({})
   const [lensSelFor, setLensSelFor] = useState({})
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
@@ -335,8 +335,8 @@ export default function ParkingManagement({ embedded = false }) {
     if (!selId || mode !== 'live') return undefined
     let alive = true
     const tick = () => zoneApi.getDetections()
-      .then(all => { if (alive) setDetections(all?.[selId]?.vehicles ?? []) })
-      .catch(() => { if (alive) setDetections([]) })
+      .then(all => { if (alive) setDetections(all?.[selId] ?? null) })
+      .catch(() => { if (alive) setDetections(null) })
     tick()
     const timer = setInterval(tick, 2000)
     return () => { alive = false; clearInterval(timer) }
@@ -1317,7 +1317,20 @@ export default function ParkingManagement({ embedded = false }) {
 
                 {/* What the detector sees. Dashed until the vehicle settles —
                     only a settled one is allowed to claim a bay. */}
-                {mode === 'live' && detections.map(v => (
+                {mode === 'live' && (detections?.ignored ?? []).map((v, i) => (
+                  <rect
+                    key={`ign-${i}`}
+                    x={v.bbox.x} y={v.bbox.y}
+                    width={v.bbox.width} height={v.bbox.height}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.45)"
+                    strokeWidth={0.0015}
+                    strokeDasharray="0.006 0.006"
+                    pointerEvents="none"
+                  />
+                ))}
+
+                {mode === 'live' && (detections?.vehicles ?? []).map(v => (
                   <rect
                     key={`veh-${v.id}`}
                     x={v.bbox.x} y={v.bbox.y}

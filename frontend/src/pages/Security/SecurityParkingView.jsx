@@ -163,7 +163,7 @@ export default function SecurityParkingView() {
   // What the detector last saw in the selected zone. Occupancy is a verdict;
   // these are the boxes behind it, so a bay staying green can be told apart
   // from a detector seeing nothing at all.
-  const [detections,    setDetections]    = useState([])
+  const [detections,    setDetections]    = useState(null)
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
   const [loading,       setLoading]       = useState(true)
@@ -208,8 +208,8 @@ export default function SecurityParkingView() {
     if (!selId) return undefined
     let alive = true
     const tick = () => zoneApi.getDetections()
-      .then(all => { if (alive) setDetections(all?.[selId]?.vehicles ?? []) })
-      .catch(() => { if (alive) setDetections([]) })
+      .then(all => { if (alive) setDetections(all?.[selId] ?? null) })
+      .catch(() => { if (alive) setDetections(null) })
     tick()
     const timer = setInterval(tick, 2000)
     return () => { alive = false; clearInterval(timer) }
@@ -685,7 +685,7 @@ export default function SecurityParkingView() {
                       Dashed while the vehicle is still moving — a car coming
                       down the aisle crosses bays it is not parked in, and only
                       a settled one is allowed to claim a bay. */}
-                  {detections.map(v => (
+                  {(detections?.vehicles ?? []).map(v => (
                     <rect
                       key={`veh-${v.id}`}
                       x={v.bbox.x} y={v.bbox.y}
@@ -694,6 +694,22 @@ export default function SecurityParkingView() {
                       stroke="#F6CE11"
                       strokeWidth={0.0025}
                       strokeDasharray={v.settled ? undefined : '0.012 0.008'}
+                    />
+                  ))}
+
+                  {/* Seen, but too big to be one vehicle in one of these bays,
+                      so it claims nothing. Drawn thin and grey rather than
+                      dropped: a detector seeing nothing and a detector seeing
+                      something the rules reject must not look the same. */}
+                  {(detections?.ignored ?? []).map((v, i) => (
+                    <rect
+                      key={`ign-${i}`}
+                      x={v.bbox.x} y={v.bbox.y}
+                      width={v.bbox.width} height={v.bbox.height}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth={0.0015}
+                      strokeDasharray="0.006 0.006"
                     />
                   ))}
                 </svg>

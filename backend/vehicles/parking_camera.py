@@ -575,6 +575,7 @@ class ParkingCameraThread(threading.Thread):
         self._hyst:   dict[int, int]    = {}
         # Newest detector output, for the screens — see _remember().
         self._last_vehicles: list[dict] = []
+        self._last_ignored:  list[dict] = []
         self._last_vehicles_at = 0.0
 
         # Vehicle identity and stillness across frames. Every dwell threshold in
@@ -920,7 +921,7 @@ class ParkingCameraThread(threading.Thread):
             for t in self._tracker.tracks.values()
         ]
 
-    def _plausible(self, dets: list) -> list:
+    def _split_plausible(self, dets: list) -> tuple:
         """Drop boxes too big to be one vehicle standing in one of these bays.
 
         Lowering the confidence floor far enough to see a vehicle in a dim,
@@ -942,27 +943,39 @@ class ParkingCameraThread(threading.Thread):
             default=0.0,
         )
         if biggest <= 0:
-            return dets   # no drawn bays yet — nothing to judge scale against
+            return dets, []   # no drawn bays yet — nothing to judge scale against
 
         cap = biggest * MAX_VEHICLE_BAY_RATIO
-        kept = []
+        kept, ignored = [], []
         for d in dets:
             b = d.get('bbox') or {}
             area = float(b.get('width', 0)) * float(b.get('height', 0))
             if area > cap:
-                log.debug("[ParkingCam] zone %s: ignoring %.0f%%-of-frame box "
-                          "(%.1fx the largest bay)", self.zone_id, area * 100, area / biggest)
+                ignored.append({
+                    'bbox':  dict(b),
+                    'score': round(float(d.get('score', 0)), 2),
+                    'ratio': round(area / biggest, 1),
+                })
                 continue
             kept.append(d)
-        return kept
+        return kept, ignored
 
     def _track(self, frame: np.ndarray, now: float) -> list:
-        """Run the detector and fold the result into this zone's tracker."""
-        vehicles = self._tracker.update(self._plausible(self._detect(frame)), now)
-        self._remember(vehicles, now)
+        """Run the detector and fold the result into this zone's tracker.
+
+        The size rule decides what may claim a bay — it does not decide what a
+        person is allowed to see. Hiding the boxes it rejects would leave the
+        screens showing nothing at all on a camera where the detector is in
+        fact seeing the cars every frame, which is a worse lie than the blob it
+        was written to stop.
+        """
+        dets = self._detect(frame)
+        keep, ignored = self._split_plausible(dets)
+        vehicles = self._tracker.update(keep, now)
+        self._remember(vehicles, ignored, now)
         return vehicles
 
-    def _remember(self, vehicles: list, now: float) -> None:
+    def _remember(self, vehicles: list, ignored: list, now: float) -> None:
         """Keep the newest boxes where the API can read them.
 
         Occupancy is a verdict — a bay is taken or it is not — and a verdict
@@ -985,6 +998,7 @@ class ParkingCameraThread(threading.Thread):
         ]
         with self._lock:
             self._last_vehicles = snapshot
+            self._last_ignored = list(ignored)
             self._last_vehicles_at = time.monotonic()
 
     def vehicles_seen(self) -> dict:
@@ -993,6 +1007,10 @@ class ParkingCameraThread(threading.Thread):
             at = self._last_vehicles_at
             return {
                 'vehicles': list(self._last_vehicles),
+                # Seen by the detector, but too large to be one vehicle in one
+                # of these bays. Shown so "it detects nothing" and "it detects
+                # something I refuse to count" cannot look the same on screen.
+                'ignored': list(self._last_ignored),
                 'age': round(time.monotonic() - at, 1) if at else None,
             }
 
