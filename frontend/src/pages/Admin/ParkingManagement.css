@@ -1653,6 +1653,11 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* The map keeps its ratio, so on a wide panel there is space either side of
+     it. Painting that band the picture's own dark instead of the card's white
+     makes it read as letterboxing rather than as a layout gap. The toolbar and
+     legend paint their own backgrounds over this. */
+  background: #0B2340;
 }
 
 .admin-content--fill .pm-toolbar,

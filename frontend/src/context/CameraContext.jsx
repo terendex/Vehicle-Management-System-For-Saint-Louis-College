@@ -568,6 +568,22 @@ export function CameraProvider({ children }) {
     const wanted  = new Map(desired.map(c => [c.rtsp_url.trim(), c]))
 
     if (connect) {
+      // A camera that moved between entry and parking has to move here too.
+      //
+      // addCamera dedups by URL and will not re-tag one it already knows, so a
+      // camera connected while it was an entry camera goes on wearing that tag
+      // for the life of the session: the parking page filters on
+      // `assignment === 'parking'` and never sees it, and — worse — it keeps
+      // running gate detection because detect is sticky. Dropping it first
+      // makes the line below rebuild it with this page's assignment and its
+      // detect flag.
+      //
+      // Nothing legitimate holds a camera under another assignment: every page
+      // that connects one passes the assignment off the same Camera row.
+      camerasRef.current
+        .filter(c => wanted.has(c.url) && c.assignment !== assignment)
+        .forEach(c => removeCamera(c.id))
+
       desired.forEach(c => addCamera(c.name, c.rtsp_url, assignment, { detect, gate: c.gate_id }))
     }
 

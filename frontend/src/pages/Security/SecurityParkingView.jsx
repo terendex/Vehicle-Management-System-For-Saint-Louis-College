@@ -277,6 +277,18 @@ export default function SecurityParkingView() {
     () => new Map(deviceCams.map(d => [d.id, d])),
     [deviceCams],
   )
+
+  // Camera → the zones drawn against it. A dual-lens unit watches two places,
+  // so this is a list, not a single zone.
+  const zonesByCamera = useMemo(() => {
+    const m = new Map()
+    for (const z of zones) {
+      if (z.camera == null) continue
+      if (!m.has(z.camera)) m.set(z.camera, [])
+      m.get(z.camera).push(z)
+    }
+    return m
+  }, [zones])
   const liveByUrl = useMemo(() => {
     const m = new Map()
     for (const c of allCameras) {
@@ -413,6 +425,45 @@ export default function SecurityParkingView() {
               <span className="pm-zone-empty">No parking zones configured yet.</span>
             )}
           </div>
+          {/* Pick by camera, not just by zone.
+              A guard thinks in cameras — "show me the one over the north lot" —
+              while the zones are what the bays belong to. Choosing a camera
+              jumps to the zone drawn against it; the zone tabs stay for the
+              dual-lens case, where one camera carries two zones. Only worth the
+              space once there is more than one camera to choose between. */}
+          {deviceCams.length > 1 && (
+            <>
+              <span className="pm-zone-bar-label" style={{ borderRight: 'none' }}>
+                <Camera size={13} /> Cameras
+              </span>
+              <div className="pm-zone-tabs">
+                {deviceCams.map(dev => {
+                  const zonesHere = zonesByCamera.get(dev.id) ?? []
+                  const live      = liveByUrl.get((dev.rtsp_url || '').trim())
+                  const active    = zonesHere.some(z => z.id === selId)
+                  return (
+                    <button
+                      key={`cam-${dev.id}`}
+                      className={`pm-zone-tab${active ? ' pm-zone-tab--active' : ''}`}
+                      onClick={() => zonesHere[0] && setSelId(zonesHere[0].id)}
+                      disabled={!zonesHere.length}
+                      title={zonesHere.length
+                        ? `${dev.name} — ${zonesHere.map(z => z.name).join(', ')}`
+                        : `${dev.name} — no zone drawn for it yet`}
+                    >
+                      <span
+                        className="pm-cam-strip-dot"
+                        style={{ background: live?.streamConnected ? '#1BA968'
+                                           : live?.wsActive ? '#E0B00C' : '#5C7B92' }}
+                      />
+                      {dev.name}
+                      {!zonesHere.length && <span className="pm-cam-strip-badge">No zone</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
           <div className="pm-zone-bar-actions">
             <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
