@@ -315,6 +315,13 @@ def status_dict() -> dict[int, bool]:
         return {zid: t.is_alive() for zid, t in list(_cameras.items())}
 
 
+def detections_dict() -> dict[int, dict]:
+    """{zone_id: {vehicles: [...], age: seconds}} for every running zone."""
+    with _lock:
+        threads = list(_cameras.items())
+    return {zid: t.vehicles_seen() for zid, t in threads if t.is_alive()}
+
+
 def all_threads() -> dict[int, "ParkingCameraThread"]:
     with _lock:
         return dict(_cameras)
@@ -560,6 +567,9 @@ class ParkingCameraThread(threading.Thread):
         # run(). None outside it — nothing may assume a frame source exists.
         self._reader: "_StreamReader | None" = None
         self._hyst:   dict[int, int]    = {}
+        # Newest detector output, for the screens — see _remember().
+        self._last_vehicles: list[dict] = []
+        self._last_vehicles_at = 0.0
 
         # Vehicle identity and stillness across frames. Every dwell threshold in
         # this file is measured off it — see vehicle_tracker for why the bay,
@@ -906,7 +916,43 @@ class ParkingCameraThread(threading.Thread):
 
     def _track(self, frame: np.ndarray, now: float) -> list:
         """Run the detector and fold the result into this zone's tracker."""
-        return self._tracker.update(self._detect(frame), now)
+        vehicles = self._tracker.update(self._detect(frame), now)
+        self._remember(vehicles, now)
+        return vehicles
+
+    def _remember(self, vehicles: list, now: float) -> None:
+        """Keep the newest boxes where the API can read them.
+
+        Occupancy is a verdict — a bay is taken or it is not — and a verdict
+        alone cannot be debugged: a bay staying free looks identical whether the
+        detector saw nothing, saw the car and scored it too low, or saw it in
+        the wrong place. These are the boxes behind the verdict, so the screens
+        can draw what the detector is actually looking at.
+
+        Snapshotted under the lock as plain dicts rather than handing out the
+        live track objects, which the worker thread keeps mutating.
+        """
+        snapshot = [
+            {
+                'id':      v.track_id,
+                'bbox':    dict(v.bbox),
+                'settled': v.has_settled(now, self._parked_after),
+                'still_for': round(v.stationary_for(now), 1),
+            }
+            for v in vehicles
+        ]
+        with self._lock:
+            self._last_vehicles = snapshot
+            self._last_vehicles_at = time.monotonic()
+
+    def vehicles_seen(self) -> dict:
+        """The newest boxes and how long ago they were measured."""
+        with self._lock:
+            at = self._last_vehicles_at
+            return {
+                'vehicles': list(self._last_vehicles),
+                'age': round(time.monotonic() - at, 1) if at else None,
+            }
 
     def _process_frame(self, frame: np.ndarray) -> None:
         spaces = self._load_spaces()

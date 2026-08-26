@@ -348,6 +348,16 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         """Returns {zone_id: is_running} for all zones."""
         return Response(parking_camera.status_dict())
 
+    @action(detail=False, methods=['get'], url_path='detections')
+    def detections(self, request):
+        """The boxes behind the occupancy verdict, per running zone.
+
+        GET and readable by guards as well as the CDSO: "why is that bay still
+        green" is a question asked standing in front of the lot, and the honest
+        answer is whatever the detector last saw.
+        """
+        return Response(parking_camera.detections_dict())
+
     @action(detail=False, methods=['get'], url_path='alerts')
     def alerts(self, request):
         """Live double-parking alerts across every running zone.

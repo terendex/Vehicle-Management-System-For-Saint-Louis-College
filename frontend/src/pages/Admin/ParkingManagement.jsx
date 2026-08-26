@@ -112,6 +112,9 @@ export default function ParkingManagement({ embedded = false }) {
   // stacked dual-lens frame from an ordinary one (the backend's own test).
   // lensSel: which view is being worked on; absent = not chosen yet, a state
   // the editor refuses to draw in.
+  // The detector's own boxes for the selected zone — the evidence behind the
+  // bay colours, so "why is that bay still green" has an answer on screen.
+  const [detections, setDetections] = useState([])
   const [imgDimsFor, setImgDimsFor] = useState({})
   const [lensSelFor, setLensSelFor] = useState({})
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
@@ -324,6 +327,20 @@ export default function ParkingManagement({ embedded = false }) {
   const onCameraChange = useCallback(() => { loadCameras(); loadZones() },
                                      [loadCameras, loadZones])
   useLiveUpdates(onCameraChange, 'camera')
+
+  // Polled at the rate the worker re-detects (DETECT_INTERVAL_SECONDS = 2).
+  // Live mode only: in the editor the picture is a still reference image and
+  // boxes measured against the live frame would sit over the wrong scene.
+  useEffect(() => {
+    if (!selId || mode !== 'live') return undefined
+    let alive = true
+    const tick = () => zoneApi.getDetections()
+      .then(all => { if (alive) setDetections(all?.[selId]?.vehicles ?? []) })
+      .catch(() => { if (alive) setDetections([]) })
+    tick()
+    const timer = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [selId, mode])
 
   // Poll detection (auto-camera) status for all zones
   const refreshCamStatus = useCallback(async () => {
@@ -1297,6 +1314,21 @@ export default function ParkingManagement({ embedded = false }) {
                     ))}
                   </g>
                 )}
+
+                {/* What the detector sees. Dashed until the vehicle settles —
+                    only a settled one is allowed to claim a bay. */}
+                {mode === 'live' && detections.map(v => (
+                  <rect
+                    key={`veh-${v.id}`}
+                    x={v.bbox.x} y={v.bbox.y}
+                    width={v.bbox.width} height={v.bbox.height}
+                    fill="rgba(246, 206, 17, 0.12)"
+                    stroke="#F6CE11"
+                    strokeWidth={0.0025}
+                    strokeDasharray={v.settled ? undefined : '0.012 0.008'}
+                    pointerEvents="none"
+                  />
+                ))}
               </svg>
 
               {/* Space label popover (edit mode) */}

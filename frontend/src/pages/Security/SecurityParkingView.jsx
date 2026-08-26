@@ -160,6 +160,10 @@ function IssueViolationModal({ onClose }) {
 export default function SecurityParkingView() {
   // Which occupied bay the guard asked about, if any.
   const [bayLookup,     setBayLookup]     = useState(null)
+  // What the detector last saw in the selected zone. Occupancy is a verdict;
+  // these are the boxes behind it, so a bay staying green can be told apart
+  // from a detector seeing nothing at all.
+  const [detections,    setDetections]    = useState([])
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
   const [loading,       setLoading]       = useState(true)
@@ -197,6 +201,19 @@ export default function SecurityParkingView() {
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
+  // Polled at the rate the worker re-detects (DETECT_INTERVAL_SECONDS = 2).
+  // Faster would redraw the same rectangles; slower would lag the picture.
+  useEffect(() => {
+    if (!selId) return undefined
+    let alive = true
+    const tick = () => zoneApi.getDetections()
+      .then(all => { if (alive) setDetections(all?.[selId]?.vehicles ?? []) })
+      .catch(() => { if (alive) setDetections([]) })
+    tick()
+    const timer = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [selId])
 
   // Camera changes reach this screen too. Pruning only: the effect below opens
   // just the selected zone's feed on purpose, so this must not connect every
@@ -663,6 +680,22 @@ export default function SecurityParkingView() {
                       </g>
                     )
                   })}
+
+                  {/* What the detector sees, drawn over the bays it is judging.
+                      Dashed while the vehicle is still moving — a car coming
+                      down the aisle crosses bays it is not parked in, and only
+                      a settled one is allowed to claim a bay. */}
+                  {detections.map(v => (
+                    <rect
+                      key={`veh-${v.id}`}
+                      x={v.bbox.x} y={v.bbox.y}
+                      width={v.bbox.width} height={v.bbox.height}
+                      fill="rgba(246, 206, 17, 0.12)"
+                      stroke="#F6CE11"
+                      strokeWidth={0.0025}
+                      strokeDasharray={v.settled ? undefined : '0.012 0.008'}
+                    />
+                  ))}
                 </svg>
               </div>
 
@@ -673,6 +706,9 @@ export default function SecurityParkingView() {
                 </span>
                 <span className="pm-legend-item">
                   <span className="pm-legend-dot pm-legend-dot--occ" />Occupied
+                </span>
+                <span className="pm-legend-item">
+                  <span className="pm-legend-dot pm-legend-dot--det" />Vehicle seen
                 </span>
                 {/* Two different rates, and saying so stops a guard reading a
                     stale bay colour as a dead feed. The picture streams; the
