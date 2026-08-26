@@ -352,6 +352,45 @@ def _ptz_cache_clear(cam_id):
         _PTZ_CACHE.pop(cam_id, None)
 
 
+# Which HTTP auth flavour a camera's web server actually accepts, keyed by
+# origin (http://ip[:port]). ONVIF firmware challenges with Digest — the units
+# here answer 401 to a Basic header forever, which is what made PTZ look like a
+# missing service. Credentials changing does not invalidate this: the flavour
+# stays right, the wrong password just 401s through to the other attempts.
+_AUTH_MODE_CACHE: dict = {}
+
+
+def _http_auths(username, password, base_url):
+    """Auth attempts, in order, for a camera's HTTP/ONVIF endpoints.
+
+    Returns (mode, auth) pairs. An open camera can reject a credential header
+    it never asked for, so a bare unauthenticated attempt always stays in the
+    list. The flavour that last worked for this host is tried first.
+    """
+    from requests.auth import HTTPDigestAuth
+    if not username:
+        return [('none', None)]
+    order = [('digest', HTTPDigestAuth(username, password)),
+             ('basic',  (username, password)),
+             ('none',   None)]
+    with _PTZ_LOCK:
+        won = _AUTH_MODE_CACHE.get(base_url)
+    if won:
+        order.sort(key=lambda pair: pair[0] != won)
+    return order
+
+
+def _auth_mode_worked(base_url, mode):
+    with _PTZ_LOCK:
+        _AUTH_MODE_CACHE[base_url] = mode
+
+
+def _origin(url):
+    from urllib.parse import urlsplit
+    parts = urlsplit(url)
+    return f'{parts.scheme}://{parts.netloc}'
+
+
 def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
     """POST an ONVIF SOAP envelope. Returns (response, content_type_that_worked).
 
@@ -382,13 +421,14 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
         f'<s:Body>{body_xml}</s:Body></s:Envelope>'
     )
     data = envelope.encode('utf-8')
-    # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras
-    # Same reasoning as _try_cgi_ptz: try the credentials we have, then no
-    # credentials at all, so a camera without auth still answers.
-    auths = ([(username, password)] if username else []) + [None]
+    # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras.
+    # The WS-Security header above is only half the story: firmware that wants
+    # HTTP Digest never reads it, so every transport auth flavour is tried too.
+    origin = _origin(endpoint)
+    auths  = _http_auths(username, password, origin)
     for ct in (content_types or ['application/soap+xml; charset=utf-8',
                                  'text/xml; charset=utf-8']):
-        for auth in auths:
+        for mode, auth in auths:
             try:
                 r = _rq.post(endpoint, data=data,
                              headers={'Content-Type': ct},
@@ -396,6 +436,7 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
                 if r.status_code in (401, 403):
                     continue
                 if r.status_code < 500:
+                    _auth_mode_worked(origin, mode)
                     return r, ct
             except Exception:
                 break
@@ -521,19 +562,15 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None
     ]
     candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None
                   else list(enumerate(forms)))
-    # Auth attempts, in order. An open camera can reject a Basic header it did
-    # not ask for, so a plain unauthenticated request is tried as well —
-    # without it, removing the stored password broke PTZ on exactly the
-    # cameras that never needed one.
-    auths = [(username, password)] if username else []
-    auths.append(None)
+    auths = _http_auths(username, password, base_url)
 
     errors = []
     for idx, url in candidates:
-        for auth in auths:
+        for mode, auth in auths:
             try:
                 r = _rq.get(url, auth=auth, timeout=3)
                 if r.status_code < 400:
+                    _auth_mode_worked(base_url, mode)
                     return idx
                 if r.status_code in (401, 403):
                     continue          # try the next credential form
