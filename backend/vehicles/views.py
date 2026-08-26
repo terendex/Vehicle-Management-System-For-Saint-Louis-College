@@ -517,28 +517,34 @@ def _ptz_home(base_url, username, password, token, **route):
 def camera_http_credentials(cam):
     """(username, password) to use for this camera's HTTP/ONVIF calls.
 
-    Order: the camera's own password if it has one, then any credentials
-    embedded in its rtsp_url (a hand-written URL may carry a different account),
-    then the device ID with an empty password for genuinely open units.
+    The **username** comes from the rtsp_url when it carries one. On the units
+    here `device_id` is a hardware serial, not a login — the real ONVIF account
+    is `admin`, and it only ever appears in the URL. Sending the serial gets a
+    SOAP fault on every request, which the PTZ view then reports as
+    "No PTZ service path responded successfully".
+
+    The **password** prefers the stored field, because that is the one admins
+    edit; the URL's password is the fallback for a camera added by hand. The
+    device ID stays the last-resort username for units with no URL credentials.
     """
     from urllib.parse import unquote
 
-    stored = (getattr(cam, 'password', '') or '').strip()
-    if stored:
-        return (getattr(cam, 'device_id', '') or ''), stored
-
-    url = (getattr(cam, 'rtsp_url', '') or '')
+    stored  = (getattr(cam, 'password', '') or '').strip()
+    url     = (getattr(cam, 'rtsp_url', '') or '')
+    url_user = url_pw = ''
     if '://' in url and '@' in url:
-        rest = url.split('://', 1)[1]
+        rest  = url.split('://', 1)[1]
         creds = rest.rsplit('@', 1)[0]          # rsplit: passwords may contain '@'
         if ':' in creds:
-            user, pw = creds.split(':', 1)
+            url_user, url_pw = creds.split(':', 1)
         else:
-            user, pw = creds, ''
-        if user:
-            return unquote(user), unquote(pw)
+            url_user, url_pw = creds, ''
+        url_user, url_pw = unquote(url_user), unquote(url_pw)
 
-    return (getattr(cam, 'device_id', '') or ''), ''
+    if url_user:
+        return url_user, (stored or url_pw)
+
+    return (getattr(cam, 'device_id', '') or ''), stored
 
 
 def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None):

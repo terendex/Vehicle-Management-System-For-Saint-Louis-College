@@ -17,9 +17,9 @@ from vehicles.views import (_AUTH_MODE_CACHE, camera_http_credentials,
                             _try_cgi_ptz)
 
 
-def cam(rtsp_url='', device_id='dev123'):
+def cam(rtsp_url='', device_id='dev123', password=''):
     return Camera(name='Cam X', ip='10.0.0.5', device_id=device_id,
-                  rtsp_url=rtsp_url, assignment='entry')
+                  rtsp_url=rtsp_url, password=password, assignment='entry')
 
 
 class CredentialResolutionTests(TestCase):
@@ -43,6 +43,27 @@ class CredentialResolutionTests(TestCase):
     def test_credential_less_url_falls_back_to_the_device_id(self):
         u, p = camera_http_credentials(cam('rtsp://10.0.0.5/stream1', device_id='dev123'))
         self.assertEqual((u, p), ('dev123', ''))
+
+    def test_the_url_username_beats_the_device_id_when_a_password_is_stored(self):
+        """The regression: device_id is a hardware serial, not an ONVIF login.
+        Pairing it with the stored password faulted every SOAP call, which the
+        PTZ view reported as 'No PTZ service path responded successfully'."""
+        u, p = camera_http_credentials(cam(
+            'rtsp://admin:L2830EAA@10.0.0.5/cam/realmonitor?channel=1&subtype=0',
+            device_id='16D2FCDPSF444F0', password='L2830EAA'))
+        self.assertEqual((u, p), ('admin', 'L2830EAA'))
+
+    def test_the_stored_password_wins_over_a_stale_one_in_the_url(self):
+        """Admins edit the password field, not the URL, so it is the fresher
+        of the two — but it does not drag the device_id along as username."""
+        u, p = camera_http_credentials(cam('rtsp://admin:old@10.0.0.5/stream1',
+                                           device_id='serial9', password='new'))
+        self.assertEqual((u, p), ('admin', 'new'))
+
+    def test_a_stored_password_with_no_url_user_still_uses_the_device_id(self):
+        u, p = camera_http_credentials(cam('rtsp://10.0.0.5/stream1',
+                                           device_id='dev123', password='pw'))
+        self.assertEqual((u, p), ('dev123', 'pw'))
 
     def test_no_url_at_all_falls_back_to_the_device_id(self):
         u, p = camera_http_credentials(cam('', device_id='dev123'))
