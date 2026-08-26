@@ -213,7 +213,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
                   'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
                   'category_capacity', 'category_occupied', 'category_available',
                   'category_is_full', 'category_fill_pct', 'occupancy_source',
-                  'occupancy_method', 'baseline_image_url', 'baseline_captured_at',
+                  'occupancy_method', 'detection_enabled',
+                  'baseline_image_url', 'baseline_captured_at',
                   'has_baseline', 'created_at', 'spaces']
         read_only_fields = ['baseline_captured_at']
 

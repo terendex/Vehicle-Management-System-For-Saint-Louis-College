@@ -622,10 +622,25 @@ export default function SecurityParkingView() {
                         style={known ? { cursor: 'pointer' } : undefined}
                       >
                         {known && <title>{`${s.occupied_by} — click for details`}</title>}
-                        <rect
-                          x={x} y={y} width={w} height={h}
-                          fill={fill} stroke={color} strokeWidth={0.003} rx={0.004}
-                        />
+                        {/* Draw the bay the shape it was drawn in.
+                            The pen tool stores freeform vertices in `points`;
+                            x1..y2 is only the bounding box kept alongside them
+                            for quick overlap maths. Rendering the box here made
+                            a bay the admin had angled along the kerb come out
+                            as an upright rectangle covering ground the bay does
+                            not include — the two screens disagreeing about
+                            where the same bay is. */}
+                        {s.points && s.points.length >= 3 ? (
+                          <polygon
+                            points={s.points.map(pt => pt.join(',')).join(' ')}
+                            fill={fill} stroke={color} strokeWidth={0.003}
+                          />
+                        ) : (
+                          <rect
+                            x={x} y={y} width={w} height={h}
+                            fill={fill} stroke={color} strokeWidth={0.003} rx={0.004}
+                          />
+                        )}
                         <text
                           x={x + w / 2}
                           y={y + h / 2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}

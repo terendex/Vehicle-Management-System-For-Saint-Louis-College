@@ -553,6 +553,19 @@ class ParkingZone(models.Model):
         related_name='parking_zones',
         help_text="Physical camera (registered in Device Management) that watches this zone.",
     )
+    # Whether this zone's detector should be running.
+    #
+    # Detection used to exist only as a button someone pressed, and it stayed
+    # off until they did — so a zone drawn on a Friday watched nothing all
+    # weekend, and every restart quietly switched every zone off again while the
+    # screens went on showing bays free. It defaults on, and the supervisor in
+    # detection_supervisor.py keeps a worker running for every zone that has it.
+    # The Stop Detection button clears it, which is what makes a deliberate
+    # pause survive both the supervisor and a restart.
+    detection_enabled = models.BooleanField(
+        default=True,
+        help_text="Run this zone's camera detector automatically. Turn off to pause it.",
+    )
     capacity_override = models.PositiveIntegerField(
         null=True, blank=True,
         help_text="Event-mode capacity override. If set, overrides the mapped space count as the effective capacity.",

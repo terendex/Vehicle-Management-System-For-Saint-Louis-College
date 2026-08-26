@@ -324,12 +324,22 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         zone = self.get_object()
         if not zone.camera or not zone.camera.rtsp_url:
             return Response({'error': 'No camera assigned to this zone. Assign one from Device Management.'}, status=400)
+        # Records the intent as well as acting on it: detection is automatic
+        # now (detection_supervisor), so this flag is what a restart reads back.
+        if not zone.detection_enabled:
+            zone.detection_enabled = True
+            zone.save(update_fields=['detection_enabled'])
         parking_camera.start(zone.id, zone.camera.rtsp_url)
         return Response({'status': 'started'})
 
     @action(detail=True, methods=['post'], url_path='stop-camera')
     def stop_camera(self, request, pk=None):
         zone = self.get_object()
+        # Must persist, or the supervisor would restart the detector on its next
+        # pass and the button would look broken.
+        if zone.detection_enabled:
+            zone.detection_enabled = False
+            zone.save(update_fields=['detection_enabled'])
         parking_camera.stop(zone.id)
         return Response({'status': 'stopped'})
 
