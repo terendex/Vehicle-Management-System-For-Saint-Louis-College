@@ -20,6 +20,7 @@ from django.core import serializers
 from django.core.management import call_command
 from django.core.management.color import no_style
 from django.db import DEFAULT_DB_ALIAS, connections
+from django.db.models.constants import OnConflict
 from django.utils import timezone as tz
 
 # App labels whose data is captured in a backup. Excludes contenttypes,
@@ -208,18 +209,59 @@ def latest_auto_backup() -> dict | None:
 # the same rows — this is still a merge by primary key, nothing is deleted —
 # but the several minutes collapse to a couple of seconds.
 
-# PostgreSQL binds at most 65535 parameters per statement, and Django sends one
-# parameter per column per row in a batch. Sizing the batch from the column
-# count keeps the widest table (access logs) well under that ceiling instead of
-# failing on it.
 _MAX_BIND_PARAMS = 30000
 
 
 def _upsert_fields(model):
-    """(concrete field names to write, updatable ones) for a bulk upsert."""
+    """(columns to write, columns to overwrite on conflict) for a bulk upsert.
+
+    Field objects rather than names because they go straight to the insert
+    compiler, which is what `bulk_create` resolves them to anyway.
+    """
     fields = [f for f in model._meta.concrete_fields if not getattr(f, 'generated', False)]
-    updatable = [f.name for f in fields if not f.primary_key]
+    updatable = [f for f in fields if not f.primary_key]
     return fields, updatable
+
+
+def _upsert(model, objs, using):
+    """Write `objs` with one INSERT ... ON CONFLICT (pk) DO UPDATE per batch.
+
+    Goes to the manager's `_insert` rather than `bulk_create` for one reason:
+    `raw`. A raw insert is the mode `loaddata` uses, and the insert compiler
+    checks it to decide whether to call `pre_save()` on each field — which is
+    what stamps `auto_now` and `auto_now_add` columns with the current time.
+
+    A restore must not do that. The timestamps in the file are the data: the
+    moment a vehicle was logged through the gate, when an account was created,
+    when a violation was issued. Letting `pre_save` run would rewrite every one
+    of them to the moment of the restore, quietly flattening the whole history
+    into a single instant. `bulk_create` gives no way to turn that off, so this
+    calls the same private entry point it does and passes `raw=True`.
+    """
+    fields, updatable = _upsert_fields(model)
+    manager = model._base_manager.using(using)
+
+    if updatable:
+        on_conflict = OnConflict.UPDATE
+        update_fields, unique_fields = updatable, [model._meta.pk]
+    else:
+        # A table that is nothing but its primary key has no column to write on
+        # a conflict; the row already existing is the whole result, so skipping
+        # it is correct rather than an error.
+        on_conflict = OnConflict.IGNORE
+        update_fields = unique_fields = None
+
+    # PostgreSQL binds at most 65535 parameters per statement and Django sends
+    # one per column per row, so the batch is sized from the column count. That
+    # keeps the widest table (access logs) under the ceiling instead of failing
+    # on it.
+    batch = max(1, _MAX_BIND_PARAMS // max(1, len(fields)))
+    for start in range(0, len(objs), batch):
+        manager._insert(
+            objs[start:start + batch], fields=fields, raw=True,
+            on_conflict=on_conflict,
+            update_fields=update_fields, unique_fields=unique_fields,
+        )
 
 
 class LoadResult(NamedTuple):
@@ -276,21 +318,7 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
 
     with connection.constraint_checks_disabled():
         for model, rows in by_model.items():
-            fields, updatable = _upsert_fields(model)
-            batch = max(1, _MAX_BIND_PARAMS // max(1, len(fields)))
-            objs = list(rows.values())
-            if updatable:
-                model._base_manager.using(using).bulk_create(
-                    objs, batch_size=batch,
-                    update_conflicts=True, update_fields=updatable, unique_fields=['pk'],
-                )
-            else:
-                # A table that is nothing but its primary key has no column to
-                # write on a conflict; the row already existing is the whole
-                # result, so skipping it is correct rather than an error.
-                model._base_manager.using(using).bulk_create(
-                    objs, batch_size=batch, ignore_conflicts=True,
-                )
+            _upsert(model, list(rows.values()), using)
 
         # Many-to-many rows live in their own tables and are untouched by the
         # upserts above. Nothing in a backup currently carries any — the only

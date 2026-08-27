@@ -4,6 +4,7 @@ Every test redirects BASE_DIR at a temp directory, so none of this touches the
 real `backend/backups` folder — the one holding the pre-restore snapshots that
 are the last resort after a bad restore.
 """
+import datetime
 import json
 import os
 import shutil
@@ -335,9 +336,16 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
                                 {'filename': 'auto-backup-20260101-000000.json'})
 
     @staticmethod
-    def gate_row(pk, gate_id, label):
+    def gate_row(pk, gate_id, label, created_at=None):
+        """One row shaped the way `dumpdata` writes it — every concrete column
+        present, `created_at` included. That matters: the load inserts raw, so
+        an `auto_now_add` column is no longer quietly filled in with the time of
+        the restore, and a fixture that omits it fails on the NOT NULL. That is
+        the same thing `loaddata` did, and a real backup always carries it."""
+        stamp = created_at or tz.make_aware(datetime.datetime(2026, 1, 1, 8, 0, 0))
         return {'model': 'scanning.gate', 'pk': pk,
-                'fields': {'gate_id': gate_id, 'label': label, 'is_active': True}}
+                'fields': {'gate_id': gate_id, 'label': label, 'is_active': True,
+                           'created_at': stamp.isoformat()}}
 
     def test_a_restore_overwrites_matching_rows_and_inserts_the_rest(self):
         """The merge semantics the endpoint promises: update by primary key,
@@ -399,6 +407,18 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
 
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(Gate.objects.get(pk=4244).label, 'LAST')
+
+    def test_a_restore_keeps_the_timestamps_that_are_in_the_file(self):
+        """The timestamps are the data — when a vehicle passed the gate, when an
+        account was made. `auto_now_add` would otherwise re-stamp every restored
+        row with the moment of the restore and flatten the whole history into
+        one instant, so the load has to insert raw the way `loaddata` does."""
+        old = tz.make_aware(datetime.datetime(2019, 3, 14, 9, 26, 53))
+
+        resp = self.restore([self.gate_row(4246, 'gate-old', 'FROM 2019', created_at=old)])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Gate.objects.get(pk=4246).created_at, old)
 
     def test_a_restore_does_not_mint_notifications_for_restored_rows(self):
         """Bulk writes fire no per-row save signals, which is the point. Under
