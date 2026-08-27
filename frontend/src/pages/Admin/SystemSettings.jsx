@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw, UserCog, SquareParking } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
@@ -100,11 +100,34 @@ function expiryPeriodText(f) {
   return parts.join(' and ')
 }
 
+// The page is one long form split into four categories, one shown at a time.
+// Grouping is by what an admin is trying to do, not by which model the field
+// lives on: the two account-lifecycle numbers sit together, the two gate-side
+// ones together, and retention sits with backups because both are about how
+// long data survives.
+const TABS = [
+  { id: 'accounts', label: 'Accounts & Fees',   icon: UserCog },
+  { id: 'gates',    label: 'Gates & Scanning',  icon: DoorOpen },
+  { id: 'parking',  label: 'Parking',           icon: SquareParking },
+  { id: 'data',     label: 'Data & Backup',     icon: Database },
+]
+
+// Which tab each editable field belongs to, so the dot on a tab and the jump on
+// a failed save both point at the same place the control actually is.
+const FIELD_TAB = {
+  account_expiry_months: 'accounts', account_expiry_days: 'accounts',
+  vehicle_pass_fee: 'accounts', vehicle_pass_fee_employee: 'accounts',
+  scan_dedup_seconds: 'gates',
+  parked_after_seconds: 'parking', double_park_after_seconds: 'parking',
+  retention_years: 'data', auto_backup_frequency: 'data', auto_backup_keep: 'data',
+}
+
 export default function SystemSettings() {
   const [form, setForm]       = useState(FORM_DEFAULTS)
   const [saved, setSaved]     = useState(FORM_DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
+  const [tab, setTab]         = useState('accounts')
   const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
   const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
 
@@ -426,6 +449,11 @@ export default function SystemSettings() {
     || form.auto_backup_frequency !== saved.auto_backup_frequency
     || form.auto_backup_keep !== saved.auto_backup_keep
     || isDwellDirty
+  // Tabs carrying an unsaved edit, so the save bar's "unsaved changes" is
+  // findable from any tab instead of sending the admin hunting through four.
+  const dirtyTabs = new Set(
+    Object.keys(FIELD_TAB).filter((k) => form[k] !== saved[k]).map((k) => FIELD_TAB[k])
+  )
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
   const expiryChanged = form.account_expiry_months !== saved.account_expiry_months
     || form.account_expiry_days !== saved.account_expiry_days
@@ -481,7 +509,7 @@ export default function SystemSettings() {
         <div className="ss-header">
           <div>
             <h1 className="ss-title">System Settings</h1>
-            <p className="ss-subtitle">Configure system-wide policies for data retention and scan behaviour.</p>
+            <p className="ss-subtitle">System-wide policies, grouped by area. Pick a category below.</p>
           </div>
           <span className="ss-badge">
             <Settings2 size={13} />
@@ -489,7 +517,34 @@ export default function SystemSettings() {
           </span>
         </div>
 
-        <div className="ss-panel">
+        {/* ── Category tabs ──────────────────────────────────────────── */}
+        <div className="ss-tabs" role="tablist" aria-label="Settings categories">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`ss-tab-${id}`}
+              aria-selected={tab === id}
+              aria-controls="ss-tabpanel"
+              className={`ss-tab ${tab === id ? 'ss-tab--active' : ''}`}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+              {dirtyTabs.has(id) && (
+                <span className="ss-tab-dot" aria-label="Unsaved changes" title="Unsaved changes" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div
+          className="ss-panel"
+          id="ss-tabpanel"
+          role="tabpanel"
+          aria-labelledby={`ss-tab-${tab}`}
+        >
 
           {loading ? (
             <div className="ss-section">
@@ -498,115 +553,8 @@ export default function SystemSettings() {
                 <span>Loading settings…</span>
               </div>
             </div>
-          ) : (
+          ) : tab === 'accounts' ? (
             <>
-              {/* ── Data Retention ──────────────────────────────────────── */}
-              <section className="ss-section">
-                <div className="ss-section-head">
-                  <div className="ss-section-icon ss-icon-red">
-                    <Trash2 size={15} />
-                  </div>
-                  <div>
-                    <h2 className="ss-section-title">Data Retention</h2>
-                    <p className="ss-section-desc">
-                      Gate access logs, violation records, and archived accounts older than the
-                      threshold are deleted automatically each day. Only <em>archived</em> accounts
-                      are deleted — an account has to expire and be archived first, which is set
-                      under Account Expiration. Active accounts are never touched.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="ss-rows">
-                  <div className="ss-row">
-                    <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="retention_years">Retention period</label>
-                      <span className="ss-row-hint">Allowed range: 1 – 10 years.</span>
-                    </div>
-                    <div className="ss-row-control">
-                      <input
-                        id="retention_years"
-                        name="retention_years"
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={form.retention_years}
-                        onChange={handleChange}
-                        className="ss-input"
-                      />
-                      <span className="ss-unit">years</span>
-                    </div>
-                  </div>
-
-                  <div className="ss-note">
-                    <ShieldAlert size={13} />
-                    <span>
-                      Access logs, violations, and accounts archived more than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> ago
-                      will be permanently deleted and cannot be recovered. Audit log history is kept.
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              {/* ── Vehicle Pass Fee ────────────────────────────────────── */}
-              <section className="ss-section">
-                <div className="ss-section-head">
-                  <div className="ss-section-icon ss-icon-blue">
-                    <Receipt size={15} />
-                  </div>
-                  <div>
-                    <h2 className="ss-section-title">Vehicle Pass Fee</h2>
-                    <p className="ss-section-desc">
-                      Amount registrants are asked to pay at the Accounting Office. Shown on the
-                      public registration form and in the Vehicle Pass Terms. Registration only —
-                      violation fees are set separately.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="ss-rows">
-                  <div className="ss-row">
-                    <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="vehicle_pass_fee">Student / Fetcher fee</label>
-                      <span className="ss-row-hint">Charged to student and fetcher registrations.</span>
-                    </div>
-                    <div className="ss-row-control">
-                      <span className="ss-unit">₱</span>
-                      <input
-                        id="vehicle_pass_fee"
-                        name="vehicle_pass_fee"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={form.vehicle_pass_fee}
-                        onChange={handleChange}
-                        className="ss-input"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="ss-row">
-                    <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="vehicle_pass_fee_employee">Employee fee</label>
-                      <span className="ss-row-hint">Charged to faculty and staff registrations.</span>
-                    </div>
-                    <div className="ss-row-control">
-                      <span className="ss-unit">₱</span>
-                      <input
-                        id="vehicle_pass_fee_employee"
-                        name="vehicle_pass_fee_employee"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={form.vehicle_pass_fee_employee}
-                        onChange={handleChange}
-                        className="ss-input"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
               {/* ── Account Expiration ──────────────────────────────────── */}
               <section className="ss-section">
                 <div className="ss-section-head">
@@ -674,6 +622,158 @@ export default function SystemSettings() {
                 </div>
               </section>
 
+              {/* ── Vehicle Pass Fee ────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <Receipt size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Vehicle Pass Fee</h2>
+                    <p className="ss-section-desc">
+                      Amount registrants are asked to pay at the Accounting Office. Shown on the
+                      public registration form and in the Vehicle Pass Terms. Registration only —
+                      violation fees are set separately.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="vehicle_pass_fee">Student / Fetcher fee</label>
+                      <span className="ss-row-hint">Charged to student and fetcher registrations.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <span className="ss-unit">₱</span>
+                      <input
+                        id="vehicle_pass_fee"
+                        name="vehicle_pass_fee"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={form.vehicle_pass_fee}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="vehicle_pass_fee_employee">Employee fee</label>
+                      <span className="ss-row-hint">Charged to faculty and staff registrations.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <span className="ss-unit">₱</span>
+                      <input
+                        id="vehicle_pass_fee_employee"
+                        name="vehicle_pass_fee_employee"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={form.vehicle_pass_fee_employee}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </>
+          ) : tab === 'gates' ? (
+            <>
+              {/* ── Campus Gates ──────────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <DoorOpen size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Campus Gates</h2>
+                    <p className="ss-section-desc">
+                      Add new gates as the school expands. Active gates immediately appear on the guard
+                      gate-login page and can be assigned entry cameras in Device Management.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row ss-row--stacked">
+                    <form className="ss-inline-form" onSubmit={handleAddGate} noValidate>
+                      <div className="ss-form-grid">
+                        <div className="ss-field" style={{ flex: '0 0 140px' }}>
+                          <label className="ss-label" htmlFor="gate-number">Gate Number</label>
+                          <input
+                            id="gate-number"
+                            className="ss-text-input"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="e.g. 2"
+                            maxLength={3}
+                            value={gateForm.number}
+                            onChange={(e) => setGateForm((p) => ({ ...p, number: e.target.value }))}
+                            required
+                          />
+                        </div>
+                        <div className="ss-field" style={{ flex: 1, minWidth: 220 }}>
+                          <label className="ss-label" htmlFor="gate-label">Display Label</label>
+                          <input
+                            id="gate-label"
+                            className="ss-text-input"
+                            type="text"
+                            placeholder="e.g. Gate 2 — North Entrance"
+                            maxLength={100}
+                            value={gateForm.label}
+                            onChange={(e) => setGateForm((p) => ({ ...p, label: e.target.value }))}
+                            required
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        className="ss-broadcast-btn"
+                        disabled={addingGate}
+                      >
+                        {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
+                        {addingGate ? 'Adding…' : 'Add Gate'}
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="ss-row ss-row--stacked">
+                    <div className="ss-list-head">
+                      <span>Gates ({gatesLoading ? '…' : gates.length})</span>
+                    </div>
+                    {gatesLoading ? (
+                      <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading gates…</span></div>
+                    ) : gates.length === 0 ? (
+                      <p className="ss-no-notices">No gates configured.</p>
+                    ) : (
+                      <div className="ss-notices-list">
+                        {gates.map((g) => (
+                          <div key={g.id} className={`ss-gate-item${g.is_active ? '' : ' is-inactive'}`}>
+                            <div>
+                              <strong className="ss-gate-label">{g.label}</strong>
+                              <span className="ss-gate-id">{g.gate_id}</span>
+                              {!g.is_active && <span className="ss-gate-tag">Inactive</span>}
+                            </div>
+                            <button
+                              type="button"
+                              className="ss-gate-btn"
+                              disabled={togglingGateId === g.id}
+                              onClick={() => handleToggleGate(g)}
+                            >
+                              {togglingGateId === g.id ? 'Saving…' : g.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
               {/* ── Scan Grace Period ───────────────────────────────────── */}
               <section className="ss-section">
                 <div className="ss-section-head">
@@ -713,7 +813,9 @@ export default function SystemSettings() {
                   </div>
                 </div>
               </section>
-
+            </>
+          ) : tab === 'parking' ? (
+            <>
               {/* ── Parking Detection Delays ────────────────────────────── */}
               <section className="ss-section">
                 <div className="ss-section-head">
@@ -791,380 +893,340 @@ export default function SystemSettings() {
                   </div>
                 </div>
               </section>
+
+              {/* ── Parking Notices ───────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-purple">
+                    <Megaphone size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Broadcast Parking Notice</h2>
+                    <p className="ss-section-desc">
+                      Send an announcement to all registered vehicle owners via email and the owner portal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row ss-row--stacked">
+                    <form className="ss-inline-form" onSubmit={handleBroadcast} noValidate>
+                      <div className="ss-field">
+                        <label className="ss-label" htmlFor="notice-title">Subject / Title</label>
+                        <input
+                          id="notice-title"
+                          className="ss-text-input"
+                          type="text"
+                          placeholder="e.g. Parking suspension on June 28"
+                          maxLength={200}
+                          value={noticeForm.title}
+                          onChange={(e) => setNoticeForm((p) => ({ ...p, title: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div className="ss-field">
+                        <label className="ss-label" htmlFor="notice-body">Message</label>
+                        <textarea
+                          id="notice-body"
+                          className="ss-textarea"
+                          rows={4}
+                          placeholder="Write the full notice text here…"
+                          value={noticeForm.body}
+                          onChange={(e) => setNoticeForm((p) => ({ ...p, body: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="ss-broadcast-btn"
+                        disabled={broadcasting}
+                      >
+                        {broadcasting ? <Loader2 size={15} className="ss-spinner" /> : <Send size={15} />}
+                        {broadcasting ? 'Sending…' : 'Broadcast to All Owners'}
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Active notices list */}
+                  <div className="ss-row ss-row--stacked">
+                    <div className="ss-list-head">
+                      <span>Active Notices ({noticesLoading ? '…' : notices.length})</span>
+                    </div>
+                    {noticesLoading ? (
+                      <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading notices…</span></div>
+                    ) : notices.length === 0 ? (
+                      <p className="ss-no-notices">No active notices.</p>
+                    ) : (
+                      <div className="ss-notices-list">
+                        {notices.map((n) => (
+                          <div key={n.id} className="ss-notice-item">
+                            <div className="ss-notice-item-body">
+                              <span className="ss-notice-title">{n.title}</span>
+                              <span className="ss-notice-meta">
+                                {new Date(n.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}
+                                {n.created_by_name && <> · by {n.created_by_name}</>}
+                              </span>
+                              <p className="ss-notice-body">{n.body}</p>
+                            </div>
+                            <button
+                              className="ss-notice-remove"
+                              title="Deactivate notice"
+                              disabled={removingId === n.id}
+                              onClick={() => setConfirmDeactivate({ id: n.id, title: n.title })}
+                            >
+                              {removingId === n.id ? <Loader2 size={14} className="ss-spinner" /> : <X size={14} />}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            </>
+          ) : (
+            <>
+              {/* ── Data Retention ──────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-red">
+                    <Trash2 size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Data Retention</h2>
+                    <p className="ss-section-desc">
+                      Gate access logs, violation records, and archived accounts older than the
+                      threshold are deleted automatically each day. Only <em>archived</em> accounts
+                      are deleted — an account has to expire and be archived first, which is set
+                      under Account Expiration. Active accounts are never touched.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="retention_years">Retention period</label>
+                      <span className="ss-row-hint">Allowed range: 1 – 10 years.</span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="retention_years"
+                        name="retention_years"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={form.retention_years}
+                        onChange={handleChange}
+                        className="ss-input"
+                      />
+                      <span className="ss-unit">years</span>
+                    </div>
+                  </div>
+
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      Access logs, violations, and accounts archived more than <strong>{form.retention_years} year{form.retention_years !== 1 ? 's' : ''}</strong> ago
+                      will be permanently deleted and cannot be recovered. Audit log history is kept.
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {/* ── Backup & Restore ──────────────────────────────────────── */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <Database size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Backup &amp; Restore</h2>
+                    <p className="ss-section-desc">
+                      Download a snapshot of system data — users, vehicles, registrations,
+                      violations and scan logs — to a folder you choose, let the server take one on a
+                      schedule, or restore the system from any backup you still have.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <span className="ss-row-label">Full system snapshot</span>
+                      <span className="ss-row-hint">
+                        You pick the folder and filename before the download starts — keep it somewhere safe, it holds
+                        every account and plate in the system. Uploaded images (owner photos,
+                        licence scans, snapshots) are <strong>not</strong> included — only their
+                        filenames — so back those up separately. Authenticator pairings are also
+                        left out, so a restore never breaks anyone&rsquo;s 2FA.
+                      </span>
+                    </div>
+                    <div className="ss-backup-actions">
+                      <button
+                        type="button"
+                        className="ss-broadcast-btn"
+                        onClick={handleDownloadBackup}
+                        disabled={downloading || restoring}
+                      >
+                        {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
+                        {downloading ? 'Preparing…' : 'Download Backup'}
+                      </button>
+
+                      <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
+                        {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
+                        {restoring ? 'Restoring…' : 'Restore from Backup'}
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          hidden
+                          disabled={downloading || restoring}
+                          onChange={handleRestorePick}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="auto_backup_frequency">Automatic backups</label>
+                      <span className="ss-row-hint">
+                        {FREQ_HINT[form.auto_backup_frequency]} Automatic backups are kept on the server
+                        and listed below, where you can download or restore any of them.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <select
+                        id="auto_backup_frequency"
+                        name="auto_backup_frequency"
+                        className="ss-select"
+                        value={form.auto_backup_frequency}
+                        onChange={handleChange}
+                      >
+                        {BACKUP_FREQUENCIES.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {form.auto_backup_frequency !== 'off' && (
+                    <div className="ss-row">
+                      <div className="ss-row-text">
+                        <label className="ss-row-label" htmlFor="auto_backup_keep">Automatic backups to keep</label>
+                        <span className="ss-row-hint">
+                          Once there are more than this, the oldest is deleted so backups cannot fill
+                          the disk. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)} Applies
+                          to the automatic ones and to the server&rsquo;s copy of each download
+                          &mdash; pre-restore snapshots are never rotated away. Allowed range: 1 &ndash; 90.
+                        </span>
+                      </div>
+                      <div className="ss-row-control">
+                        <input
+                          id="auto_backup_keep"
+                          name="auto_backup_keep"
+                          type="number"
+                          min={1}
+                          max={90}
+                          value={form.auto_backup_keep}
+                          onChange={handleChange}
+                          className="ss-input"
+                        />
+                        <span className="ss-unit">backups</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="ss-row ss-row--stacked">
+                    <div className="ss-list-head ss-list-head--split">
+                      <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
+                      <span className="ss-list-head-right">
+                        {backupsCheckedAt && (
+                          <span className="ss-checked-at">
+                            Updated {backupsCheckedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="ss-refresh-btn"
+                          title="Check the server for new backups"
+                          disabled={backupsLoading || downloading || restoring}
+                          onClick={() => fetchBackups()}
+                        >
+                          <RefreshCw size={12} className={backupsLoading ? 'ss-spinner' : undefined} />
+                          Refresh
+                        </button>
+                      </span>
+                    </div>
+                    {backupsLoading ? (
+                      <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading backups…</span></div>
+                    ) : backups.length === 0 ? (
+                      <p className="ss-no-notices">
+                        No backups saved on the server yet. Download one, or switch automatic backups on above.
+                      </p>
+                    ) : (
+                      <div className="ss-notices-list">
+                        {backups.map((item) => (
+                          <div key={item.name} className="ss-backup-item">
+                            <div className="ss-backup-info">
+                              <span className="ss-backup-name">{item.name}</span>
+                              <span className="ss-backup-meta">
+                                <History size={11} />
+                                {formatStamp(item.created_at)} &middot; {formatBytes(item.size)}
+                                <span className={`ss-backup-tag ss-backup-tag--${item.kind}`}>
+                                  {KIND_LABEL[item.kind] || KIND_LABEL.other}
+                                </span>
+                              </span>
+                            </div>
+                            <div className="ss-backup-item-actions">
+                              <button
+                                type="button"
+                                className="ss-gate-btn"
+                                title="Choose where to save this file"
+                                disabled={backupBusy === item.name || downloading || restoring}
+                                onClick={() => handleDownloadSaved(item)}
+                              >
+                                <Download size={12} /> Save As…
+                              </button>
+                              <button
+                                type="button"
+                                className="ss-gate-btn"
+                                disabled={backupBusy === item.name || downloading || restoring}
+                                onClick={() => handleRestoreSavedPick(item)}
+                              >
+                                <RotateCcw size={12} /> Restore
+                              </button>
+                              <button
+                                type="button"
+                                className="ss-gate-btn ss-gate-btn--danger"
+                                disabled={backupBusy === item.name || downloading || restoring}
+                                onClick={() => setConfirmDeleteBackup(item)}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="ss-note">
+                    <ShieldAlert size={13} />
+                    <span>
+                      Restoring overwrites current records with those in the backup. A safety snapshot of the
+                      current data is saved automatically before any restore, and the load is rolled back if it fails.
+                      Backups held on the server live with the app &mdash; keep your own downloaded copy of
+                      anything you would not want to lose with it.
+                    </span>
+                  </div>
+                </div>
+              </section>
             </>
           )}
 
-          {/* ── Campus Gates ──────────────────────────────────────────── */}
-          <section className="ss-section">
-            <div className="ss-section-head">
-              <div className="ss-section-icon ss-icon-blue">
-                <DoorOpen size={15} />
-              </div>
-              <div>
-                <h2 className="ss-section-title">Campus Gates</h2>
-                <p className="ss-section-desc">
-                  Add new gates as the school expands. Active gates immediately appear on the guard
-                  gate-login page and can be assigned entry cameras in Device Management.
-                </p>
-              </div>
-            </div>
-
-            <div className="ss-rows">
-              <div className="ss-row ss-row--stacked">
-                <form className="ss-inline-form" onSubmit={handleAddGate} noValidate>
-                  <div className="ss-form-grid">
-                    <div className="ss-field" style={{ flex: '0 0 140px' }}>
-                      <label className="ss-label" htmlFor="gate-number">Gate Number</label>
-                      <input
-                        id="gate-number"
-                        className="ss-text-input"
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="e.g. 2"
-                        maxLength={3}
-                        value={gateForm.number}
-                        onChange={(e) => setGateForm((p) => ({ ...p, number: e.target.value }))}
-                        required
-                      />
-                    </div>
-                    <div className="ss-field" style={{ flex: 1, minWidth: 220 }}>
-                      <label className="ss-label" htmlFor="gate-label">Display Label</label>
-                      <input
-                        id="gate-label"
-                        className="ss-text-input"
-                        type="text"
-                        placeholder="e.g. Gate 2 — North Entrance"
-                        maxLength={100}
-                        value={gateForm.label}
-                        onChange={(e) => setGateForm((p) => ({ ...p, label: e.target.value }))}
-                        required
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="ss-broadcast-btn"
-                    disabled={addingGate}
-                  >
-                    {addingGate ? <Loader2 size={15} className="ss-spinner" /> : <Plus size={15} />}
-                    {addingGate ? 'Adding…' : 'Add Gate'}
-                  </button>
-                </form>
-              </div>
-
-              <div className="ss-row ss-row--stacked">
-                <div className="ss-list-head">
-                  <span>Gates ({gatesLoading ? '…' : gates.length})</span>
-                </div>
-                {gatesLoading ? (
-                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading gates…</span></div>
-                ) : gates.length === 0 ? (
-                  <p className="ss-no-notices">No gates configured.</p>
-                ) : (
-                  <div className="ss-notices-list">
-                    {gates.map((g) => (
-                      <div key={g.id} className={`ss-gate-item${g.is_active ? '' : ' is-inactive'}`}>
-                        <div>
-                          <strong className="ss-gate-label">{g.label}</strong>
-                          <span className="ss-gate-id">{g.gate_id}</span>
-                          {!g.is_active && <span className="ss-gate-tag">Inactive</span>}
-                        </div>
-                        <button
-                          type="button"
-                          className="ss-gate-btn"
-                          disabled={togglingGateId === g.id}
-                          onClick={() => handleToggleGate(g)}
-                        >
-                          {togglingGateId === g.id ? 'Saving…' : g.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* ── Parking Notices ───────────────────────────────────────── */}
-          <section className="ss-section">
-            <div className="ss-section-head">
-              <div className="ss-section-icon ss-icon-purple">
-                <Megaphone size={15} />
-              </div>
-              <div>
-                <h2 className="ss-section-title">Broadcast Parking Notice</h2>
-                <p className="ss-section-desc">
-                  Send an announcement to all registered vehicle owners via email and the owner portal.
-                </p>
-              </div>
-            </div>
-
-            <div className="ss-rows">
-              <div className="ss-row ss-row--stacked">
-                <form className="ss-inline-form" onSubmit={handleBroadcast} noValidate>
-                  <div className="ss-field">
-                    <label className="ss-label" htmlFor="notice-title">Subject / Title</label>
-                    <input
-                      id="notice-title"
-                      className="ss-text-input"
-                      type="text"
-                      placeholder="e.g. Parking suspension on June 28"
-                      maxLength={200}
-                      value={noticeForm.title}
-                      onChange={(e) => setNoticeForm((p) => ({ ...p, title: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="ss-field">
-                    <label className="ss-label" htmlFor="notice-body">Message</label>
-                    <textarea
-                      id="notice-body"
-                      className="ss-textarea"
-                      rows={4}
-                      placeholder="Write the full notice text here…"
-                      value={noticeForm.body}
-                      onChange={(e) => setNoticeForm((p) => ({ ...p, body: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="ss-broadcast-btn"
-                    disabled={broadcasting}
-                  >
-                    {broadcasting ? <Loader2 size={15} className="ss-spinner" /> : <Send size={15} />}
-                    {broadcasting ? 'Sending…' : 'Broadcast to All Owners'}
-                  </button>
-                </form>
-              </div>
-
-              {/* Active notices list */}
-              <div className="ss-row ss-row--stacked">
-                <div className="ss-list-head">
-                  <span>Active Notices ({noticesLoading ? '…' : notices.length})</span>
-                </div>
-                {noticesLoading ? (
-                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading notices…</span></div>
-                ) : notices.length === 0 ? (
-                  <p className="ss-no-notices">No active notices.</p>
-                ) : (
-                  <div className="ss-notices-list">
-                    {notices.map((n) => (
-                      <div key={n.id} className="ss-notice-item">
-                        <div className="ss-notice-item-body">
-                          <span className="ss-notice-title">{n.title}</span>
-                          <span className="ss-notice-meta">
-                            {new Date(n.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}
-                            {n.created_by_name && <> · by {n.created_by_name}</>}
-                          </span>
-                          <p className="ss-notice-body">{n.body}</p>
-                        </div>
-                        <button
-                          className="ss-notice-remove"
-                          title="Deactivate notice"
-                          disabled={removingId === n.id}
-                          onClick={() => setConfirmDeactivate({ id: n.id, title: n.title })}
-                        >
-                          {removingId === n.id ? <Loader2 size={14} className="ss-spinner" /> : <X size={14} />}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* ── Backup & Restore ──────────────────────────────────────── */}
-          <section className="ss-section">
-            <div className="ss-section-head">
-              <div className="ss-section-icon ss-icon-blue">
-                <Database size={15} />
-              </div>
-              <div>
-                <h2 className="ss-section-title">Backup &amp; Restore</h2>
-                <p className="ss-section-desc">
-                  Download a snapshot of system data — users, vehicles, registrations,
-                  violations and scan logs — to a folder you choose, let the server take one on a
-                  schedule, or restore the system from any backup you still have.
-                </p>
-              </div>
-            </div>
-
-            <div className="ss-rows">
-              <div className="ss-row">
-                <div className="ss-row-text">
-                  <span className="ss-row-label">Full system snapshot</span>
-                  <span className="ss-row-hint">
-                    You pick the folder and filename before the download starts — keep it somewhere safe, it holds
-                    every account and plate in the system. Uploaded images (owner photos,
-                    licence scans, snapshots) are <strong>not</strong> included — only their
-                    filenames — so back those up separately. Authenticator pairings are also
-                    left out, so a restore never breaks anyone&rsquo;s 2FA.
-                  </span>
-                </div>
-                <div className="ss-backup-actions">
-                  <button
-                    type="button"
-                    className="ss-broadcast-btn"
-                    onClick={handleDownloadBackup}
-                    disabled={downloading || restoring}
-                  >
-                    {downloading ? <Loader2 size={15} className="ss-spinner" /> : <Download size={15} />}
-                    {downloading ? 'Preparing…' : 'Download Backup'}
-                  </button>
-
-                  <label className={`ss-restore-btn${restoring ? ' is-busy' : ''}`}>
-                    {restoring ? <Loader2 size={15} className="ss-spinner" /> : <Upload size={15} />}
-                    {restoring ? 'Restoring…' : 'Restore from Backup'}
-                    <input
-                      type="file"
-                      accept="application/json,.json"
-                      hidden
-                      disabled={downloading || restoring}
-                      onChange={handleRestorePick}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div className="ss-row">
-                <div className="ss-row-text">
-                  <label className="ss-row-label" htmlFor="auto_backup_frequency">Automatic backups</label>
-                  <span className="ss-row-hint">
-                    {FREQ_HINT[form.auto_backup_frequency]} Automatic backups are kept on the server
-                    and listed below, where you can download or restore any of them.
-                  </span>
-                </div>
-                <div className="ss-row-control">
-                  <select
-                    id="auto_backup_frequency"
-                    name="auto_backup_frequency"
-                    className="ss-select"
-                    value={form.auto_backup_frequency}
-                    onChange={handleChange}
-                  >
-                    {BACKUP_FREQUENCIES.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {form.auto_backup_frequency !== 'off' && (
-                <div className="ss-row">
-                  <div className="ss-row-text">
-                    <label className="ss-row-label" htmlFor="auto_backup_keep">Automatic backups to keep</label>
-                    <span className="ss-row-hint">
-                      Once there are more than this, the oldest is deleted so backups cannot fill
-                      the disk. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)} Applies
-                      to the automatic ones and to the server&rsquo;s copy of each download
-                      &mdash; pre-restore snapshots are never rotated away. Allowed range: 1 &ndash; 90.
-                    </span>
-                  </div>
-                  <div className="ss-row-control">
-                    <input
-                      id="auto_backup_keep"
-                      name="auto_backup_keep"
-                      type="number"
-                      min={1}
-                      max={90}
-                      value={form.auto_backup_keep}
-                      onChange={handleChange}
-                      className="ss-input"
-                    />
-                    <span className="ss-unit">backups</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="ss-row ss-row--stacked">
-                <div className="ss-list-head ss-list-head--split">
-                  <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
-                  <span className="ss-list-head-right">
-                    {backupsCheckedAt && (
-                      <span className="ss-checked-at">
-                        Updated {backupsCheckedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      className="ss-refresh-btn"
-                      title="Check the server for new backups"
-                      disabled={backupsLoading || downloading || restoring}
-                      onClick={() => fetchBackups()}
-                    >
-                      <RefreshCw size={12} className={backupsLoading ? 'ss-spinner' : undefined} />
-                      Refresh
-                    </button>
-                  </span>
-                </div>
-                {backupsLoading ? (
-                  <div className="ss-loading"><Loader2 size={18} className="ss-spinner" /><span>Loading backups…</span></div>
-                ) : backups.length === 0 ? (
-                  <p className="ss-no-notices">
-                    No backups saved on the server yet. Download one, or switch automatic backups on above.
-                  </p>
-                ) : (
-                  <div className="ss-notices-list">
-                    {backups.map((item) => (
-                      <div key={item.name} className="ss-backup-item">
-                        <div className="ss-backup-info">
-                          <span className="ss-backup-name">{item.name}</span>
-                          <span className="ss-backup-meta">
-                            <History size={11} />
-                            {formatStamp(item.created_at)} &middot; {formatBytes(item.size)}
-                            <span className={`ss-backup-tag ss-backup-tag--${item.kind}`}>
-                              {KIND_LABEL[item.kind] || KIND_LABEL.other}
-                            </span>
-                          </span>
-                        </div>
-                        <div className="ss-backup-item-actions">
-                          <button
-                            type="button"
-                            className="ss-gate-btn"
-                            title="Choose where to save this file"
-                            disabled={backupBusy === item.name || downloading || restoring}
-                            onClick={() => handleDownloadSaved(item)}
-                          >
-                            <Download size={12} /> Save As…
-                          </button>
-                          <button
-                            type="button"
-                            className="ss-gate-btn"
-                            disabled={backupBusy === item.name || downloading || restoring}
-                            onClick={() => handleRestoreSavedPick(item)}
-                          >
-                            <RotateCcw size={12} /> Restore
-                          </button>
-                          <button
-                            type="button"
-                            className="ss-gate-btn ss-gate-btn--danger"
-                            disabled={backupBusy === item.name || downloading || restoring}
-                            onClick={() => setConfirmDeleteBackup(item)}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="ss-note">
-                <ShieldAlert size={13} />
-                <span>
-                  Restoring overwrites current records with those in the backup. A safety snapshot of the
-                  current data is saved automatically before any restore, and the load is rolled back if it fails.
-                  Backups held on the server live with the app &mdash; keep your own downloaded copy of
-                  anything you would not want to lose with it.
-                </span>
-              </div>
-            </div>
-          </section>
-
         </div>
+
 
         {/* ── Save Bar ───────────────────────────────────────────────── */}
         {!loading && (
@@ -1179,6 +1241,11 @@ export default function SystemSettings() {
                 if (expiryInvalid) problems.push('Account expiration needs at least 1 month or 1 day.')
                 if (dwellInvalid)  problems.push('The double-parking delay cannot be shorter than the parked delay.')
                 if (keepInvalid)   problems.push('Automatic backups to keep must be between 1 and 90.')
+                if (problems.length) {
+                  // Open the tab holding the first bad field, so dismissing the
+                  // message leaves the admin looking at the control to fix.
+                  setTab(expiryInvalid ? 'accounts' : dwellInvalid ? 'parking' : 'data')
+                }
                 if (await notify.validation(problems, { title: 'Settings not saved' })) return
                 setConfirmSave(true)
               }}
@@ -1304,7 +1371,7 @@ export default function SystemSettings() {
             </h2>
             <p className="ss-modal-body">
               {restoring
-                ? 'Loading records into the database. This can take a few minutes — please keep this page open and do not refresh.'
+                ? 'Loading records into the database. Please keep this page open and do not refresh.'
                 : 'Generating your backup file. It will download automatically when ready.'}
             </p>
             <span className="ss-loading-elapsed">

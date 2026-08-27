@@ -66,6 +66,74 @@
   padding: 2rem 0;
 }
 
+/* ── Category tabs ──────────────────────────────────────────────── */
+/* The page holds eight sections; showing all eight at once was the thing that
+   made it hard to read. One category at a time, chosen here. The row scrolls
+   sideways on narrow screens rather than wrapping into a second line that
+   pushes the panel down. */
+
+.ss-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.ss-tabs::-webkit-scrollbar { display: none; }
+
+.ss-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid #D3E1EC;
+  border-radius: 9px;
+  padding: 9px 15px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: #4A6B85;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.ss-tab:hover:not(.ss-tab--active) {
+  background: #F4F8FB;
+  border-color: #BDD4E5;
+  color: #0B2340;
+}
+
+.ss-tab:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+
+.ss-tab--active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Unsaved-change marker. The save bar says changes exist; this says where. */
+.ss-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #D9822B;
+  flex: 0 0 auto;
+}
+
+.ss-tab--active .ss-tab-dot { background: #FFC46B; }
+
+@media (max-width: 520px) {
+  .ss-tab { padding: 8px 12px; font-size: 0.78rem; }
+  .ss-tab span { display: none; }
+  .ss-tab--active span { display: inline; }
+}
+
 /* ── Settings panel ─────────────────────────────────────────────── */
 
 .ss-panel {
