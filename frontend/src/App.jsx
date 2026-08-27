@@ -27,6 +27,7 @@ const UserManagement          = lazy(() => import('./pages/Admin/UserManagement'
 const OperationsCenter        = lazy(() => import('./pages/Admin/OperationsCenter'))
 const RuleConstraints         = lazy(() => import('./pages/Admin/RuleConstraints'))
 const AuditLog                = lazy(() => import('./pages/Admin/AuditLog'))
+const VehicleLog              = lazy(() => import('./pages/Admin/VehicleLog'))
 const ParkingSpaceManagement  = lazy(() => import('./pages/Admin/ParkingSpaceManagement'))
 const DeviceManagement        = lazy(() => import('./pages/Admin/DeviceManagement'))
 const SystemSettings          = lazy(() => import('./pages/Admin/SystemSettings'))
@@ -152,6 +153,7 @@ export default function App() {
             <Route path="/admin/users" element={<UserManagement />} />
             <Route path="/admin/rules" element={<RuleConstraints />} />
             <Route path="/admin/audit" element={<AuditLog />} />
+            <Route path="/admin/vehicle-log" element={<VehicleLog />} />
             <Route path="/admin/devices" element={<DeviceManagement />} />
             <Route path="/admin/suppliers" element={<SupplierManagement />} />
             {/* Admin (CDSO) — settings, operations, parking, violations */}

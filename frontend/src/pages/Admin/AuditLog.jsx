@@ -10,7 +10,7 @@ import './AuditLog.css'
 
 // Must stay in step with AuditLog.Action on the backend. Vehicle-owner gate
 // movement (scan / entered / exited) is deliberately absent — the audit log no
-// longer records it; gate history lives on the Entry Management screens.
+// longer records it; gate history lives on the Vehicle Log (/admin/vehicle-log).
 const ACTION_LABELS = {
   user_created:      'User Created',
   user_updated:      'User Updated',
@@ -223,8 +223,8 @@ export default function AuditLog() {
           <div>
             <h1 className="al-title">Audit Log</h1>
             <p className="al-subtitle">
-              Administrative actions on accounts and records. Vehicle entry and exit
-              history is on the Entry Management screens, not here.
+              Administrative actions on accounts and records. Gate scans and vehicle
+              entry/exit history are on the Vehicle Log, not here.
             </p>
           </div>
           <div className="al-header-actions">

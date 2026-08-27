@@ -6,6 +6,7 @@ import {
   Users,
   FileSliders,
   ClipboardList,
+  ScrollText,
   ParkingCircle,
   Settings2,
   LogOut,
@@ -58,6 +59,7 @@ function buildNavGroups(isAdmin) {
         { name: 'Operations Center', path: '/admin/entries', icon: <TowerControl size={18} /> },
         { name: 'Parking Space Management', path: '/admin/parking', icon: <ParkingCircle size={18} /> },
         { name: 'Violations', path: '/admin/violations', icon: <AlertTriangle size={18} /> },
+        { name: 'Vehicle Log', path: '/admin/vehicle-log', icon: <ScrollText size={18} /> },
       ],
     })
   }

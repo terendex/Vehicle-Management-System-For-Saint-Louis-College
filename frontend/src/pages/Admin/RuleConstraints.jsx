@@ -241,6 +241,20 @@ function ModeToggle({ active, onToggle, activeLabel, inactiveLabel, activeColor 
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// Three separate jobs live on this page and only one is ever being done at a
+// time: setting who may enter and when, opening or closing the registration
+// window for a school year, and flipping the campus-wide override. Showing all
+// three at once made the page a scroll; they are tabs now.
+//
+// Entry Rules leads because it is the page's namesake and by far the most
+// edited — the registration window is touched once a year and the override
+// only for an event.
+const TABS = [
+  { id: 'entry',   label: 'Entry Rules',         icon: CalendarDays },
+  { id: 'periods', label: 'Registration Period', icon: CalendarRange },
+  { id: 'access',  label: 'Access Mode',         icon: Globe },
+]
+
 export default function RuleConstraints() {
   const [rules,       setRules]       = useState({})
   const [loading,     setLoading]     = useState(true)
@@ -262,6 +276,7 @@ export default function RuleConstraints() {
   const [savingPeriod,   setSavingPeriod]   = useState(false)
   const [togglingId,     setTogglingId]     = useState(null)
   const [confirmAction,  setConfirmAction]  = useState(null) // { type, id?, period? }
+  const [tab,            setTab]            = useState('entry')
 
   useEffect(() => {
     let cancelled = false
@@ -452,273 +467,323 @@ export default function RuleConstraints() {
         <div className="rc-header">
           <div>
             <h1 className="rc-title">Rule Constraints</h1>
-            <p className="rc-subtitle">Configure entry schedules, access modes, and registration period.</p>
+            <p className="rc-subtitle">Entry schedules, registration window, and campus access mode — pick a category below.</p>
           </div>
           <div className="rc-config-badge">
             <Settings2 /> CONFIGURATION
           </div>
         </div>
 
-        {/* ── Open Campus Mode ─────────────────────────────────── */}
-        <div className="rc-section">
-          <div className="rc-section-head">
-            <span className="rc-section-label">
-              <Globe size={17} />
-              Open Campus Mode
-            </span>
-            {ss.open_campus_mode && (
-              <span className="rc-mode-active-badge rc-mode-active-badge--open">ACTIVE</span>
-            )}
-          </div>
-          <div className="rc-section-body">
-            {ssLoading ? (
-              <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
-            ) : (
-              <div className="rc-mode-block rc-mode-block--open">
-                <p className="rc-mode-desc">
-                  When enabled, <strong>all vehicles</strong> are allowed to enter regardless of registration status,
-                  schedule rules, or entry constraints. Use during open events, graduation, or campus-wide access days.
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                  <ModeToggle
-                    active={ss.open_campus_mode}
-                    onToggle={() => setConfirmAction({ type: 'toggleCampusMode' })}
-                    activeLabel="Open Campus ON"
-                    inactiveLabel="Open Campus OFF"
-                    activeColor="#1072B3"
-                  />
-                  <span style={{ fontSize: 12, color: ss.open_campus_mode ? '#1072B3' : '#64839C', fontWeight: 600 }}>
-                    {ss.open_campus_mode
-                      ? 'All vehicles are freely allowed — all rules bypassed.'
-                      : 'Normal entry restrictions apply.'}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Registration Period ───────────────────────────────── */}
-        <div className="rc-section">
-          <div className="rc-section-head">
-            <span className="rc-section-label">
-              <CalendarRange size={17} />
-              Vehicle Registration Period
+        {/* Open Campus Mode overrides every rule on this page, so when it is on
+            it has to be visible from whichever tab you are standing on — the
+            Entry Rules tab showing carefully configured schedules that are
+            currently being ignored would otherwise be actively misleading. */}
+        {ss.open_campus_mode && (
+          <div className="rc-open-banner">
+            <AlertTriangle size={16} />
+            <span>
+              <strong>Open Campus Mode is ON.</strong> Every vehicle is admitted regardless of
+              registration or schedule — the entry rules below are not being applied.
             </span>
             <button
-              className="rc-btn rc-btn-primary rc-btn-sm"
-              onClick={() => (periodEditor?.mode === 'add' ? closePeriodEditor() : openAddPeriod())}
+              type="button"
+              className="rc-open-banner-link"
+              onClick={() => setTab('access')}
             >
-              <Plus size={14} /> New Period
+              Manage
             </button>
           </div>
-          <div className="rc-section-body">
-            {/* Add / edit form */}
-            {periodEditor && (() => {
-              const editing = periodEditor.mode === 'edit'
-              /* An older window's label is no longer in the rolling option list,
-                 and a running window's start date is in the past — neither may
-                 be dropped just because the form was reopened to move the end
-                 date, so both are carried into the inputs as they stand. */
-              const rolling = periodLabelOptions()
-              const labelOptions = periodForm.label && !rolling.includes(periodForm.label)
-                ? [periodForm.label, ...rolling]
-                : rolling
-              return (
-                <div className="rc-period-form">
-                  <p className="rc-period-form-title">
-                    {editing
-                      ? <><Pencil size={13} /> Editing period</>
-                      : <><Plus size={13} /> New registration period</>}
-                  </p>
-                  <div className="rc-period-form-fields">
-                    <div className="rc-reg-field" style={{ flex: 2 }}>
-                      <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
-                      <select
-                        className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
-                        value={periodForm.label}
-                        onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
-                      >
-                        <option value="">Select a school year…</option>
-                        {labelOptions.map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="rc-reg-field">
-                      <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
-                      <input
-                        type="date"
-                        className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
-                        value={periodForm.start_date}
-                        min={editing ? undefined : new Date().toISOString().slice(0, 10)}
-                        onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
-                      />
-                    </div>
-                    <div className="rc-reg-field">
-                      <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
-                      <input
-                        type="date"
-                        className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
-                        value={periodForm.end_date}
-                        min={periodForm.start_date || undefined}
-                        onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="rc-period-form-actions">
-                    <button className="rc-btn rc-btn-secondary" onClick={closePeriodEditor}>Cancel</button>
-                    <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
-                      {savingPeriod
-                        ? <Loader2 size={14} className="rc-spin" />
-                        : editing ? <Pencil size={14} /> : <Plus size={14} />}
-                      {savingPeriod ? 'Saving…' : editing ? 'Save Changes' : 'Save & Activate'}
-                    </button>
-                  </div>
-                </div>
-              )
-            })()}
+        )}
 
-            {/* Periods table */}
-            {periodsLoading ? (
-              <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
-            ) : periods.length === 0 ? (
-              <p className="rc-mode-desc" style={{ color: '#64839C', fontStyle: 'italic' }}>
-                No registration periods yet. Click "New Period" to create one.
-              </p>
-            ) : (
-              <div className="rc-period-table-wrap">
-                <table className="rc-period-table">
-                  <thead>
-                    <tr>
-                      <th>Label</th>
-                      <th>Start</th>
-                      <th>End</th>
-                      <th>Status</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {periods.map(p => {
-                      const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-                      const todayIso = new Date().toLocaleDateString('en-CA')
-                      const ended = p.end_date < todayIso
-                      const isActive = p.is_active && !ended
-                      return (
-                        <tr key={p.id} className={isActive ? 'rc-period-row--active' : ''}>
-                          <td className="rc-period-label">{p.label}</td>
-                          <td>{fmt(p.start_date)}</td>
-                          <td>{fmt(p.end_date)}</td>
-                          <td>
-                            {isActive
-                              ? <span className="rc-period-badge rc-period-badge--active"><CheckCircle size={11} /> Active</span>
-                              : <span className="rc-period-badge rc-period-badge--archived"><Archive size={11} /> Archived</span>}
-                          </td>
-                          <td>
-                            <div className="rc-period-actions">
-                              {/* Editable while it is still running — a deadline
-                                  that has to move is the whole reason to touch a
-                                  live window, and archiving to re-create one only
-                                  leaves a duplicate row behind. */}
-                              {!ended && (
-                                <button
-                                  className="rc-btn rc-btn-secondary rc-btn-sm"
-                                  onClick={() => openEditPeriod(p)}
-                                >
-                                  <Pencil size={12} /> Edit
-                                </button>
-                              )}
-                              {ended ? null : isActive ? (
-                                <button
-                                  className="rc-btn rc-btn-secondary rc-btn-sm"
-                                  disabled={togglingId === p.id}
-                                  onClick={() => setConfirmAction({ type: 'deactivatePeriod', id: p.id, period: p })}
-                                >
-                                  {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <Archive size={12} />}
-                                  Deactivate
-                                </button>
-                              ) : (
-                                <button
-                                  className="rc-btn rc-btn-primary rc-btn-sm"
-                                  disabled={togglingId === p.id}
-                                  onClick={() => setConfirmAction({ type: 'activatePeriod', id: p.id, period: p })}
-                                >
-                                  {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <CheckCircle size={12} />}
-                                  Set Active
-                                </button>
+        {/* ── Category tabs ────────────────────────────────────── */}
+        <div className="rc-tabs" role="tablist" aria-label="Rule categories">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`rc-tab-${id}`}
+              aria-selected={tab === id}
+              aria-controls="rc-tabpanel"
+              className={`rc-tab ${tab === id ? 'rc-tab--active' : ''}`}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+              {id === 'access' && ss.open_campus_mode && (
+                <span className="rc-tab-dot" aria-label="Open Campus Mode is on" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div id="rc-tabpanel" role="tabpanel" aria-labelledby={`rc-tab-${tab}`}>
+
+          {tab === 'entry' ? (
+          /* ── Entry Rules ── */
+          <div className="rc-section">
+            <div className="rc-section-head">
+              <span className="rc-section-label">
+                <CalendarDays size={17} />
+                Entry Rules
+              </span>
+            </div>
+
+            <div className="rc-section-body" style={{ padding: 0 }}>
+              {loading ? (
+                <div className="rc-empty">
+                  <Loader2 size={36} className="rc-spin" />
+                  <p>Loading entry rules…</p>
+                </div>
+              ) : (
+                <div className="rc-entry-list">
+                  {ENTRY_TYPES.map((et) => {
+                    const rule = rules[et.key]
+                    const { Icon } = et
+                    return (
+                      <div key={et.key} className="rc-entry-card" style={{ opacity: rule?.enabled === false ? 0.5 : 1 }}>
+                        <div className="rc-entry-icon">
+                          <Icon size={20} />
+                        </div>
+                        <div className="rc-entry-info">
+                          <p className="rc-entry-title">{et.title}</p>
+                          <p className="rc-entry-desc">{et.desc}</p>
+                          {rule && (
+                            <div className="rc-entry-schedule">
+                              <span className="rc-entry-days">
+                                {DAY_LABELS.filter((d) => rule.days?.includes(d.key)).map((d) => d.label).join(' · ')}
+                              </span>
+                              <span className="rc-entry-time">
+                                <Clock size={11} />
+                                {formatTime12(rule.start_time)} – {formatTime12(rule.end_time)}
+                              </span>
+                              {rule.max_stay_minutes != null && (
+                                <span className="rc-entry-time" style={{ color: '#8A6B00' }}>
+                                  <Timer size={11} />
+                                  Max stay: {rule.max_stay_minutes} min
+                                </span>
                               )}
                             </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Entry Rules ──────────────────────────────────────── */}
-        <div className="rc-section">
-          <div className="rc-section-head">
-            <span className="rc-section-label">
-              <CalendarDays size={17} />
-              Entry Rules
-            </span>
-          </div>
-
-          <div className="rc-section-body" style={{ padding: 0 }}>
-            {loading ? (
-              <div className="rc-empty">
-                <Loader2 size={36} className="rc-spin" />
-                <p>Loading entry rules…</p>
-              </div>
-            ) : (
-              <div className="rc-entry-list">
-                {ENTRY_TYPES.map((et) => {
-                  const rule = rules[et.key]
-                  const { Icon } = et
-                  return (
-                    <div key={et.key} className="rc-entry-card" style={{ opacity: rule?.enabled === false ? 0.5 : 1 }}>
-                      <div className="rc-entry-icon">
-                        <Icon size={20} />
+                          )}
+                        </div>
+                        <button
+                          className="rc-entry-chevron"
+                          onClick={() => setEditingType(et)}
+                          title="Edit schedule"
+                        >
+                          <ChevronRight size={18} />
+                        </button>
                       </div>
-                      <div className="rc-entry-info">
-                        <p className="rc-entry-title">{et.title}</p>
-                        <p className="rc-entry-desc">{et.desc}</p>
-                        {rule && (
-                          <div className="rc-entry-schedule">
-                            <span className="rc-entry-days">
-                              {DAY_LABELS.filter((d) => rule.days?.includes(d.key)).map((d) => d.label).join(' · ')}
-                            </span>
-                            <span className="rc-entry-time">
-                              <Clock size={11} />
-                              {formatTime12(rule.start_time)} – {formatTime12(rule.end_time)}
-                            </span>
-                            {rule.max_stay_minutes != null && (
-                              <span className="rc-entry-time" style={{ color: '#8A6B00' }}>
-                                <Timer size={11} />
-                                Max stay: {rule.max_stay_minutes} min
-                              </span>
-                            )}
-                          </div>
-                        )}
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          ) : tab === 'periods' ? (
+          /* ── Registration Period ── */
+          <div className="rc-section">
+            <div className="rc-section-head">
+              <span className="rc-section-label">
+                <CalendarRange size={17} />
+                Vehicle Registration Period
+              </span>
+              <button
+                className="rc-btn rc-btn-primary rc-btn-sm"
+                onClick={() => (periodEditor?.mode === 'add' ? closePeriodEditor() : openAddPeriod())}
+              >
+                <Plus size={14} /> New Period
+              </button>
+            </div>
+            <div className="rc-section-body">
+              {/* Add / edit form */}
+              {periodEditor && (() => {
+                const editing = periodEditor.mode === 'edit'
+                /* An older window's label is no longer in the rolling option list,
+                   and a running window's start date is in the past — neither may
+                   be dropped just because the form was reopened to move the end
+                   date, so both are carried into the inputs as they stand. */
+                const rolling = periodLabelOptions()
+                const labelOptions = periodForm.label && !rolling.includes(periodForm.label)
+                  ? [periodForm.label, ...rolling]
+                  : rolling
+                return (
+                  <div className="rc-period-form">
+                    <p className="rc-period-form-title">
+                      {editing
+                        ? <><Pencil size={13} /> Editing period</>
+                        : <><Plus size={13} /> New registration period</>}
+                    </p>
+                    <div className="rc-period-form-fields">
+                      <div className="rc-reg-field" style={{ flex: 2 }}>
+                        <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
+                        <select
+                          className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
+                          value={periodForm.label}
+                          onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
+                        >
+                          <option value="">Select a school year…</option>
+                          {labelOptions.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
                       </div>
-                      <button
-                        className="rc-entry-chevron"
-                        onClick={() => setEditingType(et)}
-                        title="Edit schedule"
-                      >
-                        <ChevronRight size={18} />
+                      <div className="rc-reg-field">
+                        <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
+                        <input
+                          type="date"
+                          className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
+                          value={periodForm.start_date}
+                          min={editing ? undefined : new Date().toISOString().slice(0, 10)}
+                          onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
+                        />
+                      </div>
+                      <div className="rc-reg-field">
+                        <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
+                        <input
+                          type="date"
+                          className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
+                          value={periodForm.end_date}
+                          min={periodForm.start_date || undefined}
+                          onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="rc-period-form-actions">
+                      <button className="rc-btn rc-btn-secondary" onClick={closePeriodEditor}>Cancel</button>
+                      <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
+                        {savingPeriod
+                          ? <Loader2 size={14} className="rc-spin" />
+                          : editing ? <Pencil size={14} /> : <Plus size={14} />}
+                        {savingPeriod ? 'Saving…' : editing ? 'Save Changes' : 'Save & Activate'}
                       </button>
                     </div>
-                  )
-                })}
-              </div>
-            )}
+                  </div>
+                )
+              })()}
+
+              {/* Periods table */}
+              {periodsLoading ? (
+                <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
+              ) : periods.length === 0 ? (
+                <p className="rc-mode-desc" style={{ color: '#64839C', fontStyle: 'italic' }}>
+                  No registration periods yet. Click "New Period" to create one.
+                </p>
+              ) : (
+                <div className="rc-period-table-wrap">
+                  <table className="rc-period-table">
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Status</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {periods.map(p => {
+                        const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+                        const todayIso = new Date().toLocaleDateString('en-CA')
+                        const ended = p.end_date < todayIso
+                        const isActive = p.is_active && !ended
+                        return (
+                          <tr key={p.id} className={isActive ? 'rc-period-row--active' : ''}>
+                            <td className="rc-period-label">{p.label}</td>
+                            <td>{fmt(p.start_date)}</td>
+                            <td>{fmt(p.end_date)}</td>
+                            <td>
+                              {isActive
+                                ? <span className="rc-period-badge rc-period-badge--active"><CheckCircle size={11} /> Active</span>
+                                : <span className="rc-period-badge rc-period-badge--archived"><Archive size={11} /> Archived</span>}
+                            </td>
+                            <td>
+                              <div className="rc-period-actions">
+                                {/* Editable while it is still running — a deadline
+                                    that has to move is the whole reason to touch a
+                                    live window, and archiving to re-create one only
+                                    leaves a duplicate row behind. */}
+                                {!ended && (
+                                  <button
+                                    className="rc-btn rc-btn-secondary rc-btn-sm"
+                                    onClick={() => openEditPeriod(p)}
+                                  >
+                                    <Pencil size={12} /> Edit
+                                  </button>
+                                )}
+                                {ended ? null : isActive ? (
+                                  <button
+                                    className="rc-btn rc-btn-secondary rc-btn-sm"
+                                    disabled={togglingId === p.id}
+                                    onClick={() => setConfirmAction({ type: 'deactivatePeriod', id: p.id, period: p })}
+                                  >
+                                    {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <Archive size={12} />}
+                                    Deactivate
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="rc-btn rc-btn-primary rc-btn-sm"
+                                    disabled={togglingId === p.id}
+                                    onClick={() => setConfirmAction({ type: 'activatePeriod', id: p.id, period: p })}
+                                  >
+                                    {togglingId === p.id ? <Loader2 size={12} className="rc-spin" /> : <CheckCircle size={12} />}
+                                    Set Active
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
+          ) : (
+          /* ── Open Campus Mode ── */
+          <div className="rc-section">
+            <div className="rc-section-head">
+              <span className="rc-section-label">
+                <Globe size={17} />
+                Open Campus Mode
+              </span>
+              {ss.open_campus_mode && (
+                <span className="rc-mode-active-badge rc-mode-active-badge--open">ACTIVE</span>
+              )}
+            </div>
+            <div className="rc-section-body">
+              {ssLoading ? (
+                <div className="rc-empty"><Loader2 size={22} className="rc-spin" /></div>
+              ) : (
+                <div className="rc-mode-block rc-mode-block--open">
+                  <p className="rc-mode-desc">
+                    When enabled, <strong>all vehicles</strong> are allowed to enter regardless of registration status,
+                    schedule rules, or entry constraints. Use during open events, graduation, or campus-wide access days.
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                    <ModeToggle
+                      active={ss.open_campus_mode}
+                      onToggle={() => setConfirmAction({ type: 'toggleCampusMode' })}
+                      activeLabel="Open Campus ON"
+                      inactiveLabel="Open Campus OFF"
+                      activeColor="#1072B3"
+                    />
+                    <span style={{ fontSize: 12, color: ss.open_campus_mode ? '#1072B3' : '#64839C', fontWeight: 600 }}>
+                      {ss.open_campus_mode
+                        ? 'All vehicles are freely allowed — all rules bypassed.'
+                        : 'Normal entry restrictions apply.'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          )}
+
         </div>
+
 
       </div>
 
