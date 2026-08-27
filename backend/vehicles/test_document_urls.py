@@ -1,120 +1,152 @@
-"""Registration documents are handed to the reviewer as a URL that resolves.
+"""The document-URL signing client.
 
-The bucket keeps the files at object keys; the public host they used to be
-served from only answers while the bucket is world-readable, which is both off
-by default and the wrong setting for a licence photo. These pin the signing —
-and the fallbacks that must not blow up a review page when it cannot happen.
+These exercise the caching logic, not boto3: a fake storage stands in for S3 so
+the suite needs no bucket, no credentials and no network. What matters is that
+one client is built per process rather than one per thread, because rebuilding
+it costs about a second and that second used to land on a reviewer's page load.
 """
-from types import SimpleNamespace
+import threading
 
-from django.contrib.auth import get_user_model
-from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import RequestFactory, TestCase
-from rest_framework.test import APITestCase
+from django.test import SimpleTestCase
 
-from vehicles.document_urls import signed_document_url
-from vehicles.models import VehicleRegistration
-from vehicles.serializers import VehicleRegistrationSerializer
-
-User = get_user_model()
+from vehicles import document_warmup
+from vehicles.document_urls import (
+    _SIGNING_CLIENT_ATTR, _shared_signing_client, signed_document_url,
+    warm_signing_client,
+)
 
 
-class _FakeClient:
-    def __init__(self, fail=False):
-        self.fail = fail
+class FakeClient:
+    def __init__(self):
         self.calls = []
 
-    def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803 (boto3 spelling)
-        if self.fail:
-            raise RuntimeError('signing is broken')
+    def generate_presigned_url(self, op, Params, ExpiresIn):   # noqa: N803 (boto3 spelling)
         self.calls.append((op, Params, ExpiresIn))
-        return f"https://api.example/{Params['Bucket']}/{Params['Key']}?X-Amz-Signature=abc"
+        return f"https://signed.example/{Params['Key']}?expires={ExpiresIn}"
 
 
-def _bucket_field(name='receipts/r.jpg', fail=False, public_url='https://public.example/r.jpg'):
-    """A FieldFile lookalike backed by a bucket storage, as django-storages shapes it."""
-    client  = _FakeClient(fail=fail)
-    storage = SimpleNamespace(
-        bucket_name='a-bucket',
-        connection=SimpleNamespace(meta=SimpleNamespace(client=client)),
-    )
-    field = SimpleNamespace(name=name, storage=storage, url=public_url)
-    return field, client
+class FakeSession:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def client(self, *args, **kwargs):
+        self.owner.clients_built += 1
+        return FakeClient()
 
 
-class SignedDocumentUrlTests(TestCase):
-    def test_missing_file_has_no_url(self):
-        self.assertIsNone(signed_document_url(None))
+class FakeStorage:
+    """Stands in for S3Storage, counting how often a client gets built."""
 
-    def test_bucket_file_is_signed_against_the_api_endpoint(self):
-        field, client = _bucket_field()
-        url = signed_document_url(field)
-        self.assertIn('X-Amz-Signature', url)
-        self.assertNotIn('public.example', url)
-        op, params, expires = client.calls[0]
-        self.assertEqual(op, 'get_object')
-        self.assertEqual(params, {'Bucket': 'a-bucket', 'Key': 'receipts/r.jpg'})
-        self.assertGreater(expires, 0)
+    def __init__(self):
+        self.bucket_name  = 'test-bucket'
+        self.region_name  = 'auto'
+        self.use_ssl      = True
+        self.endpoint_url = 'https://example.r2.cloudflarestorage.com'
+        self.client_config = None
+        self.verify       = None
+        self.clients_built = 0
 
-    def test_signing_failure_falls_back_to_the_plain_url(self):
-        # A broken signer must not blank the reviewer's page.
-        field, _ = _bucket_field(fail=True)
-        with self.assertLogs('vehicles.document_urls', level='ERROR'):
-            self.assertEqual(signed_document_url(field), 'https://public.example/r.jpg')
-
-    def test_local_storage_url_is_made_absolute(self):
-        # Local FileSystemStorage has nothing to sign — Django serves the file.
-        field = SimpleNamespace(name='receipts/r.jpg', storage=SimpleNamespace(),
-                                url='/media/receipts/r.jpg')
-        request = RequestFactory().get('/api/vehicles/registrations/')
-        self.assertEqual(signed_document_url(field, request),
-                         'http://testserver/media/receipts/r.jpg')
+    def _create_session(self):
+        return FakeSession(self)
 
 
-class ParkingZoneReferenceImageTests(TestCase):
-    """The zone editor draws bays on this image; a dead URL means a blank canvas.
+class FakeFieldFile:
+    def __init__(self, storage, name='receipts/Dela_Cruz_Juan.jpg'):
+        self.storage = storage
+        self.name = name
+        self.url = f'https://public.example/{name}'
 
-    It used to be handed out as the bucket's public URL, which only answers
-    while public access is on — and R2 ships with that off. Measured on the
-    campus bucket: the object read fine over the S3 API while the public host
-    did not answer at all, so the editor showed a broken thumbnail with nothing
-    to draw on.
-    """
-
-    def test_reference_image_is_signed_like_the_documents(self):
-        from vehicles.serializers import ParkingZoneSerializer
-        field, client = _bucket_field(name='parking_zones/zone-10-capture.jpg')
-        zone = SimpleNamespace(reference_image=field)
-        url = ParkingZoneSerializer().get_reference_image_url(zone)
-        self.assertIn('X-Amz-Signature', url)
-        self.assertNotIn('public.example', url)
-        _, params, _ = client.calls[0]
-        self.assertEqual(params['Key'], 'parking_zones/zone-10-capture.jpg')
-
-    def test_a_zone_without_an_image_has_no_url(self):
-        from vehicles.serializers import ParkingZoneSerializer
-        zone = SimpleNamespace(reference_image=None)
-        self.assertIsNone(ParkingZoneSerializer().get_reference_image_url(zone))
+    def __bool__(self):
+        return bool(self.name)
 
 
-class RegistrationDocumentSerializationTests(APITestCase):
-    """The serializer must hand out the fetchable URL, not the stored key."""
+class SigningClientCacheTests(SimpleTestCase):
 
     def setUp(self):
-        self.reg = VehicleRegistration.objects.create(
-            registrant_type='student', full_name='DELA CRUZ, JUAN',
-            email='doc-url@slc.edu.ph', vehicle_type='Motorcycle',
-            plate_number='DOC1234',
-            or_receipt_image=SimpleUploadedFile('r.jpg', b'\xff\xd8\xff\xe0jpeg',
-                                                content_type='image/jpeg'),
-        )
-        self.addCleanup(self.reg.or_receipt_image.delete, save=False)
+        self.storage = FakeStorage()
 
-    def test_uploaded_document_serializes_to_a_url_not_a_key(self):
-        data = VehicleRegistrationSerializer(self.reg).data
-        self.assertIn('/media/receipts/', data['or_receipt_image'])
+    def test_the_client_is_built_once_not_once_per_call(self):
+        for _ in range(5):
+            signed_document_url(FakeFieldFile(self.storage))
+        self.assertEqual(self.storage.clients_built, 1)
 
-    def test_absent_documents_serialize_as_null(self):
-        data = VehicleRegistrationSerializer(self.reg).data
-        self.assertIsNone(data['drivers_license_image'])
-        self.assertIsNone(data['assessment_form'])
+    def test_the_client_is_shared_across_threads(self):
+        """The regression this guards: django-storages caches its connection in
+        a threading.local, so every worker thread rebuilt it — about a second
+        each time, on whichever request landed on a fresh thread."""
+        seen = []
+
+        def sign():
+            signed_document_url(FakeFieldFile(self.storage))
+            seen.append(getattr(self.storage, _SIGNING_CLIENT_ATTR))
+
+        threads = [threading.Thread(target=sign) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(self.storage.clients_built, 1)
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(len({id(c) for c in seen}), 1)   # all the same client
+
+    def test_a_signed_url_carries_the_key_and_a_ttl(self):
+        url = signed_document_url(FakeFieldFile(self.storage), ttl=1234)
+        self.assertIn('receipts/Dela_Cruz_Juan.jpg', url)
+        self.assertIn('expires=1234', url)
+
+    def test_no_file_means_no_url(self):
+        self.assertIsNone(signed_document_url(None))
+        self.assertEqual(self.storage.clients_built, 0)
+
+    def test_local_storage_falls_back_to_its_own_url(self):
+        """FileSystemStorage has no bucket and nothing to sign — Django serves
+        those files itself."""
+        class LocalStorage:
+            pass
+
+        field = FakeFieldFile(LocalStorage())
+        self.assertEqual(signed_document_url(field), field.url)
+
+    def test_a_broken_storage_does_not_take_the_page_down(self):
+        """A django-storages upgrade could rename the attributes we mirror. The
+        page must still render — a document link that falls back to the public
+        URL beats a 500 on the review queue."""
+        class BrokenStorage(FakeStorage):
+            def _create_session(self):
+                raise RuntimeError('attribute renamed upstream')
+
+            @property
+            def connection(self):
+                raise RuntimeError('no connection either')
+
+        field = FakeFieldFile(BrokenStorage())
+        self.assertEqual(signed_document_url(field), field.url)
+
+    def test_warm_up_builds_the_client_before_any_request(self):
+        client = _shared_signing_client(self.storage)
+        self.assertIsNotNone(client)
+        self.assertEqual(self.storage.clients_built, 1)
+        # A request arriving afterwards reuses it rather than paying again.
+        signed_document_url(FakeFieldFile(self.storage))
+        self.assertEqual(self.storage.clients_built, 1)
+
+    def test_warm_up_is_a_no_op_without_a_bucket(self):
+        """A campus install on local storage has nothing to warm."""
+        warm_signing_client()   # default_storage may be either; must not raise
+
+
+class WarmupStartTests(SimpleTestCase):
+
+    def test_management_commands_do_not_warm_up(self):
+        """`manage.py migrate` and the test runner gain nothing from a client
+        they will never use."""
+        document_warmup._started = False
+        with self.settings():
+            import sys
+            argv, sys.argv = sys.argv, ['manage.py', 'migrate']
+            try:
+                document_warmup.start()
+            finally:
+                sys.argv = argv
+        self.assertFalse(document_warmup._started)

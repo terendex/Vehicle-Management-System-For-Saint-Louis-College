@@ -16,3 +16,9 @@ class VehiclesConfig(AppConfig):
         # Same server-process guard as the scheduler — see detection_supervisor.
         from . import detection_supervisor
         detection_supervisor.start()
+
+        # Builds the S3 signing client off the request path. Without this the
+        # first reviewer to open Vehicle Registration after a restart waits ~1s
+        # for botocore to load. Same server-process guard as the two above.
+        from . import document_warmup
+        document_warmup.start()
