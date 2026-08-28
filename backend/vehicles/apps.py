@@ -13,7 +13,10 @@ class VehiclesConfig(AppConfig):
 
         # Keeps a detector running for every zone that has a camera, instead of
         # waiting for someone to press Start Detection after every restart.
-        # Same server-process guard as the scheduler — see detection_supervisor.
+        # Same server-process guard as the scheduler — and additionally a
+        # host guard: it only runs where the cameras are actually reachable,
+        # which is the campus server, not the cloud one. See
+        # detection_supervisor._autodetect_disabled for why that matters.
         from . import detection_supervisor
         detection_supervisor.start()
 

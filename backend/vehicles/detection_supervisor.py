@@ -97,12 +97,41 @@ def _loop() -> None:
             log.exception("[autodetect] reconcile pass failed")
 
 
+def _autodetect_disabled() -> bool:
+    """Whether to skip the supervisor entirely on this host.
+
+    Off by default anywhere the cameras are unreachable, which in practice means
+    the cloud half. The cameras live on the campus LAN at 192.168.x.x; a Railway
+    container cannot route to them, so every reconcile pass there was starting a
+    detector that could only fail — and failing is not cheap. One open attempt
+    costs CV2_OPEN_TIMEOUT_SECONDS then OPEN_TIMEOUT_SECONDS (about half a
+    minute), spawns an ffmpeg child, and holds a worker thread the whole time.
+    Passes are 20s apart, so the attempts overlapped and piled up, and the
+    single Daphne process serving the site was left starving: every request,
+    including a small JSON POST, was waiting tens of seconds behind them.
+
+    Explicit beats inferred in both directions — set DISABLE_PARKING_AUTODETECT
+    to false on a cloud host that really can reach the cameras (a VPN, a tunnel),
+    or to true on campus to keep it off.
+    """
+    raw = os.getenv('DISABLE_PARKING_AUTODETECT', '').strip().lower()
+    if raw in ('1', 'true', 'yes'):
+        return True
+    if raw in ('0', 'false', 'no'):
+        return False
+    # Unset: default off wherever Railway sets its own environment markers.
+    return bool(os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('RAILWAY_PUBLIC_DOMAIN'))
+
+
 def start() -> None:
     """Start the supervisor once per process. No-op outside the server."""
     global _started
 
-    if os.getenv('DISABLE_PARKING_AUTODETECT', '').lower() in ('1', 'true', 'yes'):
-        log.info("[autodetect] disabled by DISABLE_PARKING_AUTODETECT")
+    if _autodetect_disabled():
+        log.info(
+            "[autodetect] disabled on this host — the parking cameras are not "
+            "reachable from here. Set DISABLE_PARKING_AUTODETECT=false to override."
+        )
         return
 
     # Same rule as vehicles/scheduler.py: migrations, tests, shells and one-shot
