@@ -6,6 +6,10 @@ import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+import {
+  IllustratedStep,
+  PayAtAccountingArt, NoFeeArt, UploadOrArt, ApprovalMailArt, CdsoOfficeArt,
+} from '../../components/Illustrations/RegArt'
 
 const LICENSE_IMAGE_MAX_MB    = 5
 const LICENSE_IMAGE_MAX_BYTES = LICENSE_IMAGE_MAX_MB * 1024 * 1024
@@ -1165,38 +1169,48 @@ export default function RegisterPage() {
               </div>
             )}
 
-            {/* Compact next steps */}
+            {/* Next steps. Each one is drawn as well as written — this screen is
+                read once, on a phone, and the applicant has to remember the
+                errand for days afterwards. */}
             <div className="success-next-steps">
               <p className="success-next-heading">What to do next</p>
-              <div className="success-next-list">
-                <div className="success-next-item">
-                  <span className="success-next-num">1</span>
-                  {/* Telling an exempt applicant to "Pay ₱0.00" would send them
-                      to Accounting for nothing. */}
-                  {feeExempt ? (
-                    <span>
-                      <strong>No fee to pay</strong> — {formData.department} staff are
-                      exempt from the vehicle pass fee. Go straight to the <strong>CDSO Office</strong>.
-                    </span>
-                  ) : (
-                    <span>Pay <strong>₱{vehiclePassFee.toFixed(2)}</strong> at the <strong>Accounting Office</strong></span>
-                  )}
-                </div>
-                {/* Exempt applicants never receive an Official Receipt, so the
-                    upload step does not exist for them — and the numbering has
-                    to close up rather than skip from 1 to 3. */}
-                {!feeExempt && (
-                  <div className="success-next-item">
-                    <span className="success-next-num">2</span>
-                    <span>
-                      <strong>Upload your OR</strong> using the link in the email we just sent
-                    </span>
-                  </div>
+              <div className="reg-step-list">
+                {/* Telling an exempt applicant to "Pay ₱0.00" would send them
+                    to Accounting for nothing — so their first two steps are a
+                    different pair, and the numbering closes up rather than
+                    skipping over the payment they never have to make. */}
+                {feeExempt ? (
+                  <>
+                    <IllustratedStep step={1} tone="ok" art={<NoFeeArt />} title="No fee to pay">
+                      {formData.department} staff are exempt from the vehicle pass fee, so there is
+                      nothing to settle at the Accounting Office.
+                    </IllustratedStep>
+                    <IllustratedStep step={2} art={<CdsoOfficeArt />} title="Go to the CDSO Office">
+                      Bring a valid ID. The CDSO reviews your application and the documents you
+                      attached, then releases your vehicle pass.
+                    </IllustratedStep>
+                  </>
+                ) : (
+                  <>
+                    <IllustratedStep
+                      step={1}
+                      art={<PayAtAccountingArt />}
+                      title={`Pay ₱${vehiclePassFee.toFixed(2)} at the Accounting Office`}
+                    >
+                      Settle the vehicle pass fee at the counter and keep the Official Receipt (OR)
+                      they hand you — you will need both its number and a photo of it.
+                    </IllustratedStep>
+                    <IllustratedStep step={2} art={<UploadOrArt />} title="Upload your Official Receipt">
+                      Open the link in the email we just sent, enter the OR number and attach a
+                      clear photo of the receipt. Your application is not queued for review until
+                      this is done.
+                    </IllustratedStep>
+                  </>
                 )}
-                <div className="success-next-item">
-                  <span className="success-next-num">{feeExempt ? 2 : 3}</span>
-                  <span>Watch for an <strong>approval email</strong> with your portal credentials</span>
-                </div>
+                <IllustratedStep step={3} art={<ApprovalMailArt />} title="Watch for the approval email">
+                  The CDSO emails you the outcome. If approved, that email carries the credentials
+                  for your vehicle owner portal.
+                </IllustratedStep>
               </div>
             </div>
 

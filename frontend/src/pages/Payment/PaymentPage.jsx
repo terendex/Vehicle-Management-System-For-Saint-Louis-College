@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Upload, X, FileText, Receipt, ArrowLeft, Info } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Upload, X, FileText, Receipt, ArrowLeft } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
+import {
+  IllustratedStep, PayAtAccountingArt, OrNumberArt, ReceiptPhotoArt, CdsoReviewArt,
+} from '../../components/Illustrations/RegArt'
 import slcLogo from '../../assets/slclogo.jpg'
 import './PaymentPage.css'
 
@@ -301,13 +304,29 @@ export default function PaymentPage() {
             </div>
           )}
 
-          <div className="paypage-note">
-            <Info size={14} />
-            <span>
-              Pay the fee at the <strong>Accounting Office</strong> first. Then enter the
-              Official Receipt number below and attach a clear photo of the receipt.
-              Your application is not queued for CDSO review until this is done.
-            </span>
+          {/* The same drawn steps the applicant already met on the confirmation
+              screen, continued here. Most arrive days later from a link in an
+              email, with no memory of what the errand was. */}
+          <div className="paypage-steps">
+            <p className="paypage-steps-heading">How this works</p>
+            <div className="reg-step-list">
+              <IllustratedStep step={1} art={<PayAtAccountingArt />} title="Pay at the Accounting Office">
+                Settle the vehicle pass fee at the counter first, and keep the Official Receipt
+                they hand you.
+              </IllustratedStep>
+              <IllustratedStep step={2} art={<OrNumberArt />} title="Enter the OR number">
+                Copy it from the receipt exactly as printed — the CDSO checks the number against
+                the photo you attach.
+              </IllustratedStep>
+              <IllustratedStep step={3} art={<ReceiptPhotoArt />} title="Attach a photo of the receipt">
+                The whole receipt, flat and in focus, with every corner in frame. A blurred or
+                cropped photo has to be retaken.
+              </IllustratedStep>
+              <IllustratedStep step={4} art={<CdsoReviewArt />} title="The CDSO reviews it">
+                Your application is not queued for review until the receipt is filed. You will be
+                emailed the outcome.
+              </IllustratedStep>
+            </div>
           </div>
 
           <form noValidate onSubmit={handleSubmit} className="paypage-form">

@@ -159,6 +159,26 @@
 
 .paypage-note--ok svg { color: #059669; }
 
+/* Illustrated walkthrough of the whole errand. The cards themselves are
+   .reg-step-list / .reg-step-card, shared with the registration form's
+   confirmation screen (components/Illustrations/RegArt.css). */
+.paypage-steps {
+  background: #F4F8FB;
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  padding: 0.9rem 1rem 1rem;
+  margin-bottom: 1.1rem;
+}
+
+.paypage-steps-heading {
+  margin: 0 0 0.7rem;
+  font-size: 0.69rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #5C7B92;
+}
+
 /* --- Form --- */
 .paypage-form {
   display: flex;
