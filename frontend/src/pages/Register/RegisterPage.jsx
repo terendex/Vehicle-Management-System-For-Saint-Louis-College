@@ -20,47 +20,67 @@ const ASSESSMENT_FILE_MAX_MB    = 5
 const ASSESSMENT_FILE_MAX_BYTES = ASSESSMENT_FILE_MAX_MB * 1024 * 1024
 const ASSESSMENT_FILE_TYPES     = [...LICENSE_IMAGE_TYPES, 'application/pdf']
 
-/* ── School email ──
-   Every applicant registers with an SLC address: it is the cheapest check that
-   they actually belong to the school, and it makes the address the CDSO's
-   approval mail goes to one the school controls. Students are issued
-   <8-digit ID>@slc-sflu.edu.ph, so theirs is checked all the way down to the
-   ID. Employees and fetchers are given named accounts instead, so for them the
-   domain is the whole rule and the local part is left alone. */
-const SCHOOL_EMAIL_DOMAIN = 'slc-sflu.edu.ph'
-const STUDENT_EMAIL_REGEX = /^\d{8}@slc-sflu\.edu\.ph$/
-const SCHOOL_EMAIL_REGEX  = /^[^\s@]+@slc-sflu\.edu\.ph$/
+/* ── Email address ──
+   Which rule applies follows who the school actually issues an account to:
+
+     SCHOOL_ID  College students. They are issued <8-digit ID>@slc-sflu.edu.ph,
+                so theirs is checked all the way down to the ID.
+     SCHOOL     Employees and fetchers. They get named accounts instead, so the
+                domain is the whole rule and the local part is left alone.
+     PERSONAL   Students below college — SHS, JHS, Elementary and SpEd. The
+                school issues them no address at all, so demanding one would
+                lock out every pupil whose parent registers for them. A working
+                personal address is what the CDSO's approval mail needs, and any
+                provider will do.
+
+   For everyone but that last group the domain is still the cheapest check that
+   the applicant belongs to SLC, and it keeps the address the approval mail goes
+   to one the school controls. */
+const SCHOOL_EMAIL_DOMAIN   = 'slc-sflu.edu.ph'
+const STUDENT_EMAIL_REGEX   = /^\d{8}@slc-sflu\.edu\.ph$/
+const SCHOOL_EMAIL_REGEX    = /^[^\s@]+@slc-sflu\.edu\.ph$/
+const PERSONAL_EMAIL_REGEX  = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const EMAIL_MODE = { SCHOOL_ID: 'school-id', SCHOOL: 'school', PERSONAL: 'personal' }
 
 /* Why the address was refused. Problems are reported in one modal on submit,
    where a bare "invalid email" leaves the applicant guessing which half of the
    address is at fault — so name the actual fault instead. Only ever called on
-   an address the rule's regex has already rejected. `requireId` is the student
-   rule: the local part has to be their 8-digit school ID, not just any name. */
-function describeEmail(value, { requireId }) {
+   an address the rule's regex has already rejected. */
+function describeEmail(value, { mode }) {
   const email = value.trim()
+  const needsId     = mode === EMAIL_MODE.SCHOOL_ID
+  const needsDomain = mode !== EMAIL_MODE.PERSONAL
 
   if (/\s/.test(email)) return 'Email address can’t contain spaces — remove them.'
 
   const parts = email.split('@')
   if (parts.length === 1) {
-    return requireId
-      ? `Email address is missing the @ — enter your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
-      : `Email address is missing the @ — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
+    if (needsId) return `Email address is missing the @ — enter your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
+    if (needsDomain) return `Email address is missing the @ — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
+    return 'Email address is missing the @ — e.g. juandelacruz@gmail.com.'
   }
   if (parts.length > 2) return 'Email address has more than one @ — keep only the one before the domain.'
 
   const [local, domain] = parts
   if (!local) {
-    return requireId
-      ? 'Enter your 8-digit school ID before the @.'
-      : 'Enter the name part of your school email before the @.'
+    if (needsId) return 'Enter your 8-digit school ID before the @.'
+    if (needsDomain) return 'Enter the name part of your school email before the @.'
+    return 'Enter a name before the @ — e.g. juandelacruz@gmail.com.'
   }
-  if (!domain) return `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
 
+  if (!needsDomain) {
+    if (!domain) return 'Add a domain after the @ — e.g. gmail.com.'
+    if (domain.startsWith('.') || domain.endsWith('.')) return `“${domain}” can’t start or end with a dot.`
+    if (!domain.includes('.')) return `“${domain}” is missing its ending — e.g. ${domain}.com.`
+    return 'Invalid email address format — e.g. juandelacruz@gmail.com.'
+  }
+
+  if (!domain) return `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
   if (domain !== SCHOOL_EMAIL_DOMAIN) {
     return `Registration needs your SLC school email — replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
   }
-  if (requireId) {
+  if (needsId) {
     if (!/^\d+$/.test(local)) {
       return 'The part before the @ must be your 8-digit school ID — digits only, no letters or dots.'
     }
@@ -435,27 +455,46 @@ export default function RegisterPage() {
       .finally(() => setLoadingBarangays(false))
   }, [selectedCityCode])
 
+  /* Which email rule this applicant falls under. College is the only student
+     level the school issues an address to; the rest register with a personal
+     one. Recomputed every render, so switching registrant type or education
+     level re-points the field at the right rule immediately. */
+  const emailMode =
+    registrantType !== 'student'           ? EMAIL_MODE.SCHOOL
+    : formData.student_level === 'college' ? EMAIL_MODE.SCHOOL_ID
+    : EMAIL_MODE.PERSONAL
+
   const FIELD_PATTERNS = {
     plate_number: {
       validate: isValidPlateNumber,
       message: 'Invalid Philippine plate number format',
       hint: 'e.g. AAA 0000 · AA 0000 · A000AA · AAA000',
     },
-    // Everyone registers with an SLC address. Only students have the 8-digit ID
-    // baked into theirs, so they are the only ones checked past the domain.
-    email: registrantType === 'student'
+    // See EMAIL_MODE above for why each group gets the rule it does. A student
+    // who has not picked a level yet falls to the lenient rule rather than the
+    // strict one: guessing College at them would flag a perfectly good personal
+    // address before the form has any idea which they are. They cannot submit
+    // without choosing a level, and the rule tightens the moment they do.
+    email: emailMode === EMAIL_MODE.SCHOOL_ID
       ? {
           regex: STUDENT_EMAIL_REGEX,
-          describe: (value) => describeEmail(value, { requireId: true }),
+          describe: (value) => describeEmail(value, { mode: emailMode }),
           message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
           hint: `e.g. 12345678@${SCHOOL_EMAIL_DOMAIN}`,
         }
-      : {
-          regex: SCHOOL_EMAIL_REGEX,
-          describe: (value) => describeEmail(value, { requireId: false }),
-          message: `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}`,
-          hint: `e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}`,
-        },
+      : emailMode === EMAIL_MODE.SCHOOL
+        ? {
+            regex: SCHOOL_EMAIL_REGEX,
+            describe: (value) => describeEmail(value, { mode: emailMode }),
+            message: `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}`,
+            hint: `e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}`,
+          }
+        : {
+            regex: PERSONAL_EMAIL_REGEX,
+            describe: (value) => describeEmail(value, { mode: emailMode }),
+            message: 'Invalid email address format',
+            hint: 'e.g. juandelacruz@gmail.com',
+          },
     conduction_number: {
       regex: /^[A-Z0-9]{5,12}$/i,
       message: 'Invalid conduction number. Use 5–12 alphanumeric characters.',
@@ -501,6 +540,16 @@ export default function RegisterPage() {
     // A rule may explain the specific fault; otherwise its one flat message stands.
     return rule.describe ? rule.describe(value) : rule.message
   }
+
+  /* The email is judged by a rule that changes with registrant type and
+     education level, so a remembered error goes stale the moment either moves:
+     a College applicant who switches to SHS should not still be told to use
+     their 8-digit ID, and the personal address that was fine as SHS has to be
+     flagged the moment they switch back. Derived on every render rather than
+     stored, so the field can never disagree with the rule currently in force.
+     `formErrors.email` is still written by the shared change handler; it is
+     simply not what the field reads. */
+  const emailError = validateField('email', formData.email)
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -729,7 +778,7 @@ export default function RegisterPage() {
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType])
+  }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType, emailMode])
 
   const selectSchedule = (group) => {
     setFormData(prev => ({ ...prev, schedule: group.code, campus_days: [...group.days] }))
@@ -1575,12 +1624,22 @@ export default function RegisterPage() {
                   onChange={handleInputChange}
                   required
                   placeholder={FIELD_PATTERNS.email.hint}
-                  className={formErrors.email || dupErrors.email ? 'input-error' : ''}
+                  className={emailError || dupErrors.email ? 'input-error' : ''}
                 />
-                {(formErrors.email || dupErrors.email) && (
-                  <span className="field-error-msg">{formErrors.email || dupErrors.email}</span>
+                {(emailError || dupErrors.email) && (
+                  <span className="field-error-msg">{emailError || dupErrors.email}</span>
                 )}
-                {!formErrors.email && !dupErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
+                {!emailError && !dupErrors.email && dupChecking.email && <span className="field-checking-msg">Checking availability…</span>}
+                {/* Spelled out because the rule is not the same for everyone — an
+                    Elementary parent seeing only a school-address placeholder has
+                    no way to tell whether their own Gmail is allowed. */}
+                <span className="field-hint">
+                  {emailMode === EMAIL_MODE.SCHOOL_ID
+                    ? `College students use their SLC school email — 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
+                    : emailMode === EMAIL_MODE.SCHOOL
+                      ? `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}.`
+                      : 'Use a personal email address you actually check — a Gmail account is fine.'}
+                </span>
               </div>
 
               {/* Student-specific */}
