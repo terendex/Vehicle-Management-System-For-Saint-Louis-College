@@ -6,6 +6,7 @@ import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+import { compressImage } from '../../utils/imageCompress'
 import {
   IllustratedStep,
   PayAtAccountingArt, NoFeeArt, UploadOrArt, ApprovalMailArt, CdsoOfficeArt,
@@ -641,20 +642,25 @@ export default function RegisterPage() {
   }
 
   /* ── Driver's license photo ── */
-  const handleLicenseImageChange = (e) => {
-    const file = e.target.files?.[0]
+  const handleLicenseImageChange = async (e) => {
+    const picked = e.target.files?.[0]
     // Let the user re-pick the same file after removing it
     e.target.value = ''
-    if (!file) return
+    if (!picked) return
 
-    if (!LICENSE_IMAGE_TYPES.includes(file.type)) {
+    if (!LICENSE_IMAGE_TYPES.includes(picked.type)) {
       notify.error('Please choose a JPG, PNG, WEBP or HEIC image.', { title: 'Unsupported file' })
       return
     }
-    if (file.size > LICENSE_IMAGE_MAX_BYTES) {
-      notify.error(`That image is ${formatFileSize(file.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`, { title: 'Image too large' })
+    if (picked.size > LICENSE_IMAGE_MAX_BYTES) {
+      notify.error(`That image is ${formatFileSize(picked.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`, { title: 'Image too large' })
       return
     }
+
+    // Shrunk here rather than at submit time, so the chip below shows the size
+    // that will actually be uploaded and the work happens while the applicant
+    // is still filling in fields. Falls back to the original on any failure.
+    const file = await compressImage(picked)
 
     setLicenseImage(file)
     // HEIC won't render in most browsers — fall back to the filename-only chip.
@@ -702,18 +708,20 @@ export default function RegisterPage() {
     return file
   }
 
-  const handleAssessmentChange = (e) => {
+  // compressImage passes PDFs straight through — an assessment form is as often
+  // the portal's PDF as a photo of the printed copy.
+  const handleAssessmentChange = async (e) => {
     const file = pickAssessmentFile(e)
-    if (file) setAssessmentFile(file)
+    if (file) setAssessmentFile(await compressImage(file))
   }
 
   const clearAssessmentFile = () => {
     setAssessmentFile(null)
   }
 
-  const handleFetcherAssessmentChange = (index, e) => {
+  const handleFetcherAssessmentChange = async (index, e) => {
     const file = pickAssessmentFile(e)
-    if (file) updateFetcherStudent(index, 'assessment', file)
+    if (file) updateFetcherStudent(index, 'assessment', await compressImage(file))
   }
 
   // Release the last object URL when the form unmounts

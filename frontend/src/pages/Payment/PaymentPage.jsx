@@ -5,6 +5,7 @@ import { CheckCircle, AlertTriangle, Upload, X, FileText, Receipt, ArrowLeft } f
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
+import { compressImage } from '../../utils/imageCompress'
 import {
   IllustratedStep, PayAtAccountingArt, OrNumberArt, ReceiptPhotoArt, CdsoReviewArt,
 } from '../../components/Illustrations/RegArt'
@@ -92,22 +93,26 @@ export default function PaymentPage() {
   // Release the last object URL when the page unmounts
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
 
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0]
+  const handleFileChange = async (e) => {
+    const picked = e.target.files?.[0]
     // Let the user re-pick the same file after removing it
     e.target.value = ''
-    if (!file) return
+    if (!picked) return
 
     // Some browsers report an empty type for HEIC; fall back to the extension.
-    const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
-    if (!RECEIPT_TYPES.includes(file.type) && !extOk) {
+    const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(picked.name)
+    if (!RECEIPT_TYPES.includes(picked.type) && !extOk) {
       notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
       return
     }
-    if (file.size > RECEIPT_MAX_BYTES) {
-      notify.error(`That file is ${formatFileSize(file.size)}. Please keep it under ${RECEIPT_MAX_MB}MB.`, { title: 'File too large' })
+    if (picked.size > RECEIPT_MAX_BYTES) {
+      notify.error(`That file is ${formatFileSize(picked.size)}. Please keep it under ${RECEIPT_MAX_MB}MB.`, { title: 'File too large' })
       return
     }
+
+    // A photographed receipt is the whole payload of this page, so shrinking it
+    // here is most of what the applicant feels on Submit. PDFs pass through.
+    const file = await compressImage(picked)
 
     setReceipt(file)
     // PDFs and HEIC won't render — those fall back to the filename chip.

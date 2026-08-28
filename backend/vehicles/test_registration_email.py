@@ -269,19 +269,42 @@ class MailFailureIsReportedTests(TestCase):
         payload.update(over)
         return self.client.post('/api/vehicles/register/open/', payload, format='json')
 
-    def test_submission_reports_a_sent_email(self):
+    def test_submission_queues_the_acknowledgement_email(self):
+        """The send moved off the request path, so the response reports that it
+        was handed over — not that a mail server has already accepted it."""
         res = self._submit()
         self.assertEqual(res.status_code, 201)
-        self.assertEqual(res.data['email_status'], 'sent')
+        self.assertEqual(res.data['email_status'], 'queued')
+        # EMAIL_SEND_ASYNC is off under test, so the send still ran inline and
+        # the mail is on record — "queued" must not mean "quietly dropped".
+        self.assertTrue(any(m.to == ['juan@slc.edu.ph'] for m in mail.outbox),
+                        'the acknowledgement email was never sent')
 
-    def test_submission_survives_a_dead_mail_server_but_says_so(self):
+    def test_submission_survives_a_dead_mail_server_and_reports_it(self):
+        """A dead mail server must never look like a healthy one. The failure
+        now surfaces in email_utils' log and an admin notification rather than
+        in the response, exactly as it does on the acceptance path."""
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR') as logs:
+            with self.assertLogs('vehicles.email_utils', level='ERROR') as logs:
                 res = self._submit()
         self.assertEqual(res.status_code, 201, 'the submission itself must still be saved')
-        self.assertEqual(res.data['email_status'], 'failed')
+        self.assertEqual(res.data['email_status'], 'queued')
         self.assertTrue(VehicleRegistration.objects.filter(pk=res.data['id']).exists())
-        self.assertIn('pending-registration email', '\n'.join(logs.output))
+        self.assertIn('send_pending_email', '\n'.join(logs.output))
+
+    def test_a_failed_acknowledgement_raises_an_admin_notification(self):
+        """The bell is what replaced the old response warning — without it a
+        failed send would leave nobody aware the applicant never got their
+        receipt-upload link."""
+        from accounts.models import Notification
+
+        with override_settings(**DEAD_SMTP):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
+                self._submit()
+
+        self.assertTrue(
+            Notification.objects.filter(event='pending_email_failed').exists(),
+            'a failed acknowledgement email raised no admin notification')
 
     def test_rejection_reports_a_dead_mail_server(self):
         reg_id = self._submit().data['id']

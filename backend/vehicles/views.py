@@ -1352,6 +1352,30 @@ def _acceptance_email_failed_notice(registration):
     return _notice
 
 
+def _pending_email_failed_notice(registration):
+    """Same idea for the acknowledgement mail a public submission triggers.
+
+    Worth raising even though nothing is issued yet: that email carries the
+    applicant's reference number *and* the link they upload their Official
+    Receipt through. Without it they have no way back into the flow, and the
+    application sits unpaid in the queue looking like an applicant who never
+    bothered — so the CDSO has to know to send it to them by hand.
+    """
+    from accounts.notifications import notify
+    plate = registration.plate_number or registration.conduction_number or ''
+
+    def _notice():
+        notify(
+            'registration', 'pending_email_failed',
+            f"Acknowledgement email failed — {plate}",
+            f"{registration.full_name}'s application was submitted, but the "
+            f"acknowledgement email could not be delivered to {registration.email}. "
+            f"They have not received their receipt-upload link.",
+            severity='warning', plate_number=plate, link='/admin/vehicles',
+        )
+    return _notice
+
+
 class RegistrationPdfView(APIView):
     """Print the approved-registration confirmation for one registration.
 
@@ -2153,25 +2177,28 @@ class PublicOpenRegistrationView(APIView):
                                 else VehicleRegistration.PaymentStatus.UNPAID),
                 amount_paid=(Decimal('0.00') if exempt else None),
             )
-            # The submission itself stands whether or not the acknowledgement
-            # email gets out — but the failure is logged rather than swallowed.
-            # A bare `except: pass` here meant an expired SMTP credential looked
-            # exactly like a healthy system: applicants were told "submitted
-            # successfully", no email ever arrived, and nothing was recorded.
-            try:
-                send_pending_email(registration)
-                email_status = 'sent'
-            except Exception:
-                logger.exception(
-                    "Failed to send the pending-registration email to %s "
-                    "(registration %s) — the submission was still saved.",
-                    registration.email, registration.pk,
-                )
-                email_status = 'failed'
+            # Acknowledgement mail, handed to a background thread like the
+            # acceptance and receipt mails. The registration is already
+            # committed, so the send never affected the outcome — it only made
+            # the applicant sit on the submit button while Brevo (or Gmail's
+            # SMTP, on the campus half) completed a round trip, which is
+            # seconds on top of a request that otherwise takes tens of
+            # milliseconds. The applicant still has a second upload to wait on
+            # after this one, so it was the worst place in the flow to block.
+            #
+            # The failure is still not swallowed: a bare `except: pass` here
+            # once meant an expired SMTP credential looked exactly like a
+            # healthy system. It is logged, and it raises an admin notification
+            # — which matters more here than anywhere else, because this mail
+            # carries the link the applicant needs to upload their receipt.
+            send_in_background(
+                send_pending_email, registration,
+                on_failure=_pending_email_failed_notice(registration),
+            )
             return Response(
                 {"message": "Registration submitted successfully. Please wait for CDSO review.",
                  "id": registration.id,
-                 "email_status": email_status},
+                 "email_status": 'queued'},
                 status=status.HTTP_201_CREATED,
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
