@@ -21,57 +21,52 @@ const ASSESSMENT_FILE_MAX_BYTES = ASSESSMENT_FILE_MAX_MB * 1024 * 1024
 const ASSESSMENT_FILE_TYPES     = [...LICENSE_IMAGE_TYPES, 'application/pdf']
 
 /* ── School email ──
-   Students and employees are issued <8-digit ID>@slc-sflu.edu.ph, so the form
-   accepts nothing else from them: it is the cheapest check that the applicant
-   actually belongs to SLC, and it makes the address the CDSO's approval mail
-   goes to one the school controls. Fetchers are parents and guardians with no
-   school account, so they keep a plain email address. */
+   Every applicant registers with an SLC address: it is the cheapest check that
+   they actually belong to the school, and it makes the address the CDSO's
+   approval mail goes to one the school controls. Students are issued
+   <8-digit ID>@slc-sflu.edu.ph, so theirs is checked all the way down to the
+   ID. Employees and fetchers are given named accounts instead, so for them the
+   domain is the whole rule and the local part is left alone. */
 const SCHOOL_EMAIL_DOMAIN = 'slc-sflu.edu.ph'
-const SCHOOL_EMAIL_REGEX  = /^\d{8}@slc-sflu\.edu\.ph$/
-const GENERIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const STUDENT_EMAIL_REGEX = /^\d{8}@slc-sflu\.edu\.ph$/
+const SCHOOL_EMAIL_REGEX  = /^[^\s@]+@slc-sflu\.edu\.ph$/
 
 /* Why the address was refused. Problems are reported in one modal on submit,
    where a bare "invalid email" leaves the applicant guessing which half of the
    address is at fault — so name the actual fault instead. Only ever called on
-   an address the rule's regex has already rejected. */
-function describeEmail(value, { school }) {
+   an address the rule's regex has already rejected. `requireId` is the student
+   rule: the local part has to be their 8-digit school ID, not just any name. */
+function describeEmail(value, { requireId }) {
   const email = value.trim()
 
   if (/\s/.test(email)) return 'Email address can’t contain spaces — remove them.'
 
   const parts = email.split('@')
   if (parts.length === 1) {
-    return school
+    return requireId
       ? `Email address is missing the @ — enter your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
-      : 'Email address is missing the @ — e.g. juan@example.com.'
+      : `Email address is missing the @ — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
   }
   if (parts.length > 2) return 'Email address has more than one @ — keep only the one before the domain.'
 
   const [local, domain] = parts
   if (!local) {
-    return school
+    return requireId
       ? 'Enter your 8-digit school ID before the @.'
-      : 'Enter a name before the @ — e.g. juan@example.com.'
+      : 'Enter the name part of your school email before the @.'
   }
-  if (!domain) {
-    return school
-      ? `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
-      : 'Add a domain after the @ — e.g. example.com.'
-  }
+  if (!domain) return `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
 
-  if (school) {
-    if (domain !== SCHOOL_EMAIL_DOMAIN) {
-      return `Registration needs your SLC school email — replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
-    }
+  if (domain !== SCHOOL_EMAIL_DOMAIN) {
+    return `Registration needs your SLC school email — replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
+  }
+  if (requireId) {
     if (!/^\d+$/.test(local)) {
       return 'The part before the @ must be your 8-digit school ID — digits only, no letters or dots.'
     }
     return `Your school ID must be 8 digits — “${local}” has ${local.length}.`
   }
-
-  if (domain.startsWith('.') || domain.endsWith('.')) return `“${domain}” can’t start or end with a dot.`
-  if (!domain.includes('.')) return `“${domain}” is missing its ending — e.g. ${domain}.com.`
-  return 'Invalid email address format — e.g. juan@example.com.'
+  return `Invalid email address format — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
 }
 
 function formatFileSize(bytes) {
@@ -442,20 +437,20 @@ export default function RegisterPage() {
       message: 'Invalid Philippine plate number format',
       hint: 'e.g. AAA 0000 · AA 0000 · A000AA · AAA000',
     },
-    // Fetchers are outsiders — anything that looks like an email will do.
-    // Everyone else has to use their SLC address.
-    email: registrantType === 'fetcher'
+    // Everyone registers with an SLC address. Only students have the 8-digit ID
+    // baked into theirs, so they are the only ones checked past the domain.
+    email: registrantType === 'student'
       ? {
-          regex: GENERIC_EMAIL_REGEX,
-          describe: (value) => describeEmail(value, { school: false }),
-          message: 'Invalid email address format',
-          hint: 'e.g. juan@example.com',
+          regex: STUDENT_EMAIL_REGEX,
+          describe: (value) => describeEmail(value, { requireId: true }),
+          message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
+          hint: `e.g. 12345678@${SCHOOL_EMAIL_DOMAIN}`,
         }
       : {
           regex: SCHOOL_EMAIL_REGEX,
-          describe: (value) => describeEmail(value, { school: true }),
-          message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
-          hint: `e.g. 12345678@${SCHOOL_EMAIL_DOMAIN}`,
+          describe: (value) => describeEmail(value, { requireId: false }),
+          message: `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}`,
+          hint: `e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}`,
         },
     conduction_number: {
       regex: /^[A-Z0-9]{5,12}$/i,
@@ -748,6 +743,12 @@ export default function RegisterPage() {
     // Already-known duplicates from the live check (the backend re-checks regardless)
     ;['plate_number', 'conduction_number', 'email', 'drivers_license', 'student_id', 'employee_id']
       .forEach((name) => { if (dupErrors[name]) problems.push(dupErrors[name]) })
+
+    // The license number on its own is just typed text — the photo is what CDSO
+    // checks it against, so an application without one cannot be reviewed.
+    if (!licenseImage) {
+      problems.push("Attach a photo of the driver's license so CDSO can verify it.")
+    }
 
     if (!formData.privacy_consent) problems.push('Agree to the Data Privacy Consent.')
     if (!formData.details_confirmed) {
@@ -1945,7 +1946,7 @@ export default function RegisterPage() {
               )}
 
               <div className="form-group col-span-2">
-                <label>Driver's License Photo <span className="label-optional">(optional)</span></label>
+                <label>Driver's License Photo <span className="required">*</span></label>
 
                 {!licenseImage ? (
                   <label className="license-upload">
@@ -1984,7 +1985,8 @@ export default function RegisterPage() {
                 )}
 
                 <span className="field-hint">
-                  A clear, readable photo of the driver's license helps CDSO verify the application faster.
+                  Attach a clear, readable photo of the driver's license — CDSO checks it against
+                  the license number above before approving the application.
                 </span>
               </div>
 
