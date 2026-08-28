@@ -34,9 +34,15 @@ const PAYMENT_LABELS = {
 }
 
 function formatSchedule(entity) {
-  if (!entity?.schedule) return '—'
-  if (entity.schedule === 'MIXED' && entity.campus_days?.length > 0) {
-    return entity.campus_days.map(day => DAY_SHORT[day] || day).join(' · ')
+  // The days are the source of truth; `schedule` is the label for a known
+  // rotation. So spell the days out whenever there is no rotation code to name
+  // — a MIXED row, a row predating the rotation migration, or a payload that
+  // simply did not carry the code. Falling straight to '—' while holding the
+  // days hid a schedule the record actually had.
+  const days = entity?.campus_days
+  if (!entity?.schedule || entity.schedule === 'MIXED') {
+    if (days?.length > 0) return days.map(day => DAY_SHORT[day] || day).join(' · ')
+    return '—'
   }
   return SCHEDULE_LABELS[entity.schedule] || entity.schedule
 }

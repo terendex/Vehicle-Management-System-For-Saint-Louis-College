@@ -1678,6 +1678,13 @@ class AcceptRegistrationView(APIView):
                 "program_year": registration.program_year,
                 "employee_id": registration.employee_id,
                 "department": registration.department.name if registration.department else '',
+                # Both halves of the schedule, not just the days. The account
+                # modal formats `schedule` into "Mon · Wed · Fri" and only falls
+                # back to campus_days for a MIXED row — sending the days alone
+                # left every newly approved student showing "—" for Schedule,
+                # even though the same value renders fine in the table behind
+                # the modal (that comes off the serializer, which is __all__).
+                "schedule": registration.schedule,
                 "campus_days": registration.campus_days,
                 "drivers_license": registration.drivers_license,
                 "student_level": registration.student_level,

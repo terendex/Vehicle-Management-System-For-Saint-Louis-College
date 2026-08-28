@@ -1291,7 +1291,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 18px 10px;
+  /* This is a status readout, not the page's headline. At 18px of padding
+     around a 32px numeral the three tiles were the tallest thing in the card
+     and pushed the bays — the part people actually scan — below the fold. */
+  padding: 12px 10px;
   border-right: 1px solid #D3E1EC;
 }
 
@@ -1300,9 +1303,10 @@
 }
 
 .od-parking-stat-num {
-  font-size: 32px;
+  font-size: 25px;
   font-weight: 800;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .od-parking-stat-label {
@@ -1501,7 +1505,7 @@
   }
 
   .od-zone-fill-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 
   .od-modal {
@@ -1579,7 +1583,7 @@
   }
 
   .od-parking-stat-num {
-    font-size: 24px;
+    font-size: 21px;
   }
 
   .od-modal {
@@ -1602,6 +1606,8 @@
 
   .od-zone-fill-grid {
     grid-template-columns: 1fr;
+    /* Track .od-parking-summary's tighter mobile inset. */
+    margin: 0 12px 12px;
   }
 
   .od-outstanding-banner {
@@ -1751,9 +1757,16 @@
 
 .od-zone-fill-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* auto-FIT, not auto-fill: with one zone, auto-fill keeps the empty 200px
+     tracks and leaves the single card stranded at the left of an otherwise
+     blank row. auto-fit collapses them so one zone fills the width and two
+     still sit side by side. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-  margin-bottom: 12px;
+  /* Matches the 20px inset every sibling in this card uses (.od-parking-summary
+     margin, .od-parking-grid / -legend / -note padding). Without it this row
+     alone sat flush to the card edge, a few pixels left of everything else. */
+  margin: 0 20px 12px;
 }
 
 .od-zone-fill-card {
@@ -1782,6 +1795,15 @@
   font-size: 13px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+/* The unit stays quiet so the number keeps the emphasis — it is there to
+   disambiguate, not to compete. */
+.od-zone-fill-pct-unit {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B8CA6;
 }
 
 .od-zone-fill-pct.normal   { color: #0F7A5A; }

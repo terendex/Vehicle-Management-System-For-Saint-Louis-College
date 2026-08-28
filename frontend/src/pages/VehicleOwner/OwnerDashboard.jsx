@@ -856,8 +856,11 @@ export default function OwnerDashboard() {
                         <div key={z.zone_id} className="od-zone-fill-card">
                           <div className="od-zone-fill-header">
                             <span className="od-zone-fill-name">{z.zone_name}</span>
+                            {/* "0%" alone sits directly above "1 of 1 spaces
+                                available" and reads just as easily as 0%
+                                *available* — the opposite of what it means. */}
                             <span className={`od-zone-fill-pct ${z.fill_pct >= 90 ? 'critical' : z.fill_pct >= 70 ? 'high' : 'normal'}`}>
-                              {z.fill_pct}%
+                              {z.fill_pct}%<span className="od-zone-fill-pct-unit">full</span>
                             </span>
                           </div>
                           <div className="od-zone-fill-bar-bg">
