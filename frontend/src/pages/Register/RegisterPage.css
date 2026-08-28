@@ -1361,6 +1361,40 @@
   margin-top: 1px;
 }
 
+/* The notice carries an action, so it stacks: message, then the button that
+   resolves it. Left-aligned with the text rather than stretched — a full-width
+   button inside a warning box reads as the page's primary action, which it
+   is not. */
+.success-license-warn-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.success-license-retry {
+  padding: 7px 16px;
+  border: 1px solid #C9A227;
+  border-radius: 8px;
+  background: #FFFFFF;
+  color: #7A5C00;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.success-license-retry:hover:not(:disabled) {
+  background: #FDF3D0;
+  border-color: #A88420;
+}
+
+.success-license-retry:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .success-next-steps {
   background: #F4F8FB;
   border: 1px solid #D3E1EC;

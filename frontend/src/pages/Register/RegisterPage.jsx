@@ -267,9 +267,13 @@ export default function RegisterPage() {
   const [licenseImage, setLicenseImage] = useState(null)
   const [licensePreview, setLicensePreview] = useState(null)
   const [assessmentFile, setAssessmentFile] = useState(null)
-  // Set when the registration saved but the document upload didn't, so the
-  // success screen can tell the applicant to bring the physical copies instead.
-  const [licenseUploadFailed, setLicenseUploadFailed] = useState(false)
+  // Set when the registration row saved but its documents didn't. The driver's
+  // license photo is required, so this is an unfinished application rather than
+  // a footnote — and the row already exists, so the applicant cannot simply
+  // submit again (the backend would reject it as a duplicate). Holds exactly
+  // what a retry needs: the row it attaches to, and the files themselves.
+  const [pendingDocUpload, setPendingDocUpload] = useState(null)
+  const [retryingDocUpload, setRetryingDocUpload] = useState(false)
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -538,6 +542,49 @@ export default function RegisterPage() {
       ...prev,
       vehicle_color: choice === 'Other' ? '' : validateField('vehicle_color', value),
     }))
+  }
+
+  /* ── Supporting documents ──
+     Posted after the registration row exists, so a failure here leaves an
+     application on file with no driver's license photo attached — and CDSO
+     cannot review it without one. The single automatic retry absorbs the usual
+     transient blip; anything that survives it is handed back to the applicant
+     as a button they can press, not a warning they can only read. */
+  const uploadDocuments = async (registrationId, email, files) => {
+    try {
+      await registrationApi.uploadRegistrationDocuments(registrationId, email, files)
+      return true
+    } catch (firstErr) {
+      console.error('Registration document upload failed, retrying:', firstErr)
+      try {
+        await registrationApi.uploadRegistrationDocuments(registrationId, email, files)
+        return true
+      } catch (retryErr) {
+        console.error('Registration document upload failed again:', retryErr)
+        return false
+      }
+    }
+  }
+
+  const handleRetryDocUpload = async () => {
+    if (!pendingDocUpload || retryingDocUpload) return
+    setRetryingDocUpload(true)
+    const { registrationId, email, files } = pendingDocUpload
+    const ok = await uploadDocuments(registrationId, email, files)
+    setRetryingDocUpload(false)
+    if (ok) {
+      setPendingDocUpload(null)
+      notify.success(
+        'Your documents are now on file — nothing else is needed from you.',
+        { title: 'Upload complete' },
+      )
+    } else {
+      notify.error(
+        'The upload still did not go through. Check your connection and try again, or '
+        + 'bring the physical driver’s license to the CDSO Office.',
+        { title: 'Upload failed' },
+      )
+    }
   }
 
   /* ── Driver's license photo ── */
@@ -875,17 +922,19 @@ export default function RegisterPage() {
         : []
       const hasFetcherAssessment = fetcherAssessments.some(Boolean)
       if ((licenseImage || assessment || hasFetcherAssessment) && result?.id) {
-        // Best-effort — a failed upload shouldn't block the (already submitted)
-        // registration, but the applicant is told so they can bring the physical copies.
-        try {
-          await registrationApi.uploadRegistrationDocuments(result.id, payload.email, {
-            license: licenseImage,
-            assessment,
-            fetcherAssessments,
-          })
-        } catch (uploadErr) {
-          setLicenseUploadFailed(true)
-          console.error('Registration document upload failed:', uploadErr)
+        const files = { license: licenseImage, assessment, fetcherAssessments }
+        if (!await uploadDocuments(result.id, payload.email, files)) {
+          // The registration itself is saved and cannot be submitted again, so
+          // the upload is parked for retry rather than lost. Raised as a modal
+          // too: the license photo is required, and a notice sitting on the
+          // success screen is exactly the kind of thing a relieved applicant
+          // scrolls straight past.
+          setPendingDocUpload({ registrationId: result.id, email: payload.email, files })
+          notify.error(
+            'Your application was submitted, but the driver’s license photo did not upload — '
+            + 'and CDSO needs it to review your application. Use “Retry upload” on the next screen.',
+            { title: 'Documents not uploaded' },
+          )
         }
       }
 
@@ -1046,14 +1095,24 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {licenseUploadFailed && (
+            {pendingDocUpload && (
               <div className="success-license-warn">
                 <AlertTriangle size={16} />
-                <span>
-                  Your supporting documents could not be uploaded, but your application was
-                  submitted. Just bring the physical driver's license and assessment form when
-                  you visit the CDSO Office.
-                </span>
+                <div className="success-license-warn-body">
+                  <span>
+                    Your application was submitted, but your supporting documents could not be
+                    uploaded. The driver's license photo is required before CDSO can review your
+                    application — please retry, or bring the physical copies to the CDSO Office.
+                  </span>
+                  <button
+                    type="button"
+                    className="success-license-retry"
+                    onClick={handleRetryDocUpload}
+                    disabled={retryingDocUpload}
+                  >
+                    {retryingDocUpload ? 'Uploading…' : 'Retry upload'}
+                  </button>
+                </div>
               </div>
             )}
 
