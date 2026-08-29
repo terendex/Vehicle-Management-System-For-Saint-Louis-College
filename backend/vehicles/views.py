@@ -1968,9 +1968,26 @@ class ScheduleSlotsView(APIView):
         active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
         base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
         limit = SCHEDULE_SLOT_LIMIT
+
+        # One query with a FILTER per day, not one .count() per day.
+        #
+        # The loop this replaces issued six separate COUNT(*) statements. On
+        # Railway, sitting beside the database, that was invisible. From the
+        # campus half each one is a ~45ms round-trip to Neon, so a 528-byte
+        # response cost ~300ms of waiting - and the count grows with ALL_DAYS.
+        # Same filters, same numbers, one trip.
+        #
+        # Day names are plain alphabetic (Monday..Saturday), so they are safe to
+        # use directly as aggregate aliases; the prefix only keeps them clear of
+        # any model field name.
+        counts = base.aggregate(**{
+            f'day_{day}': Count('pk', filter=Q(campus_days__contains=[day]))
+            for day in ALL_DAYS
+        })
+
         result = {}
         for day in ALL_DAYS:
-            used = base.filter(campus_days__contains=[day]).count()
+            used = counts[f'day_{day}']
             result[day] = {
                 "used": used,
                 "limit": limit,
@@ -2161,11 +2178,18 @@ class PublicOpenRegistrationView(APIView):
 
             active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
             base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
-            full_days = []
-            for day in campus_days:
-                used = base.filter(campus_days__contains=[day]).count()
-                if used >= SCHEDULE_SLOT_LIMIT:
-                    full_days.append(day)
+
+            # One query with a FILTER per day, for the same reason as
+            # ScheduleSlotsView above: a .count() per day is a round-trip per
+            # day, and this runs on the path a student waits on when they press
+            # submit. full_days is still built by walking campus_days, so the
+            # order of the names in the error message is unchanged.
+            day_counts = base.aggregate(**{
+                f'day_{day}': Count('pk', filter=Q(campus_days__contains=[day]))
+                for day in campus_days
+            })
+            full_days = [day for day in campus_days
+                         if day_counts[f'day_{day}'] >= SCHEDULE_SLOT_LIMIT]
             if full_days:
                 # A rotation is taken as a whole, so one full day closes the
                 # whole schedule — saying "Friday is full, pick another day"

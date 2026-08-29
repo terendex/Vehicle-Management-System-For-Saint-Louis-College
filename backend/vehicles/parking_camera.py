@@ -654,6 +654,7 @@ class ParkingCameraThread(threading.Thread):
 
         try:
             while not self._stop.is_set():
+                waited_from = time.monotonic()
                 frame, last_seq = reader.wait_for_frame(last_seq)
                 if frame is None:
                     # Either no new frame within the timeout — normal on a
@@ -666,6 +667,26 @@ class ParkingCameraThread(threading.Thread):
                         reader       = _acquire_reader(self.rtsp_url)
                         self._reader = reader
                         last_seq     = -1
+
+                    # Back off, but only when wait_for_frame returned EARLY.
+                    #
+                    # It is documented as blocking for FRAME_WAIT_SECONDS, and
+                    # on a stuttering camera it does. But its inner loop is
+                    # `while self._seq <= after_seq and not self._stop.is_set()`
+                    # — so the moment the reader has stopped, or has not yet
+                    # published a first frame, it returns instantly. This loop
+                    # then `continue`s straight back into it with nothing to
+                    # slow it down.
+                    #
+                    # The cost is not idle spin. The thread holds the GIL while
+                    # it churns, measured at 99% of a core with an unreachable
+                    # camera, and every HTTP request in this process queues
+                    # behind it — a static file took 1.1s instead of a few ms.
+                    #
+                    # A genuine timeout has already waited, so it is left alone.
+                    if time.monotonic() - waited_from < FRAME_WAIT_SECONDS / 2:
+                        if self._stop.wait(RECONNECT_DELAY_SECONDS):
+                            break
                     continue
 
                 try:
