@@ -87,6 +87,7 @@ $App = [ordered]@{
     LogPath     = ''
     LogDirty    = $false         # a line arrived this tick; scroll and flush once
     AutoOpened  = $false         # OpenOnStart fires once per server start, not per restart loop
+    ListenFailed = $false        # daphne could not bind the port - a different failure to a crash
 }
 
 $LogDir = Join-Path $env:LOCALAPPDATA 'SLC-VMS\logs'
@@ -836,7 +837,11 @@ $statusPattern =
     '|(?<cambad>^\s*NO ROUTE\s*:)' +
     '|(?<camnone>no cameras registered yet)' +
     '|(?<dbfail>could not read the camera list)' +
-    '|(?<realtime>\[settings\] realtime:)'
+    '|(?<realtime>\[settings\] realtime:)' +
+    # daphne reports a failed bind and then run-campus.ps1 still exits 0, so
+    # without matching this the launcher reported "the server exited on its
+    # own (code 0)" for what is really "the port was already taken".
+    '|(?<listenfail>Listen failure|WinError 10048)'
 $StatusRe = New-Object regex($statusPattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled))
 
 $severityPattern =
@@ -907,6 +912,10 @@ function Read-ServerLine {
         elseif ($m.Groups['dbfail'].Success) {
             Set-Pill 'Db'  'unreachable' 'bad'
             Set-Pill 'Cam' 'unknown' 'bad'
+            $kind = 'error'
+        }
+        elseif ($m.Groups['listenfail'].Success) {
+            $App.ListenFailed = $true
             $kind = 'error'
         }
         elseif ($m.Groups['realtime'].Success) {
@@ -1055,8 +1064,35 @@ function Open-CampusPage {
 # ---------------------------------------------------------------------------
 #  Start / stop
 # ---------------------------------------------------------------------------
+# True once nothing is listening on the port any more.
+#
+# Stop-Server kills the powershell child with taskkill /T, and HasExited flips
+# the instant that child dies - but daphne and its python grandchildren are
+# still tearing down, and they are the ones holding the socket. Starting again
+# on that signal alone races them, and daphne loses:
+#
+#   CRITICAL Listen failure: Couldn't listen on 0.0.0.0:8000: [WinError 10048]
+#
+# which is what turned "Update and restart" into a stopped server.
+function Wait-PortFree {
+    param([int]$Port, [int]$TimeoutSeconds = 20)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $inUse = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if (-not $inUse) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $false
+}
+
 function Start-Server {
     if ($App.Proc -and -not $App.Proc.HasExited) { return }
+
+    if (-not (Wait-PortFree -Port $cfg.Port)) {
+        Write-Log ("Port $($cfg.Port) is still held by the previous server. " +
+                   'Waiting longer, then trying anyway.') 'warn'
+        [void](Wait-PortFree -Port $cfg.Port -TimeoutSeconds 20)
+    }
 
     $missing = Get-CampusMissingSecrets -EnvFile $App.EnvFile -RequiredOnly
     if ($missing.Count -gt 0) {
@@ -1066,7 +1102,7 @@ function Start-Server {
         return
     }
 
-    $App.CamOk = 0; $App.CamBad = 0; $App.Origin = ''; $App.AutoOpened = $false
+    $App.CamOk = 0; $App.CamBad = 0; $App.Origin = ''; $App.AutoOpened = $false; $App.ListenFailed = $false
     Set-State 'Starting' 'Preparing the environment. A first run installs dependencies and can take several minutes.'
     Set-Pill 'Db' 'checking' 'none'; Set-Pill 'Cam' 'checking' 'none'; Set-Pill 'Rt' 'checking' 'none'
 
@@ -1491,6 +1527,13 @@ $timer.Add_Tick({
         } elseif ($App.State -eq 'Stopping') {
             Set-State 'Stopped' 'Stopped. Guards cannot reach this machine while it is down.'
             Write-Log 'Server stopped.' 'note'
+        } elseif ($App.ListenFailed) {
+            # run-campus.ps1 exits 0 even when daphne could not bind, so the exit
+            # code says nothing useful here. Naming the real cause saves someone
+            # hunting through the log for a CRITICAL line well above the end.
+            Set-State 'Failed' "Port $($cfg.Port) was already in use, so the server could not start."
+            Write-Log ("Could not bind port $($cfg.Port) - something else is still using it. " +
+                       'If that is an older copy of this server, press Start again in a few seconds.') 'error'
         } else {
             Set-State 'Failed' "The server exited on its own (code $code). The log above says why."
             Write-Log "run-campus.ps1 exited with code $code" 'error'
