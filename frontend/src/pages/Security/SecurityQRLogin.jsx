@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ShieldCheck, LogIn, AlertCircle, CheckCircle, ChevronLeft, Eye, EyeOff } from 'lucide-react'
-import { toast } from 'sonner'
+import { ShieldCheck, LogIn, ChevronLeft, Eye, EyeOff } from 'lucide-react'
+import notify from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
@@ -17,6 +18,12 @@ export default function SecurityQRLogin() {
 
   // Set by the forced password change, which signs the guard out on purpose
   const passwordChanged = searchParams.get('passwordChanged') === '1'
+  useEffect(() => {
+    if (!passwordChanged) return
+    notify.success('Password changed. Please sign in with your new password.', {
+      title: 'Password updated',
+    })
+  }, [passwordChanged])
 
   // Kiosk mode: /security/guard-login/gate1, /security/guard-login/gate4, … locks the gate.
   // Gates are dynamic (admin can add more), so accept any gateN slug.
@@ -27,12 +34,9 @@ export default function SecurityQRLogin() {
   const [email, setEmail]               = useState('')
   const [password, setPassword]         = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [credError, setCredError]       = useState('')
   const [inputToken, setInputToken]     = useState('')
   const [showToken, setShowToken]       = useState(false)
   const [status, setStatus]             = useState('idle') // idle | scanning | success | error
-  const [guardInfo, setGuardInfo]       = useState(null)
-  const [errorMsg, setErrorMsg]         = useState('')
   const [useCamera, setUseCamera]       = useState(true)
   const [cameraErr, setCameraErr]       = useState('')
   // The QR Badge tab appears once the typed email belongs to a guard whose
@@ -139,35 +143,42 @@ export default function SecurityQRLogin() {
   const handleQRScan = async (token) => {
     if (status === 'scanning') return
     const clean = token.trim()
-    if (!clean) return
+    if (!clean) {
+      await notify.error('Enter or scan your QR token.', { title: 'Nothing to verify' })
+      return
+    }
     setStatus('scanning')
-    setErrorMsg('')
     try {
       const guard = await qrLogin(clean, selectedGate)
-      setGuardInfo(guard)
-      setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
-      setTimeout(() => navigate('/security/entries'), 1800)
+      await notify.success(`Clocked in at ${gateName(guard.gate_assignment)}.`, {
+        title: `Welcome, ${guard.full_name}`,
+      })
+      navigate('/security/entries')
     } catch (err) {
-      setErrorMsg(err.message || 'QR scan failed.')
-      setStatus('error')
       setInputToken('')
-      setTimeout(() => { setStatus('idle'); inputRef.current?.focus() }, 3000)
+      await notify.error(err.message || 'QR scan failed.', {
+        title: 'Scan Failed', confirmLabel: 'Try Again',
+      })
+      setStatus('idle')
+      inputRef.current?.focus()
     }
   }
 
   const handleCredentialLogin = async (e) => {
     e?.preventDefault()
-    if (!email.trim() || !password || isLoading) return
-    setCredError('')
+    if (isLoading) return
+    const problems = [...fieldProblems(e?.currentTarget)]
+    if (!email.trim()) problems.push('Enter your email address.')
+    if (!password) problems.push('Enter your password.')
+    if (await notify.validation(problems, { title: 'Cannot sign in' })) return
     try {
       const guard = await guardLogin(email.trim(), password, selectedGate)
-      setGuardInfo(guard)
-      setStatus('success')
-      toast.success(`Welcome, ${guard.full_name}! Clocked in at ${gateName(guard.gate_assignment)}.`)
-      setTimeout(() => navigate('/security/entries'), 1800)
+      await notify.success(`Clocked in at ${gateName(guard.gate_assignment)}.`, {
+        title: `Welcome, ${guard.full_name}`,
+      })
+      navigate('/security/entries')
     } catch (err) {
-      setCredError(err.message || 'Login failed. Please check your credentials.')
+      notify.error(err.message || 'Login failed. Please check your credentials.', { title: 'Login Failed', confirmLabel: 'Try Again' })
       setPassword('')
     }
   }
@@ -176,8 +187,6 @@ export default function SecurityQRLogin() {
     setSelectedGate(null)
     setStatus('idle')
     setInputToken('')
-    setErrorMsg('')
-    setCredError('')
     setEmail('')
     setPassword('')
     setUseCamera(true)
@@ -247,23 +256,7 @@ export default function SecurityQRLogin() {
           ) : (
             /* ── STEP 2: Scan ── */
             <>
-              {status === 'success' && guardInfo ? (
-                <div className="sqr-state">
-                  <div className="sqr-state-icon success"><CheckCircle size={32} /></div>
-                  <h2 className="sqr-state-title">Welcome, {guardInfo.full_name}!</h2>
-                  <p className="sqr-state-sub">
-                    Clocked in at <strong>{gateName(guardInfo.gate_assignment)}</strong>
-                  </p>
-                  <p className="sqr-state-hint">Redirecting to dashboard…</p>
-                </div>
-              ) : status === 'error' ? (
-                <div className="sqr-state">
-                  <div className="sqr-state-icon error"><AlertCircle size={32} /></div>
-                  <h2 className="sqr-state-title">Scan Failed</h2>
-                  <p className="sqr-state-sub">{errorMsg}</p>
-                  <p className="sqr-state-hint">Retrying in a moment…</p>
-                </div>
-              ) : status === 'scanning' ? (
+              {status === 'scanning' ? (
                 <div className="sqr-state">
                   <div className="sqr-spinner" />
                   <p className="sqr-state-sub">Verifying QR code…</p>
@@ -291,19 +284,7 @@ export default function SecurityQRLogin() {
                     </div>
                   </div>
 
-                  <form className="sqr-cred-form" onSubmit={handleCredentialLogin}>
-                    {passwordChanged && !credError && (
-                      <div className="sqr-cred-success" role="status">
-                        <CheckCircle size={15} />
-                        <span>Password changed. Please sign in with your new password.</span>
-                      </div>
-                    )}
-                    {credError && (
-                      <div className="sqr-cred-error" role="alert">
-                        <AlertCircle size={15} />
-                        <span>{credError}</span>
-                      </div>
-                    )}
+                  <form className="sqr-cred-form" onSubmit={handleCredentialLogin} noValidate>
                     <div className="sqr-cred-group">
                       <label className="sqr-cred-label" htmlFor="guard-email">Email</label>
                       <input
@@ -338,7 +319,7 @@ export default function SecurityQRLogin() {
                     <button
                       type="submit"
                       className="sqr-cred-submit"
-                      disabled={!email.trim() || !password || isLoading}
+                      disabled={isLoading}
                     >
                       {isLoading ? <span className="sqr-btn-spinner" /> : <LogIn size={17} />}
                       {isLoading ? 'Signing in…' : 'Login & Clock In'}
@@ -384,7 +365,7 @@ export default function SecurityQRLogin() {
                             </div>
                             <button
                               className="sqr-submit"
-                              disabled={!inputToken.trim() || isLoading}
+                              disabled={isLoading}
                               onClick={() => handleQRScan(inputToken)}
                             >
                               <LogIn size={18} />

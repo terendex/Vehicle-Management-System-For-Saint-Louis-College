@@ -185,12 +185,28 @@ export const HELP_TOPICS = [
     category: 'CDSO',
     roles: ['admin'],
     body: [
-      { type: 'p', text: 'The Audit Log is the system’s report centre. It records every scan, entry/exit, and management action.' },
+      { type: 'p', text: 'The Audit Log is the system’s report centre for management actions — accounts, records, and overrides. Gate scans and entry/exit history live on the Vehicle Log (next topic).' },
       { type: 'steps', items: [
         'Use the Date From / Date To fields (or the quick period buttons) to choose a range — future dates are blocked.',
         'Filter by action type or search by actor, plate, or details.',
         'Click Export PDF for a branded SLC report, or Export Excel for a formatted spreadsheet. Both include every row matching your filters.',
       ] },
+    ],
+  },
+  {
+    id: 'cdso-vehicle-log',
+    title: 'Vehicle Log',
+    category: 'CDSO',
+    roles: ['admin'],
+    body: [
+      { type: 'p', text: 'The Vehicle Log is the gate history: every scan, entry, and exit recorded by security, across all gates. Each guard sees only their own gate — you see all of them in one place.' },
+      { type: 'steps', items: [
+        'Pick a date range with the quick period buttons, or set Date From / Date To yourself.',
+        'Narrow by gate or by status (Authorized, Denied, Visitor, Unreadable, Exited).',
+        'Search by plate number, vehicle owner, or the guard on duty.',
+        'Click Export PDF for a branded SLC report, or Export Excel for a spreadsheet. Both cover every row matching your filters, not just the page on screen.',
+      ] },
+      { type: 'p', text: 'A vehicle that entered and left shows as one row with its exit time and how long it stayed; one still on campus is marked “Still inside”.' },
     ],
   },
   {

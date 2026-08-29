@@ -49,7 +49,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       'react', 'react-dom', 'react-router-dom',
-      'axios', 'sonner', 'zustand',
+      'axios', 'zustand',
       'lucide-react', 'date-fns',
       'recharts',
       'jspdf',

@@ -988,3 +988,132 @@
   box-sizing: border-box;
 }
 .vm-or-input:focus { border-color: #03396C; }
+
+/* ── Responsive ──────────────────────────────────────────────────
+   The nine-column table already carries its own min-width and scrolls
+   inside .vm-card, so it needs no help. The work is the toolbar — five
+   filter buttons, a period switcher, a search box and a refresh — which
+   is what actually falls apart first as the screen narrows. */
+
+/* --- Tablet --- */
+@media (max-width: 900px) {
+  .vm-page {
+    gap: 1.25rem;
+  }
+
+  .vm-header-stats {
+    width: 100%;
+  }
+
+  /* Filters above, search below, each owning a full row. Sharing one
+     line left the search input at its 190px minimum with the filter
+     buttons wrapping raggedly around it. */
+  .vm-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .vm-search-group {
+    width: 100%;
+  }
+
+  .vm-search-wrap {
+    flex: 1;
+  }
+
+  .vm-search-input {
+    width: 100%;
+  }
+}
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .vm-stats-row {
+    gap: 10px;
+  }
+
+  /* Four stats to a wrapping row: equal shares beat a 3 + 1 orphan. */
+  .vm-stat {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+    padding: 8px 12px;
+  }
+
+  /* The separator only reads between two groups on one line. */
+  .vm-filter-sep {
+    display: none;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .vm-title {
+    font-size: 20px;
+  }
+
+  .vm-subtitle {
+    font-size: 0.8rem;
+  }
+
+  .vm-stat-num {
+    font-size: 1.2rem;
+  }
+
+  .vm-filters {
+    gap: 5px;
+  }
+
+  .vm-period-btns {
+    width: 100%;
+  }
+
+  .vm-period-btn {
+    flex: 1;
+  }
+
+  /* Dialogs fill the phone and scroll inside — the issue-violation form
+     is taller than a landscape viewport. */
+  .vm-overlay {
+    padding: 10px;
+  }
+
+  .vm-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .vm-modal-body {
+    padding: 14px;
+  }
+
+  .vm-modal-foot {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+  }
+
+  .vm-modal-foot > .vm-btn {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .vm-title {
+    font-size: 18px;
+  }
+
+  .vm-stat {
+    flex: 1 1 100%;
+  }
+
+  .vm-filter-btn {
+    flex: 1 1 calc(50% - 3px);
+    justify-content: center;
+  }
+
+  .vm-modal-foot > .vm-btn {
+    flex: 1 1 100%;
+  }
+}

@@ -331,6 +331,44 @@
   color: #4A6B85;
 }
 
+/* ===== Payment badges =====
+   A second axis beside .status-badge, not more values of it: an application can
+   be rejected after the applicant paid, and a fee-exempt one is neither paid nor
+   owing. Deliberately squarer and quieter than the status pill so the two read
+   as different facts at a glance instead of competing for the same meaning. */
+
+.payment-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.payment-paid {
+  background: #D6F0E6;
+  color: #0A5C43;
+  border-color: #A7DCC7;
+}
+
+/* Amber, not red: an unpaid application is the normal starting state, not a
+   fault. Red is reserved for rejected/expired on the status pill. */
+.payment-unpaid {
+  background: #FDF0BE;
+  color: #7A5C00;
+  border-color: #EFD98A;
+}
+
+.payment-exempt {
+  background: #E8F1F9;
+  color: #03396C;
+  border-color: #C0D8EC;
+}
+
 /* ===== Action dropdown ===== */
 
 .action-cell {
@@ -518,30 +556,268 @@
   gap: 8px;
 }
 
-.vr-period-btns {
+/* ── Headline counts ─────────────────────────────────────────────────────── */
+
+/* The total and the refine panel share one line: the total is a single tile
+   and the panel is a short row of them, so stacking left a full-width band of
+   empty space beside each. Making the panel a bounded, tinted surface is what
+   keeps it reading as a second tier rather than more tiles on the same strip.
+
+   The tiles themselves are the user-management stat card: white surface, tinted
+   icon chip, uppercase label over the number. Same anatomy, one size down for
+   the refine row, so the two admin pages read as one system. */
+.vr-stats {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.vr-stats-primary {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.vr-stats-refine {
+  /* Takes the width the total tile does not, and drops to its own line rather
+     than squeezing the tiles below a readable width. */
+  flex: 1 1 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid #DCE7F0;
+  border-radius: 14px;
+  background: #F7FAFC;
+}
+
+/* An empty status has nothing to break down, so the panel folds onto one line
+   rather than reserving a full-height band to hold a single sentence. */
+.vr-stats-refine--empty {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-style: dashed;
+  background: transparent;
+}
+
+.vr-stats-refine-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  background: #EEF4F9;
-  border-radius: 8px;
-  padding: 3px;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #64839C;
+  flex-shrink: 0;
 }
 
-.vr-period-btn {
-  padding: 5px 12px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: #4A6B85;
+.vr-stats-refine-head svg { color: #8AA5BC; flex-shrink: 0; }
+.vr-stats-refine-head strong { color: #35576F; font-weight: 700; }
+
+.vr-stats-refine-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+/* Separates the two refinement axes without another heading. Hidden once the
+   row wraps, where a vertical rule between stacked groups reads as a stray mark. */
+.vr-stat-divider {
+  align-self: stretch;
+  width: 1px;
+  background: #DCE7F0;
+  margin: 2px 0;
+}
+
+.vr-stats-refine-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #7C99AF;
+}
+
+/* On the collapsed one-line form the message trails the header, so it needs a
+   separator; stacked on a narrow screen it is its own line and must not. */
+.vr-stats-refine--empty .vr-stats-refine-empty::before {
+  content: '·';
+  margin-right: 8px;
+  color: #B7C9D8;
+}
+
+.vr-stat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vr-stat-group-title {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #64839C;
+}
+
+.vr-stat-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Every tile carries its own accent colour; the shared rules below read it out
+   of --tile-accent, so a variant declares its colour once instead of restating
+   it for the chip, the tint and the selected ring. */
+.vr-stat {
+  --tile-accent: #03396C;
+  --tile-tint: #EAF2F8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  min-width: 160px;
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  background: #FFFFFF;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+/* The icon chip is what the row is scanned by: six white cards holding only a
+   number get read one digit at a time, and it also carries the tile's colour
+   now that the number itself is the same navy on every card. */
+.vr-stat-chip {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tile-tint);
+  color: var(--tile-accent);
+}
+
+.vr-stat-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Every small tile is also a filter shortcut, so it has to look pressable. */
+button.vr-stat { cursor: pointer; }
+button.vr-stat:hover {
+  border-color: #BDD4E5;
+  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.06);
+}
+button.vr-stat:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+button.vr-stat.active {
+  border-color: var(--tile-accent);
+  background: var(--tile-tint);
+  box-shadow: inset 0 0 0 1px var(--tile-accent);
+}
+button.vr-stat.active .vr-stat-chip { background: #FFFFFF; }
+
+/* The "other" tile reports anomalous rows so the counts still add up; it is
+   deliberately inert, so it must not look pressable. */
+.vr-stat--static {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.vr-stat--sm {
+  gap: 10px;
+  padding: 11px 16px;
+  min-width: 148px;
+}
+.vr-stat--sm .vr-stat-chip { width: 34px; height: 34px; border-radius: 9px; }
+
+/* On the panel's tint a plain white tile would float; the firmer border keeps
+   it reading as a control rather than a gap in the background. */
+.vr-stats-refine .vr-stat { border-color: #CBDCEA; }
+
+.vr-stat-label {
+  margin: 0;
   font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
+  color: #64839C;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   white-space: nowrap;
-  transition: all 0.15s;
 }
 
-.vr-period-btn:hover { background: #fff; color: #03396C; }
-.vr-period-btn.active { background: #fff; color: #03396C; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.vr-stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #0B2340;
+  font-variant-numeric: tabular-nums;
+}
+
+.vr-stat--sm .vr-stat-label { font-size: 11px; }
+.vr-stat--sm .vr-stat-value { font-size: 20px; }
+
+/* The headline count is the same card, one size up — it leads the row the way
+   Total Users does, not by being a different kind of object. */
+.vr-stat--total {
+  align-self: stretch;
+  min-width: 210px;
+  padding: 16px 22px;
+}
+.vr-stat--total .vr-stat-chip { width: 44px; height: 44px; border-radius: 12px; }
+.vr-stat--total .vr-stat-value { font-size: 26px; }
+
+/* Fee tints: unpaid is the one that wants chasing, exempt is a non-event. */
+.vr-stat--pay-unpaid { --tile-accent: #C62828; --tile-tint: #FCEDED; }
+.vr-stat--pay-paid   { --tile-accent: #0F7A5A; --tile-tint: #E6F5EF; }
+.vr-stat--pay-exempt { --tile-accent: #64839C; --tile-tint: #EEF3F8; }
+
+/* Last, so it beats the variant tints above: an empty bucket is a fact, not a
+   headline, and draining its colour lets the one count that does have rows
+   behind it carry the line. */
+.vr-stat--zero {
+  --tile-accent: #9DB2C4;
+  --tile-tint: #F1F5F9;
+}
+.vr-stat--zero .vr-stat-label { color: #90A8BC; }
+.vr-stat--zero .vr-stat-value { color: #7C99AF; }
+
+.vr-stat-placeholder {
+  align-self: center;
+  font-size: 12px;
+  color: #64839C;
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .vr-stats { flex-direction: column; gap: 12px; }
+  .vr-stats-primary { gap: 12px; }
+  .vr-stat--total { align-self: stretch; }
+  .vr-stats-refine-body { gap: 12px; }
+  /* Stacked groups need no vertical rule between them. */
+  .vr-stat-divider { display: none; }
+  /* Only a wide viewport fits the header and the sentence on one line. */
+  .vr-stats-refine--empty { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .vr-stats-refine--empty .vr-stats-refine-empty::before { content: none; }
+  /* Tiles share the width evenly rather than leaving a ragged last row. */
+  .vr-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .vr-stat--sm { min-width: 0; }
+  .vr-stat-label { white-space: normal; }
+}
 
 .vr-search-wrap {
   position: relative;
@@ -1495,3 +1771,181 @@
   opacity: 1;
 }
 
+
+/* ===== Submitted documents (registration details) ===== */
+
+.vr-attach-block {
+  grid-column: span 2;
+  padding-top: 4px;
+}
+
+.vr-attach-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Three tiles across on a wide modal, folding to two and then one. Every cell
+   is the same width and every preview the same height, so the row reads as one
+   set of documents rather than three differently-shaped pictures. */
+.vr-attach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.vr-attach-cell {
+  min-width: 0;
+}
+
+.vr-attach {
+  display: block;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
+/* The frame every attachment fills, whatever it turns out to be. A fixed height
+   is what keeps a portrait scan and a landscape receipt on the same line. */
+.vr-attach-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 168px;
+  padding: 10px;
+  background: #F7FAFC;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+}
+
+/* contain, not cover: a cropped licence is a licence number the reviewer
+   cannot read, which defeats the point of showing it at all. */
+.vr-attach-img {
+  padding: 0;
+  object-fit: contain;
+}
+
+.vr-attach:hover .vr-attach-box {
+  border-color: #4A6B85;
+}
+
+.vr-attach-file {
+  flex-direction: column;
+  color: #03396C;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.vr-attach-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vr-attach-box--empty {
+  border-style: dashed;
+  color: #64839C;
+  font-size: 13px;
+  font-style: italic;
+  text-align: center;
+}
+
+.vr-attach-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  color: #6B8CA6;
+  font-size: 11px;
+}
+
+.vr-attach-empty {
+  color: #64839C;
+  font-style: italic;
+}
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The blocks above already handle the stats strip (720), the section
+   frame (768) and the account panel (580). What was left uncovered is
+   the phone itself: the toolbar, the registration table and the modal
+   action rows. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .vehicle-registration-page {
+    padding: 12px;
+  }
+
+  /* Search takes its own full row above the filters; at its fixed 210px
+     it was the widest thing in a wrapping toolbar and pushed the selects
+     onto a line of their own anyway. */
+  .vr-toolbar-left,
+  .vr-toolbar-right {
+    width: 100%;
+  }
+
+  .vr-search-wrap {
+    flex: 1 1 100%;
+  }
+
+  .vr-search-input {
+    width: 100%;
+  }
+
+  .filter-select {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+
+  /* The registration table carries plate, owner, type, status and dates.
+     .table-container scrolls it at a readable width rather than letting
+     every column collapse to one word per line. */
+  .data-table {
+    min-width: 820px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 10px 12px;
+  }
+
+  .modal-content {
+    padding: 22px 16px 18px;
+  }
+
+  /* Kept as a row — the rule above sets it !important — but allowed to
+     wrap so a third action drops to its own line instead of squeezing
+     all three until their icons and labels split. */
+  .modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .modal-actions > button {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .vehicle-registration-page {
+    padding: 4px 0 0;
+  }
+
+  .page-title {
+    font-size: 18px;
+  }
+
+  .filter-select {
+    flex: 1 1 100%;
+  }
+
+  .modal-actions > button {
+    flex: 1 1 100%;
+  }
+}

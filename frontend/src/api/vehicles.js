@@ -2,6 +2,10 @@ import api from './axios'
 
 export const getVehicles       = ()     => api.get('/vehicles/')
 export const getVehicleProfile = (id)   => api.get(`/vehicles/${id}/profile/`)
+// Same profile, addressed by plate or conduction number instead of row id, and
+// without recording anything — parking bays know a plate and nothing else.
+export const lookupVehicleByPlate = (plate) =>
+  api.get('/vehicles/by-plate/', { params: { plate } })
 
 export const getRuleConstraints = (params) => api.get('/vehicles/rules/', { params })
 export const createRuleConstraint = (data) => api.post('/vehicles/rules/', data)
@@ -18,6 +22,7 @@ export const deactivateNotice = (id)      => api.delete(`/vehicles/notices/${id}
 
 export const getRegistrationPeriods       = ()        => api.get('/vehicles/registration-periods/')
 export const createRegistrationPeriod     = (data)    => api.post('/vehicles/registration-periods/', data)
+export const updateRegistrationPeriod     = (id, data) => api.patch(`/vehicles/registration-periods/${id}/`, data)
 export const activateRegistrationPeriod   = (id)      => api.post(`/vehicles/registration-periods/${id}/activate/`)
 export const deactivateRegistrationPeriod = (id)      => api.delete(`/vehicles/registration-periods/${id}/activate/`)
 

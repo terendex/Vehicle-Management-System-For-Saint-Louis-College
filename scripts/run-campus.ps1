@@ -29,6 +29,14 @@
       -SkipFrontend    never rebuild, even if the sources changed
       -Rebuild         force a rebuild even if the bundle looks current
       -Reconfigure     re-ask for the secret values and rewrite them into .env
+      -NonInteractive  never prompt; fail instead. This is how the desktop
+                       launcher runs it - a Read-Host with no console attached
+                       would hang forever with nothing on screen to say why.
+
+    NOTE: scripts\campus-launcher.ps1 reads this script's output to drive its
+    status pills - "Serving on", "reachable :", "NO ROUTE  :", "no cameras
+    registered yet" and "could not read the camera list" are all matched there.
+    Reword one and reword the pattern in Read-ServerLine with it.
 #>
 
 [CmdletBinding()]
@@ -36,12 +44,17 @@ param(
     [int]$Port = 8000,
     [switch]$SkipFrontend,
     [switch]$Rebuild,
-    [switch]$Reconfigure
+    [switch]$Reconfigure,
+    [switch]$NonInteractive
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
+
+# The secret list and the .env read/write helpers are shared with the launcher
+# and the installer, so they live in one file rather than being copied into each.
+. (Join-Path $PSScriptRoot 'campus-config.ps1')
 
 function Say($msg, $colour = 'Cyan') { Write-Host "[campus] $msg" -ForegroundColor $colour }
 
@@ -49,9 +62,27 @@ function Say($msg, $colour = 'Cyan') { Write-Host "[campus] $msg" -ForegroundCol
 $python = Join-Path $repo 'backend\venv\Scripts\python.exe'
 if (-not (Test-Path $python)) {
     Say 'No virtualenv found - creating backend\venv (one-time, a few minutes)...'
-    & python -m venv (Join-Path $repo 'backend\venv')
+
+    # `py -3.11` before a bare `python`: EasyOCR and OpenCV are the constraint
+    # here, and a machine that also has 3.9 or 3.13 on PATH would otherwise
+    # build the venv on whichever one happens to win, then fail much later
+    # inside a wheel with an error that names none of this.
+    $created = $false
+    if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+        & py -3.11 -m venv (Join-Path $repo 'backend\venv') 2>$null
+        $created = Test-Path $python
+    }
+    if (-not $created) {
+        Say 'Python 3.11 not found via the launcher - falling back to the default python.' 'Yellow'
+        & python -m venv (Join-Path $repo 'backend\venv')
+    }
     if (-not (Test-Path $python)) {
         Write-Error 'Could not create the virtualenv. Is Python installed and on PATH?'
+    }
+
+    $ver = (& $python -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null)
+    if ($ver -and $ver.Trim() -ne '3.11') {
+        Say "WARNING: the virtualenv is on Python $($ver.Trim()); 3.11 is what this project is tested on." 'Yellow'
     }
     & $python -m pip install --upgrade pip --quiet
     & $python -m pip install -r (Join-Path $repo 'requirements.txt')
@@ -69,51 +100,32 @@ if (-not (Test-Path $envFile)) {
     $Reconfigure = $true
 }
 
-# Values this machine cannot derive. SECRET_KEY and DATABASE_URL must match
-# Railway exactly: the key signs the JWTs both halves accept, and the database
-# string is what makes the two halves one system rather than two.
-$secrets = @(
-    @{ Key = 'SECRET_KEY';           Prompt = "Django SECRET_KEY (byte-identical to Railway's)" },
-    @{ Key = 'DATABASE_URL';         Prompt = 'Neon DATABASE_URL (the same one Railway uses)' },
-    @{ Key = 'R2_ACCESS_KEY_ID';     Prompt = 'Cloudflare R2 access key id' },
-    @{ Key = 'R2_SECRET_ACCESS_KEY'; Prompt = 'Cloudflare R2 secret access key' },
-    @{ Key = 'R2_BUCKET_NAME';       Prompt = 'R2 bucket name' },
-    @{ Key = 'R2_ACCOUNT_ID';        Prompt = 'R2 account id' },
-    @{ Key = 'R2_PUBLIC_URL';        Prompt = 'R2 public URL' }
-)
+# Values this machine cannot derive - defined once in campus-config.ps1 so the
+# launcher and the installer ask for exactly the same set. SECRET_KEY and
+# DATABASE_URL must match Railway: the key signs the JWTs both halves accept,
+# and the database string is what makes the two halves one system, not two.
+$secrets = Get-CampusSecretSpec
+$missing = Get-CampusMissingSecrets -EnvFile $envFile -RequiredOnly
 
-function Get-EnvValue($key) {
-    $line = Select-String -Path $envFile -Pattern "^$key=" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $line) { return '' }
-    return ($line.Line -replace "^$key=", '').Trim()
-}
-
-function Set-EnvValue($key, $value) {
-    $content = Get-Content $envFile
-    if ($content | Select-String -Pattern "^$key=" -Quiet) {
-        $content = $content -replace "^$key=.*", "$key=$value"
-    } else {
-        $content += "$key=$value"
+if ($NonInteractive) {
+    # Prompting with no console attached is an invisible hang, so say what is
+    # wrong and let the caller show it.
+    if ($missing.Count -gt 0) {
+        Write-Error ("Not configured: " + (($missing | ForEach-Object { $_.Key }) -join ', ') +
+                     " missing from backend\.env. Run without -NonInteractive, or set them in the launcher.")
     }
-    Set-Content -Path $envFile -Value $content -Encoding utf8
-}
-
-# A value still carrying a template placeholder counts as unset.
-function Test-Placeholder($v) {
-    return ($v -eq '') -or ($v -match '^<.*>$') -or ($v -match 'same as Railway|CHANGE|your-|paste')
-}
-
-$missing = @($secrets | Where-Object { Test-Placeholder (Get-EnvValue $_.Key) })
-if ($Reconfigure -or $missing.Count -gt 0) {
+} elseif ($Reconfigure -or $missing.Count -gt 0) {
     Say 'Values needed before this half can join the shared system.' 'Yellow'
     Write-Host '        Press Enter to keep what is already in .env.' -ForegroundColor DarkGray
     foreach ($s in $secrets) {
-        $current = Get-EnvValue $s.Key
-        if (Test-Placeholder $current)                 { $shown = '(not set)' }
-        elseif ($s.Key -match 'SECRET|KEY|DATABASE')   { $shown = '(set - hidden)' }
-        else                                           { $shown = $current }
+        $current = Get-CampusEnvValue $envFile $s.Key
+        if (Test-CampusPlaceholder $current) { $shown = '(not set)' }
+        elseif ($s.Hidden)                   { $shown = '(set - hidden)' }
+        else                                 { $shown = $current }
         $entered = Read-Host "  $($s.Prompt) [$shown]"
-        if ($entered -and $entered.Trim()) { Set-EnvValue $s.Key $entered.Trim() }
+        if ($entered -and $entered.Trim()) {
+            Set-CampusEnvValue -EnvFile $envFile -Key $s.Key -Value $entered.Trim()
+        }
     }
     Say 'Saved to backend\.env.' 'Green'
 }
@@ -122,22 +134,9 @@ if ($Reconfigure -or $missing.Count -gt 0) {
 # Passed through the environment rather than written into .env: python-dotenv
 # does not override variables already set in the process, so these win. A new
 # DHCP lease therefore needs no file edit at all.
-$lan = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-        Sort-Object -Property @{ Expression = { $_.IPAddress -like '192.168.*' } } -Descending |
-        Select-Object -First 1).IPAddress
-if (-not $lan) {
-    $lan = '127.0.0.1'
-    Say 'No LAN address found - serving on localhost only.' 'Yellow'
-}
-
-$origin = "http://${lan}:$Port"
-$env:ALLOWED_HOSTS        = "localhost,127.0.0.1,$lan"
-$env:FRONTEND_URL         = $origin
-$env:BACKEND_URL          = $origin
-$env:CSRF_TRUSTED_ORIGINS = $origin
-$env:SECURE_SSL_REDIRECT  = 'false'   # plain HTTP on the LAN; the redirect would loop
-$env:RUN_MIGRATIONS       = 'false'   # Railway owns the schema for the shared DB
+$lan = Get-CampusLanAddress
+if ($lan -eq '127.0.0.1') { Say 'No LAN address found - serving on localhost only.' 'Yellow' }
+$origin = Set-CampusRuntimeEnvironment -Lan $lan -Port $Port
 
 # ── 4. Camera reachability, read from the database ───────────────────────────
 # These addresses used to be hardcoded here and drifted out of date, so the

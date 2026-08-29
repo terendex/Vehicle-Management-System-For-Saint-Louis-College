@@ -204,53 +204,6 @@ class UserDeleteView(generics.DestroyAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class UserRegistrationPdfView(APIView):
-    """Re-issue the approved-registration PDF for a vehicle owner.
-
-    Owners are emailed this document when their registration is approved, but
-    a lost email or a lost printout leaves them with nothing to present at the
-    gate. This serves a byte-identical copy on demand from the CDSO's desk, so
-    a reprint is never a different document from the original.
-
-    Deliberately the same builder the approval email uses — not a second
-    layout that could drift away from it.
-    """
-    permission_classes = [IsAdminRole]
-
-    def get(self, request, pk):
-        from django.http import HttpResponse
-        from vehicles.models import VehicleRegistration
-        from registration_pdf import (registration_confirmation_pdf,
-                                      registration_pdf_filename)
-
-        user = get_object_or_404(User, pk=pk)
-        # Matches MyRegistrationView: registrations created before the account
-        # existed are linked by email, not FK.
-        registration = (
-            VehicleRegistration.objects
-            .filter(Q(user=user) | Q(email=user.email), status='accepted')
-            .order_by('-reviewed_at')
-            .first()
-        )
-        if not registration:
-            return Response(
-                {'detail': 'This account has no approved vehicle registration to print.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        pdf = registration_confirmation_pdf(registration)
-        log_action(
-            request, AuditLog.Action.RECORD_CREATED, target_user=user,
-            details=f'Registration PDF re-issued | REG-{registration.id:06d} '
-                    f'({registration.plate_number}) | For: {user.full_name}',
-        )
-        resp = HttpResponse(pdf, content_type='application/pdf')
-        resp['Content-Disposition'] = (
-            f'attachment; filename="{registration_pdf_filename(registration)}"'
-        )
-        return resp
-
-
 class UserToggleStatusView(APIView):
     """Toggle a user's is_active flag."""
     permission_classes = [IsAdminRole]
@@ -756,7 +709,8 @@ class AuditLogPdfExportView(APIView):
 # helper existed.
 from .backup_utils import (                                        # noqa: E402
     AUTO_PREFIX, BACKUP_APPS, BACKUP_EXCLUDE, MANUAL_PREFIX, SAFETY_PREFIX,
-    dump_backup, list_backups, prune_backups, safe_path, stamp, write_backup,
+    dump_backup, list_backups, load_backup, prune_backups, safe_path, stamp,
+    write_backup,
 )
 
 
@@ -864,7 +818,7 @@ class SystemRestoreView(APIView):
     snapshot and the same atomic load; a saved file simply skips the download /
     re-upload round trip.
 
-    "Restore" overstates it, and the difference matters. `loaddata` writes each
+    "Restore" overstates it, and the difference matters. The load writes each
     record by primary key: rows in the file overwrite the matching live rows and
     missing ones are inserted, but nothing is ever deleted. An account or
     vehicle created after the backup was taken therefore survives the restore
@@ -890,9 +844,10 @@ class SystemRestoreView(APIView):
     permission_classes = [IsAdminRole, HasRecentTwoFactor]
 
     def post(self, request):
-        import json, os, tempfile
-        from django.core.management import call_command
+        import json
         from django.db import transaction
+
+        from realtime.broadcast import broadcast_change
 
         upload = request.FILES.get('file')
         filename = (request.data.get('filename') or '').strip()
@@ -916,8 +871,8 @@ class SystemRestoreView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            parsed = json.loads(raw.decode('utf-8'))
-            if not isinstance(parsed, list):
+            text = raw.decode('utf-8')
+            if not isinstance(json.loads(text), list):
                 raise ValueError('not a fixture list')
         except Exception:
             return Response({'error': 'Invalid backup file — expected a JSON data fixture.'},
@@ -927,27 +882,28 @@ class SystemRestoreView(APIView):
         safety_name, _ = write_backup(SAFETY_PREFIX)
 
         # 2) Load the fixture atomically (rolls back on any error).
-        tmp = tempfile.NamedTemporaryFile('wb', suffix='.json', delete=False)
         try:
-            tmp.write(raw)
-            tmp.close()
             with transaction.atomic():
-                call_command('loaddata', tmp.name, verbosity=0)
+                result = load_backup(text)
         except Exception as exc:
             return Response(
                 {'error': f'Restore failed and was rolled back. No changes were applied. ({exc})',
                  'safety_backup': safety_name},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
+
+        # The bulk load writes rows without firing per-row save signals, so no
+        # live-update broadcasts went out with them. Send one per model touched
+        # — a page subscribes by resource name and drops anything else, so a
+        # single catch-all message would reach nobody. Twenty-odd messages is
+        # also what the pages want: under `loaddata` they got one per row and
+        # spent the minute after a restore refetching thousands of times.
+        for resource in result.resources:
+            broadcast_change(resource, 'restored')
 
         log_action(request, AuditLog.Action.RECORD_UPDATED,
-                   details=f'System restore from backup ({len(parsed)} records, source: {source})')
-        return Response({'restored': len(parsed), 'safety_backup': safety_name},
+                   details=f'System restore from backup ({result.records} records, source: {source})')
+        return Response({'restored': result.records, 'safety_backup': safety_name},
                         status=status.HTTP_200_OK)
 
 

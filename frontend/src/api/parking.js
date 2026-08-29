@@ -128,6 +128,14 @@ export const zoneApi = {
     const { data } = await api.get('/vehicles/parking-zones/camera-status/')
     return data  // { zone_id: bool }
   },
+  // The boxes the detector last saw, per running zone. Polled rather than
+  // pushed: the worker only re-detects every couple of seconds, so a socket
+  // would spend most of its life idle to show the same rectangles.
+  getDetections: async () => {
+    const { data } = await api.get('/vehicles/parking-zones/detections/')
+    return data && typeof data === 'object' ? data : {}
+  },
+
   // Live double-parking alerts. Self-clearing: an entry disappears once the
   // vehicle moves off the line, so this is current state, not a history.
   getAlerts: async () => {

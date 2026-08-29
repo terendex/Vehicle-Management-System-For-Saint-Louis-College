@@ -37,6 +37,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -67,10 +68,62 @@ READ_TIMEOUT_SECONDS = 10
 # before declaring the open a failure.
 EXIT_DRAIN_SECONDS = 0.75
 
+# Socket-I/O timeout handed to ffmpeg itself, in seconds.
+#
+# This is the difference between a child that cleans itself up and one that
+# outlives everything. The RTSP demuxer's `-timeout` defaults to **0, meaning
+# wait forever**, so an ffmpeg that never gets a stream never exits — and it
+# never notices its parent died either, because a process that produces no
+# frames never writes to the pipe and so never sees EPIPE.
+#
+# Measured on this campus: 46 orphaned ffmpeg processes had accumulated, every
+# one of them parentless, every one still holding a session against a camera
+# that serves only a couple at a time. That is what a "freezing" live feed
+# actually was — the real viewer queued behind dozens of ghosts.
+#
+# It doubles as a stall guard for a healthy stream: a live feed delivers frames
+# continuously, so this only fires when the camera has genuinely stopped
+# talking, and then exiting is exactly right — the reader reports the failure
+# and the stream worker reconnects.
+SOCKET_TIMEOUT_SECONDS = 30
+
+# Ceiling on the pixels pushed through the raw pipe, per frame.
+#
+# This backend moves *uncompressed* bgr24, so a frame costs w*h*3 bytes on the
+# pipe no matter how small the encoded stream was. The campus Yoosee sends
+# 1920x2160 — 12.4 MB per frame, ~186 MB/s at its advertised 15 fps — and the
+# pipe simply cannot carry that: measured end to end, the camera delivered
+# 11.0 fps to a decode-only ffmpeg but only 0.6 fps through this class. The
+# network was never the problem; the raw pipe was, by a factor of 18.
+#
+# Capping pixels rather than width keeps one number meaningful for both
+# ordinary landscape cameras and the stacked dual-lens frames, which are taller
+# than they are wide. The scale is proportional, so `lens_layout` still sees the
+# aspect ratio it splits on.
+MAX_PIPE_PIXELS = 1280 * 720
+
 # Frames are dropped rather than queued: for a live feed the newest frame is
 # the only one worth having, and a backlog just adds latency.
 _SIZE_RE = re.compile(r'\b(\d{2,5})x(\d{2,5})\b')
 _FPS_RE  = re.compile(r'([\d.]+)\s+fps')
+
+
+def _scale_filter(max_pixels: int) -> str:
+    """A scale filter that shrinks only oversized frames, preserving aspect.
+
+    Expressed in ffmpeg's own filter arithmetic rather than computed here
+    because the source size is not known until ffmpeg has read the stream
+    banner — and asking first would cost a second RTSP session, which several
+    of these cameras do not have to spare.
+
+    `min(1, ...)` makes it a no-op for anything already under budget, so a
+    normal 1280x720 camera is passed through untouched. Both axes are rounded
+    to an even number: yuv420p chroma is subsampled 2x2 and an odd dimension
+    makes the scaler fail outright.
+    """
+    factor = f'min(1\\,sqrt({max_pixels}/(iw*ih)))'
+    return (f'scale=w=trunc(iw*{factor}/2)*2'
+            f':h=trunc(ih*{factor}/2)*2')
 
 
 def ffmpeg_binary() -> str | None:
@@ -107,6 +160,47 @@ def _no_window() -> dict:
     return {}
 
 
+def _is_network_url(url: str) -> bool:
+    """True for inputs that reach ffmpeg over a socket rather than the disk."""
+    return bool(re.match(r'^(rtsp|rtsps|rtmp|rtmps|http|https|udp|tcp|rtp)://',
+                         (url or '').strip(), re.I))
+
+
+def _kill_tree(proc) -> None:
+    """End `proc` *and any process it started*.
+
+    Killing just the handle we hold is not enough, because the thing we launch
+    is frequently not the thing doing the work. `shutil.which('ffmpeg')` on
+    Windows commonly resolves to a launcher stub — the Chocolatey shim here is
+    392 KB against the real binary's 99 MB — which spawns the actual encoder as
+    a *child*. `terminate()` then kills the stub and leaves real ffmpeg running,
+    parentless, still holding its RTSP session.
+
+    That is how 46 orphaned ffmpeg processes accumulated against one camera,
+    and a session-limited camera queues the live viewer behind every one of
+    them. `taskkill /T` walks the tree; POSIX has no stub problem, so the
+    ordinary terminate/kill escalation stays.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == 'nt':
+        try:
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                           capture_output=True, timeout=10, **_no_window())
+            proc.wait(timeout=3)
+            return
+        except Exception:
+            pass        # fall through to the generic escalation
+    for step in (proc.terminate, proc.kill):
+        if proc.poll() is not None:
+            return
+        try:
+            step()
+            proc.wait(timeout=3)
+        except Exception:
+            pass
+
+
 class FFmpegCapture:
     """A `cv2.VideoCapture` work-alike backed by an ffmpeg subprocess.
 
@@ -122,7 +216,8 @@ class FFmpegCapture:
 
     def __init__(self, url: str, open_timeout: float = OPEN_TIMEOUT_SECONDS,
                  read_timeout: float = READ_TIMEOUT_SECONDS,
-                 transport: str | None = None):
+                 transport: str | None = None,
+                 max_pixels: int | None = MAX_PIPE_PIXELS):
         self.url = url
         self.read_timeout = read_timeout
         self.open_timeout = open_timeout
@@ -144,7 +239,12 @@ class FFmpegCapture:
             log.warning('[ffmpeg-capture] no ffmpeg binary available')
             return
 
-        cmd = [binary, '-nostdin', '-loglevel', 'info']
+        # `-hide_banner` keeps the version/configuration dump out of stderr.
+        # It is a dozen lines long, and `_stderr_tail` only keeps the last few —
+        # so on a camera that fails before saying anything useful, the banner
+        # was the whole "error message" a diagnosing admin got to see. The
+        # stream lines this class parses for dimensions are unaffected.
+        cmd = [binary, '-nostdin', '-hide_banner', '-loglevel', 'info']
         # Only pin the transport when a caller insists. The default — letting
         # FFmpeg negotiate — is what makes unknown cameras work.
         if transport:
@@ -157,7 +257,25 @@ class FFmpegCapture:
             # only the newest frame and drops the rest, which is where this
             # backend's low latency actually comes from.
             '-an',                      # audio never helps and often hurts
-            '-i', url,
+        ]
+        # Bound the child's own socket waits. Left at the demuxer default of
+        # "wait forever", an ffmpeg that never gets a stream never exits — and
+        # never notices this process died either, because one that produces no
+        # frames never writes to the pipe and so never sees EPIPE.
+        #
+        # Only for network inputs: `-timeout` is a protocol option, and the
+        # file protocol has no such thing — passing it to a local path fails
+        # the open outright with "Option timeout not found", which would break
+        # every test that reads a generated clip.
+        if _is_network_url(url):
+            cmd += ['-timeout', str(int(SOCKET_TIMEOUT_SECONDS * 1_000_000))]
+        cmd += ['-i', url]
+        # Shrink before the pipe, never after: the whole point is to not push
+        # the bytes through it. A frame that is already within budget passes
+        # through untouched.
+        if max_pixels:
+            cmd += ['-vf', _scale_filter(max_pixels)]
+        cmd += [
             '-f', 'rawvideo',
             '-pix_fmt', 'bgr24',        # already OpenCV's channel order
             '-',
@@ -213,8 +331,15 @@ class FFmpegCapture:
         of these cameras allow only one or two sessions at a time, and spending
         one just to ask how big the picture is can cost the session that was
         meant to carry the video.
+
+        The size that matters is the one in the **Output** banner, not the
+        input's. They are the same until a scale filter is inserted, and then
+        they are not — `_pump_video` sizes its reads as w*h*3, so taking the
+        input's 1920x2160 while the pipe actually carries a scaled frame would
+        misalign every read and shear the picture rather than shrink it.
         """
         stream = self._proc.stderr
+        in_output = False
         try:
             for raw in iter(stream.readline, b''):
                 if self._stop.is_set():
@@ -223,18 +348,23 @@ class FFmpegCapture:
                 if not line:
                     continue
                 self._stderr_tail = (self._stderr_tail + [line])[-8:]
-                # The first `Video:` line is the *input* stream, which is the
-                # one whose size we want; the rawvideo output line follows it.
+                if line.startswith('Output #'):
+                    in_output = True
+                # fps is worth taking from either banner — the input states the
+                # camera's real rate, and the output repeats it — but the
+                # dimensions are only trustworthy once we are past `Output #`.
                 if not self._dims.is_set() and 'Video:' in line:
+                    f = _FPS_RE.search(line)
+                    if f and not self.fps:
+                        try:
+                            self.fps = float(f.group(1))
+                        except ValueError:
+                            pass
+                    if not in_output:
+                        continue
                     m = _SIZE_RE.search(line)
                     if m:
                         self.width, self.height = int(m.group(1)), int(m.group(2))
-                        f = _FPS_RE.search(line)
-                        if f:
-                            try:
-                                self.fps = float(f.group(1))
-                            except ValueError:
-                                pass
                         self._dims.set()
         except Exception:
             # release() closes the pipe underneath this thread; a blocked
@@ -322,14 +452,7 @@ class FFmpegCapture:
         proc, self._proc = self._proc, None
         if proc is None:
             return
-        for step in (proc.terminate, proc.kill):
-            if proc.poll() is not None:
-                break
-            try:
-                step()
-                proc.wait(timeout=3)
-            except Exception:
-                pass
+        _kill_tree(proc)
         # The pipes are deliberately NOT closed here. Both pump threads sit
         # blocked in read()/readline() on these handles, and closing a handle
         # out from under a blocked reader hangs the *closing* thread on
@@ -438,6 +561,108 @@ def _try_cv2(url: str, open_timeout_ms: int):
     return None
 
 
+# Hosts already known to need the subprocess backend.
+#
+# The OpenCV stage is meant to be a cheap fast path, but on fragile firmware it
+# is not free: it costs two connection attempts (one per transport), and the
+# campus Yoosee reboots under exactly that. The fallback then opened a camera
+# that was already on its way down and failed, even though the same call on a
+# rested camera succeeds in 2.6 s. Remembering the answer means each host pays
+# that discovery at most once per process.
+# Entries expire: a camera that is swapped, re-flashed or simply fixed should
+# get the fast path back without a restart, and a permanent note would also
+# make the decision depend on whatever this process happened to see first.
+_PREFER_FFMPEG: dict[str, float] = {}
+_MEMO_LOCK = threading.Lock()
+MEMO_TTL_SECONDS = 3600.0
+_MEMO_CACHE_PREFIX = 'ffmpeg_backend:'
+
+
+def _cache_get(key: str) -> bool:
+    """Read the shared note, if a cache is configured and reachable.
+
+    Learning costs a camera reset, so the answer is worth keeping across
+    restarts — otherwise every deploy or crash re-crashes the camera to find
+    out what it already knew. Cache trouble is never fatal here: the in-process
+    dict still works, so a missing Redis just means re-learning once.
+    """
+    try:
+        from django.core.cache import cache
+        return bool(cache.get(_MEMO_CACHE_PREFIX + key))
+    except Exception:
+        return False
+
+
+def _cache_set(key: str, value: bool) -> None:
+    try:
+        from django.core.cache import cache
+        if value:
+            cache.set(_MEMO_CACHE_PREFIX + key, True, int(MEMO_TTL_SECONDS))
+        else:
+            cache.delete(_MEMO_CACHE_PREFIX + key)
+    except Exception:
+        pass
+
+
+def _prefers_ffmpeg(key: str) -> bool:
+    with _MEMO_LOCK:
+        seen = _PREFER_FFMPEG.get(key)
+        if seen is not None:
+            if time.monotonic() - seen <= MEMO_TTL_SECONDS:
+                return True
+            del _PREFER_FFMPEG[key]
+
+    # Not known locally — a previous run may still have recorded it.
+    if _cache_get(key):
+        with _MEMO_LOCK:
+            _PREFER_FFMPEG[key] = time.monotonic()
+        return True
+    return False
+
+
+def _remember_ffmpeg(key: str) -> None:
+    with _MEMO_LOCK:
+        _PREFER_FFMPEG[key] = time.monotonic()
+    _cache_set(key, True)
+
+
+def reset_backend_memo() -> None:
+    """Forget which backend each host needs. For tests and manual recovery."""
+    with _MEMO_LOCK:
+        keys = list(_PREFER_FFMPEG)
+        _PREFER_FFMPEG.clear()
+    for key in keys:
+        _cache_set(key, False)
+
+# How long to wait for a host that stopped listening during the OpenCV stage.
+REBOOT_WAIT_SECONDS = 40
+
+# Settling time after a rebooted camera starts accepting TCP again.
+#
+# The port binds a little before the media server behind it will negotiate, and
+# a camera that just rebooted may still be holding the sessions that killed it.
+# Opening the instant the port answers earns a 4XX instead of a stream.
+POST_REBOOT_SETTLE_SECONDS = 8.0
+
+
+def _host_key(url: str) -> str:
+    """Host[:port] of an RTSP URL, without credentials — the memo key."""
+    try:
+        return url.split('@')[-1].split('/')[0].strip().lower()
+    except Exception:
+        return url
+
+
+def _listening(hostport: str, timeout: float = 3.0) -> bool:
+    """Cheap check that something still accepts TCP on the RTSP port."""
+    host, _, port = hostport.partition(':')
+    try:
+        with socket.create_connection((host, int(port or 554)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
 def open_capture(url: str, open_timeout: float = OPEN_TIMEOUT_SECONDS):
     """Open `url` with whichever backend can actually decode it.
 
@@ -449,9 +674,13 @@ def open_capture(url: str, open_timeout: float = OPEN_TIMEOUT_SECONDS):
     `isOpened()` exactly as before — a returned object that is not open means
     no backend could decode the stream.
     """
-    cap = _try_cv2(url, int(CV2_OPEN_TIMEOUT_SECONDS * 1000))
-    if cap is not None:
-        return cap
+    key = _host_key(url)
+    skip_cv2 = _prefers_ffmpeg(key)
+
+    if not skip_cv2:
+        cap = _try_cv2(url, int(CV2_OPEN_TIMEOUT_SECONDS * 1000))
+        if cap is not None:
+            return cap
 
     if not is_available():
         log.warning('[capture] OpenCV could not open %s and no system ffmpeg is '
@@ -459,7 +688,52 @@ def open_capture(url: str, open_timeout: float = OPEN_TIMEOUT_SECONDS):
         import cv2
         return cv2.VideoCapture('')          # closed, so isOpened() is False
 
-    log.info('[capture] OpenCV could not open %s — falling back to system ffmpeg',
-             _redact(url))
-    time.sleep(SLOT_RELEASE_SECONDS)         # let the camera reap the dead sessions
-    return FFmpegCapture(url, open_timeout=open_timeout)
+    if not skip_cv2:
+        log.info('[capture] OpenCV could not open %s — falling back to system ffmpeg',
+                 _redact(url))
+        time.sleep(SLOT_RELEASE_SECONDS)     # let the camera reap the dead sessions
+
+        # If the OpenCV attempts knocked the camera over, opening now just
+        # fails against a device that is booting. Wait for it rather than
+        # spending the fallback — this is the only chance to get the stream,
+        # and a wrong verdict here is what made a working camera look dead.
+        if not _listening(key):
+            # Record this *now*, on the crash itself rather than on a later
+            # success. The fallback is very likely to fail on this pass — the
+            # camera is rebooting and still holding the sessions OpenCV left,
+            # so it answers 4XX — and memoising only on success would mean
+            # never learning, re-crashing the camera on every single open.
+            _remember_ffmpeg(key)
+            log.info('[capture] %s stopped listening during the OpenCV probe — '
+                     'it will use the ffmpeg backend directly from now on', key)
+
+            log.info('[capture] waiting up to %ss for %s to restart',
+                     REBOOT_WAIT_SECONDS, key)
+            waited = 0.0
+            while waited < REBOOT_WAIT_SECONDS and not _listening(key):
+                time.sleep(2.0)
+                waited += 2.0
+            if _listening(key):
+                log.info('[capture] %s back after ~%.0fs', key, waited)
+                time.sleep(POST_REBOOT_SETTLE_SECONDS)
+
+    cap = FFmpegCapture(url, open_timeout=open_timeout)
+
+    # Letting FFmpeg negotiate is right for an unknown camera, but negotiation
+    # can still land on TCP — and some units answer "Nonmatching transport in
+    # server reply" and serve nothing at all. One explicit UDP attempt covers
+    # them. It is only ever paid on a camera that already failed, so it costs
+    # the working ones nothing.
+    if not cap.isOpened() and 'nonmatching transport' in cap.last_error().lower():
+        log.info('[capture] %s refused the negotiated transport — retrying over UDP',
+                 key)
+        cap.release()
+        time.sleep(SLOT_RELEASE_SECONDS)
+        cap = FFmpegCapture(url, open_timeout=open_timeout, transport='udp')
+
+    if cap.isOpened() and not skip_cv2:
+        # Only the subprocess backend can drive this host. Skip the OpenCV
+        # stage next time so we stop paying for a reset to learn it again.
+        _remember_ffmpeg(key)
+        log.info('[capture] %s will use the ffmpeg backend directly from now on', key)
+    return cap

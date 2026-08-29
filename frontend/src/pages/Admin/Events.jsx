@@ -5,7 +5,8 @@ import {
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
   ParkingCircle, Tag, Check, Archive, CalendarClock,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
 import { zoneApi } from '../../api/parking'
@@ -45,10 +46,16 @@ function AddEventModal({ onClose, onCreated }) {
   const [saving, setSaving]   = useState(false)
   const plateRef = useRef(null)
 
-  const addPlate = () => {
+  const addPlate = async () => {
     const p = formatPlateNumber(plateInput.trim())
-    if (!p) return
-    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
+    if (!p) {
+      await notify.error('Enter a plate number first.', { title: 'Nothing to add' })
+      return
+    }
+    if (!isValidPlateNumber(p)) {
+      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
+      return
+    }
     if (plates.includes(p)) { toast.error('Plate already added.'); return }
     setPlates(prev => [...prev, p])
     setPlateInput('')
@@ -59,8 +66,9 @@ function AddEventModal({ onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.name.trim()) return
-    if (!form.date) return
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
     setSaving(true)
     try {
       const { data } = await createEvent({ ...form, organizer_plates: plates })
@@ -85,7 +93,7 @@ function AddEventModal({ onClose, onCreated }) {
           <button className="ev-modal-close" onClick={onClose}><X size={16} /></button>
         </div>
 
-        <form onSubmit={handleSubmit} className="ev-modal-form">
+        <form onSubmit={handleSubmit} className="ev-modal-form" noValidate>
           <div className="ev-field">
             <label className="ev-label">Event Name</label>
             <input
@@ -113,7 +121,7 @@ function AddEventModal({ onClose, onCreated }) {
               <input
                 ref={plateRef}
                 className={`ev-text-input ev-plate-field${plateError ? ' ev-input-error' : ''}`}
-                placeholder="e.g. ABC 123"
+                placeholder="e.g. AAA 000"
                 value={plateInput}
                 onChange={e => {
                   const formatted = formatPlateNumber(e.target.value)
@@ -126,10 +134,7 @@ function AddEventModal({ onClose, onCreated }) {
                 <Plus size={15} /> Add
               </button>
             </div>
-            {plateError
-              ? <span className="ev-field-error-msg">{plateError}</span>
-              : <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
-            }
+            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
             {plates.length > 0 && (
               <div className="ev-plate-tags">
                 {plates.map(p => (
@@ -185,7 +190,10 @@ function EventCard({ event, onUpdated, onDeleted }) {
   }
 
   const handleReschedule = async () => {
-    if (!newDate) return
+    if (!newDate) {
+      await notify.error('Pick the new date first.', { title: 'Event not rescheduled' })
+      return
+    }
     setReschedSaving(true)
     try {
       const { data } = await patchEvent(event.id, { date: newDate })
@@ -203,7 +211,10 @@ function EventCard({ event, onUpdated, onDeleted }) {
   const addPlate = async () => {
     const p = formatPlateNumber(plateInput.trim())
     if (!p) return
-    if (!isValidPlateNumber(p)) { setPlateError('Invalid Philippine plate number format.'); return }
+    if (!isValidPlateNumber(p)) {
+      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
+      return
+    }
     if (localPlates.includes(p)) { toast.error('Plate already listed.'); return }
     setSaving(true)
     try {
@@ -340,7 +351,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
           <button
             className="ev-btn ev-btn-primary ev-btn-sm"
             onClick={handleReschedule}
-            disabled={!newDate || reschedSaving}
+            disabled={reschedSaving}
           >
             {reschedSaving ? <Loader2 size={13} className="ev-spinner" /> : <Check size={13} />}
             Confirm
@@ -378,10 +389,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
-          {plateError
-            ? <span className="ev-field-error-msg">{plateError}</span>
-            : <span className="ev-field-hint">e.g. ABC 1234 · AB 1234 · N123BC · ABC123</span>
-          }
+            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
 
           {localPlates.length === 0 ? (
             <p className="ev-no-plates">No organizer plates added yet.</p>

@@ -6,7 +6,7 @@ import {
   Image, ZoomIn, ChevronLeft, ChevronRight, Loader2,
   FileText, ShieldOff, ClipboardCheck,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import {
   getAllViolations, resolveViolation,
@@ -120,8 +120,13 @@ function ORModal({ violation, onClose, onConfirm }) {
           <button className="vm-modal-btn vm-modal-btn-ghost" onClick={onClose}>Cancel</button>
           <button
             className="vm-modal-btn vm-modal-btn-primary"
-            disabled={!or.trim()}
-            onClick={() => onConfirm(or.trim())}
+            onClick={() => {
+              if (!or.trim()) {
+                notify.error('Enter the Official Receipt number.', { title: 'Violation not cleared' })
+                return
+              }
+              onConfirm(or.trim())
+            }}
           >
             Clear Violation
           </button>
@@ -163,8 +168,14 @@ function LiftModal({ violation, onClose, onConfirm, busy }) {
           <button className="vm-modal-btn vm-modal-btn-ghost" onClick={onClose}>Cancel</button>
           <button
             className="vm-modal-btn vm-modal-btn-primary"
-            disabled={!reason.trim() || busy}
-            onClick={() => onConfirm(reason.trim())}
+            disabled={busy}
+            onClick={() => {
+              if (!reason.trim()) {
+                notify.error('Give a reason for lifting this violation.', { title: 'Violation not lifted' })
+                return
+              }
+              onConfirm(reason.trim())
+            }}
           >
             {busy ? 'Lifting…' : 'Lift Violation'}
           </button>

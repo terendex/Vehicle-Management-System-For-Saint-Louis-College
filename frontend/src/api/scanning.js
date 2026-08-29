@@ -16,6 +16,15 @@ export const manualEntry = (data) => api.post('/scan/manual-entry/', data)
 // Get recent access logs
 export const getAccessLogs = (params) => api.get('/scan/logs/', { params })
 
+// Admin/CDSO: the same filtered vehicle log as a branded Excel or PDF report.
+// Takes the screen's filters verbatim (gate_id, date_from, date_to, search,
+// status) so the file matches the table it was exported from.
+export const exportVehicleLogExcel = (params) =>
+  api.get('/scan/logs/export/', { params, responseType: 'blob' }).then(r => r.data)
+
+export const exportVehicleLogPdf = (params) =>
+  api.get('/scan/logs/export-pdf/', { params, responseType: 'blob' }).then(r => r.data)
+
 // Get all offices
 export const getOffices = () => api.get('/scan/offices/')
 

@@ -58,6 +58,116 @@
   height: 14px;
 }
 
+/* ── Category tabs ───────────────────────────────────────────── */
+/* Deliberately the same control as the tabs on System Settings: the two pages
+   sit next to each other in the System menu and an admin moving between them
+   should not have to learn a second widget. */
+
+.rc-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.rc-tabs::-webkit-scrollbar { display: none; }
+
+.rc-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid #D3E1EC;
+  border-radius: 9px;
+  padding: 9px 15px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: #4A6B85;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.rc-tab:hover:not(.rc-tab--active) {
+  background: #F4F8FB;
+  border-color: #BDD4E5;
+  color: #0B2340;
+}
+
+.rc-tab:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+
+.rc-tab--active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Marks the Access Mode tab while the override is on. */
+.rc-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1072B3;
+  flex: 0 0 auto;
+}
+
+.rc-tab--active .rc-tab-dot { background: #7FC4EE; }
+
+@media (max-width: 520px) {
+  .rc-tab { padding: 8px 12px; font-size: 0.78rem; }
+  .rc-tab span { display: none; }
+  .rc-tab--active span { display: inline; }
+}
+
+/* ── Open Campus banner ──────────────────────────────────────── */
+/* Shown on every tab while the override is on, because it silently voids the
+   rules the other tabs are displaying. */
+
+.rc-open-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #EAF4FB;
+  border: 1px solid #A9D2EC;
+  border-left: 4px solid #1072B3;
+  border-radius: 10px;
+  padding: 11px 15px;
+  color: #0B2340;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.rc-open-banner > svg {
+  color: #1072B3;
+  flex: 0 0 auto;
+}
+
+.rc-open-banner > span { flex: 1 1 auto; }
+
+.rc-open-banner-link {
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid #A9D2EC;
+  border-radius: 7px;
+  padding: 6px 13px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1072B3;
+  cursor: pointer;
+}
+
+.rc-open-banner-link:hover { background: #F4FAFD; }
+
+@media (max-width: 560px) {
+  .rc-open-banner { flex-wrap: wrap; }
+}
+
 /* ── Section card ────────────────────────────────────────────── */
 
 .rc-section {
@@ -1229,6 +1339,27 @@
   margin-bottom: 18px;
 }
 
+.rc-period-form-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #2E4C63;
+  margin: 0 0 12px;
+}
+
+/* Edit sits beside Deactivate / Set Active, so the cell needs to hold a pair
+   without stretching the row on a narrow screen. */
+.rc-period-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .rc-period-form-fields {
   display: flex;
   gap: 12px;
@@ -1391,3 +1522,87 @@
   color: #8A6B00;
 }
 .rc-confirm-btn--warning:hover { background: #FDF0BE; }
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The 900 and 700 rules above fold the access grid and the section
+   heads. These carry it to a phone: the schedule entry cards, the
+   paired time fields and the two dialog footers. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .rc-page {
+    gap: 1.1rem;
+  }
+
+  .rc-title {
+    font-size: 1.2rem;
+  }
+
+  .rc-section-head {
+    padding: 1rem 1.1rem;
+    flex-wrap: wrap;
+  }
+
+  /* An entry card is an icon, a label, a time window and its actions on
+     one line. Below this the actions wrap under the rest rather than
+     compressing the rule name they belong to. */
+  .rc-entry-card {
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    gap: 10px;
+  }
+
+  /* From/To sit on their own lines — side by side each time input was
+     narrower than the time it displays. */
+  .rc-field-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* Dialogs fill the phone and scroll; the schedule form is taller than
+     a landscape viewport. */
+  .rc-modal,
+  .rc-confirm-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .rc-confirm-modal {
+    padding: 24px 18px 20px;
+  }
+
+  .rc-modal-body {
+    padding: 1.1rem;
+  }
+
+  .rc-modal-foot {
+    flex-wrap: wrap;
+    padding-left: 1.1rem;
+    padding-right: 1.1rem;
+  }
+
+  /* The confirm dialog draws its own gutter, so this row only wraps. */
+  .rc-confirm-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .rc-modal-foot > .rc-btn,
+  .rc-confirm-actions > .rc-confirm-btn {
+    flex: 1 1 130px;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .rc-title {
+    font-size: 1.1rem;
+  }
+
+  .rc-modal-foot > .rc-btn,
+  .rc-confirm-actions > .rc-confirm-btn {
+    flex: 1 1 100%;
+  }
+}

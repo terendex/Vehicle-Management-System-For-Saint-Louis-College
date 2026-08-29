@@ -36,14 +36,6 @@ export const usersApi = {
     return data
   },
 
-  /** Re-download an owner's approved-registration PDF (admin only). */
-  getRegistrationPdf: async (id) => {
-    const { data } = await api.get(`/accounts/users/${id}/registration-pdf/`, {
-      responseType: 'blob',
-    })
-    return data
-  },
-
   /** Toggle user active/disabled status. */
   toggleUserStatus: async (id) => {
     const { data } = await api.post(`/accounts/users/${id}/toggle-status/`)

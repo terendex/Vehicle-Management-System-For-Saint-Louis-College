@@ -4,14 +4,15 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
-import { toast } from 'sonner'
+import { toast } from '../../components/Feedback/notify'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import TableLoader from '../../components/TableLoader'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import './OperationsCenter.css'
@@ -192,11 +193,15 @@ function buildCamScopes(gates, gateLabel) {
 }
 
 function CameraMonitor() {
-  const { cameras: liveCameras, addCamera, disconnectCamera, registerCanvas } = useCameraContext()
+  const { cameras: liveCameras, addCamera, disconnectCamera, registerCanvas,
+          paneCounts } = useCameraContext()
   const { gates, gateLabel } = useGates()
   const [devices,   setDevices]   = useState([])   // registered cameras (from the API)
   const [scope,     setScope]     = useState('all')
   const [selectedId, setSelectedId] = useState(null) // Camera.id from the API
+  const [lensPane,  setLensPane]  = useState(0)    // which view of a multi-lens unit
+  const [camQuery,  setCamQuery]  = useState('')
+  const fs = useFullscreen()
 
   const camScopeLabel = (cam) => {
     if (cam.assignment === 'parking') return 'Parking'
@@ -219,7 +224,14 @@ function CameraMonitor() {
 
   const camScopes = buildCamScopes(gates, gateLabel)
   const scopes    = camScopes.filter(s => s.key === 'all' || devices.some(s.match))
-  const visible   = devices.filter(camScopes.find(s => s.key === scope)?.match ?? (() => true))
+  const inScope   = devices.filter(camScopes.find(s => s.key === scope)?.match ?? (() => true))
+  // Search narrows within the active scope rather than replacing it, so the
+  // gate tabs and the box compose instead of fighting each other.
+  const camQ      = camQuery.trim().toLowerCase()
+  const visible   = camQ
+    ? inScope.filter(c => [c.name, c.ip, c.device_id, camScopeLabel(c)]
+        .some(f => String(f ?? '').toLowerCase().includes(camQ)))
+    : inScope
 
   // Keep the selection inside the current filter.
   const selected = visible.find(c => c.id === selectedId) ?? visible[0] ?? null
@@ -248,6 +260,30 @@ function CameraMonitor() {
   const feed = liveCameras.find(c => c.url === selected?.rtsp_url) ?? null
   const isLive = !!feed?.streamConnected
 
+  // A multi-lens unit packs its views into one frame rather than opening a
+  // stream per view, so the count only becomes known once a frame has decoded —
+  // CameraContext measures it and publishes it here. Until then every camera
+  // looks single-lens, which is also how it should render.
+  const lensesOf = (cam) => {
+    const f = liveCameras.find(l => l.url === cam.rtsp_url)
+    return (f && paneCounts[f.id]) || 1
+  }
+  const lensCount = selected ? lensesOf(selected) : 1
+  // Clamped rather than reset from an effect: switching from lens 2 of a dual
+  // camera to a single-lens one has to land on a view that exists, and doing it
+  // here means the first render after the switch is already correct.
+  const pane  = Math.min(lensPane, lensCount - 1)
+  const split = lensCount > 1
+
+  const pick = (camId, p) => { setSelectedId(camId); setLensPane(p) }
+
+  // One entry per *picture* a guard can put on the main display: an ordinary
+  // camera contributes one, a dual-lens unit one per lens.
+  const views = visible.flatMap(cam => {
+    const n = lensesOf(cam)
+    return Array.from({ length: n }, (_, p) => ({ cam, pane: p, lenses: n }))
+  })
+
   return (
     <div className="oc-cam-panel">
       <div className="oc-cam-head">
@@ -274,31 +310,42 @@ function CameraMonitor() {
             ))}
           </div>
 
-          <label className="oc-cam-picker">
-            <span className="oc-cam-picker-lbl">Camera</span>
-            <select
-              value={selected?.id ?? ''}
-              onChange={e => setSelectedId(Number(e.target.value))}
-              disabled={visible.length === 0}
-            >
-              {visible.length === 0 && <option value="">No cameras in this filter</option>}
-              {visible.map(c => (
-                <option key={c.id} value={c.id}>{c.name} — {camScopeLabel(c)}</option>
-              ))}
-            </select>
-          </label>
+          <div className="oc-cam-search">
+            <Search size={13} className="oc-cam-search-icon" />
+            <input
+              type="search"
+              placeholder="Search cameras…"
+              value={camQuery}
+              onChange={e => setCamQuery(e.target.value)}
+              aria-label="Search cameras"
+            />
+            {camQ && (
+              <button
+                type="button"
+                className="oc-cam-search-clear"
+                onClick={() => setCamQuery('')}
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="oc-cam-viewport">
+      <div className="oc-cam-viewport" ref={fs.setRef('monitor')}>
         {selected ? (
           <>
-            {/* Keyed by stream URL so switching cameras remounts the canvas
-                instead of painting the new feed over the old one's last frame. */}
+            {/* Keyed by stream URL *and* lens so switching either remounts the
+                canvas instead of painting the new picture over the old one's
+                last frame. `pane` is left undefined for a single-lens camera:
+                that asks the context for the whole frame, so a unit that is
+                briefly mis-measured shows everything rather than a half. */}
             <canvas
-              key={selected.rtsp_url}
-              ref={el => feed && registerCanvas(feed.id, el)}
-              style={{ width: '100%', display: 'block', background: '#000', minHeight: 260 }}
+              key={`${selected.rtsp_url}:${split ? pane : 'full'}`}
+              ref={el => feed && registerCanvas(feed.id, el, split ? pane : undefined)}
+              className="oc-cam-canvas"
             />
             {!isLive && (
               <div className="oc-cam-overlay">
@@ -309,7 +356,34 @@ function CameraMonitor() {
             <div className="oc-cam-name-tag">
               <span className={`oc-cam-dot ${isLive ? 'live' : 'wait'}`} />
               {selected.name} — {camScopeLabel(selected)}
+              {split && <span className="oc-cam-lens-badge">Lens {pane + 1}</span>}
             </div>
+            {/* The lens switch lives *inside* the viewport so it stays reachable
+                in fullscreen, where the picker below is off screen. */}
+            {split && (
+              <div className="oc-cam-lens-switch" role="group" aria-label="Select lens">
+                {Array.from({ length: lensCount }, (_, p) => (
+                  <button
+                    key={p}
+                    className={`oc-cam-lens-btn ${p === pane ? 'active' : ''}`}
+                    onClick={() => setLensPane(p)}
+                    aria-pressed={p === pane}
+                  >
+                    <Layers size={11} /> Lens {p + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              className="oc-cam-fs"
+              onClick={async () => {
+                if (!(await fs.toggle('monitor'))) toast.error('Fullscreen was blocked by the browser.')
+              }}
+              title={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+              aria-label={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+            >
+              {fs.isFullscreen('monitor') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
           </>
         ) : (
           <div className="oc-cam-empty">
@@ -324,18 +398,29 @@ function CameraMonitor() {
         )}
       </div>
 
-      {visible.length > 1 && (
-        <div className="oc-cam-strip">
-          {visible.map(cam => {
+      {/* The picker: every available view laid out under the display rather
+          than folded into a dropdown, so the whole camera list — and which of
+          them are actually up — is readable at a glance. */}
+      {views.length > 0 && (
+        <div className="oc-cam-strip" role="group" aria-label="Available cameras">
+          {views.map(({ cam, pane: p, lenses }) => {
             const f = liveCameras.find(l => l.url === cam.rtsp_url)
+            const active = selected?.id === cam.id && (lenses === 1 || p === pane)
             return (
               <button
-                key={cam.id}
-                className={`oc-cam-thumb ${selected?.id === cam.id ? 'active' : ''}`}
-                onClick={() => setSelectedId(cam.id)}
+                key={`${cam.id}:${p}`}
+                className={`oc-cam-thumb ${active ? 'active' : ''}`}
+                onClick={() => pick(cam.id, p)}
+                aria-pressed={active}
               >
                 <span className={`oc-cam-dot ${f?.streamConnected ? 'live' : f?.wsActive ? 'wait' : 'off'}`} />
-                {cam.name} · {camScopeLabel(cam)}
+                <span className="oc-cam-thumb-text">
+                  <span className="oc-cam-thumb-name">
+                    {cam.name}
+                    {lenses > 1 && <span className="oc-cam-lens-badge">Lens {p + 1}</span>}
+                  </span>
+                  <span className="oc-cam-thumb-sub">{camScopeLabel(cam)}</span>
+                </span>
               </button>
             )
           })}

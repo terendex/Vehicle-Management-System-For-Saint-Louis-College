@@ -22,25 +22,59 @@ export const registrationApi = {
     const { data } = await api.post('/vehicles/register/open/', registrationData)
     return data
   },
-  // Follow-up multipart upload — attaches a driver's license photo to a registration
-  // that was just created by submitOpenRegistration (kept separate so the main
-  // payload, with its nested campus_days/fetcher_students, can stay plain JSON).
+  // Follow-up multipart upload — attaches the supporting documents (driver's
+  // license photo, assessment form, and for a fetcher one assessment form per
+  // student they collect) to a registration that was just created by
+  // submitOpenRegistration (kept separate so the main payload, with its nested
+  // campus_days/fetcher_students, can stay plain JSON). Any file may be
+  // omitted; the backend rejects a call carrying none.
+  // fetcherAssessments is positional — index i is the file for fetcher_students[i],
+  // and a null holds that student's place so later indexes stay correct.
   // Uses fetch (not the shared axios instance) so the browser sets the multipart
   // Content-Type boundary itself instead of inheriting axios's default JSON header.
-  uploadLicenseImage: async (registrationId, email, file) => {
+  uploadRegistrationDocuments: async (registrationId, email, { license, assessment, fetcherAssessments = [] } = {}) => {
     const form = new FormData()
     form.append('registration_id', registrationId)
     form.append('email', email)
-    form.append('image', file)
-    const res = await fetch('/api/vehicles/register/license-image/', { method: 'POST', body: form })
+    if (license) form.append('image', license)
+    if (assessment) form.append('assessment_form', assessment)
+    fetcherAssessments.forEach((file, i) => {
+      if (file) form.append(`fetcher_assessment_${i}`, file)
+    })
+    const res = await fetch('/api/vehicles/register/documents/', { method: 'POST', body: form })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
-      const err = new Error(data?.error || 'Failed to upload license image.')
+      const err = new Error(data?.error || 'Failed to upload the supporting documents.')
       err.response = { data }
       throw err
     }
     return data
   },
+  // ── Applicant-driven proof of payment ──
+  // Reached from the link in the pending email. The token is the only key: the
+  // (id, email) pair the document upload uses stopped being a secret once school
+  // addresses became <8-digit ID>@slc-sflu.edu.ph over sequential ids.
+  getPaymentDetails: async (token) => {
+    const { data } = await api.get('/vehicles/register/payment/', { params: { token } })
+    return data
+  },
+  // fetch, not axios, so the browser writes its own multipart boundary rather
+  // than inheriting axios's JSON Content-Type — same reason as the doc upload.
+  submitPaymentReceipt: async (token, orNumber, receipt) => {
+    const form = new FormData()
+    form.append('token', token)
+    form.append('or_number', orNumber)
+    form.append('receipt', receipt)
+    const res = await fetch('/api/vehicles/register/payment/', { method: 'POST', body: form })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error(data?.error || 'Failed to submit the receipt.')
+      err.response = { data }
+      throw err
+    }
+    return data
+  },
+
   // Live duplicate check for the registration form's plate/conduction/email/license/
   // student/employee ID fields. conduction_number must be forwarded like the rest:
   // the form passes it and reads result.conduction_number back, but it used to be
@@ -58,6 +92,19 @@ export const registrationApi = {
     const { data } = await api.get(`/vehicles/registrations/pending/?status=${status}`)
     return data
   },
+  // Admin/CDSO — headline counts (total, per status, per registrant type).
+  // Separate from the list, which only ever loads one status at a time.
+  getRegistrationSummary: async () => {
+    const { data } = await api.get('/vehicles/registrations/summary/')
+    return data
+  },
+  // Admin/CDSO — branded PDF counting registrations by type and status
+  exportRegistrationSummaryReport: async (params = {}) => {
+    const { data } = await api.get('/vehicles/registrations/report/summary-pdf/', {
+      params, responseType: 'blob',
+    })
+    return data
+  },
   // Admin/CDSO — branded Vehicle Registrations report (format: 'pdf' | 'excel')
   exportRegistrationsReport: async (format, params = {}) => {
     const { data } = await api.get(`/vehicles/registrations/report/${format}/`, {
@@ -69,8 +116,12 @@ export const registrationApi = {
   // specialCaseReason is required when campusDaysOverride adds days not in the original request
   // acknowledgeBlock: pass true to accept a plate flagged by a prior 3rd-offense
   // violation (the backend returns 409 registration_blocked until acknowledged)
-  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason, acknowledgeBlock) => {
+  // unpaidAcceptReason is required by the backend when the registration has no
+  // Official Receipt on file at all — a pass may still be granted, but never
+  // without a stated reason.
+  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason, acknowledgeBlock, unpaidAcceptReason) => {
     const payload = { or_number: orNumber }
+    if (unpaidAcceptReason) payload.unpaid_accept_reason = unpaidAcceptReason
     if (campusDaysOverride && campusDaysOverride.length > 0) payload.campus_days = campusDaysOverride
     if (specialCaseReason) payload.special_case_reason = specialCaseReason
     if (acknowledgeBlock) payload.acknowledge_block = true
@@ -79,6 +130,15 @@ export const registrationApi = {
   },
   rejectRegistration: async (id, reason) => {
     const { data } = await api.post(`/vehicles/registrations/${id}/reject/`, { reason })
+    return data
+  },
+  /** The approved-registration confirmation PDF, with the applicant's uploaded
+   *  documents appended. Accepted registrations only — the document states the
+   *  pass was granted. */
+  getRegistrationPdf: async (id) => {
+    const { data } = await api.get(`/vehicles/registrations/${id}/pdf/`, {
+      responseType: 'blob',
+    })
     return data
   },
 

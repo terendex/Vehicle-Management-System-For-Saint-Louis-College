@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -10,6 +10,7 @@ from vehicles.models import Vehicle, SystemSettings
 from violations.models import Violation
 from scanning.entry_logic import check_entry
 from scanning.models import AccessLog
+from time_utils import day_start
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -530,3 +531,338 @@ class DenyEntryAPITests(TestCase):
         client = APIClient()
         resp = client.post('/api/scan/deny/', {'plate_number': 'DNY0004'}, format='json')
         self.assertEqual(resp.status_code, 401)
+
+
+class ConductionNumberLookupTests(TestCase):
+    """A brand-new car carries a conduction sticker, not a plate.
+
+    ManualEntryView has always resolved one — it looks the identifier up before
+    it validates the format — but the guard's field refused to send it, so the
+    only way past a missed detection was blocked for exactly the vehicles whose
+    plates cannot be read: the ones that do not have plates yet. These pin the
+    server half of that path, including the space the input auto-inserts while
+    the guard types.
+    """
+
+    def setUp(self):
+        self.guard = _make_guard('conduction-guard@slc.edu.ph')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+        owner = User.objects.create_user(
+            email='newcar@slc.edu.ph', full_name='New Car Owner',
+            password='SecurePassword123!', role='vehicle_owner',
+            owner_type=User.OwnerType.EMPLOYEE, schedule='ANY',
+        )
+        self.vehicle = Vehicle.objects.create(
+            conduction_number='CS12345A678', vehicle_type=Vehicle.Type.CAR,
+            is_authorized=True, user=owner,
+        )
+
+    def _lookup(self, identifier):
+        return self.client.post('/api/scan/manual-entry/',
+                                {'plate_number': identifier}, format='json')
+
+    def test_conduction_number_identifies_the_vehicle(self):
+        res = self._lookup('CS12345A678')
+        self.assertEqual(res.status_code, 200)
+        # Identified, whatever the schedule rules then decide about entry.
+        self.assertIsNotNone(res.data.get('vehicle'))
+        self.assertEqual(res.data['vehicle']['conduction_number'], 'CS12345A678')
+
+    def test_the_space_the_field_inserts_is_ignored(self):
+        """formatPlateNumber turns "CS12345A678" into "CS 12345A678" as it is
+        typed; the server normalises it back out."""
+        res = self._lookup('CS 12345A678')
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNotNone(res.data.get('vehicle'))
+
+    def test_lowercase_is_accepted(self):
+        res = self._lookup('cs12345a678')
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNotNone(res.data.get('vehicle'))
+
+    def test_free_text_is_still_rejected(self):
+        res = self._lookup('NOT A PLATE')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Invalid plate format', res.data['error'])
+
+
+# ── Access log list (admin Vehicle Log + guard Vehicle Log) ────────────────────
+
+class AccessLogFilterAPITests(TestCase):
+    """/scan/logs/ backs both Vehicle Log screens: the guard's (one gate, one
+    day) and the CDSO's (all gates, a date range, searchable)."""
+
+    def setUp(self):
+        self.guard = _make_guard()
+        self.admin = User.objects.create_user(
+            email='cdso-logs@slc.edu.ph', full_name='Test CDSO',
+            password='SecurePassword123!', role='admin',
+        )
+        self.owner, self.vehicle = _make_owner(
+            'logowner@slc.edu.ph', 'ABC 1234', 'employee')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+        self.today = timezone.localdate()
+        self.old_day = self.today - timedelta(days=5)
+
+    def _log(self, plate, status, gate_id='gate1', day=None, vehicle=None,
+             paired_entry=None, minutes_past_midnight=8 * 60):
+        log = AccessLog.objects.create(
+            plate_number=plate, status=status, gate_id=gate_id,
+            vehicle=vehicle, paired_entry=paired_entry,
+            on_duty_guard=self.guard, scanned_by=self.guard,
+        )
+        # scanned_at is auto_now_add, so it can only be backdated by an UPDATE.
+        # A fixed offset from local midnight keeps the row inside `day` however
+        # close to midnight the suite happens to run.
+        when = day_start(day or self.today) + timedelta(minutes=minutes_past_midnight)
+        AccessLog.objects.filter(pk=log.pk).update(scanned_at=when)
+        log.refresh_from_db()
+        return log
+
+    def _get(self, **params):
+        res = self.client.get('/api/scan/logs/', params)
+        self.assertEqual(res.status_code, 200)
+        return res.data
+
+    def test_date_range_excludes_rows_outside_it(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, day=self.today)
+        self._log('OLD 1111', AccessLog.Status.AUTHORIZED, day=self.old_day)
+
+        plates = [row['plate_number'] for row in self._get(
+            date_from=self.today.isoformat(), date_to=self.today.isoformat())]
+        self.assertEqual(plates, ['ABC 1234'])
+
+    def test_date_range_includes_both_bounds(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, day=self.today)
+        self._log('OLD 1111', AccessLog.Status.AUTHORIZED, day=self.old_day)
+
+        plates = {row['plate_number'] for row in self._get(
+            date_from=self.old_day.isoformat(), date_to=self.today.isoformat())}
+        self.assertEqual(plates, {'ABC 1234', 'OLD 1111'})
+
+    def test_malformed_date_range_is_ignored_not_a_500(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED)
+        rows = self._get(date_from='not-a-date', date_to='13/45/2026')
+        self.assertEqual(len(rows), 1)
+
+    def test_search_matches_plate_case_insensitively(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED)
+        self._log('XYZ 9999', AccessLog.Status.AUTHORIZED)
+
+        plates = [row['plate_number'] for row in self._get(search='abc')]
+        self.assertEqual(plates, ['ABC 1234'])
+
+    def test_search_matches_the_vehicle_owner(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        self._log('XYZ 9999', AccessLog.Status.AUTHORIZED)
+
+        plates = [row['plate_number'] for row in self._get(search='Test Owner')]
+        self.assertEqual(plates, ['ABC 1234'])
+
+    def test_search_matches_the_guard_on_duty(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED)
+        rows = self._get(search='Test Guard')
+        self.assertEqual(len(rows), 1)
+
+    def test_gate_filter_still_scopes_to_one_gate(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, gate_id='gate1')
+        self._log('XYZ 9999', AccessLog.Status.AUTHORIZED, gate_id='gate4')
+
+        plates = [row['plate_number'] for row in self._get(gate_id='gate4')]
+        self.assertEqual(plates, ['XYZ 9999'])
+
+    def test_exit_folds_into_its_entry_with_a_duration(self):
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED,
+                          vehicle=self.vehicle, minutes_past_midnight=8 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle,
+                  paired_entry=entry, minutes_past_midnight=9 * 60 + 30)
+
+        rows = self._get()
+        self.assertEqual(len(rows), 1)          # one visit, one row
+        self.assertEqual(rows[0]['id'], entry.id)
+        self.assertEqual(rows[0]['duration_minutes'], 90)
+
+    def test_search_keeps_the_exit_paired_to_its_entry(self):
+        """Search filters entry and exit rows alike, so a matching visit still
+        collapses into a single row rather than showing an orphan entry."""
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED,
+                          vehicle=self.vehicle, minutes_past_midnight=8 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle,
+                  paired_entry=entry, minutes_past_midnight=9 * 60)
+
+        rows = self._get(search='ABC')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['duration_minutes'], 60)
+
+    def test_limit_is_clamped_and_bad_values_fall_back(self):
+        for i in range(3):
+            self._log(f'AAA 000{i}', AccessLog.Status.AUTHORIZED)
+
+        self.assertEqual(len(self._get(limit=1)), 1)
+        self.assertEqual(len(self._get(limit=99999)), 3)   # clamped to 1000
+        self.assertEqual(len(self._get(limit='banana')), 3)  # falls back to 200
+
+    def test_anonymous_callers_are_rejected(self):
+        res = APIClient().get('/api/scan/logs/')
+        self.assertIn(res.status_code, (401, 403))
+
+
+class VehicleLogReportAPITests(TestCase):
+    """The two Vehicle Log reports. They re-run the screen's filters server-side,
+    so what matters is that they agree with the table and stay CDSO-only."""
+
+    def setUp(self):
+        self.guard = _make_guard()
+        self.admin = User.objects.create_user(
+            email='cdso-reports@slc.edu.ph', full_name='Test CDSO',
+            password='SecurePassword123!', role='admin',
+        )
+        self.owner, self.vehicle = _make_owner(
+            'reportowner@slc.edu.ph', 'ABC 1234', 'employee')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+        self.today = timezone.localdate()
+
+    def _log(self, plate, status, gate_id='gate1', day=None, vehicle=None,
+             paired_entry=None, minutes_past_midnight=8 * 60, **extra):
+        log = AccessLog.objects.create(
+            plate_number=plate, status=status, gate_id=gate_id,
+            vehicle=vehicle, paired_entry=paired_entry,
+            on_duty_guard=self.guard, scanned_by=self.guard, **extra,
+        )
+        when = day_start(day or self.today) + timedelta(minutes=minutes_past_midnight)
+        AccessLog.objects.filter(pk=log.pk).update(scanned_at=when)
+        log.refresh_from_db()
+        return log
+
+    # ── Access ────────────────────────────────────────────────────────────
+
+    def test_reports_are_cdso_only(self):
+        """A guard sees their own gate's log on screen but cannot export it."""
+        client = APIClient()
+        client.force_authenticate(user=self.guard)
+        self.assertEqual(client.get('/api/scan/logs/export/').status_code, 403)
+        self.assertEqual(client.get('/api/scan/logs/export-pdf/').status_code, 403)
+
+    def test_reports_reject_anonymous_callers(self):
+        client = APIClient()
+        self.assertIn(client.get('/api/scan/logs/export/').status_code, (401, 403))
+        self.assertIn(client.get('/api/scan/logs/export-pdf/').status_code, (401, 403))
+
+    # ── File shape ────────────────────────────────────────────────────────
+
+    def test_excel_report_downloads_as_a_workbook(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        res = self.client.get('/api/scan/logs/export/')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('spreadsheetml', res['Content-Type'])
+        self.assertIn('Vehicle Log Report', res['Content-Disposition'])
+        self.assertTrue(res.content.startswith(b'PK'))   # xlsx is a zip
+
+    def test_pdf_report_downloads_as_a_pdf(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        res = self.client.get('/api/scan/logs/export-pdf/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res['Content-Type'], 'application/pdf')
+        self.assertIn('Vehicle Log Report', res['Content-Disposition'])
+        self.assertTrue(res.content.startswith(b'%PDF'))
+
+    def test_an_empty_result_still_produces_a_report(self):
+        """No rows is a valid answer to a filter — not an error page."""
+        res = self.client.get('/api/scan/logs/export-pdf/', {'search': 'NOTHING MATCHES'})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.content.startswith(b'%PDF'))
+
+    # ── Rows match the screen ─────────────────────────────────────────────
+
+    def _rows(self, **params):
+        """Build the report rows the same way the views do, so the assertions can
+        read the content instead of parsing a PDF."""
+        from django.test import RequestFactory
+        from scanning.views import _vehicle_log_report_data
+        request = RequestFactory().get('/api/scan/logs/export/', params)
+        request.user = self.admin
+        # DRF's query_params is just request.GET on a plain HttpRequest.
+        request.query_params = request.GET
+        return _vehicle_log_report_data(request)
+
+    def test_rows_carry_the_visit_with_its_duration(self):
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle,
+                          minutes_past_midnight=8 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle,
+                  paired_entry=entry, minutes_past_midnight=10 * 60)
+
+        rows, _ = self._rows()
+        self.assertEqual(len(rows), 1)          # one visit, one row
+        self.assertEqual(rows[0][2], 'ABC 1234')
+        self.assertEqual(rows[0][3], 'Test Owner')
+        self.assertEqual(rows[0][9], '2h')      # duration column
+
+    def test_a_vehicle_with_no_exit_is_marked_still_inside(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        rows, _ = self._rows()
+        self.assertEqual(rows[0][8], '')                  # no exit time
+        self.assertIn('Still inside', rows[0][10])        # remarks
+
+    def test_override_and_denied_reason_reach_the_remarks_column(self):
+        self._log('XYZ 9999', AccessLog.Status.DENIED,
+                  denied_reason='Vehicle not registered',
+                  is_override=True, override_reason='Cleared by CDSO')
+        rows, _ = self._rows()
+        self.assertIn('Cleared by CDSO', rows[0][10])
+        self.assertIn('Vehicle not registered', rows[0][10])
+
+    def test_status_filter_is_applied_after_the_visit_merge(self):
+        """Filtering to Authorized must not resurrect the exit row that was
+        folded into its entry."""
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle,
+                          minutes_past_midnight=8 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle,
+                  paired_entry=entry, minutes_past_midnight=9 * 60)
+        self._log('XYZ 9999', AccessLog.Status.DENIED)
+
+        rows, _ = self._rows(status='authorized')
+        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
+        self.assertEqual(rows[0][9], '1h')     # still paired to its exit
+
+        rows, _ = self._rows(status='denied')
+        self.assertEqual([r[2] for r in rows], ['XYZ 9999'])
+
+    def test_denied_group_covers_wrong_day_too(self):
+        self._log('AAA 1111', AccessLog.Status.DENIED)
+        self._log('BBB 2222', AccessLog.Status.WRONG_DAY)
+        self._log('CCC 3333', AccessLog.Status.AUTHORIZED)
+
+        rows, _ = self._rows(status='denied')
+        self.assertEqual({r[2] for r in rows}, {'AAA 1111', 'BBB 2222'})
+
+    def test_screen_filters_narrow_the_report_the_same_way(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, gate_id='gate1', vehicle=self.vehicle)
+        self._log('XYZ 9999', AccessLog.Status.AUTHORIZED, gate_id='gate4')
+        self._log('OLD 1111', AccessLog.Status.AUTHORIZED, gate_id='gate1',
+                  day=self.today - timedelta(days=5))
+
+        rows, _ = self._rows(gate_id='gate1', date_from=self.today.isoformat(),
+                             date_to=self.today.isoformat())
+        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
+
+        rows, _ = self._rows(search='Test Owner')
+        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
+
+    def test_the_subtitle_spells_out_the_active_filters(self):
+        """The reader of a filtered report has to be able to see it was filtered."""
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        _, desc = self._rows(gate_id='gate1', search='ABC', status='authorized',
+                             date_from=self.today.isoformat())
+        joined = '; '.join(desc)
+        self.assertIn('Gate:', joined)
+        self.assertIn("Search: 'ABC'", joined)
+        self.assertIn('Status: Authorized', joined)
+        self.assertIn('Period:', joined)
+
+    def test_unfiltered_reports_say_so(self):
+        _, desc = self._rows()
+        self.assertEqual(desc, [])

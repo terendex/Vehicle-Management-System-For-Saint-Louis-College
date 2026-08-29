@@ -100,6 +100,55 @@ PARKED_AFTER_SECONDS = 8.0
 # ordering, so a zone never fines a car before it counts as parked.
 DOUBLE_PARK_AFTER_SECONDS = 12.0
 
+# Detector confidence for occupancy, overriding detection._CONF_VEHICLE (0.15).
+#
+# 0.15 is the vehicle detector's own default, set back when the gate ran that
+# model too and a spurious box there cost nothing. The gate is plate-only now,
+# so parking is the only caller — but the default stays permissive and this
+# override is what parking is actually tuned on. A parking overview is the
+# dense case: low-confidence boxes pile up and inflate the count.
+#
+# Swept over the 27-image parking validation split (326 labelled vehicles)
+# through detect_vehicles() itself, so NMS and the size/aspect filters are in
+# play. False boxes are split by what they sit on, because only one kind can
+# take a bay: a *phantom* is a box on empty ground, while a second box on a car
+# already counted changes no bay's verdict.
+#
+#     conf   phantoms  /img   vehicles missed   found%
+#     0.40      18     0.67        109           80%
+#     0.45      13     0.48        113           76%
+#     0.50      13     0.48        120           74%
+#     0.55      10     0.37        123           71%
+#     0.60       9     0.33        135           65%
+#
+# 0.45 was where that table said the trade stopped paying — and then the campus
+# camera answered the question the validation set could not.
+#
+# Measured on the live feed: the tricycle parked in bay C01 scores **0.27**.
+# Every threshold above that reads the bay as free with a vehicle sitting in it,
+# which is what "the detector does nothing" looked like from the outside. The
+# scene is the hard end of this model's range — dusk, indoors, a tricycle at an
+# angle, half-occluded by a car and a railing — and it is also exactly the kind
+# of scene the campus lots are full of.
+#
+# So the floor is set below what a real parked vehicle here scores, not at the
+# point that looked tidiest on the validation split. The cost is real and known:
+# on that split 0.25-0.30 carries roughly 25 phantom boxes per 27 images against
+# 13 at 0.45. A phantom marks a free bay taken; a miss marks a *taken* bay free
+# and sends someone to a space that is not there. With recall this model's weak
+# side in dense parking, the second is the worse failure and the more likely.
+#
+# If phantom occupancy becomes the complaint, raise it — but re-measure against
+# a real parked vehicle first, the way this number was set, rather than moving
+# it on the validation table alone.
+OCCUPANCY_CONF = 0.25
+
+# How much bigger than this zone's largest bay a single detection may be before
+# it is treated as junk rather than as a vehicle. See _plausible(): the floor
+# above is low enough to see real vehicles in a dim scene, which is also low
+# enough to let through one box drawn around half the picture.
+MAX_VEHICLE_BAY_RATIO = 4.0
+
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a
 # straddle must persist seconds before it counts — so running the model ten
@@ -270,6 +319,13 @@ def get_thread(zone_id: int) -> "ParkingCameraThread | None":
 def status_dict() -> dict[int, bool]:
     with _lock:
         return {zid: t.is_alive() for zid, t in list(_cameras.items())}
+
+
+def detections_dict() -> dict[int, dict]:
+    """{zone_id: {vehicles: [...], age: seconds}} for every running zone."""
+    with _lock:
+        threads = list(_cameras.items())
+    return {zid: t.vehicles_seen() for zid, t in threads if t.is_alive()}
 
 
 def all_threads() -> dict[int, "ParkingCameraThread"]:
@@ -517,6 +573,10 @@ class ParkingCameraThread(threading.Thread):
         # run(). None outside it — nothing may assume a frame source exists.
         self._reader: "_StreamReader | None" = None
         self._hyst:   dict[int, int]    = {}
+        # Newest detector output, for the screens — see _remember().
+        self._last_vehicles: list[dict] = []
+        self._last_ignored:  list[dict] = []
+        self._last_vehicles_at = 0.0
 
         # Vehicle identity and stillness across frames. Every dwell threshold in
         # this file is measured off it — see vehicle_tracker for why the bay,
@@ -666,7 +726,7 @@ class ParkingCameraThread(threading.Thread):
         from scanning.ml.detection import detect_vehicles
         from vehicles.lens_layout import detect_across_lenses
 
-        return detect_across_lenses(frame, detect_vehicles)
+        return detect_across_lenses(frame, detect_vehicles, conf=OCCUPANCY_CONF)
 
     def _detector_hits(self, spaces, vehicles, now: float) -> dict:
         """{space_id: is a parked vehicle occupying this bay} from tracked boxes.
@@ -861,9 +921,98 @@ class ParkingCameraThread(threading.Thread):
             for t in self._tracker.tracks.values()
         ]
 
+    def _split_plausible(self, dets: list) -> tuple:
+        """Drop boxes too big to be one vehicle standing in one of these bays.
+
+        Lowering the confidence floor far enough to see a vehicle in a dim,
+        cluttered scene also lets through the detector's worst habit there:
+        one box thrown around most of the frame — a carport, a doorway, an
+        air-conditioner and a staircase called a "vehicle" at 0.27. It covers
+        every bay it touches, so it reads as a full lot, and it is the most
+        convincing kind of wrong because the bays it lights up are real.
+
+        The bays themselves give the scale, so this needs no per-camera tuning:
+        a vehicle parked in a bay is about the size of that bay, give or take
+        the angle. MAX_VEHICLE_BAY_RATIO is deliberately loose — a car across
+        two bays is still ~3x one of them, and double-parking detection depends
+        on those surviving.
+        """
+        biggest = max(
+            (abs(sp.x2 - sp.x1) * abs(sp.y2 - sp.y1)
+             for sp in (self._spaces or []) if sp.x1 is not None),
+            default=0.0,
+        )
+        if biggest <= 0:
+            return dets, []   # no drawn bays yet — nothing to judge scale against
+
+        cap = biggest * MAX_VEHICLE_BAY_RATIO
+        kept, ignored = [], []
+        for d in dets:
+            b = d.get('bbox') or {}
+            area = float(b.get('width', 0)) * float(b.get('height', 0))
+            if area > cap:
+                ignored.append({
+                    'bbox':  dict(b),
+                    'score': round(float(d.get('score', 0)), 2),
+                    'ratio': round(area / biggest, 1),
+                })
+                continue
+            kept.append(d)
+        return kept, ignored
+
     def _track(self, frame: np.ndarray, now: float) -> list:
-        """Run the detector and fold the result into this zone's tracker."""
-        return self._tracker.update(self._detect(frame), now)
+        """Run the detector and fold the result into this zone's tracker.
+
+        The size rule decides what may claim a bay — it does not decide what a
+        person is allowed to see. Hiding the boxes it rejects would leave the
+        screens showing nothing at all on a camera where the detector is in
+        fact seeing the cars every frame, which is a worse lie than the blob it
+        was written to stop.
+        """
+        dets = self._detect(frame)
+        keep, ignored = self._split_plausible(dets)
+        vehicles = self._tracker.update(keep, now)
+        self._remember(vehicles, ignored, now)
+        return vehicles
+
+    def _remember(self, vehicles: list, ignored: list, now: float) -> None:
+        """Keep the newest boxes where the API can read them.
+
+        Occupancy is a verdict — a bay is taken or it is not — and a verdict
+        alone cannot be debugged: a bay staying free looks identical whether the
+        detector saw nothing, saw the car and scored it too low, or saw it in
+        the wrong place. These are the boxes behind the verdict, so the screens
+        can draw what the detector is actually looking at.
+
+        Snapshotted under the lock as plain dicts rather than handing out the
+        live track objects, which the worker thread keeps mutating.
+        """
+        snapshot = [
+            {
+                'id':      v.track_id,
+                'bbox':    dict(v.bbox),
+                'settled': v.has_settled(now, self._parked_after),
+                'still_for': round(v.stationary_for(now), 1),
+            }
+            for v in vehicles
+        ]
+        with self._lock:
+            self._last_vehicles = snapshot
+            self._last_ignored = list(ignored)
+            self._last_vehicles_at = time.monotonic()
+
+    def vehicles_seen(self) -> dict:
+        """The newest boxes and how long ago they were measured."""
+        with self._lock:
+            at = self._last_vehicles_at
+            return {
+                'vehicles': list(self._last_vehicles),
+                # Seen by the detector, but too large to be one vehicle in one
+                # of these bays. Shown so "it detects nothing" and "it detects
+                # something I refuse to count" cannot look the same on screen.
+                'ignored': list(self._last_ignored),
+                'age': round(time.monotonic() - at, 1) if at else None,
+            }
 
     def _process_frame(self, frame: np.ndarray) -> None:
         spaces = self._load_spaces()

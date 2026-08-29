@@ -1,6 +1,6 @@
 import { useEffect, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, Outlet } from 'react-router-dom'
-import { Toaster } from 'sonner'
+import FeedbackHost from './components/Feedback/FeedbackHost'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
@@ -27,6 +27,7 @@ const UserManagement          = lazy(() => import('./pages/Admin/UserManagement'
 const OperationsCenter        = lazy(() => import('./pages/Admin/OperationsCenter'))
 const RuleConstraints         = lazy(() => import('./pages/Admin/RuleConstraints'))
 const AuditLog                = lazy(() => import('./pages/Admin/AuditLog'))
+const VehicleLog              = lazy(() => import('./pages/Admin/VehicleLog'))
 const ParkingSpaceManagement  = lazy(() => import('./pages/Admin/ParkingSpaceManagement'))
 const DeviceManagement        = lazy(() => import('./pages/Admin/DeviceManagement'))
 const SystemSettings          = lazy(() => import('./pages/Admin/SystemSettings'))
@@ -39,6 +40,7 @@ const SecurityAuditLogPage    = lazy(() => import('./pages/Security/SecurityAudi
 const SecurityQRLogin         = lazy(() => import('./pages/Security/SecurityQRLogin'))
 const OwnerDashboard          = lazy(() => import('./pages/VehicleOwner/OwnerDashboard'))
 const RegisterPage            = lazy(() => import('./pages/Register/RegisterPage'))
+const PaymentPage             = lazy(() => import('./pages/Payment/PaymentPage'))
 const ForgotPasswordPage      = lazy(() => import('./pages/ForgotPassword/ForgotPasswordPage'))
 const ResetPasswordPage       = lazy(() => import('./pages/ResetPassword/ResetPasswordPage'))
 const PolicyPage              = lazy(() => import('./pages/Policy/PolicyPage'))
@@ -79,8 +81,11 @@ function RoleShell() {
   const { user } = useAuthStore()
   const { pathname } = useLocation()
   const Layout = LAYOUT_BY_ROLE[user?.role] || OwnerLayout
-  // The security entries screen wants the full-height variant.
-  const fillHeight = Layout === SecurityLayout && pathname.endsWith('/entries')
+  // The guard's two working screens want the full-height variant: both are
+  // watched at a gate rather than read at a desk, and a guard should not have
+  // to scroll to reach a control while a vehicle waits at the barrier.
+  const fillHeight = Layout === SecurityLayout
+    && (pathname.endsWith('/entries') || pathname.endsWith('/parking'))
   return (
     <Layout fillHeight={fillHeight}>
       {/* Keyed on the path so recovering from a broken page is a navigation
@@ -110,7 +115,10 @@ export default function App() {
     <LiveUpdatesProvider>
     <CameraProvider>
     <BrowserRouter>
-      <Toaster richColors position="top-right" />
+      {/* Every confirmation, error and success in the app is raised here as a
+          modal the user has to acknowledge. Mounted at the root so any page,
+          hook or socket handler can reach it. */}
+      <FeedbackHost />
       {/* Renders nothing until a sensitive request is held for a code. Mounted
           at the root so every screen is covered without knowing it exists. */}
       <StepUpGate />
@@ -123,6 +131,9 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        {/* Applicant's own proof-of-payment step, reached from the pending email.
+            Public: the payment token in the query string is the only key. */}
+        <Route path="/registration/payment" element={<PaymentPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/policy" element={<PolicyPage />} />
@@ -142,6 +153,7 @@ export default function App() {
             <Route path="/admin/users" element={<UserManagement />} />
             <Route path="/admin/rules" element={<RuleConstraints />} />
             <Route path="/admin/audit" element={<AuditLog />} />
+            <Route path="/admin/vehicle-log" element={<VehicleLog />} />
             <Route path="/admin/devices" element={<DeviceManagement />} />
             <Route path="/admin/suppliers" element={<SupplierManagement />} />
             {/* Admin (CDSO) — settings, operations, parking, violations */}

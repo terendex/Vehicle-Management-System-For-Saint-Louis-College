@@ -1,12 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
+  Camera, VideoOff, Maximize2, Minimize2,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
+import BayOccupantModal from '../../components/BayOccupant'
 import { zoneApi } from '../../api/parking'
+import { camerasApi } from '../../api/cameras'
+import { useCameraContext } from '../../context/CameraContext'
+import useFullscreen from '../../hooks/useFullscreen'
 import { overrideEntry } from '../../api/scanning'
 import { createViolation } from '../../api/violations'
 import '../Admin/ParkingManagement.css'
@@ -24,7 +30,10 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!plate.trim() || !reason.trim()) { toast.error('Plate and reason are required.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!plate.trim()) problems.push('Enter the plate number.')
+    if (!reason.trim()) problems.push('Give a reason for the override.')
+    if (await notify.validation(problems, { title: 'Override not logged' })) return
     setLoading(true)
     try {
       await overrideEntry({ plate_number: plate.trim().toUpperCase(), reason: `Parking override — ${zoneName}: ${reason}` })
@@ -50,7 +59,7 @@ function ParkingOverrideModal({ zoneName, onClose, onDone }) {
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit} style={{ padding: 18 }}>
+        <form onSubmit={handleSubmit} noValidate style={{ padding: 18 }}>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: '#8A6B00', background: '#FDF0BE', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
             Allow a vehicle to park in <strong>{zoneName}</strong> even if the zone is full. This will be logged.
           </p>
@@ -90,7 +99,9 @@ function IssueViolationModal({ onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!plate.trim()) { toast.error('Plate number is required.'); return }
+    const problems = [...fieldProblems(e.currentTarget)]
+    if (!plate.trim()) problems.push('Enter the plate number.')
+    if (await notify.validation(problems, { title: 'Violation not issued' })) return
     setLoading(true)
     try {
       await createViolation({ plate_number: plate.trim().toUpperCase(), violation_type: type, notes })
@@ -113,7 +124,7 @@ function IssueViolationModal({ onClose }) {
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
-        <form onSubmit={handleSubmit} style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form onSubmit={handleSubmit} noValidate style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate *</label>
             <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required
@@ -147,14 +158,31 @@ function IssueViolationModal({ onClose }) {
 }
 
 export default function SecurityParkingView() {
+  // Which occupied bay the guard asked about, if any.
+  const [bayLookup,     setBayLookup]     = useState(null)
+  // What the detector last saw in the selected zone. Occupancy is a verdict;
+  // these are the boxes behind it, so a bay staying green can be told apart
+  // from a detector seeing nothing at all.
+  const [detections,    setDetections]    = useState(null)
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
   const [loading,       setLoading]       = useState(true)
   const [showOverride,  setShowOverride]  = useState(false)
   const [showViolation, setShowViolation] = useState(false)
+  // Device Management camera rows, and which zones the detector is running for.
+  const [deviceCams,    setDeviceCams]    = useState([])
+  const [camStatus,     setCamStatus]     = useState({})
+  // The reference image URL is signed and expires, so "it loaded an hour ago"
+  // is no guarantee it loads now. Keyed by zone id: one zone's dead link must
+  // not blank out the next zone's picture.
+  const [imgFailedFor,  setImgFailedFor]  = useState(null)
+  const [imgDimsFor,    setImgDimsFor]    = useState({})
 
-  const selZone   = zones.find(z => z.id === selId) ?? null
-  const camRunning = false
+  const { cameras: allCameras, addCamera, syncCameras, registerCanvas, paneCounts } = useCameraContext()
+  const camFs = useFullscreen()
+
+  const selZone    = zones.find(z => z.id === selId) ?? null
+  const camRunning = !!camStatus[selId]
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -163,10 +191,50 @@ export default function SecurityParkingView() {
       const data = await zoneApi.listAll()
       setZones(data)
       setSelId(id => id ?? data[0]?.id ?? null)
+      // Refetched with the zones, not once on mount: a zone reassigned to a
+      // different camera while a guard has this page open would otherwise keep
+      // drawing bays over the old camera's picture.
+      try {
+        setDeviceCams(await camerasApi.list({ assignment: 'parking' }))
+      } catch { /* keep the cameras already known */ }
     } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadZones() }, [loadZones])
+
+  // Polled at the rate the worker re-detects (DETECT_INTERVAL_SECONDS = 2).
+  // Faster would redraw the same rectangles; slower would lag the picture.
+  useEffect(() => {
+    if (!selId) return undefined
+    let alive = true
+    const tick = () => zoneApi.getDetections()
+      .then(all => { if (alive) setDetections(all?.[selId] ?? null) })
+      .catch(() => { if (alive) setDetections(null) })
+    tick()
+    const timer = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [selId])
+
+  // Camera changes reach this screen too. Pruning only: the effect below opens
+  // just the selected zone's feed on purpose, so this must not connect every
+  // parking camera on campus — it exists so a camera deleted in Device
+  // Management stops playing here rather than streaming on unattached.
+  const refreshCameras = useCallback(() => {
+    camerasApi.list({ assignment: 'parking' })
+      .then(cams => {
+        setDeviceCams(cams)
+        syncCameras('parking', cams, { connect: false })
+      })
+      .catch(() => {})
+  }, [syncCameras])
+
+  // Deleting a camera nulls ParkingZone.camera through the collector's bulk
+  // UPDATE, which fires no parkingzone signal — so the zones have to be
+  // refetched from the *camera* event or they go on pointing at a device that
+  // no longer exists.
+  const onCameraChange = useCallback(() => { refreshCameras(); loadZones() },
+                                     [refreshCameras, loadZones])
+  useLiveUpdates(onCameraChange, 'camera')
 
   // Live-refresh zones/occupancy on parking changes
   useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])
@@ -185,6 +253,17 @@ export default function SecurityParkingView() {
     return () => clearInterval(t)
   }, [refreshZone])
 
+  // Whether the bay detector is running per zone. A GET, so guards may read it;
+  // starting and stopping it stays admin-only.
+  useEffect(() => {
+    const pull = async () => {
+      try { setCamStatus(await zoneApi.getCameraStatus()) } catch { /* silent */ }
+    }
+    pull()
+    const t = setInterval(pull, 8000)
+    return () => clearInterval(t)
+  }, [])
+
   // ── Derived ─────────────────────────────────────────────────────
   // Two different questions, two different sources.
   //
@@ -202,6 +281,83 @@ export default function SecurityParkingView() {
   const isFull       = selZone?.category_is_full   ?? false
   const sumFr        = selZone?.category_available ?? Math.max(0, totalCap - occ)
   const catLabel     = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
+
+  // ── Which camera is this zone watched by? ───────────────────────
+  //
+  // Same three-way join the admin page does, minus the camera picker: a guard
+  // does not choose a feed, the zone does. `zone.camera` is a Device Management
+  // row id, while CameraContext keys its live feeds by a client-side counter,
+  // so the RTSP URL is the only field the two share and it is the join key.
+  // Getting this wrong would put camera B's picture under camera A's bays with
+  // nothing on screen saying so.
+  const deviceById = useMemo(
+    () => new Map(deviceCams.map(d => [d.id, d])),
+    [deviceCams],
+  )
+
+  // Camera → the zones drawn against it. A dual-lens unit watches two places,
+  // so this is a list, not a single zone.
+  const zonesByCamera = useMemo(() => {
+    const m = new Map()
+    for (const z of zones) {
+      if (z.camera == null) continue
+      if (!m.has(z.camera)) m.set(z.camera, [])
+      m.get(z.camera).push(z)
+    }
+    return m
+  }, [zones])
+  const liveByUrl = useMemo(() => {
+    const m = new Map()
+    for (const c of allCameras) {
+      if (c.assignment !== 'parking') continue
+      const url = (c.url || '').trim()
+      if (!m.has(url)) m.set(url, c)
+    }
+    return m
+  }, [allCameras])
+
+  const zoneDeviceCam = selZone?.camera != null ? deviceById.get(selZone.camera) ?? null : null
+  const zoneCam       = zoneDeviceCam ? liveByUrl.get((zoneDeviceCam.rtsp_url || '').trim()) ?? null : null
+
+  // Connect only the selected zone's camera, not every parking camera on
+  // campus. Guards live on the entries screen; opening a stream per zone here
+  // would multiply RTSP sessions on hardware that already reboots under load.
+  // addCamera dedups by URL, so revisiting a zone reuses the open connection.
+  const zoneRtsp = (zoneDeviceCam?.rtsp_url || '').trim()
+  const zoneCamName = zoneDeviceCam?.name || selZone?.camera_name || ''
+  useEffect(() => {
+    if (zoneRtsp) addCamera(zoneCamName, zoneRtsp, 'parking')
+  }, [zoneRtsp, zoneCamName, addCamera])
+
+  // Same lens rule as the admin editor and lens_layout.lens_count() on the
+  // backend. The live frame is the better witness — measured by the render loop
+  // from the picture actually arriving — and it exists even for a zone that
+  // never captured a reference image.
+  const imgFailed  = !!selZone && imgFailedFor === selZone.id
+  const imgDims    = selZone ? (imgDimsFor[selZone.id] ?? null) : null
+  const livePanes  = zoneCam ? (paneCounts[zoneCam.id] ?? 1) : 1
+  const lensCount  = (() => {
+    if (livePanes > 1) return livePanes
+    if (!imgDims) return 1
+    const { w, h } = imgDims
+    if (!w || !h || h <= w) return 1
+    return w / (h / 2) >= 1.6 ? 2 : 1
+  })()
+  // Read-only: the zone already knows which view it covers, so there is nothing
+  // to ask the guard. Bay geometry stays full-frame — the lens is a viewport,
+  // applied by narrowing the SVG viewBox, never by rewriting a coordinate.
+  const lensIdx    = lensCount > 1 ? (selZone?.lens_index ?? 0) : 0
+
+  // Slots belong to one view of the camera, same filter the admin editor
+  // applies. The viewBox already clips anything outside the band, but a bay
+  // drawn before the lens split existed is tagged lens 0 with geometry spanning
+  // the whole stacked frame — that one would survive the clip and land
+  // somewhere plausible and wrong on the other lens's picture.
+  // Stats deliberately keep counting every lens: bays_occupied is the zone's
+  // map, not this viewport's.
+  const spaceList = lensCount > 1
+    ? liveSpaces.filter(s => (s.lens_index ?? 0) === lensIdx)
+    : liveSpaces
 
   return (
     <>
@@ -286,6 +442,45 @@ export default function SecurityParkingView() {
               <span className="pm-zone-empty">No parking zones configured yet.</span>
             )}
           </div>
+          {/* Pick by camera, not just by zone.
+              A guard thinks in cameras — "show me the one over the north lot" —
+              while the zones are what the bays belong to. Choosing a camera
+              jumps to the zone drawn against it; the zone tabs stay for the
+              dual-lens case, where one camera carries two zones. Only worth the
+              space once there is more than one camera to choose between. */}
+          {deviceCams.length > 1 && (
+            <>
+              <span className="pm-zone-bar-label" style={{ borderRight: 'none' }}>
+                <Camera size={13} /> Cameras
+              </span>
+              <div className="pm-zone-tabs">
+                {deviceCams.map(dev => {
+                  const zonesHere = zonesByCamera.get(dev.id) ?? []
+                  const live      = liveByUrl.get((dev.rtsp_url || '').trim())
+                  const active    = zonesHere.some(z => z.id === selId)
+                  return (
+                    <button
+                      key={`cam-${dev.id}`}
+                      className={`pm-zone-tab${active ? ' pm-zone-tab--active' : ''}`}
+                      onClick={() => zonesHere[0] && setSelId(zonesHere[0].id)}
+                      disabled={!zonesHere.length}
+                      title={zonesHere.length
+                        ? `${dev.name} — ${zonesHere.map(z => z.name).join(', ')}`
+                        : `${dev.name} — no zone drawn for it yet`}
+                    >
+                      <span
+                        className="pm-cam-strip-dot"
+                        style={{ background: live?.streamConnected ? '#1BA968'
+                                           : live?.wsActive ? '#E0B00C' : '#5C7B92' }}
+                      />
+                      {dev.name}
+                      {!zonesHere.length && <span className="pm-cam-strip-badge">No zone</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
           <div className="pm-zone-bar-actions">
             <button className="pm-btn pm-btn--outline" onClick={loadZones} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'pm-spin' : ''} /> Refresh
@@ -336,36 +531,133 @@ export default function SecurityParkingView() {
                 </div>
               </div>
 
-              {/* Canvas */}
-              <div className="pm-canvas-wrapper">
-                {selZone.reference_image_url ? (
+              {/* Canvas.
+                  Bays are drawn over the *live feed*, the same picture the
+                  admin's Live View shows. The still reference image is only the
+                  fallback for a zone with no camera, or one whose feed has not
+                  arrived yet — a guard deciding whether a bay is really free
+                  needs the car, not a photo of the car park taken last term. */}
+              <div className="pm-canvas-wrapper" ref={camFs.setRef('parking')}>
+                {zoneCam && (
+                  <button
+                    className="pm-cam-fs"
+                    onClick={async () => {
+                      if (!(await camFs.toggle('parking'))) toast.error('Fullscreen was blocked by the browser.')
+                    }}
+                    title={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                    aria-label={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                  >
+                    {camFs.isFullscreen('parking') ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                  </button>
+                )}
+
+                {zoneCam ? (
+                  <canvas
+                    className="pm-canvas-live"
+                    /* Always an explicit pane, never undefined — `pane == null`
+                       is the FULL_FRAME key. With one lens the render loop
+                       draws pane 0 and the whole frame identically, so this
+                       costs nothing and keeps a stacked dual-lens camera from
+                       showing both scenes squeezed into one box. */
+                    ref={el => registerCanvas(zoneCam.id, el, lensIdx)}
+                  />
+                ) : selZone.reference_image_url && !imgFailed ? (
                   <img
                     src={selZone.reference_image_url}
                     className="pm-canvas-img"
                     draggable={false}
                     alt=""
+                    /* Stretch to lensCount x height and slide the wanted band
+                       into the wrapper, which clips — matching the viewBox. */
+                    style={lensCount > 1 ? {
+                      height: `${lensCount * 100}%`,
+                      top: `${-lensIdx * 100}%`,
+                      bottom: 'auto',
+                    } : undefined}
+                    onError={() => setImgFailedFor(selZone.id)}
+                    onLoad={e => {
+                      setImgFailedFor(f => (f === selZone.id ? null : f))
+                      setImgDimsFor(m => ({ ...m, [selZone.id]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }))
+                    }}
                   />
                 ) : (
-                  <div className="pm-canvas-no-img">No reference image for this zone.</div>
+                  /* The signed image URL expires, so a page left open overnight
+                     comes back to a dead link. Without this that renders as a
+                     broken-image glyph with no hint that Refresh fixes it. */
+                  <div className="pm-canvas-no-img">
+                    {imgFailed ? (
+                      <>
+                        <AlertTriangle size={26} />
+                        <p className="pm-canvas-no-img-title">Reference image could not be loaded</p>
+                        <p className="pm-canvas-no-img-sub">The link may have expired. Refresh to get a fresh one.</p>
+                        <button className="pm-btn pm-btn--outline" onClick={loadZones}>
+                          <RefreshCw size={13} /> Refresh
+                        </button>
+                      </>
+                    ) : zoneDeviceCam ? (
+                      <>
+                        <VideoOff size={26} />
+                        <p className="pm-canvas-no-img-title">Connecting to {zoneDeviceCam.name}…</p>
+                        <p className="pm-canvas-no-img-sub">
+                          The bay numbers above are live — only the picture is still loading.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={26} />
+                        <p className="pm-canvas-no-img-title">No camera on this zone</p>
+                        <p className="pm-canvas-no-img-sub">
+                          Ask an administrator to assign a camera to {selZone.name}.
+                        </p>
+                      </>
+                    )}
+                  </div>
                 )}
 
-                {/* SVG overlay — read-only (no event handlers) */}
+                {/* SVG overlay. Bays are not editable here — the geometry
+                    belongs to Parking Management — but an occupied one answers
+                    who is in it, because the plate painted on the rectangle is
+                    the only thing this screen knew about the car.
+                    One band of the full frame: every bay is stored in
+                    full-frame coordinates, so narrowing the viewBox is all it
+                    takes to show a single lens. */}
                 <svg
                   className="pm-canvas-svg"
-                  viewBox="0 0 1 1"
+                  viewBox={lensCount > 1 ? `0 ${lensIdx / lensCount} 1 ${1 / lensCount}` : '0 0 1 1'}
                   preserveAspectRatio="none"
                 >
-                  {liveSpaces.map(s => {
+                  {spaceList.map(s => {
                     const x     = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2)
                     const w     = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                     const color = s.is_occupied ? '#D93B3B' : '#1BA968'
                     const fill  = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
+                    const known = s.is_occupied && !!s.occupied_by
                     return (
-                      <g key={s.id}>
-                        <rect
-                          x={x} y={y} width={w} height={h}
-                          fill={fill} stroke={color} strokeWidth={0.003} rx={0.004}
-                        />
+                      <g
+                        key={s.id}
+                        onClick={known ? () => setBayLookup(s) : undefined}
+                        style={known ? { cursor: 'pointer' } : undefined}
+                      >
+                        {known && <title>{`${s.occupied_by} — click for details`}</title>}
+                        {/* Draw the bay the shape it was drawn in.
+                            The pen tool stores freeform vertices in `points`;
+                            x1..y2 is only the bounding box kept alongside them
+                            for quick overlap maths. Rendering the box here made
+                            a bay the admin had angled along the kerb come out
+                            as an upright rectangle covering ground the bay does
+                            not include — the two screens disagreeing about
+                            where the same bay is. */}
+                        {s.points && s.points.length >= 3 ? (
+                          <polygon
+                            points={s.points.map(pt => pt.join(',')).join(' ')}
+                            fill={fill} stroke={color} strokeWidth={0.003}
+                          />
+                        ) : (
+                          <rect
+                            x={x} y={y} width={w} height={h}
+                            fill={fill} stroke={color} strokeWidth={0.003} rx={0.004}
+                          />
+                        )}
                         <text
                           x={x + w / 2}
                           y={y + h / 2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}
@@ -388,6 +680,38 @@ export default function SecurityParkingView() {
                       </g>
                     )
                   })}
+
+                  {/* What the detector sees, drawn over the bays it is judging.
+                      Dashed while the vehicle is still moving — a car coming
+                      down the aisle crosses bays it is not parked in, and only
+                      a settled one is allowed to claim a bay. */}
+                  {(detections?.vehicles ?? []).map(v => (
+                    <rect
+                      key={`veh-${v.id}`}
+                      x={v.bbox.x} y={v.bbox.y}
+                      width={v.bbox.width} height={v.bbox.height}
+                      fill="rgba(246, 206, 17, 0.12)"
+                      stroke="#F6CE11"
+                      strokeWidth={0.0025}
+                      strokeDasharray={v.settled ? undefined : '0.012 0.008'}
+                    />
+                  ))}
+
+                  {/* Seen, but too big to be one vehicle in one of these bays,
+                      so it claims nothing. Drawn thin and grey rather than
+                      dropped: a detector seeing nothing and a detector seeing
+                      something the rules reject must not look the same. */}
+                  {(detections?.ignored ?? []).map((v, i) => (
+                    <rect
+                      key={`ign-${i}`}
+                      x={v.bbox.x} y={v.bbox.y}
+                      width={v.bbox.width} height={v.bbox.height}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth={0.0015}
+                      strokeDasharray="0.006 0.006"
+                    />
+                  ))}
                 </svg>
               </div>
 
@@ -399,7 +723,15 @@ export default function SecurityParkingView() {
                 <span className="pm-legend-item">
                   <span className="pm-legend-dot pm-legend-dot--occ" />Occupied
                 </span>
-                <span className="pm-legend-note">Auto-refreshes every 8 s</span>
+                <span className="pm-legend-item">
+                  <span className="pm-legend-dot pm-legend-dot--det" />Vehicle seen
+                </span>
+                {/* Two different rates, and saying so stops a guard reading a
+                    stale bay colour as a dead feed. The picture streams; the
+                    bay verdicts come from the 8-second occupancy poll. */}
+                <span className="pm-legend-note">
+                  {zoneCam ? 'Live picture · bays refresh every 8 s' : 'Auto-refreshes every 8 s'}
+                </span>
               </div>
 
             </div>{/* /pm-canvas-area */}
@@ -419,6 +751,14 @@ export default function SecurityParkingView() {
 
       {showViolation && (
         <IssueViolationModal onClose={() => setShowViolation(false)} />
+      )}
+
+      {bayLookup && (
+        <BayOccupantModal
+          space={bayLookup}
+          zoneName={selZone?.name}
+          onClose={() => setBayLookup(null)}
+        />
       )}
 
     </>

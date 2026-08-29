@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, KeyRound, ShieldCheck } from 'lucide-react'
+import { KeyRound, ShieldCheck } from 'lucide-react'
 import useTwofaStore from '../../stores/twofaStore'
 import CodeField from './CodeField'
+import notify from '../Feedback/notify'
 import './twofactor.css'
 
 /**
@@ -36,9 +37,20 @@ function StepUpDialog() {
     async (submittedCode) => {
       if (submitting) return
       const value = submittedCode || code
-      if (value.length !== 6) return
+      if (value.length !== 6) {
+        await notify.error('Enter all six digits of the code.', { title: 'Code incomplete' })
+        return
+      }
       const ok = await submitCode({ code: value })
-      if (!ok) setCode('')
+      if (!ok) {
+        setCode('')
+        // Read from the store rather than closing over `error`: submitCode has
+        // just written the reason, and this callback's copy predates it.
+        notify.error(
+          useTwofaStore.getState().error || 'That code was not accepted.',
+          { title: 'Verification failed', confirmLabel: 'Try Again' },
+        )
+      }
     },
     [submitting, code, submitCode]
   )
@@ -87,13 +99,6 @@ function StepUpDialog() {
             Saint Louis College.
           </p>
 
-          {error && (
-            <div className="tfa-error" role="alert">
-              <AlertCircle size={15} />
-              <span>{error}</span>
-            </div>
-          )}
-
           <div className="tfa-actions">
             <button
               type="button"
@@ -106,7 +111,7 @@ function StepUpDialog() {
             <button
               type="submit"
               className="tfa-btn tfa-btn-primary"
-              disabled={submitting || code.length !== 6}
+              disabled={submitting}
             >
               <KeyRound size={16} />
               {submitting ? 'Verifying…' : 'Verify'}

@@ -216,6 +216,101 @@
   justify-content: center;
 }
 
+/* ─── Camera search above the thumbnail strip ─────────────────── */
+
+.em-cam-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0;
+  padding: 0 8px;
+  background: #0A2340;
+  border: 1px solid #0F2A47;
+  border-radius: 7px;
+}
+.em-cam-search:focus-within { border-color: #2E8CCB; }
+.em-cam-search-icon { color: #5C7B92; flex-shrink: 0; }
+.em-cam-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #D3E1EC;
+}
+.em-cam-search input::placeholder { color: #5C7B92; }
+.em-cam-search input::-webkit-search-cancel-button { display: none; }
+.em-cam-search-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: #5C7B92;
+  white-space: nowrap;
+}
+.em-cam-search-clear {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #5C7B92;
+  cursor: pointer;
+}
+.em-cam-search-clear:hover { color: #E88080; background: rgba(232, 128, 128, 0.12); }
+
+.em-cam-thumb-none {
+  color: #5C7B92;
+  font-size: 11px;
+  padding: 10px 2px;
+}
+
+/* ─── Fullscreen the CCTV viewport ────────────────────────────── */
+
+.em-cam-fs {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(4, 18, 31, 0.65);
+  color: #C7DDEE;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.em-cam-fs:hover { background: rgba(4, 18, 31, 0.92); color: #FFFFFF; }
+
+/* The viewport is locked to 16/9 in the card, which would crop a dual-lens
+   camera's tall frame once it fills the screen. Drop the ratio in fullscreen
+   and let the canvas fit inside instead. */
+.em-viewport:fullscreen {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.em-viewport:fullscreen > div,
+.em-viewport:fullscreen > div > div {
+  width: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0 !important;
+}
+.em-viewport:fullscreen canvas {
+  width: auto !important;
+  max-width: 100vw;
+  max-height: 100vh;
+  min-height: 0 !important;
+}
+
 .em-cam-thumbnails {
   display: flex;
   gap: 8px;
@@ -355,6 +450,18 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+/* The guard's lookup result is a dialog, not a card in the column — see
+   ResultModal in SecurityEntryManagement.jsx. `.em-result` still supplies the
+   frame and the per-status colours; this only sizes it inside `.em-overlay`,
+   and lets a long result (owner + vehicle + violations + actions) scroll
+   rather than run off a laptop screen. */
+.em-result-dialog {
+  width: 100%;
+  max-width: 380px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .em-result.authorized { border-left: 4px solid #14A374; }
@@ -1086,13 +1193,32 @@
 }
 
 /* Viewport fills the full panel width at the camera's 16:9 ratio — the whole
-   frame shows with no cropping and no letterbox bars. The plate form below is
-   kept compact so everything fits on one screen without scrolling. */
+   frame shows with no cropping and no letterbox bars.
+ *
+ * `0 1 auto`, not `0 0 auto`: on a wide screen 16/9 of the full column is
+ * taller than the height left over, and because the card is `overflow: hidden`
+ * whatever does not fit is not scrolled to — it is cut off. What sat below the
+ * video was the plate / conduction lookup and the QR scanner, so on a 1920×1080
+ * laptop the guard's only manual way past a missed plate silently vanished.
+ *
+ * Now the picture is the thing that yields: it holds 16:9 whenever there is
+ * room and shrinks when there is not, letterboxing inside its own black box
+ * (the canvas is already `object-fit: contain`, so nothing is cropped). The
+ * controls below keep their natural height and are always on screen. */
 .admin-content--fill .em-camera-card .em-viewport {
   aspect-ratio: 16 / 9;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   height: auto;
   min-height: 0 !important; /* override inline minHeight: 340 */
+}
+
+/* Everything under the picture is fixed furniture: the camera search, the
+   thumbnail strip, and the plate lookup / QR bar. None of them may be the item
+   that absorbs a height shortfall. */
+.admin-content--fill .em-camera-card .em-cam-search,
+.admin-content--fill .em-camera-card .em-cam-thumbnails,
+.admin-content--fill .em-camera-card .em-plate-bar {
+  flex: 0 0 auto;
 }
 .admin-content--fill .em-camera-card .em-viewport > div,
 .admin-content--fill .em-camera-card .em-viewport > div > div:has(> canvas) {

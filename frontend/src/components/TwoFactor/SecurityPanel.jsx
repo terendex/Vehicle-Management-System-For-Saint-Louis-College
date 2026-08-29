@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { twofaApi } from '../../api/twofa'
 import CodeField from './CodeField'
+import notify from '../Feedback/notify'
 import './twofactor.css'
 
 /**
@@ -73,7 +74,9 @@ export default function SecurityPanel({ compact = false }) {
 
   const failed = (err, fallback) => {
     if (err.stepUpCancelled) return          // they backed out of the prompt
-    setError(err.response?.data?.error || err.response?.data?.detail || fallback)
+    const msg = err.response?.data?.error || err.response?.data?.detail || fallback
+    setError(msg)
+    notify.error(msg, { title: 'Something went wrong' })
   }
 
   const startPairing = async () => {
@@ -90,7 +93,11 @@ export default function SecurityPanel({ compact = false }) {
 
   const confirmPairing = useCallback(async (submitted) => {
     const value = (submitted || code).trim()
-    if (busy || value.length !== 6) return
+    if (busy) return
+    if (value.length !== 6) {
+      await notify.error('Enter all six digits of the code.', { title: 'Code incomplete' })
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -231,11 +238,6 @@ export default function SecurityPanel({ compact = false }) {
             invalid={!!error}
             disabled={busy}
           />
-          {error && (
-            <div className="tfa-error" role="alert">
-              <AlertCircle size={15} /><span>{error}</span>
-            </div>
-          )}
           <div className="tfa-actions">
             <button
               type="button"
@@ -248,7 +250,7 @@ export default function SecurityPanel({ compact = false }) {
             <button
               type="submit"
               className="tfa-btn tfa-btn-primary"
-              disabled={busy || code.length !== 6}
+              disabled={busy}
             >
               <ShieldCheck size={16} />{busy ? 'Verifying…' : 'Finish pairing'}
             </button>
@@ -330,11 +332,6 @@ export default function SecurityPanel({ compact = false }) {
             </p>
           </div>
 
-          {error && (
-            <div className="tfa-error" role="alert">
-              <AlertCircle size={15} /><span>{error}</span>
-            </div>
-          )}
 
           <div className="tfa-actions tfa-actions-wide">
             <button

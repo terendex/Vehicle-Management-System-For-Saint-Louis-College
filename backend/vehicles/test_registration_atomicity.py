@@ -69,6 +69,25 @@ class AcceptanceAtomicityTests(TestCase):
         return self.client.post(f'/api/vehicles/registrations/{reg_id}/accept/',
                                 {'or_number': '1234567'}, format='json')
 
+    def test_the_account_payload_carries_the_schedule(self):
+        """The approval modal renders Schedule from this payload, not from the
+        table behind it. campus_days alone is not enough: the formatter only
+        falls back to the days for a MIXED row, so a missing `schedule` showed
+        every newly approved student a bare dash."""
+        reg_id = self._submit()
+        res = self._accept(reg_id)
+        self.assertEqual(res.status_code, 200, res.data)
+
+        account = res.data['account']
+        reg = VehicleRegistration.objects.get(pk=reg_id)
+        self.assertIn('schedule', account,
+                      'the account payload dropped the schedule code')
+        self.assertEqual(account['schedule'], reg.schedule)
+        self.assertTrue(account['schedule'],
+                        'a student registration must resolve to a rotation code')
+        # The days ride along too — the formatter needs them for a MIXED row.
+        self.assertEqual(account['campus_days'], reg.campus_days)
+
     def _explode_on_vehicle_upsert(self):
         """Patch the vehicle step to fail, restoring it afterwards."""
         original = vehicle_views._upsert_vehicle_for_registration
@@ -133,12 +152,14 @@ class AcceptanceAtomicityTests(TestCase):
         unreachable SMTP server costs the owner their credentials email and
         nothing else."""
         reg_id = self._submit()
+        # The send now happens off the request path, so the failure surfaces in
+        # email_utils' log and an admin notification rather than the response.
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR'):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
                 res = self._accept(reg_id)
 
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.data['email_status'], 'failed')
+        self.assertEqual(res.data['email_status'], 'queued')
         reg = VehicleRegistration.objects.get(pk=reg_id)
         self.assertEqual(reg.status, 'accepted')
         self.assertIsNotNone(reg.user)

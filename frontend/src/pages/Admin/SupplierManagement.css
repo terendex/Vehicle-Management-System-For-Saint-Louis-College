@@ -518,3 +518,102 @@
 .sp-warn-icon {
   color: #C62828;
 }
+
+/* ── Responsive ──────────────────────────────────────────────────
+   Supplier cards are already a wrapping flex list, so the work here is
+   mostly stopping the card head from splitting a name away from its
+   actions, and giving the plate entry row a full line on a phone. */
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .sp-page {
+    gap: 1.25rem;
+  }
+
+  .sp-card-head {
+    padding: 12px 14px;
+    gap: 12px;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .sp-title {
+    font-size: 1.2rem;
+  }
+
+  /* The three card actions become their own row under the supplier name.
+     flex-shrink:0 kept them intact while the name column collapsed to a
+     couple of characters, which is the wrong thing to protect. */
+  .sp-card-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .sp-card-actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* Plate field over the Add button — side by side the input was left
+     with roughly the width of the plate text itself. */
+  .sp-plate-input-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sp-add-plate-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .sp-plates-section {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  /* Dialogs fill the phone instead of floating as a cropped card, and
+     scroll internally — the visit form is taller than a short viewport. */
+  .sp-overlay {
+    padding: 10px;
+  }
+
+  .sp-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .sp-modal--sm {
+    max-width: 100%;
+    padding: 24px 18px 20px;
+  }
+
+  .sp-modal-form {
+    padding: 16px 16px 18px;
+  }
+
+  .sp-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .sp-modal-actions > .sp-btn {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .sp-title {
+    font-size: 1.1rem;
+  }
+
+  .sp-card-actions > * {
+    flex: 1 1 100%;
+  }
+
+  .sp-modal-actions > .sp-btn {
+    flex: 1 1 100%;
+  }
+}

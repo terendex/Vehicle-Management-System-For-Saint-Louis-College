@@ -1,0 +1,72 @@
+SMART PARKING AND VEHICLE VERIFICATION SYSTEM
+Saint Louis College - campus deployment
+
+===========================================================================
+PLACEHOLDER - REPLACE BEFORE DISTRIBUTING
+
+This text is shown on the installer's license page and someone has to accept
+it before the software installs. It was written as a working placeholder so
+that page is not empty; it is NOT legal advice and has not been reviewed by
+anyone at the college. Replace it with the terms Saint Louis College actually
+wants to put in front of an installing administrator, then rebuild.
+===========================================================================
+
+
+1. WHAT THIS IS
+
+   This software is the on-site half of Saint Louis College's Smart Parking
+   and Vehicle Verification System. It is internal college software, provided
+   for installation on college-owned or college-authorised machines only. It
+   is not offered to the public and carries no warranty.
+
+
+2. WHAT IT CONNECTS TO
+
+   Installing this does not create a separate system. This machine joins an
+   existing deployment: it reads and writes the same live database and the
+   same file storage as the college's cloud instance. Anything recorded here
+   is recorded for the whole system, immediately.
+
+   Because of that, the credentials entered during setup - the signing key and
+   the database connection string - grant full access to live records. Treat
+   them as you would any other production credential.
+
+
+3. PERSONAL DATA
+
+   In normal operation this software captures vehicle images and licence
+   plates at campus gates and links them to registered students, employees,
+   fetchers and visitors. That is personal information about identifiable
+   people, and its handling is subject to the Philippine Data Privacy Act of
+   2012 (Republic Act No. 10173) and to the college's own privacy policy.
+
+   Installing and operating this system is an act of processing that data.
+   The operator is responsible for ensuring it happens under the college's
+   registered privacy notice, retention schedule and access controls.
+
+
+4. CAMERAS AND RECORDING
+
+   This machine opens video streams from cameras on the campus network.
+   Signage, consent and camera placement remain the college's responsibility
+   and are not configured by this installer.
+
+
+5. NO WARRANTY
+
+   The software is provided "as is", without warranty of any kind, express or
+   implied. It performs automated licence plate recognition, which is not
+   perfect: it misreads plates, and it can fail to detect a vehicle entirely.
+   Decisions that affect a person - denying entry, recording a violation -
+   should be reviewable by a human being, and the system records its evidence
+   so that they can be.
+
+   The authors and the college accept no liability for loss or damage arising
+   from use of this software.
+
+
+6. ACCEPTANCE
+
+   Installing this software means the installing administrator has authority
+   from Saint Louis College to deploy it on this machine and to connect it to
+   the college's live system.

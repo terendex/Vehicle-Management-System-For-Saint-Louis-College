@@ -1048,12 +1048,65 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 # Each consumer subscribes to an asyncio.Queue; the worker thread broadcasts
 # encoded JPEG frames to every live subscriber.
 
+# Cap the picture that goes on the wire, not just the one ffmpeg pipes.
+#
+# The OpenCV backend hands back the camera's native resolution — 2304x1296 on
+# the Imou at Gate 1 — and a JPEG that size is ~1.08 MB of base64 per frame, 20
+# times a second. Frames that big never reached the browser at all: the socket
+# carried "Stream connected." and then nothing, which on screen is a green
+# connected dot over a permanently black canvas. Proven by A/B against the same
+# camera's substream, which is the same code path at 108 KB a frame and streams
+# 168 frames in 18 s.
+#
+# `MAX_PIPE_PIXELS` is the budget the raw-pipe backend already uses, so one
+# number now governs both backends instead of only the one that happened to
+# need it first. Capping pixels rather than width keeps it meaningful for the
+# stacked dual-lens frames too, which are taller than they are wide.
+#
+# Detection runs on this same JPEG, so the boxes it returns are already in the
+# coordinates the browser draws in — the frontend sizes everything from the
+# received image's naturalWidth.
+def _fit_for_wire(frm):
+    import cv2
+    from vehicles.ffmpeg_capture import MAX_PIPE_PIXELS
+
+    h, w = frm.shape[:2]
+    if w * h <= MAX_PIPE_PIXELS:
+        return frm
+    scale = (MAX_PIPE_PIXELS / float(w * h)) ** 0.5
+    return cv2.resize(frm, (max(1, int(w * scale)), max(1, int(h * scale))),
+                      interpolation=cv2.INTER_AREA)
+
+
 class _StreamWorker:
     """Manages a single RTSP capture thread shared across multiple consumers."""
 
     FRAME_INTERVAL = 1.0 / 20   # 20 fps cap for network/CPU budget
     MAX_RETRIES    = 5
-    RETRY_DELAY    = 2.0
+
+    # Reconnect backoff, doubling from RETRY_DELAY up to RETRY_DELAY_CAP.
+    #
+    # A flat 2 s retry could not reconnect to the campus Yoosee at all. Cheap
+    # firmware reboots when its RTSP server is pushed, and once it does, ICMP
+    # comes back immediately while RTSP needs roughly 21 s more to bind. Six
+    # attempts 2 s apart therefore spent every one of them inside the boot
+    # window, gave up ~11 s before the camera was ready, and reported a URL or
+    # network fault that did not exist. Worse, each attempt was several more
+    # connections into a device mid-boot, which is what re-triggered the reset:
+    # the retry loop was feeding the crash it existed to recover from.
+    #
+    # Doubling reaches ~60 s over the same five retries, so the last attempts
+    # land well after the stream is available again.
+    RETRY_DELAY     = 2.0
+    RETRY_DELAY_CAP = 30.0
+
+    # How long the newest frame may go without being replaced before the stream
+    # counts as stalled rather than merely slow.
+    #
+    # Comfortably above any real gap: the campus camera's worst measured gap
+    # over a clean minute was 135 ms, and even a keyframe hiccup is well under
+    # a second. Anything past this is not a slow camera, it is a dead one.
+    STALE_FRAME_SECONDS = 8.0
 
     def __init__(self, rtsp_url: str):
         self.rtsp_url   = rtsp_url
@@ -1124,6 +1177,11 @@ class _StreamWorker:
                     except Exception: pass
             loop.call_soon_threadsafe(_put)
 
+    @classmethod
+    def _backoff(cls, retry: int) -> float:
+        """Seconds to wait before reconnect attempt number `retry` (0-based)."""
+        return min(cls.RETRY_DELAY * (2 ** retry), cls.RETRY_DELAY_CAP)
+
     def _run(self, stop: threading.Event):
         # `stop` is this generation's Event, passed in rather than read off self:
         # a later subscribe swaps self._stop for a fresh one, and an older thread
@@ -1137,8 +1195,12 @@ class _StreamWorker:
             cap = RtspStreamConsumer._open_cap(self.rtsp_url)
             if not cap or not cap.isOpened():
                 if cap: cap.release()
+                delay = self._backoff(retry)
                 retry += 1
-                _t.sleep(self.RETRY_DELAY)
+                # Interruptible: a subscriber leaving should not wait out a
+                # 30 s sleep before the thread notices it has been stopped.
+                if stop.wait(delay):
+                    break
                 continue
 
             retry = 0
@@ -1146,7 +1208,7 @@ class _StreamWorker:
             logger.info('[StreamWorker] Opened %s', self.rtsp_url)
 
             # Drain thread so grab() never blocks the broadcast loop
-            latest       = {'data': None, 'ok': False}
+            latest       = {'data': None, 'ok': False, 'at': _t.monotonic(), 'seq': 0}
             drain_stop   = threading.Event()
             cap_released = threading.Event()
 
@@ -1162,7 +1224,14 @@ class _StreamWorker:
                             errs = 0; grabs += 1
                             ok, frm = cap.retrieve()
                             if ok and frm is not None:
-                                latest['data'] = frm; latest['ok'] = True
+                                # `at` and `seq` are what let the broadcast loop
+                                # tell a live picture from a frozen one. Without
+                                # them the newest frame and a ten-minute-old
+                                # frame are indistinguishable.
+                                latest['data'] = frm
+                                latest['ok'] = True
+                                latest['at'] = _t.monotonic()
+                                latest['seq'] += 1
                         except Exception:
                             errs += 1
                             if errs > 20: break
@@ -1184,10 +1253,18 @@ class _StreamWorker:
                             'message': 'Stream timed out (no frames received).'})
                 drain_stop.set()
                 cap_released.wait(35)
+                # Back off here too. A stream that opened and then stopped
+                # producing frames is the *other* face of the firmware reset,
+                # and reconnecting instantly walks straight back into a camera
+                # that is still on its way down.
+                delay = self._backoff(retry)
                 retry += 1
+                if stop.wait(delay):
+                    break
                 continue
 
             try:
+                sent_seq = 0
                 while not stop.is_set() and not cap_released.is_set():
                     t0 = _t.monotonic()
                     frm = latest['data']
@@ -1195,10 +1272,29 @@ class _StreamWorker:
                         self._push({'type': 'status', 'connected': False,
                                     'message': 'Stream dropped. Reconnecting…'})
                         break
-                    ok, buf = cv2.imencode('.jpg', frm, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    if ok:
-                        self._push({'type': 'frame',
-                                    'image_b64': _b64.b64encode(buf.tobytes()).decode()})
+
+                    # A camera that goes quiet does not fail loudly: the drain
+                    # thread just blocks in grab(), `ok` stays True, and this
+                    # loop happily re-encoded the *same* frame 20 times a second
+                    # forever. On screen that is a frozen picture over a
+                    # "connected" badge, and nothing reconnected for up to 20
+                    # failed grabs x a 10 s read timeout — over three minutes.
+                    # Frame age is the honest signal, so use it.
+                    if _t.monotonic() - latest['at'] > self.STALE_FRAME_SECONDS:
+                        self._push({'type': 'status', 'connected': False,
+                                    'message': 'Stream stalled. Reconnecting…'})
+                        break
+
+                    # Only encode what is actually new. Re-encoding an unchanged
+                    # frame burns JPEG cycles per viewer to transmit a picture
+                    # they already have.
+                    if latest['seq'] != sent_seq:
+                        sent_seq = latest['seq']
+                        ok, buf = cv2.imencode('.jpg', _fit_for_wire(frm),
+                                               [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        if ok:
+                            self._push({'type': 'frame',
+                                        'image_b64': _b64.b64encode(buf.tobytes()).decode()})
                     wait = self.FRAME_INTERVAL - (_t.monotonic() - t0)
                     if wait > 0: _t.sleep(wait)
             finally:
@@ -1207,8 +1303,11 @@ class _StreamWorker:
 
         if retry > self.MAX_RETRIES:
             self._push({'type': 'error',
-                        'message': 'Cannot connect to RTSP stream. '
-                                   'Check the URL and ensure the backend has network access to the camera.'})
+                        'message': 'Cannot connect to RTSP stream. If the camera '
+                                   'answers ping but not video, it may have reset — '
+                                   'some units need up to a minute after a reboot '
+                                   'before RTSP accepts connections again. '
+                                   'Otherwise check the URL and the network route.'})
 
         # A worker whose capture thread has given up must not stay in the pool.
         # It used to, whenever a subscriber was still attached, and the next

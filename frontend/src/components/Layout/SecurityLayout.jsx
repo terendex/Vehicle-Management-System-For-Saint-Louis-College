@@ -9,8 +9,6 @@ import {
   Clock,
   RefreshCw,
   X,
-  CheckCircle,
-  AlertCircle,
   LogIn,
   Eye,
   EyeOff,
@@ -18,7 +16,8 @@ import {
   HelpCircle,
   Shield,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify from '../Feedback/notify'
+import { fieldProblems } from '../Feedback/formProblems'
 import jsQR from 'jsqr'
 import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
@@ -52,8 +51,6 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
   const { qrLogin, guardLogin, isLoading } = useAuthStore()
 
   const [status,     setStatus]     = useState('idle')  // idle | scanning | success | error
-  const [guardInfo,  setGuardInfo]  = useState(null)
-  const [errorMsg,   setErrorMsg]   = useState('')
   const [useCamera,  setUseCamera]  = useState(true)
   const [inputToken, setInputToken] = useState('')
   const [showToken,  setShowToken]  = useState(false)
@@ -65,7 +62,6 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
   const [email, setEmail]               = useState('')
   const [password, setPassword]         = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [credError, setCredError]       = useState('')
 
   const videoRef  = useRef(null)
   const streamRef = useRef(null)
@@ -146,46 +142,51 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
     if (!clean) return
     stopCamera()
     setStatus('scanning')
-    setErrorMsg('')
 
     try {
       const guard = await qrLogin(clean, gate)
-      setGuardInfo(guard)
-      setStatus('success')
-      toast.success(`Shift handed over to ${guard.full_name} at ${gateLabel}.`)
       onSuccess?.()
-      setTimeout(() => { onClose() }, 2200)
+      await notify.success(`Now on duty at ${gateLabel}.`, {
+        title: 'Shift Handed Over',
+        description: `Welcome, ${guard.full_name}.`,
+      })
+      onClose()
     } catch (err) {
-      setErrorMsg(err.message || 'QR scan failed. Please try again.')
-      setStatus('error')
       setInputToken('')
-      setTimeout(() => {
-        setStatus('idle')
-        // Re-init camera after error
-        if (useCamera) {
-          setUseCamera(false)
-          setTimeout(() => setUseCamera(true), 80)
-        } else {
-          inputRef.current?.focus()
-        }
-      }, 3000)
+      await notify.error(err.message || 'QR scan failed. Please try again.', {
+        title: 'Scan Failed', confirmLabel: 'Try Again',
+      })
+      setStatus('idle')
+      // Re-init the camera once the dialog is out of the way.
+      if (useCamera) {
+        setUseCamera(false)
+        setTimeout(() => setUseCamera(true), 80)
+      } else {
+        inputRef.current?.focus()
+      }
     }
   }
 
   const handleCredentialLogin = async (e) => {
     e?.preventDefault()
-    if (!email.trim() || !password || isLoading) return
-    setCredError('')
+    if (isLoading) return
+    const problems = [...fieldProblems(e?.currentTarget)]
+    if (!email.trim()) problems.push('Enter your email address.')
+    if (!password) problems.push('Enter your password.')
+    if (await notify.validation(problems, { title: 'Cannot sign in' })) return
     try {
       const guard = await guardLogin(email.trim(), password, gate)
-      setGuardInfo(guard)
-      setStatus('success')
-      toast.success(`Shift handed over to ${guard.full_name} at ${gateLabel}.`)
       onSuccess?.()
-      setTimeout(() => { onClose() }, 2200)
+      await notify.success(`Now on duty at ${gateLabel}.`, {
+        title: 'Shift Handed Over',
+        description: `Welcome, ${guard.full_name}.`,
+      })
+      onClose()
     } catch (err) {
-      setCredError(err.message || 'Login failed. Please check your credentials.')
       setPassword('')
+      notify.error(err.message || 'Login failed. Please check your credentials.', {
+        title: 'Login Failed', confirmLabel: 'Try Again',
+      })
     }
   }
 
@@ -204,23 +205,7 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
         </div>
 
         {/* States */}
-        {status === 'success' ? (
-          <div className="cs-state cs-state-success">
-            <CheckCircle size={42} />
-            <h3>Shift Handed Over</h3>
-            <p>Welcome, <strong>{guardInfo?.full_name}</strong></p>
-            <p className="cs-hint">Now on duty at {gateLabel}</p>
-          </div>
-
-        ) : status === 'error' ? (
-          <div className="cs-state cs-state-error">
-            <AlertCircle size={42} />
-            <h3>Scan Failed</h3>
-            <p>{errorMsg}</p>
-            <p className="cs-hint">Retrying in a moment…</p>
-          </div>
-
-        ) : status === 'scanning' ? (
+        {status === 'scanning' ? (
           <div className="cs-state">
             <div className="cs-spinner" />
             <p>Verifying QR badge…</p>
@@ -231,8 +216,7 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
             <p className="cs-instruction">
               Incoming guard: sign in with your credentials to take over the shift at <strong>{gateLabel}</strong>
             </p>
-            <form onSubmit={handleCredentialLogin} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {credError && <p className="cs-err-text" role="alert">{credError}</p>}
+            <form onSubmit={handleCredentialLogin} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <input
                 className="cs-input"
                 style={{ fontFamily: 'inherit' }}
@@ -260,7 +244,7 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
                 <button
                   type="submit"
                   className="cs-submit"
-                  disabled={!email.trim() || !password || isLoading}
+                  disabled={isLoading}
                 >
                   <LogIn size={16} />
                 </button>
@@ -301,8 +285,13 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
                       </button>
                       <button
                         className="cs-submit"
-                        disabled={!inputToken.trim()}
-                        onClick={() => handleScan(inputToken)}
+                        onClick={() => {
+                          if (!inputToken.trim()) {
+                            notify.error('Enter or scan your QR token.', { title: 'Nothing to verify' })
+                            return
+                          }
+                          handleScan(inputToken)
+                        }}
                       >
                         <LogIn size={16} />
                       </button>

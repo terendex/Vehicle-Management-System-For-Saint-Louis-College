@@ -399,17 +399,210 @@
   -webkit-user-drag: none;
 }
 
+/* ── One tile per lens ───────────────────────────────────────────────────
+   A dual-lens unit sends two unrelated scenes stacked into one frame. Shown
+   whole it is squeezed into a single 16:9 box — both halves distorted, and it
+   reads as one broken camera rather than two working ones. Side by side, each
+   gets its own 16:9 viewport at half the width, which is both undistorted and
+   smaller than the single oversized tile it replaces. */
+.pm-live-panes {
+  display: grid;
+  gap: 10px;
+}
+.pm-live-panes--split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pm-live-pane {
+  position: relative;
+  min-width: 0;
+}
+.pm-live-pane-tag {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(4, 18, 31, 0.72);
+  color: #C7DDEE;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+/* Stack them on a narrow screen: two half-width 16:9 tiles side by side get
+   too small to judge a parking bay by. */
+@media (max-width: 900px) {
+  .pm-live-panes--split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The live picture in the main canvas. Sized exactly like the reference image
+   it replaced, so the SVG bay overlay lines up with either background without
+   knowing which one is behind it. */
+.pm-canvas-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  background: #04121F;
+}
+
+/* ── The camera panel, beneath the picture ───────────────────────────────
+   Was a right-hand sidebar carrying its own live feed. That put two camera
+   views on one screen with the *smaller* one live and the big one a still
+   photo, which is what made the main view look frozen. The live feed is the
+   main canvas now, so what remains here is status and controls for it: is this
+   camera zoned, capture a reference image, how bays are scored, and which
+   camera to watch. Full width, because it is no longer competing with the
+   picture for horizontal space. */
+.pm-cam-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #FFFFFF;
+  border: 1px solid #E3EDF5;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Inside the panel these sit in a row rather than stacked in a narrow column. */
+.pm-cam-panel .pm-method-box { margin-top: 0; }
+.pm-cam-panel .pm-cam-thumb-strip { padding-bottom: 0; }
+
+/* ── Camera options, under the picture ───────────────────────────────────── */
+
+.pm-cam-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: #F7FAFC;
+  border-top: 1px solid #E3EDF5;
+}
+.pm-cam-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pm-cam-bar-icon { color: #5C7B92; flex-shrink: 0; }
+.pm-cam-bar-note {
+  font-size: 11px;
+  color: #7E9BB2;
+}
+
+/* ── Choosing a view on a multi-lens camera ──────────────────────────────
+   A dual-lens unit stacks two unrelated scenes into one frame. Bays are stored
+   against the whole frame, so one drawn across the join is geometrically valid
+   and completely wrong — nothing downstream can catch it. The editor therefore
+   shows one view at a time and will not draw until one is chosen. */
+
+.pm-lens-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: #EEF4F9;
+  border: 1px solid #CFE0EE;
+  border-radius: 8px;
+}
+.pm-lens-label {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5C7B92;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pm-lens-btn {
+  padding: 5px 11px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: #35576F;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pm-lens-btn:hover { background: #DCE9F3; }
+.pm-lens-btn--active {
+  background: #03396C;
+  color: #FFFFFF;
+}
+
+.pm-lens-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(4, 18, 31, 0.82);
+  backdrop-filter: blur(3px);
+}
+.pm-lens-prompt svg { color: #5CA9DC; }
+.pm-lens-prompt-title {
+  margin: 0;
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 700;
+}
+.pm-lens-prompt-sub {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #A9C6DC;
+}
+.pm-lens-prompt-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* The empty/failed canvas state.
+   Previously one line of italic grey text floating in a large dark void, with
+   no indication of what to do about it — and when the image 404s the browser
+   draws its broken-image glyph in the corner instead, which reads as a bug
+   rather than a prompt. This gives the state an icon, a title, one line of
+   guidance and, where there is one, the action that resolves it. */
 .pm-canvas-no-img {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #4A6B85;
-  font-size: 13px;
-  font-style: italic;
+  gap: 10px;
+  color: #5C7B92;
   text-align: center;
   padding: 24px;
+}
+.pm-canvas-no-img svg { color: #3E6280; }
+
+.pm-canvas-no-img-title {
+  margin: 0;
+  color: #C7DDEE;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pm-canvas-no-img-sub {
+  margin: 0;
+  max-width: 380px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7E9BB2;
+}
+.pm-canvas-no-img .pm-btn {
+  margin-top: 4px;
 }
 
 .pm-canvas-svg {
@@ -592,6 +785,74 @@
   margin: 0;
   line-height: 1.6;
 }
+
+/* ── Bay occupant lookup ──────────────────────────────────────
+   Used by both parking screens through components/BayOccupant.jsx: the guard's
+   view opens it as its own dialog, Parking Management shows it above the
+   Mark Free action. */
+.pm-bay-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pm-bay-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.pm-bay-label { color: #5C7B92; flex-shrink: 0; }
+
+.pm-bay-value {
+  color: #0B2340;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
+}
+
+.pm-bay-value--cap { text-transform: capitalize; }
+
+.pm-bay-plate {
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+/* The lookup's own states — waiting, unreachable, or a plate nobody
+   registered. They sit inside the dialog that asked the question, so they are
+   not a page status strip. */
+.pm-bay-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4A6B85;
+}
+
+.pm-bay-note--warn { color: #8A6B00; }
+
+.pm-bay-retry { margin-left: auto; }
+
+.pm-bay-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #FDF0BE;
+  border: 1px solid #F7E08A;
+  color: #7A5C00;
+}
+
+.pm-bay-pill--ok  { background: #D6F0E6; border-color: #B6E3D2; color: #0F7A5A; }
+.pm-bay-pill--bad { background: #FADEDE; border-color: #F3C0C0; color: #C62828; }
 
 .pm-modal-footer {
   display: flex;
@@ -907,6 +1168,97 @@
   overflow: hidden;
 }
 
+/* ─── Camera search above the strip ───────────────────────────── */
+
+.pm-cam-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0;
+  padding: 0 8px;
+  background: #0A2340;
+  border: 1px solid #123351;
+  border-radius: 7px;
+}
+.pm-cam-search:focus-within { border-color: #2E8CCB; }
+.pm-cam-search-icon { color: #5C7B92; flex-shrink: 0; }
+.pm-cam-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #D3E1EC;
+}
+.pm-cam-search input::placeholder { color: #5C7B92; }
+.pm-cam-search input::-webkit-search-cancel-button { display: none; }
+.pm-cam-search-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: #5C7B92;
+  white-space: nowrap;
+}
+.pm-cam-search-clear {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #5C7B92;
+  cursor: pointer;
+}
+.pm-cam-search-clear:hover { color: #E88080; background: rgba(232, 128, 128, 0.12); }
+
+.pm-cam-thumb-none {
+  color: #5C7B92;
+  font-size: 11px;
+  padding: 8px 2px;
+}
+
+/* ─── Fullscreen the parking feed ─────────────────────────────── */
+
+.pm-cam-fs {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(2, 12, 21, 0.7);
+  color: #C7DDEE;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pm-cam-fs:hover { background: rgba(2, 12, 21, 0.95); color: #FFFFFF; }
+
+/* In the sidebar the canvas is full-width with a min-height; filling the
+   screen needs the opposite — bounded on both axes and centred. */
+.pm-cam-main-wrap:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm-cam-main-wrap:fullscreen > div {
+  width: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+}
+.pm-cam-main-wrap:fullscreen canvas {
+  width: auto !important;
+  max-width: 100vw;
+  max-height: 100vh;
+  min-height: 0;
+}
+
 .pm-cam-main-wrap canvas {
   display: block;
   width: 100%;
@@ -1179,4 +1531,159 @@
   .pm-stat-card { padding: 12px; gap: 10px; }
   .pm-stat-icon { width: 32px; height: 32px; }
   .pm-stat-val  { font-size: 1.2rem; }
+}
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The blocks above fold the stats grid and stack the camera column.
+   These take it down to a phone: the page gutter, the header actions
+   and the modals, whose overlay carried no padding at all. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .pm-page {
+    padding: 1rem;
+  }
+
+  .pm-title {
+    font-size: 18px;
+  }
+
+  /* Actions drop under the title and share the row evenly rather than
+     holding their full width against a shrinking header. */
+  .pm-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    flex-shrink: 1;
+  }
+
+  .pm-header-actions .pm-btn {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+
+  /* The overlay had no padding, so a 400px modal on a 360px screen sat
+     edge to edge. It now insets and scrolls if the body runs long. */
+  .pm-overlay {
+    padding: 10px;
+  }
+
+  .pm-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .pm-modal--centered {
+    padding: 24px 18px 20px;
+  }
+
+  .pm-modal-body {
+    padding: 16px;
+  }
+
+  .pm-modal-footer {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+
+  .pm-modal-footer .pm-btn {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+
+  .pm-cat-toggle {
+    flex-wrap: wrap;
+  }
+
+  .pm-cat-toggle > * {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .pm-page {
+    padding: 0.75rem;
+  }
+
+  .pm-stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pm-header-actions .pm-btn,
+  .pm-modal-footer .pm-btn {
+    flex: 1 1 100%;
+  }
+}
+
+
+/* ═══ Fill-height variant (the guard's parking screen) ═══════════════════════
+   Activated by .admin-content--fill on the layout wrapper — see App.jsx. The
+   admin parking page never sets it and is untouched by everything below.
+
+   The rule is the same one the entries screen follows: the picture gives way,
+   the controls do not. A guard reads this at a gate, so the zone tabs, the
+   toolbar and the legend have to be on screen at all times, and the bay map is
+   what shrinks to make that true. */
+
+.admin-content--fill .pm-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  gap: 10px;
+}
+
+/* Everything above the picture keeps its natural height. */
+.admin-content--fill .pm-stats-row,
+.admin-content--fill .pm-stat-caption,
+.admin-content--fill .pm-zone-bar,
+.admin-content--fill .dpa-banner {
+  flex: 0 0 auto;
+}
+
+.admin-content--fill .pm-content-row {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.admin-content--fill .pm-canvas-area {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* The map keeps its ratio, so on a wide panel there is space either side of
+     it. Painting that band the picture's own dark instead of the card's white
+     makes it read as letterboxing rather than as a layout gap. The toolbar and
+     legend paint their own backgrounds over this. */
+  background: #0B2340;
+}
+
+.admin-content--fill .pm-toolbar,
+.admin-content--fill .pm-legend,
+.admin-content--fill .pm-cam-panel {
+  flex: 0 0 auto;
+}
+
+/* The bay map keeps its ratio while it shrinks.
+ *
+ * It cannot simply be squashed the way the entry viewport can: the bay overlay
+ * is normalised against this box and the picture under it is `object-fit: fill`
+ * precisely so the two always agree. Change the box's proportions and the
+ * picture distorts. So the height is what the flex row hands down, and the
+ * width follows from the ratio — the map ends up centred with the panel's own
+ * background either side, at whatever size fits. */
+.admin-content--fill .pm-canvas-wrapper {
+  flex: 0 1 auto;
+  height: 100%;
+  min-height: 0;
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.admin-content--fill .pm-canvas-placeholder {
+  flex: 1 1 auto;
+  min-height: 0;
 }

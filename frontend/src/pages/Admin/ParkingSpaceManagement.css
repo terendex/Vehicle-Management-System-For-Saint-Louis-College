@@ -14,3 +14,15 @@
 @media (max-width: 768px) {
   .psm-confiscated { padding: 0 20px; }
 }
+
+/* The gutter tracks .pm-page's own steps above this card, so the three
+   stacked sections keep one left edge all the way down to a phone. */
+@media (max-width: 640px) {
+  .psm-confiscated { padding: 0 1rem; }
+  .psm-section-divider { margin: 20px 0; }
+}
+
+@media (max-width: 400px) {
+  .psm-confiscated { padding: 0 0.75rem; }
+  .psm-section-divider { margin: 16px 0; }
+}

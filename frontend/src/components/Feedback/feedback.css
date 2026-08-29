@@ -1,0 +1,161 @@
+/* ══════════════════════════════════════════════════════════════
+   Acknowledgement dialogs — the single feedback surface.
+
+   The z-index is deliberately far above every other layer in the app.
+   These dialogs are usually raised *by* an overlay — the step-up gate
+   (9500), the owner evidence lightbox (9999), the page's own form
+   modals (1000) — and a message that opens behind the thing that
+   raised it is worse than no message at all: the button looks dead.
+
+   If a new overlay is ever added above this, the dialog silently stops
+   being visible, so keep this the highest number in the codebase.
+   ══════════════════════════════════════════════════════════════ */
+
+.fb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 18, 31, 0.52);
+  backdrop-filter: blur(3px);
+  animation: fbFade 0.14s ease;
+}
+
+.fb-dialog {
+  width: 100%;
+  max-width: 420px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--surface, #FFFFFF);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(4, 18, 31, 0.24);
+  padding: 28px 26px 22px;
+  text-align: center;
+  animation: fbIn 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes fbFade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fbIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* --- Tone --- */
+.fb-icon {
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fb-success .fb-icon { background: var(--success-bg, #E6F5EF); color: var(--success, #0F7A5A); }
+.fb-error   .fb-icon { background: var(--danger-bg,  #FCEDED); color: var(--danger,  #C62828); }
+.fb-warning .fb-icon { background: var(--warning-bg, #FEF9E4); color: var(--warning, #8A6B00); }
+.fb-info    .fb-icon { background: var(--sky-50,     #EAF2F8); color: var(--blue,    #1072B3); }
+.fb-confirm .fb-icon { background: var(--sky-50,     #EAF2F8); color: var(--navy,    #03396C); }
+
+/* --- Copy --- */
+.fb-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink, #0B2340);
+  line-height: 1.3;
+}
+
+.fb-message {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text, #2E4C63);
+  /* Plate numbers and stream URLs arrive here unbroken and would otherwise
+     push the dialog wider than its max-width. */
+  overflow-wrap: anywhere;
+}
+
+.fb-description {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-2, #5C7B92);
+}
+
+/* Validation lists and "what was tried" rundowns. Left-aligned — a bulleted
+   list centred under a centred heading is unreadable at more than two items. */
+.fb-details {
+  margin: 14px 0 0;
+  padding: 12px 14px 12px 30px;
+  text-align: left;
+  list-style: disc;
+  background: var(--surface-2, #F7FAFC);
+  border: 1px solid var(--line, #D3E1EC);
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text, #2E4C63);
+}
+.fb-details li + li { margin-top: 4px; }
+
+/* --- Actions --- */
+.fb-actions {
+  margin-top: 22px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.fb-btn {
+  min-width: 108px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1.5px solid transparent;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.fb-btn:focus-visible { outline: 2px solid var(--navy, #03396C); outline-offset: 2px; }
+
+.fb-btn-primary {
+  background: var(--navy, #03396C);
+  color: #FFFFFF;
+}
+.fb-btn-primary:hover { background: var(--navy-600, #084A85); }
+
+.fb-btn-danger {
+  background: var(--danger, #C62828);
+  color: #FFFFFF;
+}
+.fb-btn-danger:hover { background: var(--danger-ink, #841818); }
+
+.fb-btn-ghost {
+  background: var(--surface, #FFFFFF);
+  border-color: var(--line-strong, #BDD4E5);
+  color: var(--text, #2E4C63);
+}
+.fb-btn-ghost:hover { background: var(--sky-50, #EAF2F8); color: var(--ink, #0B2340); }
+
+/* Queue depth, shown only when more than one message is waiting. */
+.fb-queue {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-2, #5C7B92);
+}
+
+@media (max-width: 420px) {
+  .fb-dialog { padding: 24px 18px 18px; }
+  .fb-actions { flex-direction: column-reverse; }
+  .fb-btn { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-overlay, .fb-dialog { animation: none; }
+}

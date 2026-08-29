@@ -4,6 +4,7 @@ Every test redirects BASE_DIR at a temp directory, so none of this touches the
 real `backend/backups` folder — the one holding the pre-restore snapshots that
 are the last resort after a bad restore.
 """
+import datetime
 import json
 import os
 import shutil
@@ -13,9 +14,10 @@ from django.test import TestCase, override_settings
 from django.utils import timezone as tz
 from rest_framework.test import APIClient
 
-from accounts.models import User
+from accounts.models import Notification, User
 from accounts import backup_utils
-from vehicles.models import SystemSettings
+from scanning.models import Gate
+from vehicles.models import ParkingSpace, SystemSettings
 
 
 class BackupTempDirMixin:
@@ -308,3 +310,124 @@ class SavedBackupEndpointTests(BackupTempDirMixin, TestCase):
     def test_restore_still_needs_something_to_restore_from(self):
         resp = self.client.post('/api/accounts/system/restore/', {})
         self.assertEqual(resp.status_code, 400)
+
+
+class RestoreLoaderTests(BackupTempDirMixin, TestCase):
+    """The bulk loader that replaced `loaddata` on the restore endpoint.
+
+    `loaddata` wrote a fixture one row at a time, which against the production
+    database in Singapore meant one ~40 ms round trip per record and a restore
+    that took minutes. `backup_utils.load_backup` upserts a model at a time
+    instead. These cover the guarantees loaddata used to provide for free and
+    the loader now has to carry itself.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user(
+            email='restore-admin@slc.edu.ph', full_name='RESTORE ADMIN',
+            password='SecurePassword123!', role='admin')
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def restore(self, fixture):
+        self.touch('auto-backup-20260101-000000.json', json.dumps(fixture))
+        return self.client.post('/api/accounts/system/restore/',
+                                {'filename': 'auto-backup-20260101-000000.json'})
+
+    @staticmethod
+    def gate_row(pk, gate_id, label, created_at=None):
+        """One row shaped the way `dumpdata` writes it — every concrete column
+        present, `created_at` included. That matters: the load inserts raw, so
+        an `auto_now_add` column is no longer quietly filled in with the time of
+        the restore, and a fixture that omits it fails on the NOT NULL. That is
+        the same thing `loaddata` did, and a real backup always carries it."""
+        stamp = created_at or tz.make_aware(datetime.datetime(2026, 1, 1, 8, 0, 0))
+        return {'model': 'scanning.gate', 'pk': pk,
+                'fields': {'gate_id': gate_id, 'label': label, 'is_active': True,
+                           'created_at': stamp.isoformat()}}
+
+    def test_a_restore_overwrites_matching_rows_and_inserts_the_rest(self):
+        """The merge semantics the endpoint promises: update by primary key,
+        insert what is missing, delete nothing."""
+        existing = Gate.objects.create(gate_id='gate9', label='OLD LABEL')
+        untouched = Gate.objects.create(gate_id='gate8', label='NOT IN THE FILE')
+
+        resp = self.restore([
+            self.gate_row(existing.pk, 'gate9', 'NEW LABEL'),
+            self.gate_row(existing.pk + 500, 'gate7', 'BRAND NEW'),
+        ])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()['restored'], 2)
+        existing.refresh_from_db()
+        self.assertEqual(existing.label, 'NEW LABEL')
+        self.assertEqual(Gate.objects.get(gate_id='gate7').label, 'BRAND NEW')
+        self.assertTrue(Gate.objects.filter(pk=untouched.pk).exists())
+
+    def test_a_restore_leaves_sequences_past_the_ids_it_loaded(self):
+        """Restored rows carry their own primary keys, which does not move the
+        table's sequence. Without a reset the next locally-created row picks an
+        id the restore already used and the insert dies on a duplicate key."""
+        high = Gate.objects.create(gate_id='gate9', label='SEED').pk + 10_000
+
+        resp = self.restore([self.gate_row(high, 'gate-high', 'RESTORED HIGH ID')])
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        fresh = Gate.objects.create(gate_id='gate-after', label='CREATED AFTER RESTORE')
+        self.assertGreater(fresh.pk, high)
+
+    def test_a_dangling_reference_rolls_the_whole_restore_back(self):
+        """Foreign keys are deferred until commit, so a bad one surfaces at the
+        end of the load rather than on the row that caused it. The whole restore
+        must come back out — a half-applied backup is worse than none."""
+        before = Gate.objects.count()
+
+        resp = self.restore([
+            self.gate_row(4242, 'gate-doomed', 'SHOULD NOT SURVIVE'),
+            {'model': 'vehicles.parkingspace', 'pk': 4243,
+             'fields': {'zone': 999999, 'space_number': 'A1'}},
+        ])
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('rolled back', resp.json()['error'])
+        self.assertFalse(Gate.objects.filter(pk=4242).exists())
+        self.assertFalse(ParkingSpace.objects.filter(pk=4243).exists())
+        self.assertEqual(Gate.objects.count(), before)
+
+    def test_a_repeated_primary_key_keeps_the_last_one(self):
+        """PostgreSQL refuses to touch the same row twice in one upsert, so
+        duplicates have to be collapsed before the write. Last-one-wins is what
+        applying them in order used to produce."""
+        resp = self.restore([
+            self.gate_row(4244, 'gate-dupe', 'FIRST'),
+            self.gate_row(4244, 'gate-dupe', 'SECOND'),
+            self.gate_row(4244, 'gate-dupe', 'LAST'),
+        ])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Gate.objects.get(pk=4244).label, 'LAST')
+
+    def test_a_restore_keeps_the_timestamps_that_are_in_the_file(self):
+        """The timestamps are the data — when a vehicle passed the gate, when an
+        account was made. `auto_now_add` would otherwise re-stamp every restored
+        row with the moment of the restore and flatten the whole history into
+        one instant, so the load has to insert raw the way `loaddata` does."""
+        old = tz.make_aware(datetime.datetime(2019, 3, 14, 9, 26, 53))
+
+        resp = self.restore([self.gate_row(4246, 'gate-old', 'FROM 2019', created_at=old)])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Gate.objects.get(pk=4246).created_at, old)
+
+    def test_a_restore_does_not_mint_notifications_for_restored_rows(self):
+        """Bulk writes fire no per-row save signals, which is the point. Under
+        `loaddata` every restored registration raised a fresh "new registration"
+        alert — the receivers never checked the raw flag that marks a fixture
+        load — so restoring a month-old backup buried the admin bell."""
+        before = Notification.objects.count()
+
+        resp = self.restore([self.gate_row(4245, 'gate-quiet', 'QUIET')])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Notification.objects.count(), before)

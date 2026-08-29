@@ -1,0 +1,124 @@
+/* Illustrated steps for the account journey.
+
+   The stretch between submitting an application and holding portal credentials
+   is the part applicants get lost in: pay at a counter, come back days later to
+   file the receipt, wait for an approval mail. Each of those steps carries a
+   drawn scene next to it. The applicants are students and parents doing this
+   once a year on a phone, and a wall of prose is what they skip; the picture is
+   what makes the errand legible before the words are read.
+
+   Deliberately not used on the form itself — the fields there are labelled and
+   hinted already. The scenes are inline SVG (see RegArt.jsx) so they inherit
+   the palette below and cost no extra request. Shared here rather than living
+   on one page because the same steps appear on both the confirmation screen and
+   the OR upload page. */
+
+.reg-art {
+  /* Scoped palette — the brand sheet's navy/sky/gold, kept local so the
+     drawings stay one family no matter which page mounts them. */
+  --art-bg:       #EAF2F8;
+  --art-navy:     #03396C;
+  --art-navy-2:   #0B5C9C;
+  --art-blue:     #2E8CCB;
+  --art-sky:      #BDD4E5;
+  --art-sky-2:    #DCE9F2;
+  --art-white:    #FFFFFF;
+  --art-gold:     #F6CE11;
+  --art-gold-2:   #F8DA55;
+  --art-gold-ink: #8A6B00;
+  --art-green:    #14A374;
+  --art-green-2:  #A8DCC8;
+  --art-ink:      #0B2340;
+
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.reg-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reg-step-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  background: #FFFFFF;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 14px;
+  text-align: left;
+}
+
+/* The art keeps its own column so the text baseline never shifts between
+   cards when one instruction runs to three lines and its neighbour to one. */
+.reg-step-art {
+  position: relative;
+  width: 104px;
+  flex-shrink: 0;
+}
+
+/* Step number rides the corner of the drawing instead of taking a column of
+   its own — the order still reads, and the picture stays the widest thing. */
+.reg-step-num {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  width: 24px;
+  height: 24px;
+  background: #03396C;
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 1px 2px rgba(3, 57, 108, 0.06);
+}
+
+.reg-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.reg-step-title {
+  margin: 0 0 3px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0B2340;
+  line-height: 1.4;
+}
+
+.reg-step-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: #4A6B85;
+  line-height: 1.55;
+}
+
+/* For a step that is good news rather than a task — a waived fee. */
+.reg-step-card--ok {
+  background: #E6F5EF;
+  border-color: #A8DCC8;
+}
+
+.reg-step-card--ok .reg-step-num {
+  background: #0F7A5A;
+}
+
+@media (max-width: 560px) {
+  .reg-step-card {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .reg-step-art { width: 78px; }
+
+  .reg-step-title { font-size: 13px; }
+  .reg-step-text { font-size: 12px; }
+}

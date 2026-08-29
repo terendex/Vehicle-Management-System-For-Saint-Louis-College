@@ -166,7 +166,10 @@ class AcceptanceEmailContentTests(TestCase):
 
     @override_settings(MEDIA_URL='/media/')
     def test_carries_the_qr_code_and_the_registration_pdf(self):
-        send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+        # Paid: the confirmation PDF rides with the settled fee, not with the
+        # approval — test_receipt_email pins the unpaid half of that rule.
+        send_acceptance_email(make_reg(payment_status='paid', or_number='1234567'),
+                              'TempPass1!', 'SLC-VO-000001')
         msg = mail.outbox[-1]
         # Local storage has no absolute URL to link, so the inline copy falls
         # back to a data URI — see the remote-storage test below for production.
@@ -231,7 +234,10 @@ class AcceptanceEmailContentTests(TestCase):
         registration_pdf.registration_confirmation_pdf = broken
         try:
             with self.assertLogs('vehicles.email_utils', level='ERROR'):
-                send_acceptance_email(make_reg(), 'TempPass1!', 'SLC-VO-000001')
+                # Paid, so a PDF is actually attempted — an unpaid
+                # application has none to lose.
+                send_acceptance_email(make_reg(payment_status='paid', or_number='1234567'),
+                                      'TempPass1!', 'SLC-VO-000001')
         finally:
             registration_pdf.registration_confirmation_pdf = original
         msg = mail.outbox[-1]
@@ -263,19 +269,42 @@ class MailFailureIsReportedTests(TestCase):
         payload.update(over)
         return self.client.post('/api/vehicles/register/open/', payload, format='json')
 
-    def test_submission_reports_a_sent_email(self):
+    def test_submission_queues_the_acknowledgement_email(self):
+        """The send moved off the request path, so the response reports that it
+        was handed over — not that a mail server has already accepted it."""
         res = self._submit()
         self.assertEqual(res.status_code, 201)
-        self.assertEqual(res.data['email_status'], 'sent')
+        self.assertEqual(res.data['email_status'], 'queued')
+        # EMAIL_SEND_ASYNC is off under test, so the send still ran inline and
+        # the mail is on record — "queued" must not mean "quietly dropped".
+        self.assertTrue(any(m.to == ['juan@slc.edu.ph'] for m in mail.outbox),
+                        'the acknowledgement email was never sent')
 
-    def test_submission_survives_a_dead_mail_server_but_says_so(self):
+    def test_submission_survives_a_dead_mail_server_and_reports_it(self):
+        """A dead mail server must never look like a healthy one. The failure
+        now surfaces in email_utils' log and an admin notification rather than
+        in the response, exactly as it does on the acceptance path."""
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR') as logs:
+            with self.assertLogs('vehicles.email_utils', level='ERROR') as logs:
                 res = self._submit()
         self.assertEqual(res.status_code, 201, 'the submission itself must still be saved')
-        self.assertEqual(res.data['email_status'], 'failed')
+        self.assertEqual(res.data['email_status'], 'queued')
         self.assertTrue(VehicleRegistration.objects.filter(pk=res.data['id']).exists())
-        self.assertIn('pending-registration email', '\n'.join(logs.output))
+        self.assertIn('send_pending_email', '\n'.join(logs.output))
+
+    def test_a_failed_acknowledgement_raises_an_admin_notification(self):
+        """The bell is what replaced the old response warning — without it a
+        failed send would leave nobody aware the applicant never got their
+        receipt-upload link."""
+        from accounts.models import Notification
+
+        with override_settings(**DEAD_SMTP):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
+                self._submit()
+
+        self.assertTrue(
+            Notification.objects.filter(event='pending_email_failed').exists(),
+            'a failed acknowledgement email raised no admin notification')
 
     def test_rejection_reports_a_dead_mail_server(self):
         reg_id = self._submit().data['id']
@@ -289,17 +318,80 @@ class MailFailureIsReportedTests(TestCase):
         self.assertEqual(VehicleRegistration.objects.get(pk=reg_id).status, 'rejected')
 
     def test_acceptance_reports_a_dead_mail_server_and_keeps_the_account(self):
+        """The acceptance mail moved off the request path, so a dead server no
+        longer reaches the reviewer through the response. It has to reach them
+        somewhere, or an owner silently never gets their credentials — the
+        admin bell is that somewhere."""
+        from accounts.models import Notification
+
         reg_id = self._submit().data['id']
         self.client.force_authenticate(user=self.admin)
         with override_settings(**DEAD_SMTP):
-            with self.assertLogs('vehicles.views', level='ERROR'):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
                 res = self.client.post(f'/api/vehicles/registrations/{reg_id}/accept/',
                                        {'or_number': '1234567'}, format='json')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.data['email_status'], 'failed')
+        # The send is queued, not awaited — the reviewer is not made to wait on
+        # a mail server for an outcome already committed.
+        self.assertEqual(res.data['email_status'], 'queued')
+
         reg = VehicleRegistration.objects.get(pk=reg_id)
         self.assertEqual(reg.status, 'accepted')
         self.assertIsNotNone(reg.user, 'the account must survive a mail failure')
+
+        notice = Notification.objects.filter(event='acceptance_email_failed').first()
+        self.assertIsNotNone(
+            notice, 'a failed credentials email must still reach the CDSO somehow')
+        self.assertIn(reg.email, notice.message)
+        self.assertEqual(notice.severity, 'warning')
+
+    def test_a_successful_acceptance_raises_no_failure_notice(self):
+        from accounts.models import Notification
+
+        reg_id = self._submit().data['id']
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.post(f'/api/vehicles/registrations/{reg_id}/accept/',
+                               {'or_number': '1234567'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['email_status'], 'queued')
+        self.assertFalse(
+            Notification.objects.filter(event='acceptance_email_failed').exists(),
+            'a delivered email must not raise a failure notice')
+
+    def test_the_background_sender_really_runs_on_a_thread(self):
+        """The inline mode the rest of the suite runs in must not be the only
+        path that works — this exercises the threaded one and joins it."""
+        from django.core import mail
+        from vehicles.email_utils import send_in_background
+
+        seen = {}
+
+        def _send(marker):
+            seen['marker'] = marker
+            mail.send_mail('subject', 'body', 'from@slc.edu.ph', ['to@slc.edu.ph'])
+
+        with override_settings(EMAIL_SEND_ASYNC=True):
+            thread = send_in_background(_send, 'ran')
+        self.assertIsNotNone(thread, 'async mode must hand back a thread')
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), 'the send thread did not finish')
+        self.assertEqual(seen.get('marker'), 'ran')
+
+    def test_a_threaded_failure_still_reaches_on_failure(self):
+        from vehicles.email_utils import send_in_background
+
+        called = {}
+
+        def _boom():
+            raise RuntimeError('mail server down')
+
+        with override_settings(EMAIL_SEND_ASYNC=True):
+            with self.assertLogs('vehicles.email_utils', level='ERROR'):
+                thread = send_in_background(
+                    _boom, on_failure=lambda: called.setdefault('notified', True))
+                thread.join(timeout=10)
+        self.assertTrue(called.get('notified'),
+                        'a failure on the thread must still raise its notice')
 
     def test_password_reset_logs_instead_of_failing_silently(self):
         User.objects.create_user(email='owner@slc.edu.ph', full_name='Owner',

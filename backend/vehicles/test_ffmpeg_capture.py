@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from vehicles import ffmpeg_capture
 
@@ -59,10 +59,26 @@ class _FakeCv2Cap:
         self.released = True
 
 
+# The backend memo is also written to the shared cache so a restart does not
+# have to re-learn it by crashing a camera. Tests must not read or write the
+# real one: a note left in Redis by an earlier run would otherwise decide the
+# backend for a later run, which is a test that passes or fails depending on
+# what happened yesterday.
+@override_settings(CACHES={'default': {
+    'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    'LOCATION': 'ffmpeg-capture-tests',
+}})
 class BackendSelectionTests(SimpleTestCase):
     """Which backend `open_capture` picks, and why."""
 
     URL = 'rtsp://admin:secret@10.0.0.5:554/onvif1'
+
+    def setUp(self):
+        # open_capture remembers hosts that could not survive the OpenCV probe,
+        # and every test here shares one URL. Without this, whichever test ran
+        # first decided the backend for all the others.
+        ffmpeg_capture.reset_backend_memo()
+        self.addCleanup(ffmpeg_capture.reset_backend_memo)
 
     def test_opencv_is_used_when_it_can_actually_decode(self):
         """The fast path must stay the fast path — no subprocess for a camera
@@ -135,6 +151,139 @@ class BackendSelectionTests(SimpleTestCase):
              patch.object(ffmpeg_capture, 'is_available', return_value=False):
             got = ffmpeg_capture.open_capture(self.URL)
         self.assertFalse(got.isOpened())
+
+    # ── remembering hosts the OpenCV probe knocks over ──────────────────────
+
+    def _crash_during_probe(self):
+        """One open_capture against a host that stops listening mid-probe."""
+        with patch.object(ffmpeg_capture, '_try_cv2', return_value=None), \
+             patch.object(ffmpeg_capture, 'is_available', return_value=True), \
+             patch.object(ffmpeg_capture, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(ffmpeg_capture, 'REBOOT_WAIT_SECONDS', 0), \
+             patch.object(ffmpeg_capture, 'POST_REBOOT_SETTLE_SECONDS', 0), \
+             patch.object(ffmpeg_capture, '_listening', return_value=False), \
+             patch.object(ffmpeg_capture, 'FFmpegCapture'):
+            ffmpeg_capture.open_capture(self.URL)
+
+    def test_a_host_that_dies_during_the_probe_is_remembered_even_though_the_open_failed(self):
+        """The learning has to key off the crash, not off a later success.
+
+        The fallback usually fails on the very pass that crashed the camera —
+        it is rebooting and still holding the sessions OpenCV left, so it
+        answers 4XX. Recording only on success would mean never learning, and
+        re-crashing the camera on every single open.
+        """
+        self._crash_during_probe()
+        self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_a_remembered_host_skips_the_opencv_stage_entirely(self):
+        """Which is the whole point: no second camera reset to re-learn."""
+        self._crash_during_probe()
+        with patch.object(ffmpeg_capture, '_try_cv2') as tried, \
+             patch.object(ffmpeg_capture, 'is_available', return_value=True), \
+             patch.object(ffmpeg_capture, 'FFmpegCapture'):
+            ffmpeg_capture.open_capture(self.URL)
+        tried.assert_not_called()
+
+    def test_a_healthy_camera_is_never_marked_and_keeps_the_fast_path(self):
+        """A camera OpenCV can decode must not be pushed onto the subprocess."""
+        cap = _FakeCv2Cap(opens=True, frames=True)
+        with patch.object(ffmpeg_capture, '_try_cv2', return_value=cap):
+            ffmpeg_capture.open_capture(self.URL)
+        self.assertFalse(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_the_note_is_recovered_from_the_cache_after_a_restart(self):
+        """A restart must not re-learn by crashing the camera again."""
+        self._crash_during_probe()
+        # Simulate a fresh process: the shared note survives, the dict does not.
+        with ffmpeg_capture._MEMO_LOCK:
+            ffmpeg_capture._PREFER_FFMPEG.clear()
+        self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+            ffmpeg_capture._host_key(self.URL)))
+
+    def test_an_unreachable_cache_never_breaks_opening(self):
+        """Redis is optional here; losing it costs a re-learn, not a camera."""
+        def boom(*a, **k):
+            raise RuntimeError('redis down')
+
+        with patch('django.core.cache.cache.get', side_effect=boom), \
+             patch('django.core.cache.cache.set', side_effect=boom):
+            self._crash_during_probe()
+            # Still remembered in-process, and nothing raised.
+            self.assertTrue(ffmpeg_capture._prefers_ffmpeg(
+                ffmpeg_capture._host_key(self.URL)))
+
+
+class ChildLifetimeTests(SimpleTestCase):
+    """That an ffmpeg child cannot outlive the process that started it.
+
+    Both halves of this were live on campus at once, and together they left 46
+    orphaned ffmpeg processes holding sessions against a camera that serves
+    only a couple — which is what a "freezing" live feed actually was.
+    """
+
+    def test_network_inputs_get_a_socket_timeout(self):
+        """Without it the RTSP demuxer waits forever and never exits."""
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value=None):
+            cap = ffmpeg_capture.FFmpegCapture('rtsp://10.0.0.5/onvif1')
+        self.assertIsNone(cap._proc)      # no binary: nothing spawned
+
+        seen = {}
+
+        def record(cmd, **kw):
+            seen['cmd'] = cmd
+            raise RuntimeError('stop here — the argv is all this asserts on')
+
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value='ffmpeg'), \
+             patch('subprocess.Popen', side_effect=record):
+            ffmpeg_capture.FFmpegCapture('rtsp://10.0.0.5/onvif1')
+        self.assertIn('-timeout', seen['cmd'])
+        # Must precede -i: it is an input option, not an output one.
+        self.assertLess(seen['cmd'].index('-timeout'), seen['cmd'].index('-i'))
+
+    def test_file_inputs_do_not_get_one(self):
+        """`-timeout` is protocol-specific; the file protocol rejects it
+        outright with "Option timeout not found", failing the open."""
+        seen = {}
+
+        def record(cmd, **kw):
+            seen['cmd'] = cmd
+            raise RuntimeError('argv captured')
+
+        with patch.object(ffmpeg_capture, 'ffmpeg_binary', return_value='ffmpeg'), \
+             patch('subprocess.Popen', side_effect=record):
+            ffmpeg_capture.FFmpegCapture(r'C:\clips\sample.mp4')
+        self.assertNotIn('-timeout', seen['cmd'])
+
+    def test_is_network_url_covers_the_schemes_that_matter(self):
+        for url in ('rtsp://h/x', 'RTSP://h/x', 'http://h/x', 'rtmp://h/x', 'udp://h:1'):
+            self.assertTrue(ffmpeg_capture._is_network_url(url), url)
+        for url in ('/var/clips/a.mp4', r'C:\clips\a.mp4', 'a.mp4', ''):
+            self.assertFalse(ffmpeg_capture._is_network_url(url), url)
+
+    def test_release_kills_the_whole_tree_not_just_the_handle(self):
+        """`which('ffmpeg')` often finds a launcher stub that spawns the real
+        binary as a child; terminating only our handle leaves that child alive
+        and parentless, still holding its RTSP session."""
+        calls = []
+
+        class _Proc:
+            pid = 4321
+            def poll(self): return None
+            def wait(self, timeout=None): return 0
+            def terminate(self): calls.append('terminate')
+            def kill(self): calls.append('kill')
+
+        with patch('os.name', 'nt'), \
+             patch('subprocess.run', side_effect=lambda *a, **k: calls.append(a[0])):
+            ffmpeg_capture._kill_tree(_Proc())
+
+        self.assertTrue(calls, 'nothing was killed')
+        argv = calls[0]
+        self.assertEqual(argv[:3], ['taskkill', '/F', '/T'])
+        self.assertIn('4321', argv)
 
 
 class PrimedCaptureTests(SimpleTestCase):

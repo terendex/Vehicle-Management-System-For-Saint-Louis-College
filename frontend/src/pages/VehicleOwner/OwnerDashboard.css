@@ -352,12 +352,175 @@
 
 .od-qr-display {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 10px;
   padding: 20px;
   background: #F7FAFC;
   margin: 12px 20px;
   border-radius: 12px;
   border: 2px dashed #BDD4E5;
+}
+
+/* The card code doubles as the trigger for the fullscreen sheet */
+.od-qr-display--btn {
+  width: calc(100% - 40px);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.od-qr-display--btn:hover {
+  background: #EEF6FC;
+  border-color: #03396C;
+}
+
+.od-qr-display--btn:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+
+.od-qr-expand-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B8CA6;
+}
+
+.od-qr-display--btn:hover .od-qr-expand-hint {
+  color: #03396C;
+}
+
+/* Primary action on the card — Copy sits under it as the quieter outline */
+.od-qr-full-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: calc(100% - 40px);
+  margin: 0 20px 8px;
+  padding: 10px 18px;
+  background: #03396C;
+  border: 1.5px solid #03396C;
+  border-radius: 10px;
+  color: #FFFFFF;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.od-qr-full-btn:hover {
+  background: #05529B;
+  box-shadow: 0 3px 10px rgba(3, 57, 108, 0.25);
+}
+
+.od-qr-full-btn:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+
+/* ===== Fullscreen QR sheet =====
+   Deliberately a plain white field rather than the dark modal scrim: a scanner
+   reads a big, high-contrast code on a bright screen fastest. */
+.od-qrfs {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  background: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: odFadeIn 0.18s ease;
+}
+
+.od-qrfs-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.od-qrfs-plate {
+  font-size: clamp(20px, 5vw, 28px);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #0B2340;
+}
+
+.od-qrfs-sub {
+  font-size: 13px;
+  color: #6B8CA6;
+}
+
+.od-qrfs-code {
+  width: min(84vw, 58vh, 460px);
+  padding: 14px;
+  background: #FFFFFF;
+  border-radius: 14px;
+  border: 1px solid #E3EDF5;
+  box-shadow: 0 6px 26px rgba(3, 57, 108, 0.1);
+  margin-top: 4px;
+}
+
+/* qrcode.react renders a fixed-size svg; let it scale to the box instead */
+.od-qrfs-code svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.od-qrfs-data {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0B2340;
+  background: #F1F7FC;
+  border: 1px solid #D3E1EC;
+  border-radius: 8px;
+  padding: 7px 12px;
+  word-break: break-all;
+  margin-top: 6px;
+}
+
+.od-qrfs-tip {
+  font-size: 12px;
+  color: #8AA5BC;
+  margin: 2px 0 0;
+}
+
+.od-qrfs-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  background: #F1F7FC;
+  border: 1px solid #D3E1EC;
+  border-radius: 50%;
+  color: #03396C;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.od-qrfs-close:hover {
+  background: #E1EEF8;
+  border-color: #BDD4E5;
+}
+
+.od-qrfs-close:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
 }
 
 .od-qr-data-box {
@@ -1128,7 +1291,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 18px 10px;
+  /* This is a status readout, not the page's headline. At 18px of padding
+     around a 32px numeral the three tiles were the tallest thing in the card
+     and pushed the bays — the part people actually scan — below the fold. */
+  padding: 12px 10px;
   border-right: 1px solid #D3E1EC;
 }
 
@@ -1137,9 +1303,10 @@
 }
 
 .od-parking-stat-num {
-  font-size: 32px;
+  font-size: 25px;
   font-weight: 800;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .od-parking-stat-label {
@@ -1338,7 +1505,7 @@
   }
 
   .od-zone-fill-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 
   .od-modal {
@@ -1416,7 +1583,7 @@
   }
 
   .od-parking-stat-num {
-    font-size: 24px;
+    font-size: 21px;
   }
 
   .od-modal {
@@ -1439,6 +1606,8 @@
 
   .od-zone-fill-grid {
     grid-template-columns: 1fr;
+    /* Track .od-parking-summary's tighter mobile inset. */
+    margin: 0 12px 12px;
   }
 
   .od-outstanding-banner {
@@ -1489,6 +1658,17 @@
   .od-qr-display {
     margin: 10px 12px;
     padding: 14px;
+  }
+
+  /* keep the trigger's width in step with the tighter gutter */
+  .od-qr-display--btn,
+  .od-qr-full-btn {
+    width: calc(100% - 24px);
+  }
+
+  .od-qr-full-btn {
+    margin: 0 12px 8px;
+    font-size: 12px;
   }
 
   .od-qr-data-box {
@@ -1577,9 +1757,16 @@
 
 .od-zone-fill-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* auto-FIT, not auto-fill: with one zone, auto-fill keeps the empty 200px
+     tracks and leaves the single card stranded at the left of an otherwise
+     blank row. auto-fit collapses them so one zone fills the width and two
+     still sit side by side. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-  margin-bottom: 12px;
+  /* Matches the 20px inset every sibling in this card uses (.od-parking-summary
+     margin, .od-parking-grid / -legend / -note padding). Without it this row
+     alone sat flush to the card edge, a few pixels left of everything else. */
+  margin: 0 20px 12px;
 }
 
 .od-zone-fill-card {
@@ -1608,6 +1795,15 @@
   font-size: 13px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+/* The unit stays quiet so the number keeps the emphasis — it is there to
+   disambiguate, not to compete. */
+.od-zone-fill-pct-unit {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B8CA6;
 }
 
 .od-zone-fill-pct.normal   { color: #0F7A5A; }

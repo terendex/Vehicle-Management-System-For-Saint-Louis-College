@@ -426,3 +426,23 @@
   .gam-scan-row > :nth-child(4),
   .gam-scan-row > :nth-child(5) { display: none; }
 }
+
+/* --- Mobile --- */
+@media (max-width: 480px) {
+  .gam-page { padding: 12px; }
+
+  /* Down to the two columns that answer the question: which plate, and
+     was it let through. The owner name goes — at this width it is the
+     column that wraps to three lines while telling you least. Gate and
+     time already left at 640. */
+  .gam-scan-list-header,
+  .gam-scan-row {
+    grid-template-columns: 82px 1fr;
+    gap: 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .gam-scan-list-header > :nth-child(2),
+  .gam-scan-row > :nth-child(2) { display: none; }
+}

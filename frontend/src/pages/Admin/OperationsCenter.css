@@ -183,48 +183,114 @@
   border-color: #03396C;
   color: #fff;
 }
-.oc-cam-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  min-width: 0;
-}
-.oc-cam-picker-lbl {
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #64839C;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
-}
-.oc-cam-picker select {
-  max-width: 230px;
-  padding: 5px 9px;
-  border: 1.5px solid #D3E1EC;
-  border-radius: 7px;
-  background: #fff;
-  color: #2E4C63;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.oc-cam-picker select:focus { outline: none; border-color: #2E8CCB; }
-.oc-cam-picker select:disabled { background: #F7FAFC; color: #9DB6C9; cursor: default; }
-
-@media (max-width: 560px) {
-  /* The picker sitting on the same line as the chips squeezed both; give it
-     its own row rather than truncating camera names. */
-  .oc-cam-picker { margin-left: 0; width: 100%; }
-  .oc-cam-picker select { flex: 1; max-width: none; }
-}
+/* The camera list lives under the display as cards, so no dropdown here. */
 
 .oc-cam-viewport {
   position: relative;
   background: #0B2340;
   min-height: 300px;
-  max-height: 440px;
+  /* Fixed rather than max-height: the canvas is centred inside this box and
+     scaled to fit it, so the panel keeps one height whatever shape the feed
+     is — a 16:9 lens, a 1:1 stacked dual-lens frame, or nothing at all. */
+  height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
+}
+
+/* Sized from its own frame: the canvas element's width/height attributes are
+   its intrinsic size, so auto + max 100% letterboxes it into the viewport at
+   the right aspect ratio instead of stretching it. */
+.oc-cam-canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+}
+
+/* ── Camera search ───────────────────────────────────────────────────────── */
+
+.oc-cam-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Pushed to the trailing edge, the spot the camera dropdown used to hold. */
+  margin-left: auto;
+  padding: 0 8px;
+  background: #FFFFFF;
+  border: 1px solid #CFE0EE;
+  border-radius: 7px;
+}
+.oc-cam-search:focus-within { border-color: #2E8CCB; }
+.oc-cam-search-icon { color: #6E8CA4; flex-shrink: 0; }
+.oc-cam-search input {
+  border: none;
+  outline: none;
+  background: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #0B2340;
+  width: 150px;
+}
+.oc-cam-search input::placeholder { color: #9DB6C9; }
+.oc-cam-search input::-webkit-search-cancel-button { display: none; }
+.oc-cam-search-clear {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #6E8CA4;
+  cursor: pointer;
+}
+.oc-cam-search-clear:hover { color: #C2453F; background: rgba(194, 69, 63, 0.1); }
+
+/* ── Fullscreen ──────────────────────────────────────────────────────────── */
+
+.oc-cam-fs {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(4, 18, 31, 0.65);
+  color: #C7DDEE;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.oc-cam-fs:hover { background: rgba(4, 18, 31, 0.9); color: #FFFFFF; }
+
+/* The viewport is a fixed-height band in the page, which would keep the feed
+   in a 420px strip in fullscreen. Fill the screen instead; the centring and
+   the fit-to-box canvas rules are already in the base styles, so the picture
+   simply scales up to whatever the display allows. */
+.oc-cam-viewport:fullscreen {
+  min-height: 0;
+  height: 100vh;
+  width: 100vw;
+  background: #000;
+}
+
+/* Fullscreen is where a lens is actually studied, so the controls that overlay
+   it grow to match the larger picture. */
+.oc-cam-viewport:fullscreen .oc-cam-name-tag,
+.oc-cam-viewport:fullscreen .oc-cam-lens-btn { font-size: 13px; }
+.oc-cam-viewport:fullscreen .oc-cam-name-tag { padding: 6px 12px; top: 16px; left: 16px; }
+.oc-cam-viewport:fullscreen .oc-cam-lens-switch { bottom: 16px; }
+.oc-cam-viewport:fullscreen .oc-cam-fs { top: 16px; right: 16px; }
+
+@media (max-width: 720px) {
+  /* Own row on a narrow panel: auto-margin plus a full width would otherwise
+     leave the chips and the box fighting for one line. */
+  .oc-cam-search { margin-left: 0; width: 100%; }
+  .oc-cam-search input { width: 100%; flex: 1; }
 }
 .oc-cam-overlay {
   position: absolute;
@@ -270,31 +336,105 @@
 .oc-cam-empty p { font-size: 13px; font-weight: 600; margin: 0; color: #64839C; }
 .oc-cam-empty span { font-size: 11px; color: #5C7B92; }
 
+/* ── Camera picker (replaces the dropdown) ───────────────────────────────── */
+/* Every available view as its own card. Auto-fill rather than a fixed column
+   count so one camera does not stretch a card across the panel, and a dozen
+   still wrap tidily. */
 .oc-cam-strip {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 7px;
+  padding: 10px 12px;
   border-top: 1px solid #EEF4F9;
-  flex-wrap: wrap;
+  max-height: 168px;
+  overflow-y: auto;
 }
 .oc-cam-thumb {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
+  gap: 7px;
+  padding: 7px 10px;
   border: 1.5px solid #D3E1EC;
-  border-radius: 8px;
+  border-radius: 9px;
   background: #fff;
-  font-size: 11px;
-  font-weight: 600;
   color: #5C7B92;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
   font-family: inherit;
+  text-align: left;
+  min-width: 0;
 }
-.oc-cam-thumb.active, .oc-cam-thumb:hover { border-color: #03396C; color: #03396C; background: #F4F8FB; }
+.oc-cam-thumb:hover { border-color: #03396C; color: #03396C; background: #F4F8FB; }
+.oc-cam-thumb.active {
+  border-color: #03396C;
+  color: #03396C;
+  background: #EDF4FA;
+  box-shadow: inset 0 0 0 1px #03396C;
+}
+.oc-cam-thumb-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.oc-cam-thumb-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  /* The name is what the guard reads; a long one truncates rather than
+     wrapping the card to two heights. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oc-cam-thumb-sub { font-size: 10px; font-weight: 600; color: #8AA5BC; }
+.oc-cam-thumb.active .oc-cam-thumb-sub { color: #4A6B85; }
+
+/* Which picture of a multi-lens unit this is. Same badge in the card and on
+   the live feed's name tag, so the two read as the same thing. */
+.oc-cam-lens-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 20px;
+  background: #E4EFF8;
+  color: #03396C;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.oc-cam-name-tag .oc-cam-lens-badge { background: rgba(255,255,255,0.22); color: #fff; }
+
+/* Lens switch over the feed — inside the viewport so fullscreen keeps it. */
+.oc-cam-lens-switch {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 9px;
+  background: rgba(4, 18, 31, 0.7);
+}
+.oc-cam-lens-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #C7DDEE;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.oc-cam-lens-btn:hover  { background: rgba(255,255,255,0.14); color: #fff; }
+.oc-cam-lens-btn.active { background: #03396C; color: #fff; }
+
 .oc-cam-dot {
   width: 5px; height: 5px; border-radius: 50%;
+  flex-shrink: 0;
 }
 .oc-cam-dot.live { background: #1BA968; }
 .oc-cam-dot.wait { background: #E0B00C; }
@@ -638,4 +778,74 @@
 
 .oc-confiscated {
   margin-top: 20px;
+}
+
+/* ── Responsive: mobile steps ────────────────────────────────────
+   The 1200/1024/768 rules above collapse the main grid, the gate column
+   and the bottom row. These finish the job on a phone: the header, the
+   stat strip and the pagers under each list. */
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .oc-page {
+    gap: 14px;
+  }
+
+  .oc-title {
+    font-size: 20px;
+  }
+
+  /* Refresh drops under the title instead of squeezing the subtitle,
+     which carries the "Updated N ago" stamp people actually read. */
+  .oc-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .oc-refresh-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .oc-stats-row {
+    gap: 8px;
+  }
+
+  .oc-stat-card {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .oc-stat-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .oc-stat-val {
+    font-size: 1.2rem;
+  }
+
+  /* Count above, controls below — on one line the "Showing x–y of z"
+     text and the two arrows collided at around 380px. */
+  .oc-pager {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .oc-pager-controls {
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .oc-title {
+    font-size: 18px;
+  }
+
+  .oc-stats-row {
+    grid-template-columns: 1fr;
+  }
 }

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Vehicle, VehicleRegistration, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, ParkingNotice, Supplier, SupplierPlate, ScheduledVisit
+from .document_urls import signed_document_url
 from accounts.models import User
 
 
@@ -24,6 +25,13 @@ class VehicleSerializer(serializers.ModelSerializer):
 class VehicleRegistrationSerializer(serializers.ModelSerializer):
     registration_block_count = serializers.SerializerMethodField()
 
+    # The applicant's uploads. What is stored is an object key; what a browser
+    # needs is a URL it can fetch, and for the reasons in document_urls that is
+    # not the bucket's public path. Swapped on the way out in to_representation
+    # rather than declared as fields here, so read_only_fields below stays the
+    # single list of what the review process owns.
+    DOCUMENT_FIELDS = ('drivers_license_image', 'assessment_form', 'or_receipt_image')
+
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
@@ -45,7 +53,13 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
             'or_number', 'reviewed_at', 'rejection_reason',
             'system_student_id', 'system_employee_id',
             'is_special_case', 'special_case_reason',
-            'drivers_license_image',   # set only by UploadLicenseImageView
+            'drivers_license_image',   # set only by UploadRegistrationDocumentsView
+            'assessment_form',         # set only by UploadRegistrationDocumentsView
+            # Payment is recorded by the applicant's receipt upload and by the
+            # accept flow — never by the submission payload, which would let an
+            # application mark itself paid and skip the Accounting Office.
+            'payment_status', 'or_receipt_image', 'amount_paid', 'paid_at',
+            'payment_token', 'unpaid_accept_reason',
             'created_at',
         )
 
@@ -95,6 +109,34 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         # instance.department is a FK: without select_related('department') on
         # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
+        # What is stored is an object key; what the reviewer's browser needs is
+        # a URL it can fetch. See document_urls for why that is not the bucket's
+        # public path.
+        request = self.context.get('request')
+        for name in self.DOCUMENT_FIELDS:
+            data[name] = signed_document_url(getattr(instance, name), request)
+        # A fetcher's students each attach their own enrolment proof. The files
+        # live in their own table (FetcherStudentAssessment) but the reviewer
+        # reads them per student, so each one is folded into the entry it
+        # belongs to rather than handed over as a separate list to re-pair.
+        # Prefetch 'fetcher_assessments' on the queryset or this costs a query
+        # per row.
+        students = data.get('fetcher_students')
+        if isinstance(students, list) and students:
+            by_index = {a.student_index: a for a in instance.fetcher_assessments.all()}
+            data['fetcher_students'] = [
+                {**entry,
+                 'assessment_form': signed_document_url(
+                     by_index[i].assessment_form, request) if i in by_index else None}
+                if isinstance(entry, dict) else entry
+                for i, entry in enumerate(students)
+            ]
+        # payment_token is the secret in the applicant's receipt-upload link.
+        # This serializer feeds the CDSO queue and the vehicle profile a guard
+        # can open, so anyone with either view could otherwise read a stranger's
+        # token and file a receipt against their registration. The pending email
+        # is the only place the token is ever meant to appear.
+        data.pop('payment_token', None)
         return data
 
 
@@ -116,7 +158,8 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ParkingSpace
         fields = ['id', 'zone', 'space_number', 'vehicle_category',
-                  'x1', 'y1', 'x2', 'y2', 'points', 'is_occupied', 'occupied_by', 'updated_at']
+                  'x1', 'y1', 'x2', 'y2', 'points', 'lens_index',
+                  'is_occupied', 'occupied_by', 'updated_at']
 
     def get_vehicle_category(self, obj):
         return obj.zone.vehicle_category if obj.zone else None
@@ -165,12 +208,13 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = ParkingZone
-        fields = ['id', 'name', 'vehicle_category', 'camera', 'camera_name', 'reference_image',
+        fields = ['id', 'name', 'vehicle_category', 'lens_index', 'camera', 'camera_name', 'reference_image',
                   'reference_image_url', 'capacity_override', 'space_count',
                   'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
                   'category_capacity', 'category_occupied', 'category_available',
                   'category_is_full', 'category_fill_pct', 'occupancy_source',
-                  'occupancy_method', 'baseline_image_url', 'baseline_captured_at',
+                  'occupancy_method', 'detection_enabled',
+                  'baseline_image_url', 'baseline_captured_at',
                   'has_baseline', 'created_at', 'spaces']
         read_only_fields = ['baseline_captured_at']
 
@@ -246,12 +290,17 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         return obj.camera.name if obj.camera else None
 
     def get_reference_image_url(self, obj):
-        if not obj.reference_image:
-            return None
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(obj.reference_image.url)
-        return obj.reference_image.url
+        """Signed, for the same reason the registration documents are.
+
+        The bucket's public host only works while public access is on, and R2
+        ships with the development URL turned off — measured here: the object
+        reads fine over the S3 API (78 KB) while the public host does not
+        answer at all, which on screen is the zone editor's broken thumbnail
+        with nothing to draw bays on. `signed_document_url` already handles
+        this, including the local-storage case, so use it rather than a second
+        way of doing the same thing.
+        """
+        return signed_document_url(obj.reference_image, self.context.get('request'))
 
     # ── Zone/bay facts (drawn map + camera) ───────────────────────────────────
     #

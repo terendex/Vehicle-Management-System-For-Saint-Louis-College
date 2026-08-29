@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 import cv2
 from django.db import transaction
-from django.db.models import Q, Value
+from django.db.models import Count, Q, Value
 from django.db.models.functions import Lower, Replace, Upper
 from django.http import StreamingHttpResponse, HttpResponse
 from rest_framework import viewsets, permissions
@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from rest_framework import status as drf_status
 from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event, ScheduledVisit
+from .models import _normalize_plate
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
 from . import parking_camera
 
@@ -42,14 +43,17 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
               f"Plate: {vehicle.plate_number} | By: {request.user.full_name}")
         return Response({'plate': vehicle.plate_number, 'is_authorized': vehicle.is_authorized})
 
-    @action(detail=True, methods=['get'])
-    def profile(self, request, pk=None):
-        """Return full vehicle profile: owner, latest registration, active and resolved violations."""
+    @staticmethod
+    def _profile_payload(vehicle):
+        """Owner, latest accepted registration and violations for one vehicle.
+
+        Shared by `profile` (by row id) and `by_plate` (by a typed or detected
+        plate) so the two can never drift into telling a guard different things
+        about the same car.
+        """
         from violations.serializers import ViolationSerializer
         from .models import VehicleRegistration
         from .serializers import VehicleRegistrationSerializer
-
-        vehicle = self.get_object()
 
         # Latest accepted registration — FK-linked first, then plate fallback for legacy records
         reg = (
@@ -63,12 +67,40 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         active_violations   = vehicle.violations.filter(is_resolved=False).order_by('-issued_at')
         resolved_violations = vehicle.violations.filter(is_resolved=True).order_by('-issued_at')
 
-        return Response({
+        return {
             'vehicle':             VehicleSerializer(vehicle).data,
             'registration':        VehicleRegistrationSerializer(reg).data if reg else None,
             'active_violations':   ViolationSerializer(active_violations, many=True).data,
             'resolved_violations': ViolationSerializer(resolved_violations, many=True).data,
-        })
+        }
+
+    @action(detail=True, methods=['get'])
+    def profile(self, request, pk=None):
+        """Return full vehicle profile: owner, latest registration, active and resolved violations."""
+        return Response(self._profile_payload(self.get_object()))
+
+    @action(detail=False, methods=['get'], url_path='by-plate')
+    def by_plate(self, request):
+        """Same profile, found by plate or conduction number instead of row id.
+
+        Parking needs this: a bay carries only the plate the detector read off
+        the car, and asking who that is must not record anything. The obvious
+        alternative — /scan/manual-entry/ — answers the same question but logs
+        a gate entry as a side effect, which would put a car through the
+        barrier because someone clicked a parking space.
+
+        A plate nobody registered is a normal answer here, not an error: the
+        lot is full of visitors and delivery vehicles. It comes back as
+        `found: false` so the caller can say so plainly.
+        """
+        identifier = request.query_params.get('plate', '')
+        vehicle = Vehicle.resolve(identifier)
+        if vehicle is None:
+            return Response({
+                'found': False,
+                'plate': _normalize_plate(identifier),
+            })
+        return Response({'found': True, **self._profile_payload(vehicle)})
 
 class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     """Campus schedule rules. Read by any signed-in role; changed only by the
@@ -183,10 +215,19 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                 points = None
                 bbox = {'x1': s.get('x1'), 'y1': s.get('y1'), 'x2': s.get('x2'), 'y2': s.get('y2')}
 
+            # lens_index tags which view of a multi-lens camera the bay is in.
+            # Coerced rather than trusted: it indexes a stacked frame, so a
+            # negative or absurd value would quietly orphan the bay from every
+            # view the editor can show.
+            try:
+                lens_index = max(0, int(s.get('lens_index') or 0))
+            except (TypeError, ValueError):
+                lens_index = 0
+
             space, _ = ParkingSpace.objects.update_or_create(
                 zone=zone,
                 space_number=s['space_number'],
-                defaults={**bbox, 'points': points},
+                defaults={**bbox, 'points': points, 'lens_index': lens_index},
             )
             result.append(space)
 
@@ -283,12 +324,22 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         zone = self.get_object()
         if not zone.camera or not zone.camera.rtsp_url:
             return Response({'error': 'No camera assigned to this zone. Assign one from Device Management.'}, status=400)
+        # Records the intent as well as acting on it: detection is automatic
+        # now (detection_supervisor), so this flag is what a restart reads back.
+        if not zone.detection_enabled:
+            zone.detection_enabled = True
+            zone.save(update_fields=['detection_enabled'])
         parking_camera.start(zone.id, zone.camera.rtsp_url)
         return Response({'status': 'started'})
 
     @action(detail=True, methods=['post'], url_path='stop-camera')
     def stop_camera(self, request, pk=None):
         zone = self.get_object()
+        # Must persist, or the supervisor would restart the detector on its next
+        # pass and the button would look broken.
+        if zone.detection_enabled:
+            zone.detection_enabled = False
+            zone.save(update_fields=['detection_enabled'])
         parking_camera.stop(zone.id)
         return Response({'status': 'stopped'})
 
@@ -296,6 +347,16 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     def camera_status(self, request):
         """Returns {zone_id: is_running} for all zones."""
         return Response(parking_camera.status_dict())
+
+    @action(detail=False, methods=['get'], url_path='detections')
+    def detections(self, request):
+        """The boxes behind the occupancy verdict, per running zone.
+
+        GET and readable by guards as well as the CDSO: "why is that bay still
+        green" is a question asked standing in front of the lot, and the honest
+        answer is whatever the detector last saw.
+        """
+        return Response(parking_camera.detections_dict())
 
     @action(detail=False, methods=['get'], url_path='alerts')
     def alerts(self, request):
@@ -343,6 +404,45 @@ def _ptz_cache_clear(cam_id):
         _PTZ_CACHE.pop(cam_id, None)
 
 
+# Which HTTP auth flavour a camera's web server actually accepts, keyed by
+# origin (http://ip[:port]). ONVIF firmware challenges with Digest — the units
+# here answer 401 to a Basic header forever, which is what made PTZ look like a
+# missing service. Credentials changing does not invalidate this: the flavour
+# stays right, the wrong password just 401s through to the other attempts.
+_AUTH_MODE_CACHE: dict = {}
+
+
+def _http_auths(username, password, base_url):
+    """Auth attempts, in order, for a camera's HTTP/ONVIF endpoints.
+
+    Returns (mode, auth) pairs. An open camera can reject a credential header
+    it never asked for, so a bare unauthenticated attempt always stays in the
+    list. The flavour that last worked for this host is tried first.
+    """
+    from requests.auth import HTTPDigestAuth
+    if not username:
+        return [('none', None)]
+    order = [('digest', HTTPDigestAuth(username, password)),
+             ('basic',  (username, password)),
+             ('none',   None)]
+    with _PTZ_LOCK:
+        won = _AUTH_MODE_CACHE.get(base_url)
+    if won:
+        order.sort(key=lambda pair: pair[0] != won)
+    return order
+
+
+def _auth_mode_worked(base_url, mode):
+    with _PTZ_LOCK:
+        _AUTH_MODE_CACHE[base_url] = mode
+
+
+def _origin(url):
+    from urllib.parse import urlsplit
+    parts = urlsplit(url)
+    return f'{parts.scheme}://{parts.netloc}'
+
+
 def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
     """POST an ONVIF SOAP envelope. Returns (response, content_type_that_worked).
 
@@ -373,13 +473,14 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
         f'<s:Body>{body_xml}</s:Body></s:Envelope>'
     )
     data = envelope.encode('utf-8')
-    # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras
-    # Same reasoning as _try_cgi_ptz: try the credentials we have, then no
-    # credentials at all, so a camera without auth still answers.
-    auths = ([(username, password)] if username else []) + [None]
+    # Try SOAP 1.2 first, fall back to SOAP 1.1 (text/xml) for budget cameras.
+    # The WS-Security header above is only half the story: firmware that wants
+    # HTTP Digest never reads it, so every transport auth flavour is tried too.
+    origin = _origin(endpoint)
+    auths  = _http_auths(username, password, origin)
     for ct in (content_types or ['application/soap+xml; charset=utf-8',
                                  'text/xml; charset=utf-8']):
-        for auth in auths:
+        for mode, auth in auths:
             try:
                 r = _rq.post(endpoint, data=data,
                              headers={'Content-Type': ct},
@@ -387,6 +488,7 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
                 if r.status_code in (401, 403):
                     continue
                 if r.status_code < 500:
+                    _auth_mode_worked(origin, mode)
                     return r, ct
             except Exception:
                 break
@@ -467,28 +569,34 @@ def _ptz_home(base_url, username, password, token, **route):
 def camera_http_credentials(cam):
     """(username, password) to use for this camera's HTTP/ONVIF calls.
 
-    Order: the camera's own password if it has one, then any credentials
-    embedded in its rtsp_url (a hand-written URL may carry a different account),
-    then the device ID with an empty password for genuinely open units.
+    The **username** comes from the rtsp_url when it carries one. On the units
+    here `device_id` is a hardware serial, not a login — the real ONVIF account
+    is `admin`, and it only ever appears in the URL. Sending the serial gets a
+    SOAP fault on every request, which the PTZ view then reports as
+    "No PTZ service path responded successfully".
+
+    The **password** prefers the stored field, because that is the one admins
+    edit; the URL's password is the fallback for a camera added by hand. The
+    device ID stays the last-resort username for units with no URL credentials.
     """
     from urllib.parse import unquote
 
-    stored = (getattr(cam, 'password', '') or '').strip()
-    if stored:
-        return (getattr(cam, 'device_id', '') or ''), stored
-
-    url = (getattr(cam, 'rtsp_url', '') or '')
+    stored  = (getattr(cam, 'password', '') or '').strip()
+    url     = (getattr(cam, 'rtsp_url', '') or '')
+    url_user = url_pw = ''
     if '://' in url and '@' in url:
-        rest = url.split('://', 1)[1]
+        rest  = url.split('://', 1)[1]
         creds = rest.rsplit('@', 1)[0]          # rsplit: passwords may contain '@'
         if ':' in creds:
-            user, pw = creds.split(':', 1)
+            url_user, url_pw = creds.split(':', 1)
         else:
-            user, pw = creds, ''
-        if user:
-            return unquote(user), unquote(pw)
+            url_user, url_pw = creds, ''
+        url_user, url_pw = unquote(url_user), unquote(url_pw)
 
-    return (getattr(cam, 'device_id', '') or ''), ''
+    if url_user:
+        return url_user, (stored or url_pw)
+
+    return (getattr(cam, 'device_id', '') or ''), stored
 
 
 def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None):
@@ -512,19 +620,15 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None
     ]
     candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None
                   else list(enumerate(forms)))
-    # Auth attempts, in order. An open camera can reject a Basic header it did
-    # not ask for, so a plain unauthenticated request is tried as well —
-    # without it, removing the stored password broke PTZ on exactly the
-    # cameras that never needed one.
-    auths = [(username, password)] if username else []
-    auths.append(None)
+    auths = _http_auths(username, password, base_url)
 
     errors = []
     for idx, url in candidates:
-        for auth in auths:
+        for mode, auth in auths:
             try:
                 r = _rq.get(url, auth=auth, timeout=3)
                 if r.status_code < 400:
+                    _auth_mode_worked(base_url, mode)
                     return idx
                 if r.status_code in (401, 403):
                     continue          # try the next credential form
@@ -783,15 +887,18 @@ async def parking_stream_view(request, pk):
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import VehicleRegistration
+from .models import FetcherStudentAssessment, VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
                           resolve_student_schedule, schedule_group)
 from accounts.models import User
-from .email_utils import send_acceptance_email, send_rejection_email, send_pending_email
+from .email_utils import (send_acceptance_email, send_rejection_email,
+                          send_pending_email, send_receipt_received_email,
+                          send_in_background)
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -861,13 +968,15 @@ class PendingRegistrationsListView(APIView):
 
     def get(self, request):
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
-        # select_related pulls the department in the same SELECT, and the
+        # select_related pulls the department in the same SELECT, prefetch_related
+        # collects every fetcher's per-student assessments in one more, and the
         # prebuilt block-count map replaces one COUNT per row with one query for
-        # the page — together they turn a 2N+1 query pattern into a flat 2.
+        # the page — together they turn a 3N+1 query pattern into a flat 3.
         registrations = list(
             VehicleRegistration.objects
             .filter(status=status_filter)
             .select_related('department')
+            .prefetch_related('fetcher_assessments')
             .order_by('-created_at')
         )
         return Response(VehicleRegistrationSerializer(
@@ -944,6 +1053,25 @@ def _upsert_vehicle_for_registration(registration, user):
     return vehicle_obj
 
 
+def _assign_system_id(registration):
+    """Stamp the registration's system ID on acceptance and return it.
+
+    The prefix names what the holder actually is — a fetcher is not staff, so
+    minting them an SLC-EMP- code mislabels them on their own dashboard. Only
+    two columns exist to hold the value: students get their own, and everyone
+    else shares `system_employee_id` as the non-student slot. Storage is not
+    the label, so the fetcher's code lands in that slot carrying SLC-FET-.
+    Every reader already falls back across the two columns."""
+    padded_id = str(registration.pk).zfill(6)
+    kind = registration.registrant_type
+    if kind == 'student':
+        registration.system_student_id = f"SLC-STU-{padded_id}"
+        return registration.system_student_id
+    prefix = 'SLC-FET' if kind == 'fetcher' else 'SLC-EMP'
+    registration.system_employee_id = f"{prefix}-{padded_id}"
+    return registration.system_employee_id
+
+
 def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
@@ -986,6 +1114,14 @@ def _email_conflict(email, qs):
         return "This email address already has an active registration."
     # An email tied to an existing *live* account can't start a new pass. Archived
     # (expired) accounts keep their email but must not block re-registration.
+    #
+    # __iexact, not an exact match: BaseUserManager.normalize_email only
+    # lower-cases the *domain*, so a live account may be stored as
+    # `Juan@slc.edu.ph` while the registration holds the fully-lowercased
+    # `juan@slc.edu.ph`. An exact match missed that pair and let the flow run on
+    # into create_user(), where uniq_active_user_email turned it into a 500
+    # instead of this readable 400. AcceptRegistrationView used to repeat this
+    # very query a second time for the same reason; this one already covers it.
     if User.objects.filter(email__iexact=email_norm, is_archived=False).exists():
         return "This email address is already tied to an existing account."
     return None
@@ -1117,6 +1253,33 @@ def _registration_ban(plate_number, email, student_id, employee_id, conduction_n
     return None
 
 
+def _normalize_department(data):
+    """Map the form's department label onto the model's department_type.
+
+    The form sends a human-readable label ("Teaching", "Cleaning and Services");
+    the column stores the choice value. Driven off DepartmentType rather than an
+    if/elif chain, which silently fell through to None for any label it did not
+    know — so a new department would have been accepted and stored blank.
+
+    Mutates `data` in place and returns the resolved department_type (or '').
+    Shared by the public form and the CDSO walk-in: the walk-in path did not map
+    the label at all, so a walk-in employee's department never reached the row,
+    and with it the fee exemption never applied.
+    """
+    dept_raw = data.pop('department', None)
+    if isinstance(dept_raw, list):
+        dept_raw = dept_raw[0] if dept_raw else None
+
+    dept_label_to_value = {
+        label: value for value, label in VehicleRegistration.DepartmentType.choices
+    }
+    data['department'] = None
+    dept_value = dept_label_to_value.get(dept_raw, '')
+    if dept_value:
+        data['department_type'] = dept_value
+    return dept_value
+
+
 def _license_db_conflict(drivers_license):
     """
     The DB has a partial unique index (uniq_active_registration_drivers_license):
@@ -1187,6 +1350,92 @@ def _validate_authorized_driver(registrant_type, data):
     return None
 
 
+def _acceptance_email_failed_notice(registration):
+    """The admin-bell replacement for the old `email_status: 'failed'` warning.
+
+    The pass is already issued at this point; what the CDSO needs to know is
+    that the owner never received the credentials to use it.
+    """
+    from accounts.notifications import notify
+    plate = registration.plate_number or registration.conduction_number or ''
+
+    def _notice():
+        notify(
+            'registration', 'acceptance_email_failed',
+            f"Approval email failed — {plate}",
+            f"{registration.full_name}'s vehicle pass was approved, but the email "
+            f"carrying their portal credentials could not be delivered to "
+            f"{registration.email}. Give them their login details directly.",
+            severity='warning', plate_number=plate, link='/admin/vehicles',
+        )
+    return _notice
+
+
+def _pending_email_failed_notice(registration):
+    """Same idea for the acknowledgement mail a public submission triggers.
+
+    Worth raising even though nothing is issued yet: that email carries the
+    applicant's reference number *and* the link they upload their Official
+    Receipt through. Without it they have no way back into the flow, and the
+    application sits unpaid in the queue looking like an applicant who never
+    bothered — so the CDSO has to know to send it to them by hand.
+    """
+    from accounts.notifications import notify
+    plate = registration.plate_number or registration.conduction_number or ''
+
+    def _notice():
+        notify(
+            'registration', 'pending_email_failed',
+            f"Acknowledgement email failed — {plate}",
+            f"{registration.full_name}'s application was submitted, but the "
+            f"acknowledgement email could not be delivered to {registration.email}. "
+            f"They have not received their receipt-upload link.",
+            severity='warning', plate_number=plate, link='/admin/vehicles',
+        )
+    return _notice
+
+
+class RegistrationPdfView(APIView):
+    """Print the approved-registration confirmation for one registration.
+
+    The CDSO reviews and approves applications on this page, so the printed
+    copy is issued from here too — it used to live in User Management, which
+    meant finding the owner's account to print a document about a registration
+    the reviewer was already looking at.
+
+    Deliberately the same builder the approval email uses, so a reprint is
+    never a different document from the one the owner received. The one
+    difference is `include_documents`: the filed copy carries the scans the
+    applicant uploaded, which the owner's emailed copy has no reason to.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request, pk):
+        from registration_pdf import (registration_confirmation_pdf,
+                                      registration_pdf_filename)
+
+        registration = get_object_or_404(VehicleRegistration, pk=pk)
+        # The document states the registration is approved, so an application
+        # still under review has no printable confirmation — printing one would
+        # put a pass in someone's hands that the CDSO has not granted.
+        if registration.status != VehicleRegistration.Status.ACCEPTED:
+            return Response(
+                {'detail': 'Only an accepted registration can be printed.'},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        pdf = registration_confirmation_pdf(registration, include_documents=True)
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Registration PDF printed | REG-{registration.id:06d} "
+              f"({registration.plate_number}) | For: {registration.full_name}")
+
+        resp = HttpResponse(pdf, content_type='application/pdf')
+        resp['Content-Disposition'] = (
+            f'attachment; filename="{registration_pdf_filename(registration)}"'
+        )
+        return resp
+
+
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -1230,11 +1479,37 @@ class AcceptRegistrationView(APIView):
             return Response({"error": ban, "registration_banned": True},
                             status=status.HTTP_403_FORBIDDEN)
 
-        or_number = request.data.get('or_number', '').strip()
-        if not or_number:
-            return Response({"error": "Official Receipt (OR) number is required before accepting."}, status=status.HTTP_400_BAD_REQUEST)
-        if not or_number.isdigit() or len(or_number) > 7:
+        # ── Payment gate ──
+        # An Official Receipt number is the payment record, wherever it came
+        # from: the applicant now files their own (number + receipt photo, via
+        # the link in their pending email), but a reviewer keying one in at the
+        # counter for somebody who brought the paper instead counts just the
+        # same. The request value wins over the stored one so CDSO can correct a
+        # typo it spots against the uploaded image.
+        exempt    = registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT
+        or_number = (request.data.get('or_number') or '').strip() or (registration.or_number or '').strip()
+
+        if exempt:
+            # Nothing was owed, so there is no receipt to demand. Requiring one
+            # here used to force CDSO to invent an OR number for fee-exempt
+            # staff before the accept button would enable.
+            or_number = ''
+        elif or_number and (not or_number.isdigit() or len(or_number) > 7):
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Approving with no receipt at all is allowed, but never silently: the
+        # reason is stored on the registration so a pass issued against an
+        # unsettled fee always carries its own justification.
+        unpaid        = not exempt and not or_number
+        unpaid_reason = (request.data.get('unpaid_accept_reason') or '').strip()
+        if unpaid and not unpaid_reason:
+            return Response(
+                {"error": "unpaid_acceptance_requires_reason",
+                 "detail": f"{registration.full_name} has not submitted an Official Receipt. "
+                           f"Enter the OR number, or give a reason for approving this "
+                           f"application while the fee is still unpaid."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # A plate flagged by a 3rd-offense fee violation requires additional
         # review before it can be registered again. CDSO must explicitly
@@ -1274,15 +1549,6 @@ class AcceptRegistrationView(APIView):
                               f"{MAX_CAMPUS_DAYS} campus days."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-        # __iexact, not an exact match: BaseUserManager.normalize_email only
-        # lower-cases the *domain*, so a live account may be stored as
-        # `Juan@slc.edu.ph` while the registration holds the fully-lowercased
-        # `juan@slc.edu.ph`. An exact match missed that pair and let the flow run
-        # on into create_user(), where uniq_active_user_email turned it into a
-        # 500 instead of this readable 400.
-        if User.objects.filter(email__iexact=registration.email, is_archived=False).exists():
-             return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
         # One transaction: without it a failure part-way through (most likely the
         # Vehicle upsert hitting uniq_vehicle_plate_number) left the just-created
@@ -1335,13 +1601,23 @@ class AcceptRegistrationView(APIView):
             vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
             # Auto-generate unique system ID
-            padded_id = str(registration.pk).zfill(6)
-            if registration.registrant_type == 'student':
-                registration.system_student_id = f"SLC-STU-{padded_id}"
-            else:
-                registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            _assign_system_id(registration)
 
             registration.or_number = or_number
+            if unpaid:
+                # payment_status stays UNPAID on purpose. The pass is issued, but
+                # the fee is still owed — flipping it to paid here would erase the
+                # one fact Accounting needs to chase, and the reason would then be
+                # the only trace that money never changed hands.
+                registration.unpaid_accept_reason = unpaid_reason
+            elif not exempt and registration.payment_status != VehicleRegistration.PaymentStatus.PAID:
+                # An OR number reached us without going through the applicant's
+                # upload — a walk-in who brought the paper to the counter. Same
+                # proof, so it is recorded the same way; only the receipt image
+                # is missing.
+                registration.payment_status = VehicleRegistration.PaymentStatus.PAID
+                registration.amount_paid    = registration.pass_fee()
+                registration.paid_at        = timezone.now()
             registration.user = user        # direct FK to account
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
 
@@ -1370,33 +1646,38 @@ class AcceptRegistrationView(APIView):
             user.schedule    = registration.schedule or user.schedule
             user.save(update_fields=['campus_days', 'schedule'])
 
-            # Refresh user to get generated user_code
-            user.refresh_from_db()
+            # No refresh_from_db() here: User.save() assigns self.user_code
+            # before writing it, so the in-memory instance already carries it.
+            # Re-reading the row cost a round trip to fetch what we just set.
+            # A bare "OR: " told a later reader nothing about why a pass was
+            # issued without a receipt. This is the permanent record of that
+            # decision, so it says which of the two reasons applied.
+            if exempt:
+                or_note = 'OR: n/a (fee exempt)'
+            elif unpaid:
+                or_note = f'OR: none — approved unpaid: {unpaid_reason}'
+            else:
+                or_note = f'OR: {or_number}'
             audit(request, AuditLog.Action.RECORD_UPDATED,
                   f"Registration accepted | Plate: {registration.plate_number} | "
                   f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
-                  f"OR: {or_number} | By: {request.user.full_name}",
+                  f"{or_note} | By: {request.user.full_name}",
                   target_user=user)
         system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
 
-        # Send acceptance email with QR code and credentials. Sent after the
-        # transaction above has committed, so a dead SMTP server costs the
-        # applicant their email but never their account.
-        try:
-            send_acceptance_email(registration, temp_password, user.user_code)
-            email_status = 'sent'
-        except Exception:
-            # Log the failure but don't crash the acceptance
-            logger.exception(
-                "Failed to send acceptance email to %s (registration %s) — the "
-                "account was still created; the owner has no credentials until "
-                "this is resent.", registration.email, registration.pk,
-            )
-            email_status = 'failed'
+        # Acceptance mail with the QR code and credentials, handed to a background
+        # thread. The transaction above has already committed, so this was never
+        # able to affect the outcome — it only made the reviewer wait on a mail
+        # server. A failed send raises an admin notification instead of the
+        # response field the CDSO page used to warn from.
+        send_in_background(
+            send_acceptance_email, registration, temp_password, user.user_code,
+            on_failure=_acceptance_email_failed_notice(registration),
+        )
 
         return Response({
             "message": "Registration accepted and user created.",
-            "email_status": email_status,
+            "email_status": 'queued',
             "account": {
                 "user_code": user.user_code,
                 "system_id": system_id,
@@ -1412,6 +1693,13 @@ class AcceptRegistrationView(APIView):
                 "program_year": registration.program_year,
                 "employee_id": registration.employee_id,
                 "department": registration.department.name if registration.department else '',
+                # Both halves of the schedule, not just the days. The account
+                # modal formats `schedule` into "Mon · Wed · Fri" and only falls
+                # back to campus_days for a MIXED row — sending the days alone
+                # left every newly approved student showing "—" for Schedule,
+                # even though the same value renders fine in the table behind
+                # the modal (that comes off the serializer, which is __all__).
+                "schedule": registration.schedule,
                 "campus_days": registration.campus_days,
                 "drivers_license": registration.drivers_license,
                 "student_level": registration.student_level,
@@ -1475,11 +1763,23 @@ class CdsoDirectRegisterView(APIView):
         if registrant_type not in ('student', 'employee', 'fetcher'):
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
+        data = dict(request.data)
+
+        # Resolved before the receipt check, not after: Cleaning and Services
+        # staff pay nothing, so there is no Official Receipt to demand from them.
+        # Asking anyway meant CDSO had to invent a number to register a walk-in
+        # from that department.
+        department_type = _normalize_department(data)
+        exempt = VehicleRegistration.is_fee_exempt(registrant_type, department_type)
+
         or_number = request.data.get('or_number', '').strip()
-        if not or_number:
-            return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not or_number.isdigit() or len(or_number) > 7:
-            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
+        if exempt:
+            or_number = ''
+        else:
+            if not or_number:
+                return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not or_number.isdigit() or len(or_number) > 7:
+                return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1:1 guard — plate, email and student/employee ID must not already have an active
         # registration (also blocks an email already tied to an existing account)
@@ -1501,8 +1801,6 @@ class CdsoDirectRegisterView(APIView):
         license_error = _license_db_conflict(request.data.get('drivers_license', ''))
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
-
-        data = dict(request.data)
 
         # Walk-ins go through the same campus-day rules as the online form.
         # This path validated none of them: day names were stored unchecked, and
@@ -1540,6 +1838,16 @@ class CdsoDirectRegisterView(APIView):
                 status=VehicleRegistration.Status.ACCEPTED,
                 or_number=or_number,
                 reviewed_at=timezone.now(),
+                # A walk-in is registered at the counter with the receipt in
+                # hand — there is no unpaid window to model for this path. An
+                # exempt walk-in never had a receipt to bring, so it is recorded
+                # as exempt rather than as a payment that never happened.
+                payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
+                                else VehicleRegistration.PaymentStatus.PAID),
+                paid_at=(None if exempt else timezone.now()),
+                # Computed from the resolved department rather than read back off
+                # the saved row, which would cost a second SystemSettings query.
+                amount_paid=VehicleRegistration.fee_for(registrant_type, department_type),
             )
 
             # Build user profile fields
@@ -1567,28 +1875,21 @@ class CdsoDirectRegisterView(APIView):
 
             vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
-            padded_id = str(registration.pk).zfill(6)
-            if registrant_type == 'student':
-                registration.system_student_id = f"SLC-STU-{padded_id}"
-            else:
-                registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            _assign_system_id(registration)
             registration.user = user
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
             registration.save()
-
-            user.refresh_from_db()
+            # user.user_code is already populated in memory — see the note in
+            # AcceptRegistrationView.
         system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
 
-        try:
-            send_acceptance_email(registration, temp_password, user.user_code)
-            email_status = 'sent'
-        except Exception:
-            logger.exception(
-                "Failed to send acceptance email to %s (walk-in registration %s) "
-                "— the account was still created.",
-                registration.email, registration.pk,
-            )
-            email_status = 'failed'
+        # Same reasoning as AcceptRegistrationView: the account exists either way,
+        # so the send belongs off the request path with a notification on failure.
+        send_in_background(
+            send_acceptance_email, registration, temp_password, user.user_code,
+            on_failure=_acceptance_email_failed_notice(registration),
+        )
+        email_status = 'queued'
 
         return Response({
             "message": "Walk-in registered and account created.",
@@ -1780,24 +2081,7 @@ class PublicOpenRegistrationView(APIView):
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
 
         data = dict(request.data)
-
-        # The form sends department as a human-readable label ("Teaching",
-        # "Non-Teaching", "Services", "Cleaning"). Map it to department_type and
-        # clear the FK field so the serializer doesn't choke.
-        #
-        # Driven off DepartmentType rather than an if/elif chain: the chain
-        # silently fell through to department=None for any label it did not
-        # know, so a new department would have been accepted and stored blank.
-        dept_raw = data.pop('department', None)
-        if isinstance(dept_raw, list):
-            dept_raw = dept_raw[0] if dept_raw else None
-
-        dept_label_to_value = {
-            label: value for value, label in VehicleRegistration.DepartmentType.choices
-        }
-        data['department'] = None
-        if dept_raw in dept_label_to_value:
-            data['department_type'] = dept_label_to_value[dept_raw]
+        department_type = _normalize_department(data)
 
         # Strip fields that are not model columns (e.g. form-only UI fields)
         for extra in ('last_name', 'first_name', 'middle_name',
@@ -1899,51 +2183,111 @@ class PublicOpenRegistrationView(APIView):
 
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
+            # Cleaning and Services staff owe nothing, so they never pass through
+            # the Accounting Office and have no receipt to upload. Resolved from
+            # the request rather than read back off the saved row: it costs no
+            # query, and it rides along in the INSERT instead of a second UPDATE.
+            exempt = VehicleRegistration.is_fee_exempt(registrant_type, department_type)
             registration = serializer.save(
                 registrant_type=registrant_type,
                 source=VehicleRegistration.Source.PUBLIC,
+                payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
+                                else VehicleRegistration.PaymentStatus.UNPAID),
+                amount_paid=(Decimal('0.00') if exempt else None),
             )
-            # The submission itself stands whether or not the acknowledgement
-            # email gets out — but the failure is logged rather than swallowed.
-            # A bare `except: pass` here meant an expired SMTP credential looked
-            # exactly like a healthy system: applicants were told "submitted
-            # successfully", no email ever arrived, and nothing was recorded.
-            try:
-                send_pending_email(registration)
-                email_status = 'sent'
-            except Exception:
-                logger.exception(
-                    "Failed to send the pending-registration email to %s "
-                    "(registration %s) — the submission was still saved.",
-                    registration.email, registration.pk,
-                )
-                email_status = 'failed'
+            # Acknowledgement mail, handed to a background thread like the
+            # acceptance and receipt mails. The registration is already
+            # committed, so the send never affected the outcome — it only made
+            # the applicant sit on the submit button while Brevo (or Gmail's
+            # SMTP, on the campus half) completed a round trip, which is
+            # seconds on top of a request that otherwise takes tens of
+            # milliseconds. The applicant still has a second upload to wait on
+            # after this one, so it was the worst place in the flow to block.
+            #
+            # The failure is still not swallowed: a bare `except: pass` here
+            # once meant an expired SMTP credential looked exactly like a
+            # healthy system. It is logged, and it raises an admin notification
+            # — which matters more here than anywhere else, because this mail
+            # carries the link the applicant needs to upload their receipt.
+            send_in_background(
+                send_pending_email, registration,
+                on_failure=_pending_email_failed_notice(registration),
+            )
             return Response(
                 {"message": "Registration submitted successfully. Please wait for CDSO review.",
                  "id": registration.id,
-                 "email_status": email_status},
+                 "email_status": 'queued'},
                 status=status.HTTP_201_CREATED,
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UploadLicenseImageView(APIView):
-    """Public follow-up step to PublicOpenRegistrationView — attaches a photo of the
-    driver's license to a just-submitted registration. Kept as a separate multipart
-    request so the main JSON registration payload (with its nested campus_days /
-    fetcher_students structures) doesn't have to be reworked into form-data."""
+class UploadRegistrationDocumentsView(APIView):
+    """Public follow-up step to PublicOpenRegistrationView — attaches the applicant's
+    supporting documents (driver's license photo, assessment form) to a just-submitted
+    registration. Kept as a separate multipart request so the main JSON registration
+    payload (with its nested campus_days / fetcher_students structures) doesn't have
+    to be reworked into form-data.
+
+    A fetcher is not enrolled themselves, so the enrolment proofs for the students
+    they collect arrive here too — one file per listed student, as
+    `fetcher_assessment_<index>`, the index being the position in fetcher_students.
+
+    Every file is optional individually, but at least one has to be present —
+    a request carrying none is a client bug, not a no-op worth recording."""
     permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser, FormParser]
+
+    # Mirrors the model's FileExtensionValidator on assessment_form. Checked here
+    # too so the applicant gets a plain 400 instead of a 500 from full_clean.
+    ASSESSMENT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
+    FETCHER_ASSESSMENT_PREFIX = 'fetcher_assessment_'
+
+    def _fetcher_assessments(self, request):
+        """The per-student files, as ({student_index: uploaded_file}, error).
+
+        A field name that is not `prefix + digits` is reported rather than
+        silently skipped: a quietly dropped attachment reads to the applicant
+        as one that was accepted.
+        """
+        files = {}
+        for key in request.FILES:
+            if not key.startswith(self.FETCHER_ASSESSMENT_PREFIX):
+                continue
+            suffix = key[len(self.FETCHER_ASSESSMENT_PREFIX):]
+            if not suffix.isdigit():
+                return None, "Malformed attachment field '%s'." % key
+            files[int(suffix)] = request.FILES[key]
+        return files, None
+
+    def _bad_extension(self, upload):
+        return upload.name.lower().rsplit('.', 1)[-1] not in self.ASSESSMENT_EXTENSIONS
 
     def post(self, request):
         registration_id = request.data.get('registration_id')
         email = (request.data.get('email') or '').strip()
         image = request.FILES.get('image')
+        assessment = request.FILES.get('assessment_form')
+
+        fetcher_files, field_error = self._fetcher_assessments(request)
+        if field_error:
+            return Response({"error": field_error}, status=status.HTTP_400_BAD_REQUEST)
 
         if not registration_id or not email:
             return Response({"error": "registration_id and email are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not image:
-            return Response({"error": "No image uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        if not image and not assessment and not fetcher_files:
+            return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        if assessment and self._bad_extension(assessment):
+            return Response(
+                {"error": "The assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for upload in fetcher_files.values():
+            if self._bad_extension(upload):
+                return Response(
+                    {"error": "Each student's assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         try:
             registration = VehicleRegistration.objects.get(
@@ -1954,9 +2298,168 @@ class UploadLicenseImageView(APIView):
         except VehicleRegistration.DoesNotExist:
             return Response({"error": "Registration not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        registration.drivers_license_image = image
-        registration.save(update_fields=['drivers_license_image'])
-        return Response({"message": "License image uploaded."}, status=status.HTTP_200_OK)
+        # An index with no student behind it would file a document the review
+        # screen has no row to show it against.
+        listed = len(registration.fetcher_students or [])
+        if any(not 0 <= i < listed for i in fetcher_files):
+            return Response(
+                {"error": "An assessment form was sent for a student who is not on this registration."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        updated = []
+        if image:
+            registration.drivers_license_image = image
+            updated.append('drivers_license_image')
+        if assessment:
+            registration.assessment_form = assessment
+            updated.append('assessment_form')
+        if updated:
+            registration.save(update_fields=updated)
+
+        for index, upload in sorted(fetcher_files.items()):
+            # update_or_create, not create: a retried upload replaces the file
+            # on record instead of tripping the uniqueness constraint that keeps
+            # the reviewer looking at exactly one document per student.
+            FetcherStudentAssessment.objects.update_or_create(
+                registration=registration, student_index=index,
+                defaults={'assessment_form': upload},
+            )
+            updated.append('%s%d' % (self.FETCHER_ASSESSMENT_PREFIX, index))
+
+        return Response({"message": "Documents uploaded.", "uploaded": updated}, status=status.HTTP_200_OK)
+
+
+# The old name, kept so the previously built frontend bundle's
+# /register/license-image/ calls keep resolving to the same handler.
+UploadLicenseImageView = UploadRegistrationDocumentsView
+
+
+# ──────────────────────────────────────────────
+# Public receipt upload (applicant-driven proof of payment)
+# ──────────────────────────────────────────────
+
+def _payment_registration(token):
+    """Resolve a receipt-upload token to a still-reviewable registration.
+
+    Only PENDING rows are reachable: once CDSO has accepted or rejected the
+    application the receipt on file is part of the decision, and letting the
+    link keep overwriting it would rewrite the evidence after the fact.
+    """
+    if not token:
+        return None
+    try:
+        return VehicleRegistration.objects.get(
+            payment_token=token,
+            status=VehicleRegistration.Status.PENDING,
+        )
+    except (VehicleRegistration.DoesNotExist, ValueError, ValidationError):
+        # ValueError/ValidationError: a malformed token is a bad link, not a 500.
+        return None
+
+
+class RegistrationPaymentView(APIView):
+    """The applicant's own proof-of-payment step.
+
+    They pay at the Accounting Office, then follow the link in their pending
+    email to upload the Official Receipt themselves — CDSO verifies the image
+    against the number at review time instead of re-keying it at a counter.
+
+    Authorised by the unguessable payment_token alone. The (id, email) pair the
+    document upload uses is not a secret any more: school addresses are now
+    <8-digit ID>@slc-sflu.edu.ph and registration ids are sequential.
+    """
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    RECEIPT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
+    RECEIPT_MAX_BYTES  = 5 * 1024 * 1024
+
+    def get(self, request):
+        """Everything the upload page needs to render, and nothing more.
+
+        Deliberately not the full registration: this endpoint is reachable by
+        anyone holding the link, so it returns what the applicant already knows
+        about their own application, not the record CDSO sees.
+        """
+        registration = _payment_registration(request.query_params.get('token'))
+        if registration is None:
+            return Response(
+                {"error": "This payment link is no longer valid. It may have expired, "
+                          "or your application may already have been reviewed."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({
+            "full_name":       registration.full_name,
+            "plate_number":    registration.plate_number or registration.conduction_number,
+            "registrant_type": registration.registrant_type,
+            "amount_due":      str(registration.pass_fee()),
+            "payment_status":  registration.payment_status,
+            "or_number":       registration.or_number,
+            "has_receipt":     bool(registration.or_receipt_image),
+        })
+
+    def post(self, request):
+        registration = _payment_registration(request.data.get('token'))
+        if registration is None:
+            return Response(
+                {"error": "This payment link is no longer valid. It may have expired, "
+                          "or your application may already have been reviewed."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Exempt applicants have nothing to pay and so nothing to prove. Told
+        # plainly rather than letting them hunt for a receipt that never existed.
+        if registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT:
+            return Response(
+                {"error": "No payment is required for this application — your department is "
+                          "exempt from the Vehicle Pass fee. Just proceed to the CDSO Office."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        or_number = (request.data.get('or_number') or '').strip()
+        receipt   = request.FILES.get('receipt')
+
+        # Same shape the accept flow has always enforced, applied at the point
+        # the number is actually typed instead of days later at the counter.
+        if not or_number:
+            return Response({"error": "Official Receipt (OR) number is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not or_number.isdigit() or len(or_number) > 7:
+            return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not receipt:
+            return Response({"error": "A photo or scan of the Official Receipt is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if receipt.name.lower().rsplit('.', 1)[-1] not in self.RECEIPT_EXTENSIONS:
+            return Response({"error": "The receipt must be a JPG, PNG, WEBP, HEIC or PDF file."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if receipt.size > self.RECEIPT_MAX_BYTES:
+            return Response({"error": "Please keep the receipt under 5MB."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        registration.or_number        = or_number
+        registration.or_receipt_image = receipt
+        # Snapshot of what was owed at the moment of payment — see the field.
+        registration.amount_paid      = registration.pass_fee()
+        registration.paid_at          = timezone.now()
+        registration.payment_status   = VehicleRegistration.PaymentStatus.PAID
+        registration.save(update_fields=[
+            'or_number', 'or_receipt_image', 'amount_paid', 'paid_at', 'payment_status',
+        ])
+
+        # The receipt is what completes the registration form, so this is the
+        # mail that carries it: the PDF the CDSO files, with the uploaded
+        # documents printed into it. Backgrounded like the approval mail — the
+        # applicant is waiting on an upload, not on a mail server, and a dead
+        # SMTP host must not fail a payment that is already recorded.
+        send_in_background(send_receipt_received_email, registration)
+
+        return Response(
+            {"message": "Receipt received. Your application is now queued for CDSO review.",
+             "payment_status": registration.payment_status},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ──────────────────────────────────────────────
@@ -2452,8 +2955,21 @@ class ParkingNoticeView(APIView):
         return [permissions.IsAuthenticated()]
 
     def get(self, request):
-        """All authenticated users see active notices."""
+        """Active notices, limited to the ones broadcast since the reader joined.
+
+        A notice is a broadcast, not a bulletin board: it went out by email to
+        the owners who existed when it was sent. Someone who registers later was
+        never a recipient, so replaying the backlog in their portal would show
+        them announcements about weeks they were not on campus for. Only what is
+        posted from their account's creation onwards is theirs to see.
+
+        The CDSO (admin) is exempt — System Settings is where notices are
+        managed and removed, so it has to list every active one regardless of
+        which admin account is looking.
+        """
         notices = ParkingNotice.objects.filter(is_active=True)
+        if request.user.role != 'admin':
+            notices = notices.filter(created_at__gte=request.user.date_joined)
         return Response(ParkingNoticeSerializer(notices, many=True).data)
 
     def post(self, request):
@@ -2552,6 +3068,45 @@ def _serialize_period(p):
     }
 
 
+def _clean_period_payload(data, *, partial=False, current=None):
+    """Validate a registration-period payload for create (all fields) or edit.
+
+    `partial` keeps any field the caller left out at its `current` value, so a
+    PATCH that only moves the end date does not have to resend the label.
+    Returns (cleaned, errors) — cleaned is only complete when errors is empty.
+    """
+    from datetime import datetime as _dt
+
+    def _as_date(raw):
+        return _dt.strptime(str(raw), '%Y-%m-%d').date()
+
+    errors = {}
+    cleaned = {}
+
+    if 'label' in data or not partial:
+        label = (data.get('label') or '').strip()
+        if not label:
+            errors['label'] = 'Label is required.'
+        cleaned['label'] = label
+    else:
+        cleaned['label'] = current.label
+
+    for field in ('start_date', 'end_date'):
+        if field in data or not partial:
+            try:
+                cleaned[field] = _as_date(data.get(field))
+            except (ValueError, TypeError):
+                errors[field] = 'Required. Use YYYY-MM-DD.'
+        else:
+            cleaned[field] = getattr(current, field)
+
+    if errors:
+        return None, errors
+    if cleaned['end_date'] < cleaned['start_date']:
+        return None, {'end_date': 'End date must be on or after start date.'}
+    return cleaned, {}
+
+
 class RegistrationPeriodListCreateView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
@@ -2562,34 +3117,42 @@ class RegistrationPeriodListCreateView(APIView):
         return Response([_serialize_period(p) for p in RegistrationPeriod.objects.all()])
 
     def post(self, request):
-        from datetime import datetime as _dt
-        label      = (request.data.get('label') or '').strip()
-        start_raw  = request.data.get('start_date')
-        end_raw    = request.data.get('end_date')
-        errors = {}
-        if not label:
-            errors['label'] = 'Label is required.'
-
-        start = end = None
-        try:
-            start = _dt.strptime(str(start_raw), '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            errors['start_date'] = 'Required. Use YYYY-MM-DD.'
-        try:
-            end = _dt.strptime(str(end_raw), '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            errors['end_date'] = 'Required. Use YYYY-MM-DD.'
-
+        cleaned, errors = _clean_period_payload(request.data)
         if errors:
             return Response(errors, status=400)
-        if end < start:
-            return Response({'end_date': 'End date must be on or after start date.'}, status=400)
+        label, start, end = cleaned['label'], cleaned['start_date'], cleaned['end_date']
 
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Registration period added | {period.label} ({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
         return Response(_serialize_period(period), status=201)
+
+
+class RegistrationPeriodDetailView(APIView):
+    """Edit a registration period in place — including the active one.
+
+    A window that is already running is the one most likely to need a change:
+    the deadline gets extended, or the label was picked wrong. Editing it beats
+    archiving and re-creating, which would leave a duplicate row behind.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def patch(self, request, pk):
+        period = get_object_or_404(RegistrationPeriod, pk=pk)
+        before = f"{period.label} ({period.start_date} to {period.end_date})"
+        cleaned, errors = _clean_period_payload(request.data, partial=True, current=period)
+        if errors:
+            return Response(errors, status=400)
+
+        period.label      = cleaned['label']
+        period.start_date = cleaned['start_date']
+        period.end_date   = cleaned['end_date']
+        period.save(update_fields=['label', 'start_date', 'end_date'])
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Registration period edited | {before} -> {period.label} "
+              f"({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
+        return Response(_serialize_period(period))
 
 
 class RegistrationPeriodActivateView(APIView):
@@ -2807,6 +3370,173 @@ class RegistrationReportPdfView(APIView):
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
             col_widths_mm=[10, 30, 30, 60, 40, 40, 27],
+        )
+
+
+OTHER_KEY = 'other'
+
+
+def _registration_counts(qs):
+    """Cross-tab of registrant type x status and type x payment, with totals.
+
+    Payment is a second, independent axis rather than more `Status` values (see
+    PaymentStatus on the model), so it is counted into its own grid over the
+    same rows: both grids total to the same number.
+
+    One GROUP BY for the whole grid — the page shows every status at once but
+    the list itself only ever loads one, so the numbers cannot be counted off
+    the rows on screen.
+
+    Every row lands in exactly one cell, so `total`, `by_type` and `by_status`
+    always reconcile with each other and with the table. `choices` is not a
+    database constraint, so a legacy or hand-edited row can carry a value that
+    is no longer in either enum; those fall into an explicit "Other" bucket that
+    is reported only when it has rows. Dropping them instead would make the
+    report's total disagree with the rows printed above it, which reads as a
+    broken report rather than as odd data.
+    """
+    type_labels    = dict(VehicleRegistration.RegistrantType.choices)
+    status_labels  = dict(VehicleRegistration.Status.choices)
+    payment_labels = dict(VehicleRegistration.PaymentStatus.choices)
+    types     = list(VehicleRegistration.RegistrantType.values)
+    statuses  = list(VehicleRegistration.Status.values)
+    payments  = list(VehicleRegistration.PaymentStatus.values)
+
+    # Every cell exists up front, including the Other row and column, so the
+    # accumulate loop never has to branch on a missing key.
+    known_types = set(types)
+    grid = {t: {st: 0 for st in statuses + [OTHER_KEY]} for t in types + [OTHER_KEY]}
+    pay_grid = {t: {pm: 0 for pm in payments + [OTHER_KEY]} for t in types + [OTHER_KEY]}
+    # Status x payment as well, so the page can scope the payment tiles to the
+    # status the table is actually showing. Free: the GROUP BY below already
+    # carries all three columns, so this is a third accumulation over rows we
+    # have in hand, not another query.
+    status_pay_grid = {st: {pm: 0 for pm in payments + [OTHER_KEY]}
+                       for st in statuses + [OTHER_KEY]}
+
+    seen_other_type = seen_other_status = seen_other_payment = False
+    for row in (qs.values('registrant_type', 'status', 'payment_status')
+                  .annotate(n=Count('id'))):
+        t  = row['registrant_type'] if row['registrant_type'] in known_types else OTHER_KEY
+        st = row['status'] if row['status'] in status_labels else OTHER_KEY
+        pm = row['payment_status'] if row['payment_status'] in payment_labels else OTHER_KEY
+        seen_other_type    = seen_other_type    or t  == OTHER_KEY
+        seen_other_status  = seen_other_status  or st == OTHER_KEY
+        seen_other_payment = seen_other_payment or pm == OTHER_KEY
+        grid[t][st] += row['n']
+        pay_grid[t][pm] += row['n']
+        status_pay_grid[st][pm] += row['n']
+
+    if seen_other_type:
+        types.append(OTHER_KEY)
+        type_labels[OTHER_KEY] = 'Other'
+    if seen_other_status:
+        statuses.append(OTHER_KEY)
+        status_labels[OTHER_KEY] = 'Other'
+    if seen_other_payment:
+        payments.append(OTHER_KEY)
+        payment_labels[OTHER_KEY] = 'Other'
+
+    by_type    = {t: sum(grid[t][st] for st in statuses) for t in types}
+    by_status  = {st: sum(grid[t][st] for t in types) for st in statuses}
+    by_payment = {pm: sum(pay_grid[t][pm] for t in types) for pm in payments}
+    return {
+        'types':          types,
+        'statuses':       statuses,
+        'payments':       payments,
+        'type_labels':    type_labels,
+        'status_labels':  status_labels,
+        'payment_labels': payment_labels,
+        'grid':           grid,
+        'pay_grid':       pay_grid,
+        'status_pay_grid': status_pay_grid,
+        'by_type':        by_type,
+        'by_status':      by_status,
+        'by_payment':     by_payment,
+        'total':          sum(by_type.values()),
+    }
+
+
+class RegistrationSummaryView(APIView):
+    """Headline counts for the registration management page — admin/CDSO."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        counts = _registration_counts(VehicleRegistration.objects.all())
+        type_labels    = counts['type_labels']
+        status_labels  = counts['status_labels']
+        payment_labels = counts['payment_labels']
+        return Response({
+            'total': counts['total'],
+            # Each status carries its own payment and type split. The table only
+            # ever loads one status, so the payment and type tiles scope their
+            # counts to it — a tile reading 120 above a table showing 8 rows is
+            # read as a broken page, not as two different questions.
+            'by_status': [
+                {'key': st, 'label': status_labels.get(st, st), 'count': counts['by_status'][st],
+                 'by_payment': {pm: counts['status_pay_grid'][st][pm]
+                                for pm in counts['payments']},
+                 'by_type': {t: counts['grid'][t][st] for t in counts['types']}}
+                for st in counts['statuses']
+            ],
+            'by_payment': [
+                {'key': pm, 'label': payment_labels.get(pm, pm), 'count': counts['by_payment'][pm]}
+                for pm in counts['payments']
+            ],
+            'by_type': [
+                {'key': t, 'label': type_labels.get(t, t), 'count': counts['by_type'][t],
+                 'by_status': counts['grid'][t], 'by_payment': counts['pay_grid'][t]}
+                for t in counts['types']
+            ],
+        })
+
+
+class RegistrationSummaryReportPdfView(APIView):
+    """Branded PDF of how many registered, broken down by registrant type and status."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        from report_utils import branded_pdf_response, report_filename
+        qs, desc = _filter_registrations_report(request)
+        counts = _registration_counts(qs)
+        type_labels = counts['type_labels']
+
+        def section(axis_keys, axis_labels, cells, totals):
+            """One type-by-axis table: a row per registrant type, then the
+            all-types row. The type column carries the label, so the rest of
+            the landscape width is shared evenly by the count columns."""
+            headers = (['Registrant Type']
+                       + [axis_labels.get(k, k) for k in axis_keys] + ['Total'])
+            rows = [[type_labels.get(t, t)]
+                    + [cells[t][k] for k in axis_keys]
+                    + [counts['by_type'][t]]
+                    for t in counts['types']]
+            rows.append(['ALL TYPES']
+                        + [totals[k] for k in axis_keys] + [counts['total']])
+            n = len(axis_keys)
+            return headers, rows, [60] + [(267 - 60 - 30) / n if n else 0] * n + [30]
+
+        status_headers, status_rows, status_widths = section(
+            counts['statuses'], counts['status_labels'], counts['grid'], counts['by_status'])
+        pay_headers, pay_rows, pay_widths = section(
+            counts['payments'], counts['payment_labels'], counts['pay_grid'], counts['by_payment'])
+
+        subtitle = (('; '.join(desc) if desc else 'All records')
+                    + f" · {counts['total']} registrations")
+        return branded_pdf_response(
+            filename=report_filename('Registration Summary Report', 'pdf'),
+            report_title='Vehicle Registration Summary Report',
+            subtitle=subtitle,
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=status_headers,
+            rows=status_rows,
+            col_widths_mm=status_widths,
+            extra_tables=[{
+                'title': 'Vehicle Pass Fee — by registrant type',
+                'headers': pay_headers,
+                'rows': pay_rows,
+                'col_widths_mm': pay_widths,
+            }],
         )
 
 

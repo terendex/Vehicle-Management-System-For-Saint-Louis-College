@@ -33,34 +33,76 @@ def report_filename(report_name, ext):
     return f"{report_name} - {stamp}.{ext}"
 
 
-# ── Letterhead fonts ────────────────────────────────────────────────────────
-# "Saint Louis College" → Old English Text MT (blackletter); the tagline → a
-# formal script. The PDF registers the Windows TTF and *embeds* the glyphs so
-# the file renders correctly on any viewer. If the TTF is missing, the PDF
-# falls back to Times. (Excel has no letterhead — it is a plain data table.)
+# ── Letterhead fonts ────────────────────────────────────────────────
+# Each letterhead line has its own face, matching the official letterhead:
+#   "Saint Louis College"               → Old English Text MT (blackletter)
+#   "of San Fernando, La Union"         → Century Gothic
+#   "The Beacon of Wisdom in the North" → Bookman Old Style (italic)
+# The PDF registers the TTF and *embeds* the glyphs so the file renders
+# correctly on any viewer. Each line falls back to a built-in Times face when
+# its TTF is missing — a Linux host has none of these, and a letterhead in the
+# wrong face still beats a PDF that fails to build. (Excel has no letterhead —
+# it is a plain data table.)
 _WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
-LH_INSTITUTION_TTF = 'OLDENGL.TTF'    # Old English Text MT
+
+# (reportlab name, TTF filename, fallback built-in) per letterhead line.
+_LETTERHEAD_FACES = (
+    ('SLC-OldEnglish',   'OLDENGL.TTF', 'Times-Bold'),      # institution
+    ('SLC-Gothic',       'GOTHIC.TTF',  'Times-Roman'),     # location
+    ('SLC-BookmanItal',  'BOOKOSI.TTF', 'Times-Italic'),    # tagline
+    ('SLC-Bookman',      'BOOKOS.TTF',  'Times-Roman'),     # accreditation
+)
 
 _fonts_ready = False
-_PDF_INSTITUTION_FONT = 'Times-Bold'     # fallback until registered
+# Fallbacks until _register_letterhead_fonts() runs.
+_PDF_INSTITUTION_FONT = 'Times-Bold'
+_PDF_LOCATION_FONT    = 'Times-Roman'
+_PDF_TAGLINE_FONT     = 'Times-Italic'
+_PDF_ACCRED_FONT      = 'Times-Roman'
+
+
+def _font_path(filename):
+    """Where a letterhead TTF lives: bundled with the app, else the OS folder.
+
+    report_assets/ is checked first so a deployment that cannot rely on the
+    Windows font folder can ship the faces alongside the seal.
+    """
+    bundled = os.path.join(settings.BASE_DIR, 'report_assets', filename)
+    if os.path.exists(bundled):
+        return bundled
+    return os.path.join(_WIN_FONTS, filename)
 
 
 def _register_letterhead_fonts():
-    """Register the Old English TTF with reportlab once (embedded into each PDF).
-    The tagline stays on the built-in Times-Italic."""
-    global _fonts_ready, _PDF_INSTITUTION_FONT
+    """Register the letterhead TTFs with reportlab once (embedded into each PDF).
+
+    Every face is registered independently: one missing TTF costs that single
+    line its font, not the whole letterhead.
+    """
+    global _fonts_ready
+    global _PDF_INSTITUTION_FONT, _PDF_LOCATION_FONT, _PDF_TAGLINE_FONT, _PDF_ACCRED_FONT
     if _fonts_ready:
         return
     _fonts_ready = True
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    path = os.path.join(_WIN_FONTS, LH_INSTITUTION_TTF)
-    if os.path.exists(path):
+
+    resolved = {}
+    for name, filename, fallback in _LETTERHEAD_FACES:
+        resolved[name] = fallback
+        path = _font_path(filename)
+        if not os.path.exists(path):
+            continue
         try:
-            pdfmetrics.registerFont(TTFont('SLC-OldEnglish', path))
-            _PDF_INSTITUTION_FONT = 'SLC-OldEnglish'
+            pdfmetrics.registerFont(TTFont(name, path))
+            resolved[name] = name
         except Exception:
             pass
+
+    _PDF_INSTITUTION_FONT = resolved['SLC-OldEnglish']
+    _PDF_LOCATION_FONT    = resolved['SLC-Gothic']
+    _PDF_TAGLINE_FONT     = resolved['SLC-BookmanItal']
+    _PDF_ACCRED_FONT      = resolved['SLC-Bookman']
 
 
 def branded_excel_response(*, filename, sheet_title, report_title, subtitle, headers, rows, col_widths):
@@ -141,14 +183,21 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
     canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
     canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
     canvas.setFillColor(colors.HexColor('#333333'))
-    canvas.setFont('Times-Roman', 10.5)
+    canvas.setFont(_PDF_LOCATION_FONT, 9.5)
     canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
     canvas.setFillColor(colors.HexColor('#555555'))
-    canvas.setFont('Times-Italic', 11)
+    canvas.setFont(_PDF_TAGLINE_FONT, 10)
     canvas.drawCentredString(cx, h - 24 * mm, LH_TAGLINE)
-    # Accreditation line (centred)
-    canvas.setFont('Times-Roman', 7.5)
+    # Accreditation line (centred). Bookman is a wide face and this line is the
+    # longest on the page, so it is shrunk until it fits between the margins
+    # rather than running off the edge of a portrait page.
     canvas.setFillColor(colors.HexColor('#555555'))
+    accred_size = 7.5
+    max_accred_w = w - 2 * left
+    while (accred_size > 5
+           and canvas.stringWidth(LH_ACCRED, _PDF_ACCRED_FONT, accred_size) > max_accred_w):
+        accred_size -= 0.25
+    canvas.setFont(_PDF_ACCRED_FONT, accred_size)
     canvas.drawCentredString(cx, h - 30 * mm, LH_ACCRED)
     # Rule
     canvas.setStrokeColor(navy)
@@ -168,8 +217,16 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
     canvas.restoreState()
 
 
-def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows, col_widths_mm):
-    """Build a landscape A4 PDF with the SLC letterhead, brand table and footer."""
+def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows,
+                         col_widths_mm, extra_tables=()):
+    """Build a landscape A4 PDF with the SLC letterhead, brand table and footer.
+
+    `extra_tables` appends further titled tables below the first, each a dict of
+    {title, headers, rows, col_widths_mm}. A report that counts the same rows
+    along two different axes needs them kept apart: side by side in one row, the
+    two sets of columns would each sum to the total, inviting a reader to add
+    them all together and get twice the real figure.
+    """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -205,27 +262,38 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     sub_style = ParagraphStyle('sub', fontName='Helvetica', fontSize=9,
                                textColor=colors.HexColor('#666666'))
 
-    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]
-    data = [[Paragraph(esc(h), head_style) for h in headers]]
-    for row in rows:
-        data.append([Paragraph(esc(c), cell_style) for c in row])
-    if len(data) == 1:
-        data.append([Paragraph('No records match the selected filters.', cell_style)]
-                    + [Paragraph('', cell_style) for _ in range(len(headers) - 1)])
+    section_style = ParagraphStyle('section', fontName='Helvetica-Bold', fontSize=10,
+                                   textColor=navy, spaceBefore=0, spaceAfter=0)
 
-    table = Table(data, colWidths=[w * mm for w in col_widths_mm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), brand),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 1), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
-        ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
-    ]))
-    story.append(table)
+    def build_table(t_headers, t_rows, t_widths):
+        data = [[Paragraph(esc(h), head_style) for h in t_headers]]
+        for row in t_rows:
+            data.append([Paragraph(esc(c), cell_style) for c in row])
+        if len(data) == 1:
+            data.append([Paragraph('No records match the selected filters.', cell_style)]
+                        + [Paragraph('', cell_style) for _ in range(len(t_headers) - 1)])
+
+        table = Table(data, colWidths=[w * mm for w in t_widths], repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), brand),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
+            ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
+        ]))
+        return table
+
+    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]
+    story.append(build_table(headers, rows, col_widths_mm))
+    for extra in extra_tables:
+        story.append(Spacer(1, 7 * mm))
+        story.append(Paragraph(esc(extra['title']), section_style))
+        story.append(Spacer(1, 3 * mm))
+        story.append(build_table(extra['headers'], extra['rows'], extra['col_widths_mm']))
     doc.build(story, onFirstPage=draw_frame, onLaterPages=draw_frame)
     return resp

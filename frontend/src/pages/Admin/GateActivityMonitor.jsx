@@ -5,7 +5,7 @@ import {
   UserCheck, ScanLine, LogOut,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { toast } from 'sonner'
+import { toast } from '../../components/Feedback/notify'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getGuardMonitor } from '../../api/scanning'
 import { useGates } from '../../hooks/useGates'

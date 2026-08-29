@@ -880,3 +880,163 @@
 .ev-events-list--archived {
   opacity: 0.9;
 }
+
+/* ── Responsive ──────────────────────────────────────────────────
+   The zone capacity table is the pressure point: 1fr + 330px of fixed
+   track cannot survive a phone, so below the tablet step it stops
+   being a table and becomes a stack of self-describing rows. */
+
+/* --- Tablet --- */
+@media (max-width: 900px) {
+  /* Add Event drops under the title and takes the full row. */
+  .ev-header > .ev-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ev-section-head--row > .ev-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* --- Small tablet --- */
+@media (max-width: 768px) {
+  .ev-page {
+    gap: 1.25rem;
+  }
+
+  .ev-mode-card {
+    padding: 1rem 1.1rem;
+  }
+
+  .ev-capacity-block {
+    padding: 1rem;
+  }
+
+  /* The hint is a full sentence; trailing the heading it wrapped into
+     the toggle column. Its own line keeps both readable. */
+  .ev-capacity-head {
+    flex-wrap: wrap;
+  }
+
+  .ev-capacity-hint {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  /* Default and Override columns tighten before the row breaks apart. */
+  .ev-zone-header,
+  .ev-zone-row {
+    grid-template-columns: 1fr 90px 120px 72px;
+    gap: 8px;
+  }
+
+  .ev-capacity-input {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 640px) {
+  .ev-title {
+    font-size: 1.2rem;
+  }
+
+  /* Column headers only label a grid. Once the row stacks they label
+     nothing, so they come out — every cell already says what it is:
+     the zone names itself, the default reads "N spaces", and the input
+     carries a "No override" placeholder. */
+  .ev-zone-header {
+    display: none;
+  }
+
+  .ev-zone-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  /* Default capacity sits with the zone name as its supporting line
+     rather than floating as an orphaned number. */
+  .ev-zone-capacity-cell .ev-zone-base {
+    font-size: 0.8rem;
+    color: #6B8CA6;
+  }
+
+  .ev-zone-override-cell {
+    width: 100%;
+  }
+
+  .ev-save-capacity-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* The toggle stays on the right, as it does on a wide screen. Letting the
+     card wrap put OFF under the text on the one card whose description ran
+     long, so two identical controls sat in different places. The toggle
+     never shrinks; the description takes the extra line instead. */
+  .ev-mode-card {
+    gap: 0.75rem;
+  }
+
+  .ev-card-head {
+    gap: 12px;
+  }
+
+  /* Card actions become their own full-width row instead of squeezing
+     three buttons against the event name. */
+  .ev-card-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .ev-card-actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* Dialogs fill the phone; a 460px card centred on a 360px screen was
+     just a full-width card with the corners cut off. */
+  .ev-overlay {
+    padding: 10px;
+  }
+
+  .ev-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    padding: 20px 18px;
+  }
+
+  .ev-modal--sm {
+    max-width: 100%;
+    padding: 24px 18px 20px;
+  }
+
+  .ev-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .ev-modal-actions > .ev-btn {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+}
+
+/* --- Very small mobile --- */
+@media (max-width: 400px) {
+  .ev-title {
+    font-size: 1.1rem;
+  }
+
+  .ev-mode-card {
+    padding: 0.9rem 1rem;
+  }
+
+  .ev-modal-actions > .ev-btn {
+    flex: 1 1 100%;
+  }
+}

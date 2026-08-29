@@ -1,6 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { toast } from '../components/Feedback/notify'
 import { WS_BASE } from '../api/wsBase'
+
+// A flapping camera or scanner re-raises the same message on every retry.
+// These dialogs stay dismissed for this long afterwards so a dead socket
+// cannot bury the screen a guard is working on.
+const STREAM_THROTTLE = 30000
 
 const TRACK_COLORS = {
   license_plate: '#14A374',
@@ -65,10 +70,13 @@ export function CameraProvider({ children }) {
   // Mutable refs — never cause re-renders, survive page navigation
   const wsMap     = useRef({})
   const canvasMap = useRef({})
-  const frameMap  = useRef({})
+  const frameMap  = useRef({})   // id → the newest *decoded* frame, safe to draw
+  const decodeMap = useRef({})   // id → bool: a decode is in flight for this camera
+  const queuedMap = useRef({})   // id → newest base64 arrived while decoding
   const trackMap  = useRef({})
   const smoothMap = useRef({})
   const rafMap    = useRef({})
+  const loopErrMap = useRef({}) // id → already logged a render-loop error
   const paneCountMap = useRef({}) // id → pane count, mirrors paneCounts inside the RAF loop
   const detectMap = useRef({}) // id → bool: whether this connection runs ML detection
   const gateMap   = useRef({}) // id → gate_id the camera covers (used to tag scan logs)
@@ -79,8 +87,60 @@ export function CameraProvider({ children }) {
   // Using a Map instead of a Set so we can look up existing camId by URL
   const urlToIdMap = useRef({})
 
+  // Mirrors `cameras` so syncCameras can read the current roster without being
+  // rebuilt every time a frame flips a connection flag.
+  const camerasRef = useRef([])
+
   // Ref that always holds the latest _connect function (needed for self-referential reconnect)
   const connectRef = useRef(null)
+
+  // ── Frame intake ─────────────────────────────────────────────────────────
+  // Decode one frame at a time per camera, and only publish it once it has
+  // actually decoded.
+  //
+  // Two bugs lived in the obvious version (`frameMap[id] = new Image()` right
+  // after setting .src). The render loop only paints an image once
+  // `complete && naturalWidth > 0`, so assigning an *undecoded* image makes the
+  // newest frame unpaintable — and if frames keep arriving faster than they
+  // decode, the slot is perpetually undecoded and the canvas sticks on the last
+  // good picture forever. Background tabs are exactly that case: browsers
+  // deprioritise image decoding for hidden documents while the socket keeps
+  // delivering, so switching away and back froze the feed.
+  //
+  // Holding at most one decode in flight also stops a hidden tab from queueing
+  // thousands of Image decodes it will never show. A frame that arrives mid
+  // decode replaces the queued one rather than joining a backlog: for a live
+  // feed only the newest picture is worth anything.
+  const acceptFrame = useCallback((camId, b64) => {
+    // `start` recurses instead of acceptFrame calling itself: a useCallback
+    // const cannot reference its own binding from inside its initialiser.
+    const start = (payload) => {
+      decodeMap.current[camId] = true
+
+      const img = new Image()
+      const done = () => {
+        decodeMap.current[camId] = false
+        const next = queuedMap.current[camId]
+        if (next) {
+          queuedMap.current[camId] = null
+          start(next)
+        }
+      }
+      img.onload = () => {
+        // Publish only now: a stale but drawable frame beats a fresh blank one.
+        frameMap.current[camId] = img
+        done()
+      }
+      img.onerror = done
+      img.src = `data:image/jpeg;base64,${payload}`
+    }
+
+    if (decodeMap.current[camId]) {
+      queuedMap.current[camId] = b64        // newest wins; older one is dropped
+      return
+    }
+    start(b64)
+  }, [])
 
   // ── Canvas registration (pages call this on mount/unmount) ───────────────
   // A camera may need more than one canvas. A dual-lens unit sends both of its
@@ -109,11 +169,23 @@ export function CameraProvider({ children }) {
     if (!trackMap.current[camId]) trackMap.current[camId] = new Map()
     if (!smoothMap.current[camId]) smoothMap.current[camId] = new Map()
 
+    // Every path out of this function must reschedule, so the body is wrapped
+    // and the next frame is queued in `finally`.
+    //
+    // Before, the only `requestAnimationFrame(draw)` for the normal path was
+    // the last statement, so *any* throw above it killed the chain for good —
+    // and `startRenderLoop` refuses to restart a loop whose rafMap entry is
+    // still set, so nothing ever revived it. A page reload was the only cure.
+    // That is precisely the reported failure: switch browser tabs, come back,
+    // frozen forever. Chrome discards a backgrounded tab's canvas backing
+    // store under memory pressure, `getContext('2d')` then returns null, and
+    // the first `ctx.clearRect` throws.
     const draw = () => {
+      try {
       const panes = canvasMap.current[camId]
       // No canvas registered (page navigated away) — keep looping, draw when back
       if (!panes || Object.keys(panes).length === 0) {
-        rafMap.current[camId] = requestAnimationFrame(draw); return
+        return
       }
 
       const img   = frameMap.current[camId]
@@ -160,7 +232,11 @@ export function CameraProvider({ children }) {
         if (canvas.width !== fw) canvas.width  = fw
         if (canvas.height !== ch) canvas.height = ch
 
+        // null when the browser has thrown the backing store away, which it
+        // does to hidden tabs. Skip this pane rather than throwing; the next
+        // frame gets a fresh context once the tab is visible again.
         const ctx = canvas.getContext('2d')
+        if (!ctx) continue
         ctx.clearRect(0, 0, fw, ch)
 
         if (ready) {
@@ -206,7 +282,16 @@ export function CameraProvider({ children }) {
         }
       }
 
-      rafMap.current[camId] = requestAnimationFrame(draw)
+      } catch (err) {
+        // One bad frame must not end the feed. Logged once per camera so a
+        // recurring fault is visible without flooding the console at 60 fps.
+        if (!loopErrMap.current[camId]) {
+          loopErrMap.current[camId] = true
+          console.error('[camera] render loop error (recovering)', err)
+        }
+      } finally {
+        rafMap.current[camId] = requestAnimationFrame(draw)
+      }
     }
     rafMap.current[camId] = requestAnimationFrame(draw)
   }, [])
@@ -220,6 +305,11 @@ export function CameraProvider({ children }) {
       canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
     }
     delete frameMap.current[camId]
+    // An in-flight decode's onload would otherwise repopulate frameMap for a
+    // camera that has just been stopped, painting a ghost frame onto the next
+    // feed to reuse the canvas.
+    delete decodeMap.current[camId]
+    delete queuedMap.current[camId]
     delete trackMap.current[camId]
     delete smoothMap.current[camId]
     delete paneCountMap.current[camId]
@@ -242,7 +332,7 @@ export function CameraProvider({ children }) {
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
 
     // Announce an outage once, not on every attempt.
-    if (attempt === 1) toast.error('Camera feed lost — reconnecting…')
+    if (attempt === 1) toast.error('Camera feed lost — reconnecting…', { title: 'Camera error', throttleMs: STREAM_THROTTLE })
 
     setCameras(p => p.map(c => c.id === camId
       ? { ...c, statusMsg: `Reconnecting in ${Math.round(delay / 1000)}s…` } : c))
@@ -289,9 +379,7 @@ export function CameraProvider({ children }) {
       try {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'frame') {
-          const img = new Image()
-          img.src = `data:image/jpeg;base64,${msg.image_b64}`
-          frameMap.current[camId] = img
+          acceptFrame(camId, msg.image_b64)
           return
         }
         if (msg.type === 'status') {
@@ -357,7 +445,7 @@ export function CameraProvider({ children }) {
       // Auto-reconnect if camera is still tracked (not removed by the user)
       if (urlToIdMap.current[rtspUrl] === camId) scheduleReconnect(camId, rtspUrl)
     }
-  }, [startRenderLoop, stopRenderLoop, scheduleReconnect])
+  }, [startRenderLoop, stopRenderLoop, scheduleReconnect, acceptFrame])
 
   // Keep ref in sync so ws.onclose callbacks always call the latest _connect
   connectRef.current = _connect
@@ -456,6 +544,62 @@ export function CameraProvider({ children }) {
     })
   }, [disconnectCamera])
 
+  useEffect(() => { camerasRef.current = cameras }, [cameras])
+
+  /**
+   * Reconcile the cameras connected under one assignment against the server's
+   * list — the half addCamera never had.
+   *
+   * Pages called addCamera once on mount, so the roster could only ever grow: a
+   * camera deleted, reassigned or re-addressed in Device Management kept
+   * streaming on the guard's screen until somebody reloaded the page. Anything
+   * still connected under `assignment` that the server no longer lists is now
+   * closed.
+   *
+   * Scoped to one assignment deliberately — every page shares this provider, so
+   * syncing the entry roster must not tear down parking's feeds.
+   *
+   * `connect: false` prunes without opening anything, for pages that connect a
+   * subset on purpose (the guard's parking view opens only the zone it is
+   * showing, on hardware that reboots if you open every stream at once).
+   */
+  const syncCameras = useCallback((assignment, list, { detect = false, connect = true } = {}) => {
+    const desired = (list || []).filter(c => (c.rtsp_url || '').trim().startsWith('rtsp://'))
+    const wanted  = new Map(desired.map(c => [c.rtsp_url.trim(), c]))
+
+    if (connect) {
+      // A camera that moved between entry and parking has to move here too.
+      //
+      // addCamera dedups by URL and will not re-tag one it already knows, so a
+      // camera connected while it was an entry camera goes on wearing that tag
+      // for the life of the session: the parking page filters on
+      // `assignment === 'parking'` and never sees it, and — worse — it keeps
+      // running gate detection because detect is sticky. Dropping it first
+      // makes the line below rebuild it with this page's assignment and its
+      // detect flag.
+      //
+      // Nothing legitimate holds a camera under another assignment: every page
+      // that connects one passes the assignment off the same Camera row.
+      camerasRef.current
+        .filter(c => wanted.has(c.url) && c.assignment !== assignment)
+        .forEach(c => removeCamera(c.id))
+
+      desired.forEach(c => addCamera(c.name, c.rtsp_url, assignment, { detect, gate: c.gate_id }))
+    }
+
+    camerasRef.current
+      .filter(c => c.assignment === assignment && !wanted.has(c.url))
+      .forEach(c => removeCamera(c.id))
+
+    // A rename reaches the label too — the thumbnail strip and the camera
+    // search are how a guard picks a feed, and they read this name.
+    setCameras(prev => prev.map(c => {
+      const want = c.assignment === assignment ? wanted.get(c.url) : null
+      const name = (want?.name || '').trim()
+      return name && name !== c.name ? { ...c, name } : c
+    }))
+  }, [addCamera, removeCamera])
+
   // ── Disconnect and clear all cameras ──────────────────────────────────────
   const disconnectAll = useCallback(() => {
     Object.keys(wsMap.current).forEach(id => {
@@ -495,6 +639,7 @@ export function CameraProvider({ children }) {
     <CameraContext.Provider value={{
       cameras,
       addCamera,
+      syncCameras,
       removeCamera,
       disconnectCamera,
       disconnectAll,

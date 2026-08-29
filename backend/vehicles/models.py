@@ -4,7 +4,7 @@ from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Value
 from django.db.models.functions import Lower, Replace, Upper
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import FileExtensionValidator, MinValueValidator, MaxValueValidator
 
 
 class ReferenceItem(models.Model):
@@ -111,6 +111,20 @@ class VehicleRegistration(models.Model):
         # the plate/email/ID/license for the person to register again.
         EXPIRED  = 'expired',  'Expired'
 
+    class PaymentStatus(models.TextChoices):
+        """Whether the Vehicle Pass fee has been settled.
+
+        Deliberately a second axis rather than more `Status` values. A
+        registration can be rejected *after* the applicant already paid (a
+        refund case), and a fee-exempt applicant is neither unpaid nor paid —
+        neither fact fits in a single enum with pending/accepted, and the
+        active-registration uniqueness constraints below key off `status`, so
+        widening it would quietly release plates that must stay held.
+        """
+        UNPAID = 'unpaid', 'Unpaid'
+        PAID   = 'paid',   'Paid'
+        EXEMPT = 'exempt', 'Exempt'
+
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
@@ -183,6 +197,17 @@ class VehicleRegistration(models.Model):
     age             = models.PositiveIntegerField(null=True, blank=True)
     drivers_license = models.CharField(max_length=100, blank=True)
     drivers_license_image = models.ImageField(upload_to='licenses/', null=True, blank=True)
+    # Proof the applicant is genuinely enrolled/employed: the registrar's
+    # assessment form. A FileField rather than an ImageField because students
+    # usually attach the PDF the portal hands them, and only sometimes a photo
+    # of the printed copy — the extension validator is what keeps the field
+    # from accepting arbitrary uploads.
+    assessment_form = models.FileField(
+        upload_to='assessments/', null=True, blank=True,
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
     campus_days     = models.JSONField(default=list)
     schedule        = models.CharField(max_length=10, choices=Schedule.choices, blank=True)
 
@@ -241,11 +266,42 @@ class VehicleRegistration(models.Model):
     or_number        = models.CharField(max_length=100, blank=True)
     source           = models.CharField(max_length=20, choices=Source.choices, default=Source.PUBLIC)
 
+    # ── Payment ──
+    # The applicant pays at the Accounting Office, then uploads the Official
+    # Receipt themselves through the link in their pending email; CDSO verifies
+    # the image against or_number at review time rather than re-keying it.
+    payment_status   = models.CharField(
+        max_length=20, choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID, db_index=True,
+    )
+    or_receipt_image = models.FileField(
+        upload_to='receipts/', null=True, blank=True,
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
+    # Snapshot, not a lookup: vehicle_pass_fee is admin-configurable, so reading
+    # the live setting would retroactively rewrite what past applicants paid the
+    # moment the fee changes.
+    amount_paid      = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    paid_at          = models.DateTimeField(null=True, blank=True)
+    # Unguessable handle for the public receipt-upload page. The document upload
+    # endpoint keys on (id, email), which stopped being much of a secret once
+    # school emails became <8-digit ID>@slc-sflu.edu.ph against sequential ids.
+    payment_token    = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    # Set when CDSO approves a registration that is still unpaid. Required in
+    # that case, so an issued pass with no receipt on file always says why.
+    unpaid_accept_reason = models.TextField(blank=True)
+
     # Special case — set when admin grants days beyond the original request
     is_special_case      = models.BooleanField(default=False)
     special_case_reason  = models.TextField(blank=True)
 
-    # Auto-assigned unique system IDs (populated on acceptance)
+    # Auto-assigned unique system IDs (populated on acceptance). Two columns,
+    # three registrant types: students get their own, and employees and fetchers
+    # share the second as the "not a student" slot. The prefix, not the column,
+    # is what says which — SLC-EMP- vs SLC-FET-. See _assign_system_id in
+    # vehicles/views.py; every reader falls back across both columns.
     system_student_id  = models.CharField(max_length=30, blank=True, unique=True, null=True)
     system_employee_id = models.CharField(max_length=30, blank=True, unique=True, null=True)
 
@@ -253,6 +309,12 @@ class VehicleRegistration(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        # Minted on first save and never rotated — the link in the pending email
+        # has to keep working for as long as the registration is reviewable.
+        if not self.payment_token:
+            self.payment_token = uuid.uuid4()
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = list(kwargs['update_fields']) + ['payment_token']
         # Canonicalize so both the application-layer conflict checks and the
         # DB unique constraints below compare like-for-like values.
         self.plate_number = _normalize_plate(self.plate_number)
@@ -263,8 +325,20 @@ class VehicleRegistration(models.Model):
         self.drivers_license = (self.drivers_license or '').strip().upper()
         super().save(*args, **kwargs)
 
-    def pass_fee(self, settings_obj=None) -> Decimal:
-        """What this applicant owes for their vehicle pass.
+    @classmethod
+    def is_fee_exempt(cls, registrant_type, department_type='') -> bool:
+        """Whether this applicant owes nothing at all for a vehicle pass.
+
+        Answerable without a row and without touching the database, which is
+        what the CDSO walk-in path needs: it decides whether to demand an
+        Official Receipt number before there is a registration to ask.
+        """
+        return (registrant_type == 'employee'
+                and (department_type or '') in cls.FEE_EXEMPT_DEPARTMENTS)
+
+    @classmethod
+    def fee_for(cls, registrant_type, department_type='', settings_obj=None) -> Decimal:
+        """What an applicant of this type and department owes.
 
         Single source of truth for the amount. The figure used to be worked out
         in the React form alone, which meant the price a person was told and the
@@ -273,15 +347,21 @@ class VehicleRegistration(models.Model):
 
         Services and Cleaning staff pay nothing — they are exempt outright, not
         discounted, so this returns 0 regardless of the configured employee rate.
+
+        Pass `settings_obj` when the caller already holds one: every miss is a
+        SystemSettings.get(), which is an uncached get_or_create round trip.
         """
+        if cls.is_fee_exempt(registrant_type, department_type):
+            return Decimal('0.00')
         if settings_obj is None:
             settings_obj = SystemSettings.get()
-
-        if self.registrant_type == 'employee':
-            if (self.department_type or '') in self.FEE_EXEMPT_DEPARTMENTS:
-                return Decimal('0.00')
+        if registrant_type == 'employee':
             return settings_obj.vehicle_pass_fee_employee
         return settings_obj.vehicle_pass_fee
+
+    def pass_fee(self, settings_obj=None) -> Decimal:
+        """What this applicant owes — see fee_for, which this delegates to."""
+        return self.fee_for(self.registrant_type, self.department_type, settings_obj)
 
     def __str__(self):
         return f"{self.full_name} - {self.plate_number} ({self.status})"
@@ -352,6 +432,62 @@ class VehicleRegistration(models.Model):
         ]
 
 
+class FetcherStudentAssessment(models.Model):
+    """The enrolment proof for one student named on a fetcher registration.
+
+    A fetcher is not enrolled themselves, so their own application proves
+    nothing about the students they collect — each listed student carries their
+    own assessment form, the same document a student applicant attaches.
+
+    Kept in its own table rather than inside VehicleRegistration.fetcher_students
+    (a JSONField): a file needs real storage handling — extension validation, a
+    signed URL for the reviewer, deletion when the row goes — and a JSON value
+    gets none of that. student_index is the position in that list, so the two
+    stay paired without the JSON having to hold anything but text.
+    """
+    id            = models.BigAutoField(primary_key=True, db_column='fetcher_student_assessment_id')
+    registration  = models.ForeignKey(
+        VehicleRegistration, on_delete=models.CASCADE,
+        related_name='fetcher_assessments',
+    )
+    student_index = models.PositiveIntegerField()
+    assessment_form = models.FileField(
+        upload_to='assessments/fetcher/',
+        validators=[FileExtensionValidator(
+            allowed_extensions=['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
+        )],
+    )
+    uploaded_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tbl_fetcher_student_assessment'
+        ordering = ['student_index']
+        # One document per listed student: a re-upload replaces what is on file
+        # rather than leaving the reviewer two copies with no way to tell which
+        # one the applicant meant.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['registration', 'student_index'],
+                name='uniq_fetcher_assessment_per_student',
+            ),
+        ]
+
+    def student(self):
+        """The fetcher_students entry this document belongs to, or None."""
+        students = self.registration.fetcher_students or []
+        if 0 <= self.student_index < len(students):
+            entry = students[self.student_index]
+            return entry if isinstance(entry, dict) else None
+        return None
+
+    def student_name(self):
+        entry = self.student() or {}
+        return entry.get('full_name') or f'Student #{self.student_index + 1}'
+
+    def __str__(self):
+        return f"Assessment for {self.student_name()} (registration {self.registration_id})"
+
+
 class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
@@ -394,6 +530,16 @@ class ParkingZone(models.Model):
     id                = models.BigAutoField(primary_key=True, db_column='parking_zone_id')
     name              = models.CharField(max_length=100)
     vehicle_category  = models.CharField(max_length=20, choices=VehicleCategory.choices)
+    # Which view of its camera this zone covers.
+    #
+    # A dual-lens unit stacks two unrelated scenes into one frame, so one camera
+    # watches two places and each wants its own zone. Recording it here rather
+    # than asking the editor every session is what makes the choice stick: the
+    # bays were drawn against one of those scenes and are meaningless against
+    # the other. 0 for every single-lens camera, so existing zones need no
+    # backfill. Like ParkingSpace.lens_index this is a tag, not a coordinate
+    # space — geometry stays normalised against the whole frame.
+    lens_index        = models.PositiveSmallIntegerField(default=0)
     reference_image   = models.ImageField(upload_to='parking_zones/', blank=True, null=True)
     # The empty-lot reference the classic scorer measures against. Separate from
     # reference_image, which is the picture the admin draws bays on and may well
@@ -410,6 +556,19 @@ class ParkingZone(models.Model):
         'Camera', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='parking_zones',
         help_text="Physical camera (registered in Device Management) that watches this zone.",
+    )
+    # Whether this zone's detector should be running.
+    #
+    # Detection used to exist only as a button someone pressed, and it stayed
+    # off until they did — so a zone drawn on a Friday watched nothing all
+    # weekend, and every restart quietly switched every zone off again while the
+    # screens went on showing bays free. It defaults on, and the supervisor in
+    # detection_supervisor.py keeps a worker running for every zone that has it.
+    # The Stop Detection button clears it, which is what makes a deliberate
+    # pause survive both the supervisor and a restart.
+    detection_enabled = models.BooleanField(
+        default=True,
+        help_text="Run this zone's camera detector automatically. Turn off to pause it.",
     )
     capacity_override = models.PositiveIntegerField(
         null=True, blank=True,
@@ -658,6 +817,17 @@ class ParkingSpace(models.Model):
         help_text="Freeform polygon vertices [[x,y], ...] normalized 0-1 (pen tool). "
                    "x1..y2 still holds the bounding box for quick lookups.",
     )
+    # Which view of a multi-lens camera this bay belongs to.
+    #
+    # A dual-lens unit stacks two unrelated scenes into one frame, so a camera
+    # has two independent sets of bays. This tags which set a bay is in; it is
+    # NOT a coordinate space. The geometry above stays normalised against the
+    # WHOLE frame, because that is what the detector returns and what
+    # `bay_occupancy._rect_for` reads — storing lens-local coordinates instead
+    # would mean translating in two more places for no gain. 0 for every
+    # ordinary single-lens camera, which is why it defaults to 0 and why
+    # existing rows need no backfill.
+    lens_index   = models.PositiveSmallIntegerField(default=0)
     is_occupied  = models.BooleanField(default=False)
     occupied_by  = models.CharField(max_length=20, blank=True)
     updated_at   = models.DateTimeField(auto_now=True)

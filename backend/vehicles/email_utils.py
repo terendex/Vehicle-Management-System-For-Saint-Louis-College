@@ -1,8 +1,10 @@
 import html
 import logging
+import threading
 
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
+from django.db import connection
 import qrcode
 from io import BytesIO
 import base64
@@ -10,6 +12,58 @@ import base64
 log = logging.getLogger(__name__)
 
 DASH = '—'
+
+
+def send_in_background(send, *args, on_failure=None, **kwargs):
+    """Deliver an email without making the caller wait for the mail server.
+
+    Approving a registration was spending its time on three things: hashing the
+    new account's password, a couple of dozen database round trips, and this —
+    building a large HTML mail and handing it to Brevo over HTTPS (or to Gmail
+    over SMTP on the campus half). Only the third has nothing to do with the
+    answer the reviewer is waiting for: the account, the vehicle and the pass
+    are already committed before this runs, and the send was best-effort even
+    when it was synchronous.
+
+    The failure path is what makes this safe to move. A dead mail server used to
+    surface as `email_status: 'failed'` in the response, which the CDSO page
+    turned into a "give them their credentials directly" warning. Losing that
+    signal to a background thread would be a real regression, so `on_failure`
+    replaces it — the callers raise an admin notification, which reaches the
+    same person through the bell instead of the modal, and outlives the session.
+
+    Returns the Thread so a test can join it. With EMAIL_SEND_ASYNC off (the
+    default under test) the work runs inline and None comes back — the failure
+    contract is identical either way, so only the concurrency differs.
+    """
+    def _run():
+        try:
+            send(*args, **kwargs)
+        except Exception:
+            log.exception("[email] %s failed; notifying instead", getattr(send, '__name__', send))
+            if on_failure is not None:
+                try:
+                    on_failure()
+                except Exception:
+                    log.exception("[email] the failure notice itself failed")
+
+    if not getattr(settings, 'EMAIL_SEND_ASYNC', True):
+        _run()
+        return None
+
+    def _threaded():
+        try:
+            _run()
+        finally:
+            # A thread gets its own connection the moment it touches the ORM
+            # (the templates read a department FK, and on_failure writes a
+            # Notification row). Left open, each send leaks one for the life of
+            # the worker until the pool refuses new ones.
+            connection.close()
+
+    thread = threading.Thread(target=_threaded, name='email-send', daemon=True)
+    thread.start()
+    return thread
 
 
 def esc(value):
@@ -100,6 +154,57 @@ def _qr_public_url(registration, png):
         return None
 
 
+REGISTRANT_TYPE_LABELS = {
+    'student':  'Student',
+    'employee': 'Employee',
+    'fetcher':  'Fetcher / Drop & Go',
+}
+
+
+def registrant_type_label(registration):
+    """'Fetcher / Drop & Go', not the raw 'fetcher' the column stores."""
+    kind = registration.registrant_type or ''
+    return REGISTRANT_TYPE_LABELS.get(kind, kind.capitalize())
+
+
+def _fetcher_student_lines(registration):
+    """One readable line per student a fetcher collects, e.g.
+    'DELA CRUZ, JUAN - ID 23100174 - Grade 7'. Empty list if there are none."""
+    lines = []
+    for i, student in enumerate(registration.fetcher_students or [], start=1):
+        if not isinstance(student, dict):
+            continue
+        bits = [student.get('full_name') or f'Student #{i}']
+        if student.get('student_id'):
+            bits.append(f"ID {student['student_id']}")
+        if student.get('program_year'):
+            bits.append(student['program_year'])
+        lines.append(' - '.join(bits))
+    return lines
+
+
+def _fetcher_rows(registration, pad='7px'):
+    """Identity rows for a fetcher: what they are classified as, and who they
+    collect. Without these the application summary a fetcher receives is the
+    only one with nothing in it that is specific to their application."""
+    fetcher_type = (registration.get_fetcher_type_display()
+                    if registration.fetcher_type else '')
+    rows = (
+        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;width:150px;">Classification</td>'
+        f'<td style="padding:{pad} 0;font-weight:600;">{esc_or_dash(fetcher_type)}</td></tr>'
+    )
+    lines = _fetcher_student_lines(registration)
+    if not lines:
+        return rows
+    listed = '<br />'.join(esc(line) for line in lines)
+    label = 'Student to Fetch' if len(lines) == 1 else 'Students to Fetch'
+    rows += (
+        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;vertical-align:top;">{label}</td>'
+        f'<td style="padding:{pad} 0;font-weight:600;line-height:1.7;">{listed}</td></tr>'
+    )
+    return rows
+
+
 def _authorized_driver_row(registration, pad='8px'):
     """Table row naming the authorized adult driver — present when the
     registrant is a minor / non-driving student. Empty string otherwise."""
@@ -117,6 +222,41 @@ def _authorized_driver_row(registration, pad='8px'):
     )
 
 
+def _fee_settled(registration):
+    """Whether there is a settled fee to confirm on paper.
+
+    Exempt counts: nothing was owed, so nothing is outstanding. Only an
+    application still waiting on its Official Receipt is unsettled.
+    """
+    from .models import VehicleRegistration
+    return registration.payment_status in (
+        VehicleRegistration.PaymentStatus.PAID,
+        VehicleRegistration.PaymentStatus.EXEMPT,
+    )
+
+
+def _registration_pdf_attachment(registration, pending=False):
+    """The (filename, bytes, mimetype) triple for the registration PDF.
+
+    Built with the applicant's uploaded documents included, so the copy in the
+    owner's inbox is the same document the CDSO files from Vehicle Registration
+    Management — one builder, one layout, nothing to drift apart.
+
+    `pending` builds the acknowledgement copy — same record, stated as an
+    application under review rather than an approved pass. The uploads are left
+    out of that one: at the moment it is built they have only just been sent,
+    and mailing them straight back doubles the size of the first email an
+    applicant receives for nothing they do not already have.
+    """
+    from registration_pdf import (registration_confirmation_pdf,
+                                  registration_pdf_filename)
+    return (registration_pdf_filename(registration, pending=pending),
+            registration_confirmation_pdf(registration,
+                                          include_documents=not pending,
+                                          pending=pending),
+            'application/pdf')
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
     # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
@@ -129,34 +269,40 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     system_id = esc_or_dash(registration.system_student_id or registration.system_employee_id)
 
     # Build identity rows based on registrant type (no nested f-strings)
-    if registration.registrant_type == 'student':
-        id_label  = 'Student ID'
-        id_value  = esc_or_dash(registration.student_id)
-        id2_label = 'Program &amp; Year'
-        id2_value = esc_or_dash(registration.program_year)
+    if registration.registrant_type == 'fetcher':
+        # A fetcher has neither an employee ID nor a department, and the old
+        # else-branch labelled their blank columns as both — an approval email
+        # that read "Employee ID: —, Department: —" to every fetcher.
+        identity_rows = _fetcher_rows(registration, pad='8px')
     else:
-        id_label  = 'Employee ID'
-        id_value  = esc_or_dash(registration.employee_id)
-        id2_label = 'Department'
-        id2_value = esc_or_dash(department_label(registration))
+        if registration.registrant_type == 'student':
+            id_label  = 'Student ID'
+            id_value  = esc_or_dash(registration.student_id)
+            id2_label = 'Program &amp; Year'
+            id2_value = esc_or_dash(registration.program_year)
+        else:
+            id_label  = 'Employee ID'
+            id_value  = esc_or_dash(registration.employee_id)
+            id2_label = 'Department'
+            id2_value = esc_or_dash(department_label(registration))
 
-    identity_rows = (
-        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
-        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">{id2_label}</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{id2_value}</td></tr>'
-    )
+        identity_rows = (
+            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
+            f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
+            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">{id2_label}</td>'
+            f'<td style="padding:8px 0;font-weight:600;">{id2_value}</td></tr>'
+        )
 
     # Campus days row (only for students) — built separately to avoid nested f-string
     if registration.registrant_type == 'student':
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
                                       if registration.campus_days else '')
-        campus_days_row = (
-            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
-            f'<td style="padding:8px 0;font-weight:600;">{campus_days_str}</td></tr>'
-        )
     else:
-        campus_days_row = ''
+        campus_days_str = 'Any campus day (Monday to Saturday)'
+    campus_days_row = (
+        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
+        f'<td style="padding:8px 0;font-weight:600;">{campus_days_str}</td></tr>'
+    )
 
     # Portal account ID (use table layout — flex not supported in many email clients)
     portal_id_display   = esc_or_dash(user_code)
@@ -169,7 +315,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     email_val           = esc(registration.email)
     plate_val           = esc_or_dash(registration.plate_number)
     vehicle_type_val    = esc(registration.vehicle_type)
-    registrant_type_val = esc(registration.registrant_type)
+    registrant_type_val = esc(registrant_type_label(registration))
     temp_password_val   = esc(temp_password)
 
     html_message = f"""
@@ -275,7 +421,10 @@ def send_acceptance_email(registration, temp_password, user_code=None):
             f"Email: {registration.email}\n"
             f"Temporary Password: {temp_password}\n\n"
             f"You will be prompted to change your password on first login.\n\n"
-            f"A PDF copy of your full registration details is attached."
+            + ("A PDF copy of your full registration details is attached."
+               if _fee_settled(registration) else
+               "Your registration form will be emailed to you as a PDF once "
+               "your Official Receipt has been uploaded.")
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[registration.email],
@@ -289,21 +438,23 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     msg.attach(f'qr-{registration.plate_number or registration.pk}.png',
                qr_png, 'image/png')
 
-    # A failure building the PDF must not cost the owner their approval email
-    # (and, upstream, must not roll back the approval itself) \u2014 so send without
-    # the attachment and log it rather than raising.
-    try:
-        from registration_pdf import (registration_confirmation_pdf,
-                                      registration_pdf_filename)
-        msg.attach(registration_pdf_filename(registration),
-                   registration_confirmation_pdf(registration),
-                   'application/pdf')
-    except Exception:
-        log.exception(
-            "Could not attach registration PDF for %s (registration %s) \u2014 "
-            "sending the approval email without it.",
-            registration.email, registration.pk,
-        )
+    # The confirmation PDF rides with the fee, not with the approval. An
+    # application approved before its Official Receipt is in (see
+    # unpaid_accept_reason) has no settled fee to confirm, so the PDF is sent
+    # instead by send_receipt_received_email the moment the receipt lands.
+    #
+    # A failure building it must not cost the owner their approval email (and,
+    # upstream, must not roll back the approval itself) — so send without the
+    # attachment and log it rather than raising.
+    if _fee_settled(registration):
+        try:
+            msg.attach(*_registration_pdf_attachment(registration))
+        except Exception:
+            log.exception(
+                "Could not attach registration PDF for %s (registration %s) \u2014 "
+                "sending the approval email without it.",
+                registration.email, registration.pk,
+            )
 
     msg.send(fail_silently=False)
 
@@ -338,8 +489,13 @@ def send_pending_email(registration):
         )
         schedule_row = ''
     else:  # fetcher
-        id_rows = ''
-        schedule_row = ''
+        # Classification and the students being collected are this application's
+        # identity, the way a student ID or a department is for the other two.
+        id_rows = _fetcher_rows(registration)
+        schedule_row = (
+            '<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
+            '<td style="padding:7px 0;font-weight:600;">Any campus day (Monday to Saturday)</td></tr>'
+        )
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)
@@ -351,10 +507,60 @@ def send_pending_email(registration):
     color_val        = esc_or_dash(registration.vehicle_color)
     conduction_val   = esc_or_dash(registration.conduction_number)
 
-    type_label = {'student': 'Student', 'employee': 'Employee', 'fetcher': 'Fetcher / Drop & Go'}.get(
-        registration.registrant_type, registration.registrant_type.capitalize()
-    )
+    type_label = registrant_type_label(registration)
     ref_number = f"REG-{str(registration.pk).zfill(6)}"
+
+    # ── Payment call-to-action ──
+    # The applicant records their own payment now: they settle the fee at the
+    # Accounting Office and upload the Official Receipt through this link, so CDSO
+    # verifies an image instead of re-keying a number at a counter.
+    # PUBLIC_SITE_URL, not FRONTEND_URL — the campus half's FRONTEND_URL is a LAN
+    # address that resolves nowhere from an applicant's phone.
+    base_url = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    fee = registration.pass_fee()
+    if fee == 0:
+        # Fee-exempt: no Accounting stop, no receipt, and no link to send.
+        payment_block = """
+                <div style="margin: 0 32px 24px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:10px; padding:18px 20px;">
+                    <h4 style="color:#065F46;margin:0 0 8px;font-size:14px;">No Payment Required</h4>
+                    <p style="color:#047857;font-size:13px;margin:0;line-height:1.7;">
+                        Your department is <strong>exempt</strong> from the Vehicle Pass fee, so there is
+                        nothing to settle at the Accounting Office. Simply proceed to the CDSO Office once
+                        your application is approved.
+                    </p>
+                </div>"""
+        payment_steps = "<li>No Vehicle Pass fee is due &#8212; your department is exempt.</li>"
+        payment_text  = "No Vehicle Pass fee is due - your department is exempt.\n\n"
+    else:
+        payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
+        payment_block = f"""
+                <div style="margin: 0 32px 24px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; padding:18px 20px;">
+                    <h4 style="color:#1E40AF;margin:0 0 8px;font-size:14px;">Next Step &#8212; Pay &amp; Upload Your Receipt</h4>
+                    <p style="color:#1D4ED8;font-size:13px;margin:0 0 14px;line-height:1.7;">
+                        Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the
+                        <strong>Accounting Office</strong>, then upload a photo of your Official Receipt
+                        using the button below. Your application stays <strong>unpaid</strong> and is not
+                        queued for review until the receipt is received.
+                    </p>
+                    <a href="{payment_link}"
+                       style="display:inline-block;background:#1D4ED8;color:#FFFFFF;text-decoration:none;
+                              padding:11px 22px;border-radius:8px;font-size:13px;font-weight:700;">
+                        Upload Official Receipt
+                    </a>
+                    <p style="color:#60A5FA;font-size:11px;margin:12px 0 0;word-break:break-all;">
+                        Or paste this link into your browser: {payment_link}
+                    </p>
+                </div>"""
+        payment_steps = (
+            f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
+            f"Office, then <strong>upload your Official Receipt</strong> using the link above.</li>"
+        )
+        payment_text = (
+            f"NEXT STEP - PAY AND UPLOAD YOUR RECEIPT\n"
+            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then upload\n"
+            f"a photo of your Official Receipt here:\n{payment_link}\n\n"
+            f"Your application is not queued for review until the receipt is received.\n\n"
+        )
 
     html_message = f"""
     <html>
@@ -388,9 +594,14 @@ def send_pending_email(registration):
                 <!-- Greeting -->
                 <div style="padding: 0 32px 20px;">
                     <p style="margin:0 0 8px;">Dear <strong>{full_name_val}</strong>,</p>
-                    <p style="color:#5A5F72;font-size:14px;margin:0;">
+                    <p style="color:#5A5F72;font-size:14px;margin:0 0 8px;">
                         Thank you for submitting your vehicle registration. The CDSO office will review your application
                         and send you a follow-up email once a decision has been made. Please keep this email for your records.
+                    </p>
+                    <p style="color:#5A5F72;font-size:14px;margin:0;">
+                        Your <strong>registration acknowledgement</strong> is attached to this email as a PDF — keep it as
+                        proof that you applied. It is <strong>not</strong> a vehicle pass and does not grant entry; the pass
+                        follows only if your application is approved.
                     </p>
                 </div>
 
@@ -425,10 +636,14 @@ def send_pending_email(registration):
                     </table>
                 </div>
 
+                <!-- Payment -->
+                {payment_block}
+
                 <!-- What Happens Next -->
                 <div style="margin: 0 32px 24px; background: #F0F2F7; border-radius: 10px; padding: 18px 20px;">
                     <h4 style="color:#2A2B61;margin:0 0 12px;font-size:14px;">What Happens Next?</h4>
                     <ol style="margin:0;padding-left:20px;color:#5A5F72;font-size:13px;line-height:1.9;">
+                        {payment_steps}
                         <li>The CDSO office will review your submitted documents and information.</li>
                         <li>You will receive an email once your registration is <strong>approved</strong> or <strong>declined</strong>.</li>
                         <li>If approved, your portal login credentials and vehicle QR code will be sent to this email.</li>
@@ -447,23 +662,144 @@ def send_pending_email(registration):
     """
 
     type_display = type_label
-    send_mail(
+    student_lines = _fetcher_student_lines(registration)
+    fetched_text = ''
+    if student_lines:
+        listed = '\n'.join(f"  - {line}" for line in student_lines)
+        fetched_text = f"Students to fetch:\n{listed}\n\n"
+    # EmailMultiAlternatives rather than send_mail(): send_mail cannot carry an
+    # attachment, and this email now does — see below.
+    msg = EmailMultiAlternatives(
         subject=f"SLC Vehicle Registration Received — {ref_number} (Pending Review)",
-        message=(
+        body=(
             f"Dear {registration.full_name},\n\n"
             f"Your vehicle registration has been received and is pending CDSO review.\n\n"
             f"Reference No.: {ref_number}\n"
             f"Plate Number:  {registration.plate_number}\n"
             f"Type:          {type_display}\n"
             f"Submitted:     {submitted_at}\n\n"
+            f"{fetched_text}"
+            f"{payment_text}"
+            f"Your registration acknowledgement is attached as a PDF \u2014 keep it as "
+            f"proof that you applied. It is not a vehicle pass.\n\n"
             f"You will be notified by email once a decision has been made.\n\n"
             f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[registration.email],
-        html_message=html_message,
-        fail_silently=False,
+        to=[registration.email],
     )
+    msg.attach_alternative(html_message, "text/html")
+
+    # Proof of application, on paper. Until this existed, an applicant who was
+    # asked whether they had registered had nothing to show but an email — and
+    # the approval PDF, which is the document that answers that, does not exist
+    # until CDSO has decided.
+    #
+    # Built as the *pending* copy: it states in its own text that it is not a
+    # pass, so it cannot be waved at a gate. A failure building it must not cost
+    # the applicant their acknowledgement email (and, upstream, must not roll
+    # back the submission) — so send without the attachment and log it.
+    try:
+        msg.attach(*_registration_pdf_attachment(registration, pending=True))
+    except Exception:
+        log.exception(
+            "Could not attach the registration acknowledgement PDF for %s "
+            "(registration %s) — sending the pending email without it.",
+            registration.email, registration.pk,
+        )
+
+    msg.send(fail_silently=False)
+
+
+def send_receipt_received_email(registration):
+    """Sent the moment the applicant uploads their Official Receipt.
+
+    This is the email that carries the registration form. Until the receipt is
+    in, there is no settled fee to confirm and nothing worth putting on a PDF
+    the owner is meant to keep; once it is, the form is complete and goes out
+    with the receipt and the rest of the uploads printed into it — the same
+    document the CDSO files.
+
+    The PDF only rides along once the registration is actually approved. It
+    states in its own text that the pass was granted, so sending it to someone
+    still under review would put a pass in their hands that nobody issued; the
+    approval email carries it for them instead, now that their fee is settled.
+    """
+    from .models import VehicleRegistration
+
+    approved   = registration.status == VehicleRegistration.Status.ACCEPTED
+    ref_number = f'REG-{registration.id:06d}'
+    full_name  = esc(registration.full_name)
+    plate_val  = esc_or_dash(registration.plate_number)
+    or_val     = esc_or_dash(registration.or_number)
+    amount_val = (f'PHP {registration.amount_paid:,.2f}'
+                  if registration.amount_paid is not None else DASH)
+
+    next_step_html = (
+        '<p>Your registration form is attached to this email as a PDF. Keep a '
+        'copy — present it when requested at the campus gates.</p>'
+        if approved else
+        '<p>Your application is now queued for CDSO review. Once it is '
+        'approved, your registration form will be emailed to you as a PDF '
+        'along with your portal login and vehicle QR code.</p>'
+    )
+
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
+            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #12915A; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                <h2 style="color: #12915A; margin-top: 0;">Official Receipt Received</h2>
+                <p>Dear {full_name},</p>
+                <p>We have received the Official Receipt for your vehicle pass. Your fee is now recorded as settled.</p>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Reference No.</td>
+                        <td style="padding:7px 0;font-weight:600;">{ref_number}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Plate Number</td>
+                        <td style="padding:7px 0;font-weight:600;">{plate_val}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">OR Number</td>
+                        <td style="padding:7px 0;font-weight:600;">{or_val}</td></tr>
+                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Amount Paid</td>
+                        <td style="padding:7px 0;font-weight:600;">{amount_val}</td></tr>
+                </table>
+                {next_step_html}
+                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
+                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    msg = EmailMultiAlternatives(
+        subject=f"SLC Vehicle Pass — Official Receipt Received ({ref_number})",
+        body=(
+            f"Dear {registration.full_name},\n\n"
+            f"We have received the Official Receipt for your vehicle pass.\n\n"
+            f"Reference No.: {ref_number}\n"
+            f"Plate Number:  {registration.plate_number}\n"
+            f"OR Number:     {registration.or_number}\n\n"
+            + ("Your registration form is attached to this email as a PDF."
+               if approved else
+               "Your application is now queued for CDSO review. Your "
+               "registration form will be emailed to you once it is approved.")
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[registration.email],
+    )
+    msg.attach_alternative(html_message, "text/html")
+
+    if approved:
+        # As in the approval mail: a PDF that will not build must not cost the
+        # applicant the confirmation that their payment landed.
+        try:
+            msg.attach(*_registration_pdf_attachment(registration))
+        except Exception:
+            log.exception(
+                "Could not attach registration PDF for %s (registration %s) — "
+                "sending the receipt confirmation without it.",
+                registration.email, registration.pk,
+            )
+
+    msg.send(fail_silently=False)
 
 
 def send_rejection_email(registration, reason):

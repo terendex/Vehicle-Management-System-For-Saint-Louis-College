@@ -11,6 +11,7 @@ from django.db.models import Q
 from vehicles.models import Vehicle, SupplierPlate
 from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
+from accounts.views import IsAdminRole
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
 from .entry_logic import check_entry, get_organizer_event, is_open_campus
 from .ml.reader import read_plate
@@ -18,7 +19,7 @@ from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
 from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer, MLTrainingSampleSerializer
-from time_utils import day_range
+from time_utils import day_range, filter_local_date_range
 
 logger = logging.getLogger(__name__)
 
@@ -1023,48 +1024,243 @@ class GateDetailView(APIView):
         return Response(_gate_dict(gate))
 
 
+# -- Vehicle Log --------------------------------------------------------------
+# The list screen (guard: one gate, one day — CDSO: all gates, a date range) and
+# its two reports read through the same helpers below, so an exported report can
+# never disagree with the table it was exported from.
+
+# One UI choice covers several stored statuses, because that is how the question
+# gets asked: "show me everything that was refused" is denied *and* wrong day.
+ACCESS_LOG_STATUS_GROUPS = {
+    'authorized': [AccessLog.Status.AUTHORIZED],
+    'denied':     [AccessLog.Status.DENIED, AccessLog.Status.WRONG_DAY],
+    'unknown':    [AccessLog.Status.UNKNOWN],
+    'unreadable': [AccessLog.Status.UNREADABLE],
+    'exited':     [AccessLog.Status.EXITED],
+}
+
+
+def _filter_access_logs(request):
+    """Apply the filters the Vehicle Log screens use.
+
+    Returns (ordered_queryset, filters_desc). `status` is deliberately NOT
+    applied here — see _merge_access_log_visits: an exit row only folds into its
+    entry while both are in the result set, so narrowing by status in SQL would
+    strip the exit half of every visit. It is applied to the merged rows instead.
+    """
+    qs = (
+        AccessLog.objects
+        .select_related('scanned_by', 'on_duty_guard', 'vehicle__user')
+        .order_by('-scanned_at')
+    )
+    filters_desc = []
+
+    gate_id = (request.query_params.get('gate_id') or '').strip()
+    if gate_id:
+        qs = qs.filter(gate_id=gate_id)
+        from .models import Gate
+        label = Gate.objects.filter(gate_id=gate_id).values_list('label', flat=True).first()
+        filters_desc.append(f'Gate: {label or gate_id}')
+
+    date = (request.query_params.get('date') or '').strip()
+    if date:
+        try:
+            _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
+            qs = qs.filter(scanned_at__gte=_start, scanned_at__lt=_end)
+            filters_desc.append(f'Date: {date}')
+        except Exception:
+            pass  # ignore malformed dates rather than 500
+
+    # Range form of the single-day filter above, for the CDSO's Vehicle Log.
+    # Unparseable bounds are ignored, same as `date`.
+    date_from = (request.query_params.get('date_from') or '').strip()
+    date_to   = (request.query_params.get('date_to') or '').strip()
+    qs = filter_local_date_range(qs, 'scanned_at', date_from, date_to)
+    if date_from or date_to:
+        filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+
+    search = (request.query_params.get('search') or '').strip()
+    if search:
+        qs = qs.filter(
+            Q(plate_number__icontains=search)
+            | Q(vehicle__user__full_name__icontains=search)
+            | Q(on_duty_guard__full_name__icontains=search)
+            | Q(scanned_by__full_name__icontains=search)
+        )
+        filters_desc.append(f"Search: '{search}'")
+
+    status_key = (request.query_params.get('status') or '').strip()
+    if status_key in ACCESS_LOG_STATUS_GROUPS:
+        labels = dict(AccessLog.Status.choices)
+        filters_desc.append(
+            'Status: ' + ', '.join(labels.get(v, v) for v in ACCESS_LOG_STATUS_GROUPS[status_key])
+        )
+
+    return qs, filters_desc
+
+
+def _merge_access_log_visits(logs):
+    """Fold each exit row into its paired entry row — one visit, one row.
+
+    Returns (visible_logs, exit_by_entry_id). Pairing only happens when the
+    entry is in `logs` too, so an exit whose entry fell outside the filter or
+    the row cap still shows on its own rather than vanishing.
+    """
+    entries_by_id = {log.id: log for log in logs if log.status == AccessLog.Status.AUTHORIZED}
+    exit_by_entry_id = {}
+    for log in logs:
+        if log.status == AccessLog.Status.EXITED and log.paired_entry_id in entries_by_id:
+            exit_by_entry_id[log.paired_entry_id] = log
+
+    merged_exit_ids = {exit_log.id for exit_log in exit_by_entry_id.values()}
+    visible = [log for log in logs if log.id not in merged_exit_ids]
+    return visible, exit_by_entry_id
+
+
+def _visit_duration_minutes(entry_log, exit_log):
+    return max(0, round((exit_log.scanned_at - entry_log.scanned_at).total_seconds() / 60))
+
+
+def _apply_status_group(logs, status_key):
+    """Narrow already-merged rows to one UI status group; unknown keys pass through."""
+    wanted = ACCESS_LOG_STATUS_GROUPS.get(status_key)
+    return [log for log in logs if log.status in wanted] if wanted else logs
+
+
 class AccessLogListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = (
-            AccessLog.objects
-            .select_related('scanned_by', 'on_duty_guard', 'vehicle__user')
-            .order_by('-scanned_at')
-        )
-        gate_id = request.query_params.get('gate_id')
-        if gate_id:
-            qs = qs.filter(gate_id=gate_id)
-        date = request.query_params.get('date')
-        if date:
-            try:
-                _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
-                qs = qs.filter(scanned_at__gte=_start, scanned_at__lt=_end)
-            except Exception:
-                pass  # ignore malformed dates rather than 500
-        limit = int(request.query_params.get('limit', 200))
+        qs, _ = _filter_access_logs(request)
+
+        try:
+            limit = int(request.query_params.get('limit', 200))
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(limit, 1000))
         logs = list(qs[:limit])
 
-        # Fold each exit row into its paired entry row (one visit = one row),
-        # with a computed duration — only when the entry is also in this result
-        # set, so an exit whose entry fell outside the filter/limit still shows.
-        entries_by_id = {log.id: log for log in logs if log.status == AccessLog.Status.AUTHORIZED}
-        paired_exit_by_entry_id = {}
-        for log in logs:
-            if log.status == AccessLog.Status.EXITED and log.paired_entry_id in entries_by_id:
-                paired_exit_by_entry_id[log.paired_entry_id] = log
-
-        merged_exit_ids = {exit_log.id for exit_log in paired_exit_by_entry_id.values()}
-        visible = [log for log in logs if log.id not in merged_exit_ids]
+        visible, exit_by_entry_id = _merge_access_log_visits(logs)
+        entries_by_id = {log.id: log for log in logs}
 
         data = AccessLogSerializer(visible, many=True).data
         for row in data:
-            exit_log = paired_exit_by_entry_id.get(row['id'])
+            exit_log = exit_by_entry_id.get(row['id'])
             if exit_log:
-                entry_log = entries_by_id[row['id']]
                 row['exited_at'] = exit_log.scanned_at
-                row['duration_minutes'] = max(0, round((exit_log.scanned_at - entry_log.scanned_at).total_seconds() / 60))
+                row['duration_minutes'] = _visit_duration_minutes(entries_by_id[row['id']], exit_log)
         return Response(data)
+
+
+VEHICLE_LOG_REPORT_HEADERS = [
+    '#', 'Date & Time', 'Plate', 'Owner', 'Type', 'Gate',
+    'Status', 'Guard on Duty', 'Exit Time', 'Duration', 'Remarks',
+]
+
+# Rows are capped rather than streamed, the same way the audit report is: a year
+# of scans is far more than anyone reads out of a PDF, and an unbounded export
+# is a memory hazard on a shared dyno.
+VEHICLE_LOG_REPORT_CAP = 5000
+
+
+def _vehicle_log_report_rows(logs, exit_by_entry_id):
+    from django.utils import timezone as tz
+    from .models import Gate
+
+    status_labels = dict(AccessLog.Status.choices)
+    gate_labels = dict(Gate.objects.values_list('gate_id', 'label'))
+
+    def duration_text(minutes):
+        if minutes is None:
+            return ''
+        if minutes < 60:
+            return f'{minutes} min'
+        hours, mins = divmod(minutes, 60)
+        return f'{hours}h {mins}m' if mins else f'{hours}h'
+
+    rows = []
+    for i, log in enumerate(logs, start=1):
+        exit_log = exit_by_entry_id.get(log.id)
+        minutes = _visit_duration_minutes(log, exit_log) if exit_log else None
+        owner = getattr(getattr(log.vehicle, 'user', None), 'full_name', '') or 'Unregistered'
+
+        remarks = []
+        if log.is_override:
+            remarks.append(f'Override: {log.override_reason}' if log.override_reason else 'Override')
+        if log.denied_reason:
+            remarks.append(log.denied_reason)
+        if not exit_log and log.status == AccessLog.Status.AUTHORIZED:
+            remarks.append('Still inside')
+
+        rows.append([
+            i,
+            tz.localtime(log.scanned_at).strftime('%b %d, %Y %I:%M:%S %p'),
+            log.plate_number or '',
+            owner,
+            (log.vehicle_type or '').title(),
+            gate_labels.get(log.gate_id, log.gate_id or ''),
+            status_labels.get(log.status, log.status),
+            getattr(log.on_duty_guard, 'full_name', '') or '',
+            tz.localtime(exit_log.scanned_at).strftime('%I:%M %p') if exit_log else '',
+            duration_text(minutes),
+            ' · '.join(remarks),
+        ])
+    return rows
+
+
+def _vehicle_log_report_data(request):
+    """(rows, filters_desc) for both formats — one filter path, one merge."""
+    qs, filters_desc = _filter_access_logs(request)
+    logs = list(qs[:VEHICLE_LOG_REPORT_CAP])
+    visible, exit_by_entry_id = _merge_access_log_visits(logs)
+    visible = _apply_status_group(visible, (request.query_params.get('status') or '').strip())
+    return _vehicle_log_report_rows(visible, exit_by_entry_id), filters_desc
+
+
+class VehicleLogExportView(APIView):
+    """Download the (filtered) vehicle log as an Excel report — CDSO only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from report_utils import branded_excel_response, report_filename
+        rows, filters_desc = _vehicle_log_report_data(request)
+        subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                    f"by {getattr(request.user, 'full_name', '')} · "
+                    + ('; '.join(filters_desc) if filters_desc else 'All records')
+                    + f" · {len(rows)} entries")
+        return branded_excel_response(
+            filename=report_filename('Vehicle Log Report', 'xlsx'),
+            sheet_title='Vehicle Log',
+            report_title='Vehicle Log Report',
+            subtitle=subtitle,
+            headers=VEHICLE_LOG_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 22, 14, 26, 12, 22, 14, 22, 12, 10, 40],
+        )
+
+
+class VehicleLogPdfExportView(APIView):
+    """Download the (filtered) vehicle log as a branded PDF report — CDSO only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from report_utils import branded_pdf_response, report_filename
+        rows, filters_desc = _vehicle_log_report_data(request)
+        subtitle = (('; '.join(filters_desc) if filters_desc else 'All records')
+                    + f" · {len(rows)} entries")
+        return branded_pdf_response(
+            filename=report_filename('Vehicle Log Report', 'pdf'),
+            report_title='Vehicle Log Report',
+            subtitle=subtitle,
+            generated_by=getattr(request.user, 'full_name', ''),
+            headers=VEHICLE_LOG_REPORT_HEADERS,
+            rows=rows,
+            # 267mm of printable width on landscape A4. Date & Time gets enough
+            # to stay on one line (the audit report learned that the hard way);
+            # Remarks takes the slack, being the only free-text column.
+            col_widths_mm=[8, 31, 21, 34, 15, 24, 21, 31, 16, 14, 52],
+        )
 
 
 class MLTrainingSampleList(APIView):

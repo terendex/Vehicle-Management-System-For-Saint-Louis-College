@@ -89,6 +89,23 @@ BLIND_DECODE_LIMIT = 24
 # that works perfectly well in the actual feed.
 VERIFY_TIMEOUT_SECONDS = 8
 
+# Consecutive candidates that found nothing listening on the RTSP port at all.
+#
+# This is a different failure from "the camera refused that path", and it wants
+# a different response. Cheap firmware reboots when its RTSP server is pushed
+# hard enough — the campus Yoosee drops off ICMP entirely a few seconds after
+# a probe — and once it has, every remaining candidate is a connection to a
+# machine that is not there. Continuing to walk the list cannot find anything,
+# and each attempt lands on a device trying to boot, which restarts the reset.
+RESET_STREAK_LIMIT = 3
+
+# How long to wait for a unit that reset to bring RTSP back up.
+#
+# Measured on the Yoosee: ICMP answers again almost immediately, but the RTSP
+# port stays refused for ~6 s and then unresponsive until ~21 s. 45 s leaves
+# room for a slower unit without stalling detection indefinitely.
+REBOOT_RECOVERY_SECONDS = 45
+
 
 def paths_for(channel: int = 1) -> list[tuple[str, str]]:
     """Stream paths to try for one channel of a device.
@@ -702,6 +719,30 @@ def _opens(url: str, timeout_s: int = PROBE_TIMEOUT_SECONDS) -> bool:
     return False
 
 
+def _await_reboot(ip: str, port: int, budget: float = REBOOT_RECOVERY_SECONDS) -> float:
+    """Wait for a camera that reset to accept connections again.
+
+    Returns the seconds spent waiting, so the caller can give that time back to
+    its own budget: a reboot is dead time that the device imposed, and charging
+    the search for it is what turns one reset into a failed detection.
+
+    Polls gently — the point is to stop touching a device that is booting, not
+    to be first in the queue when it returns.
+    """
+    started = time.monotonic()
+    while time.monotonic() - started < budget:
+        time.sleep(RECOVERY_PAUSE_SECONDS)
+        if is_reachable(ip, port, timeout=CONNECT_TIMEOUT_SECONDS):
+            waited = time.monotonic() - started
+            log.info('[rtsp-probe] %s came back after %.0fs', ip, waited)
+            # Listening again is not the same as ready: the port binds a moment
+            # before the media server behind it will negotiate.
+            time.sleep(SLOT_RELEASE_SECONDS)
+            return waited
+    log.info('[rtsp-probe] %s did not return within %.0fs', ip, budget)
+    return time.monotonic() - started
+
+
 def _redact_prefix(prefix: str) -> str:
     """Mask the password inside a bare `user:pass@` prefix."""
     if ':' not in prefix:
@@ -848,13 +889,40 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
                          if any(c['url'].startswith(f'rtsp://{p}{ip}')
                                 for p in good_prefixes)][:BLIND_DECODE_LIMIT]
             session.close()
+            host, port = ip.split(':')[0], _port_of(ip)
+            reset_streak = 0
             for cand in shortlist:
                 if time.monotonic() >= deadline:
                     break
                 time.sleep(PROBE_PACING_SECONDS)
                 if not _streams(cand['url']):
-                    attempts.append(f"{_redact(cand['url'])} -> will not stream")
+                    # Separate "refused that path" from "stopped listening".
+                    # Only the second means the device has gone away, and it is
+                    # the one worth reacting to.
+                    if is_reachable(host, port, timeout=CONNECT_TIMEOUT_SECONDS):
+                        reset_streak = 0
+                        attempts.append(f"{_redact(cand['url'])} -> will not stream")
+                        continue
+
+                    reset_streak += 1
+                    attempts.append(f"{_redact(cand['url'])} -> no answer on "
+                                    f"{host}:{port} (device may have reset)")
+                    if reset_streak < RESET_STREAK_LIMIT:
+                        continue
+
+                    # Stop probing and let it come back. The time it spends
+                    # booting is returned to the deadline so a reset costs the
+                    # search nothing but the wait itself.
+                    attempts.append(f'-- {host} stopped responding; '
+                                    f'waiting up to {REBOOT_RECOVERY_SECONDS}s '
+                                    f'for it to restart --')
+                    deadline += _await_reboot(host, port)
+                    reset_streak = 0
+                    if not is_reachable(host, port, timeout=CONNECT_TIMEOUT_SECONDS):
+                        break       # never came back; nothing left to try
                     continue
+
+                reset_streak = 0
 
                 time.sleep(SLOT_RELEASE_SECONDS)
                 ok = _opens(cand['url'], timeout_s=VERIFY_TIMEOUT_SECONDS)

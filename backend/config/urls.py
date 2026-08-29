@@ -61,13 +61,23 @@ urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 # Registered only when a built frontend is present, so local development (Vite
 # on :5173 proxying to :8000) is completely unaffected.
 if settings.FRONTEND_BUILD_DIR.exists():
-    _INDEX_HTML = (settings.FRONTEND_BUILD_DIR / 'index.html').read_bytes()
+    _INDEX_PATH = settings.FRONTEND_BUILD_DIR / 'index.html'
 
     def spa_index(_request):
-        # index.html must never be cached: a browser holding the previous copy
-        # would keep requesting the old deploy's hashed asset filenames, which
-        # no longer exist, and the app would fail to boot.
-        resp = HttpResponse(_INDEX_HTML, content_type='text/html; charset=utf-8')
+        # Read from disk per request, not once at import.
+        #
+        # Holding it in memory meant a deploy only reached people who happened
+        # to load "/" — WhiteNoise serves that one off disk — while every deep
+        # link and every refresh (/security/parking, /admin/devices …) went on
+        # booting the *previous* build until someone restarted the server. Two
+        # builds then ran side by side in one browser, and the older one won
+        # wherever the guard actually works. A few KB read per navigation is
+        # nothing next to that.
+        #
+        # index.html must never be cached by the browser either: a copy held
+        # there would keep requesting the old deploy's hashed asset filenames,
+        # which no longer exist, and the app would fail to boot.
+        resp = HttpResponse(_INDEX_PATH.read_bytes(), content_type='text/html; charset=utf-8')
         resp['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         return resp
 

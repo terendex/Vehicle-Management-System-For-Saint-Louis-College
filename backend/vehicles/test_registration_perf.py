@@ -9,6 +9,7 @@ or a filter Postgres cannot answer from an index.
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
@@ -293,3 +294,166 @@ class ConflictHelperComplexityTests(TestCase):
         self.assertIsNotNone(_registration_ban('', 'BANNED@slc.edu.ph', '', ''))
         self.assertIsNotNone(_registration_ban('', '', '99887766', ''))
         self.assertIsNone(_registration_ban('ZZZ9999', 'nobody@slc.edu.ph', '', ''))
+
+
+class PaymentComplexityTests(APITestCase):
+    """The receipt-upload step must cost the same at 25 rows and at 10,000.
+
+    It is reached by an unauthenticated applicant holding a link, so an O(N)
+    lookup here is also the cheapest thing on the system to hammer.
+    """
+
+    def setUp(self):
+        today = timezone.localdate()
+        RegistrationPeriod.objects.create(
+            label='Payment perf window', is_active=True,
+            start_date=today - timedelta(days=1),
+            end_date=today + timedelta(days=1),
+        )
+        SystemSettings.get()
+
+    def _count(self, fn):
+        with CaptureQueriesContext(connection) as ctx:
+            fn()
+        return len(ctx.captured_queries)
+
+    def _pending(self, tag):
+        """A pending row with a token, created through save() so it gets one."""
+        return VehicleRegistration.objects.create(
+            registrant_type='student', full_name='PAYER, PERF',
+            email=f'payperf{tag}@slc.edu.ph', plate_number=f'PYP{tag:05d}',
+            vehicle_type='car', student_id=f'{40000000 + tag}',
+            status=VehicleRegistration.Status.PENDING,
+        )
+
+    def _scaling(self, make_call):
+        VehicleRegistration.objects.filter(email__startswith='perf').delete()
+
+        seed_registrations(SMALL)
+        small = self._count(make_call(1))
+        seed_registrations(LARGE, offset=SMALL)
+        large = self._count(make_call(2))
+        return small, large
+
+    def assertConstant(self, label, small, large):
+        self.assertEqual(
+            small, large,
+            f"{label}: {small} queries at N={SMALL} but {large} at N={SMALL + LARGE} "
+            f"— the query count scales with the number of registrations (O(N))."
+        )
+
+    def test_payment_lookup_is_constant(self):
+        def make_call(tag):
+            reg = self._pending(tag)
+            return lambda: self.client.get(
+                '/api/vehicles/register/payment/', {'token': str(reg.payment_token)})
+        small, large = self._scaling(make_call)
+        self.assertConstant('register/payment (GET)', small, large)
+
+    def test_receipt_upload_is_constant(self):
+        def make_call(tag):
+            reg = self._pending(tag)
+
+            def call():
+                self.client.post('/api/vehicles/register/payment/', {
+                    'token': str(reg.payment_token),
+                    'or_number': '1380093',
+                    'receipt': SimpleUploadedFile(
+                        f'r{tag}.jpg', b'x' * 32, content_type='image/jpeg'),
+                }, format='multipart')
+            return call
+        small, large = self._scaling(make_call)
+        self.assertConstant('register/payment (POST)', small, large)
+
+    def test_a_dead_token_is_constant(self):
+        """The 404 path is the one an attacker would spray."""
+        def make_call(_tag):
+            return lambda: self.client.get(
+                '/api/vehicles/register/payment/',
+                {'token': '11111111-2222-3333-4444-555555555555'})
+        small, large = self._scaling(make_call)
+        self.assertConstant('register/payment (bad token)', small, large)
+
+    def test_the_payment_token_lookup_has_an_index(self):
+        """unique=True should give it one; this pins that it stays that way.
+
+        Same reasoning as LookupIndexTests: what matters is that an index path
+        exists at all, not which one the planner picks on a tiny table.
+        """
+        seed_registrations(300, offset=9000)
+        qs = VehicleRegistration.objects.filter(
+            payment_token='11111111-2222-3333-4444-555555555555',
+            status=VehicleRegistration.Status.PENDING)
+        sql, params = qs.query.sql_with_params()
+        with connection.cursor() as cur:
+            cur.execute('SET enable_seqscan = off')
+            try:
+                cur.execute('EXPLAIN ' + sql, params)
+                plan = '\n'.join(r[0] for r in cur.fetchall())
+            finally:
+                cur.execute('SET enable_seqscan = on')
+        self.assertNotIn(
+            'Seq Scan', plan,
+            f'payment_token lookup has no index path — it is O(N):\n{plan}')
+
+
+class CdsoQueueComplexityTests(APITestCase):
+    """The reviewer's queue: query count must not grow with the table.
+
+    Payload size is a separate question this does not answer — the endpoint
+    returns every row of a status, and the table paginates in the browser.
+    """
+
+    def setUp(self):
+        SystemSettings.get()
+        self.admin = User.objects.create_user(
+            email='queueperf@slc.edu.ph', full_name='Queue Perf',
+            password='pw', role='admin', is_staff=True, is_superuser=True)
+        self.client.force_authenticate(user=self.admin)
+
+    def test_the_summary_is_constant(self):
+        """One GROUP BY for the whole cross-tab, however many rows it spans.
+
+        The status/type/payment grids are three accumulations over the same
+        result set, so adding one must not add a query.
+        """
+        VehicleRegistration.objects.filter(email__startswith='perf').delete()
+
+        def call():
+            self.client.get('/api/vehicles/registrations/summary/')
+
+        seed_registrations(SMALL)
+        with CaptureQueriesContext(connection) as ctx:
+            call()
+        small = len(ctx.captured_queries)
+
+        seed_registrations(LARGE, offset=SMALL)
+        with CaptureQueriesContext(connection) as ctx:
+            call()
+        large = len(ctx.captured_queries)
+
+        self.assertEqual(
+            small, large,
+            f"registrations/summary: {small} queries at N={SMALL} but {large} at "
+            f"N={SMALL + LARGE} — the cross-tab is costing a query per group.")
+
+    def test_the_pending_queue_is_constant(self):
+        VehicleRegistration.objects.filter(email__startswith='perf').delete()
+
+        def call():
+            self.client.get('/api/vehicles/registrations/pending/?status=accepted')
+
+        seed_registrations(SMALL)
+        with CaptureQueriesContext(connection) as ctx:
+            call()
+        small = len(ctx.captured_queries)
+
+        seed_registrations(LARGE, offset=SMALL)
+        with CaptureQueriesContext(connection) as ctx:
+            call()
+        large = len(ctx.captured_queries)
+
+        self.assertEqual(
+            small, large,
+            f"registrations/pending: {small} queries at N={SMALL} but {large} at "
+            f"N={SMALL + LARGE} — serialising the page costs a query per row.")

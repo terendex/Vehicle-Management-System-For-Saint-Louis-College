@@ -4,14 +4,17 @@ import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
-  VideoOff,
+  VideoOff, Search, Maximize2, Minimize2,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
+import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
+import { BayOccupantDetails } from '../../components/BayOccupant'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import './ParkingManagement.css'
 
 const CAT_OPTS = [
@@ -80,20 +83,65 @@ export default function ParkingManagement({ embedded = false }) {
   const [confirmModal, setConfirmModal] = useState(null) // { type: 'deleteZone' }
   const [resultModal,  setResultModal]  = useState(null) // { type: 'success'|'error', message }
   // Live-view RTSP cameras panel
-  const [showCamPanel, setShowCamPanel] = useState(false)
+  // Open by default: this stopped being an optional drawer when the live feed
+  // moved into the main canvas. It now carries the camera's status and controls,
+  // including the only route to a zone for an unzoned camera.
+  const [showCamPanel, setShowCamPanel] = useState(true)
   // Device Management cameras assignable to a zone, and per-zone detection status
   const [deviceCams,   setDeviceCams]   = useState([])
   const [camRunning,   setCamRunning]   = useState({})
   const [assigning,    setAssigning]    = useState(false)
-  const [toggling,     setToggling]     = useState(false)
   const [capturing,    setCapturing]    = useState(false)
   const [methodSaving,   setMethodSaving]   = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
 
-  const { cameras: allCameras, addCamera: addPkCamera, removeCamera: removePkCameraHook, registerCanvas: registerPkCanvas } = useCameraContext()
+  const { cameras: allCameras, syncCameras: syncPkCameras,
+          registerCanvas: registerPkCanvas, paneCounts: livePaneCounts } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
+  const [camQuery, setCamQuery] = useState('')
+  // The reference image URL is signed and expires, so "it loaded an hour ago"
+  // is not a guarantee it loads now. Tracked per zone id: switching zones must
+  // not carry one zone's failure over to the next.
+  const [imgFailedFor, setImgFailedFor] = useState(null)
+  // Both keyed by zone id rather than reset in an effect: a different zone is a
+  // different question — its image may be single-lens, or the same lens may not
+  // be the right one — and deriving the answer avoids a reset that would run
+  // one render after the zone already changed.
+  //
+  // imgDims: natural size of the reference image, so the editor can tell a
+  // stacked dual-lens frame from an ordinary one (the backend's own test).
+  // lensSel: which view is being worked on; absent = not chosen yet, a state
+  // the editor refuses to draw in.
+  // The detector's own boxes for the selected zone — the evidence behind the
+  // bay colours, so "why is that bay still green" has an answer on screen.
+  const [detections, setDetections] = useState(null)
+  const [imgDimsFor, setImgDimsFor] = useState({})
+  const [lensSelFor, setLensSelFor] = useState({})
   const parkingCams = allCameras.filter(c => c.assignment === 'parking')
   const pkActiveCam = parkingCams.find(c => c.id === pkActiveCamId) ?? parkingCams[0] ?? null
+  const camFs = useFullscreen()
+
+  // Strip only. The canvases above stay mounted for every camera — filtering
+  // them would unregister a live feed and force it to reconnect.
+  // How many views this camera actually sends, as measured by the render
+  // loop from the frame itself — not guessed from the reference image,
+  // which may not exist yet when no zone has been created.
+  const livePanes = pkActiveCam ? (livePaneCounts[pkActiveCam.id] ?? 1) : 1
+
+  // For the create-zone modal: the camera being picked there is not necessarily
+  // the one on screen. Matched by name because CameraContext keys live feeds by
+  // its own id, not the Camera row's.
+  const newZoneLensCount = (() => {
+    const dev = deviceCams.find(c => String(c.id) === String(newZone.camera))
+    if (!dev) return 1
+    const live = parkingCams.find(c => c.name === dev.name)
+    return live ? (livePaneCounts[live.id] ?? 1) : 1
+  })()
+
+  const camQ = camQuery.trim().toLowerCase()
+  const shownCams = camQ
+    ? parkingCams.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
+    : parkingCams
 
   useEffect(() => {
     if (!pkActiveCamId && parkingCams.length > 0) setPkActiveCam(parkingCams[0].id)
@@ -121,6 +169,45 @@ export default function ParkingManagement({ embedded = false }) {
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
 
   const selZone = zones.find(z => z.id === selId) ?? null
+  // Scoped to the zone that actually failed, so selecting another zone shows
+  // its own image rather than inheriting the previous one's error.
+  const imgFailed = !!selZone && imgFailedFor === selZone.id
+  const imgDims  = selZone ? (imgDimsFor[selZone.id] ?? null) : null
+  // The zone remembers which view it covers, so the editor opens on it instead
+  // of asking again every visit. A switch made on screen still wins for this
+  // session — it is how you check the other view without editing the zone.
+  const lensView = selZone
+    ? (lensSelFor[selZone.id] ?? (selZone.lens_index != null ? selZone.lens_index : null))
+    : null
+
+  // Identical rule to lens_layout.lens_count() on the backend and lensCount()
+  // in CameraContext: taller than wide, and the halves are widescreen.
+  const lensCount = (() => {
+    // The live frame is the better witness: it is measured by the render loop
+    // from the picture the camera is actually sending, and it exists before any
+    // reference image does. Deriving this from the reference image alone meant a
+    // zone that had never captured one showed both lenses stacked in Live View —
+    // the very thing the lens split exists to prevent.
+    if (livePanes > 1) return livePanes
+    if (!imgDims) return 1
+    const { w, h } = imgDims
+    if (!w || !h || h <= w) return 1
+    return w / (h / 2) >= 1.6 ? 2 : 1
+  })()
+  const lensIdx = lensCount > 1 ? (lensView ?? 0) : 0
+  // Drawing is blocked until a view is picked, so a bay can never be defined
+  // against the seam between two lenses.
+  const needsLensChoice = lensCount > 1 && lensView == null
+
+  // Bay geometry is stored normalised against the WHOLE frame — the detector
+  // returns full-frame boxes and `bay_occupancy._rect_for` reads them that way.
+  // So the lens view is a viewport, not a coordinate system: the SVG viewBox
+  // shows one band and pointer input is mapped back out of it, leaving every
+  // stored coordinate full-frame. Cropping the saved image instead would have
+  // silently moved every bay to the seam.
+  const toFullFrame = (pt) => (
+    lensCount > 1 ? { x: pt.x, y: (pt.y + lensIdx) / lensCount } : pt
+  )
 
   // ── Which camera is this zone (and this feed) actually about? ────
   //
@@ -185,6 +272,17 @@ export default function ParkingManagement({ embedded = false }) {
     ?? (selZone?.camera != null ? camIndex.byId.get(selZone.camera)?.name : null)
     ?? null
 
+  // Everything in the panel is conditional, and with one camera on a zone in
+  // Live View every condition is false — which rendered an empty bordered box
+  // under the feed. Work out whether it holds anything before drawing it.
+  const camPanelHasContent = Boolean(
+    activeCamUnzoned ||
+    camZoneMismatch ||
+    parkingCams.length !== 1 ||     // 0 shows a note, 2+ shows the picker
+    !selZone ||                     // the "create a zone" hint
+    mode === 'edit'                 // capture + scoring method
+  )
+
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
     setLoading(true)
@@ -207,15 +305,42 @@ export default function ParkingManagement({ embedded = false }) {
   // Live-refresh zones/occupancy on parking changes
   useLiveUpdates(loadZones, ['parkingzone', 'parkingspace'])
 
-  // Load parking cameras once on mount — persists across navigation
-  useEffect(() => {
+  // The parking feeds, kept in step with Device Management rather than read
+  // once on mount: a camera registered while this page is open should appear,
+  // and one deleted here or from another session must stop streaming instead of
+  // playing on behind a zone that no longer has it.
+  const loadCameras = useCallback(() => {
     camerasApi.list({ assignment: 'parking' })
       .then(cams => {
         setDeviceCams(cams)
-        cams.forEach(c => addPkCamera(c.name, c.rtsp_url, 'parking'))
+        syncPkCameras('parking', cams)
       })
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [syncPkCameras])
+
+  useEffect(() => { loadCameras() }, [loadCameras])
+
+  // Deleting a camera nulls ParkingZone.camera through the collector's bulk
+  // UPDATE, which fires no parkingzone signal — so the zones have to be
+  // refetched from the *camera* event or they go on pointing at a device that
+  // no longer exists.
+  const onCameraChange = useCallback(() => { loadCameras(); loadZones() },
+                                     [loadCameras, loadZones])
+  useLiveUpdates(onCameraChange, 'camera')
+
+  // Polled at the rate the worker re-detects (DETECT_INTERVAL_SECONDS = 2).
+  // Live mode only: in the editor the picture is a still reference image and
+  // boxes measured against the live frame would sit over the wrong scene.
+  useEffect(() => {
+    if (!selId || mode !== 'live') return undefined
+    let alive = true
+    const tick = () => zoneApi.getDetections()
+      .then(all => { if (alive) setDetections(all?.[selId] ?? null) })
+      .catch(() => { if (alive) setDetections(null) })
+    tick()
+    const timer = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [selId, mode])
 
   // Poll detection (auto-camera) status for all zones
   const refreshCamStatus = useCallback(async () => {
@@ -278,17 +403,24 @@ export default function ParkingManagement({ embedded = false }) {
 
   const handleAddZone = async (e) => {
     e.preventDefault()
-    if (!newZone.name.trim()) return
+    // The form carries noValidate, so the browser's own bubble is gone and
+    // its complaints have to be re-raised here.
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
+    if (!newZone.name.trim()) {
+      await notify.error('Give the zone a name.', { title: 'Zone not created' })
+      return
+    }
     setAddingZone(true)
     try {
       const z = await zoneApi.create({
         ...newZone,
         camera: newZone.camera ? Number(newZone.camera) : null,
+        lens_index: Number(newZone.lens_index ?? 0),
       })
       setZones(p => [...p, { ...z, spaces: [] }])
       setSelId(z.id)
       setShowNew(false)
-      setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '' })
+      setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '', lens_index: 0 })
       setMode('edit')
     } catch {
       setShowNew(false)
@@ -331,24 +463,6 @@ export default function ParkingManagement({ embedded = false }) {
 
   const handleAssignCamera = (e) =>
     assignCamera(e.target.value ? Number(e.target.value) : null)
-
-  const toggleDetection = async () => {
-    if (!selZone) return
-    setToggling(true)
-    try {
-      if (camRunning[selZone.id]) {
-        await zoneApi.stopCamera(selZone.id)
-      } else {
-        await zoneApi.startCamera(selZone.id)
-      }
-      await refreshCamStatus()
-    } catch (err) {
-      setResultModal({
-        type: 'error',
-        message: err?.response?.data?.error || 'Failed to toggle camera detection.',
-      })
-    } finally { setToggling(false) }
-  }
 
   // ── Capture a still frame from the live feed as the reference image ─────
   //
@@ -435,8 +549,9 @@ export default function ParkingManagement({ embedded = false }) {
   // ── SVG drawing (edit mode) ─────────────────────────────────────
   const onMouseDown = (e) => {
     if (mode !== 'edit' || tool !== 'box') return
+    if (needsLensChoice) return          // no view picked: a bay would straddle the seam
     e.preventDefault()
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     dragStart.current = pt
     dragging.current  = false
     setSelDraft(null)
@@ -444,11 +559,11 @@ export default function ParkingManagement({ embedded = false }) {
 
   const onMouseMove = (e) => {
     if (mode === 'edit' && tool === 'pen') {
-      if (penPoints.length > 0) setPenCursor(svgPt(e, svgEl.current))
+      if (penPoints.length > 0) setPenCursor(toFullFrame(svgPt(e, svgEl.current)))
       return
     }
     if (!dragStart.current) return
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     const dx = Math.abs(pt.x - dragStart.current.x)
     const dy = Math.abs(pt.y - dragStart.current.y)
     if (dx > DRAG_MIN || dy > DRAG_MIN) dragging.current = true
@@ -462,7 +577,7 @@ export default function ParkingManagement({ embedded = false }) {
   const onMouseUp = (e) => {
     if (tool !== 'box') return
     if (!dragStart.current) return
-    const pt          = svgPt(e, svgEl.current)
+    const pt          = toFullFrame(svgPt(e, svgEl.current))
     const wasDragging = dragging.current
     const rb          = rbRef.current
 
@@ -491,6 +606,7 @@ export default function ParkingManagement({ embedded = false }) {
       vehicle_category: selZone?.vehicle_category,
       x1: nx1, y1: ny1, x2: nx2, y2: ny2,
       points: null,
+      lens_index: lensIdx,
       is_occupied: false, occupied_by: '',
     }])
     setSelDraft(id)
@@ -516,6 +632,7 @@ export default function ParkingManagement({ embedded = false }) {
       vehicle_category: selZone?.vehicle_category,
       x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
       points: points.map(p => [p.x, p.y]),
+      lens_index: lensIdx,
       is_occupied: false, occupied_by: '',
     }])
     setSelDraft(id)
@@ -523,8 +640,9 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   const onSvgClick = (e) => {
+    if (needsLensChoice) return
     if (mode !== 'edit' || tool !== 'pen') return
-    const pt = svgPt(e, svgEl.current)
+    const pt = toFullFrame(svgPt(e, svgEl.current))
     if (penPoints.length >= 3 && Math.hypot(pt.x - penPoints[0].x, pt.y - penPoints[0].y) < 0.02) {
       finalizePenShape(penPoints)
       setPenPoints([])
@@ -552,6 +670,7 @@ export default function ParkingManagement({ embedded = false }) {
       const payload = drafts.map(s => ({
         space_number: s.space_number, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
         points: s.points ?? null,
+        lens_index: s.lens_index ?? 0,
       }))
       const saved   = await zoneApi.saveLayout(selId, payload)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: saved } : z))
@@ -562,6 +681,9 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Space click (live mode) ─────────────────────────────────────
+  // An occupied bay opens as a question — who is in it — with freeing it as
+  // the action underneath. It used to open straight into "Mark as free?" over
+  // a bare plate, which asked for a decision without showing what it was about.
   const onSpaceClick = (sp) => {
     if (mode !== 'live') return
     if (sp.is_occupied) setSpaceOp({ type: 'free',   space: sp })
@@ -569,7 +691,12 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   const confirmOccupy = async () => {
-    if (!spaceOpPlate.trim()) return
+    if (!spaceOpPlate.trim()) {
+      await notify.error('Enter the plate number parked in this space.', {
+        title: 'Space not updated',
+      })
+      return
+    }
     try {
       const u = await zoneApi.markOccupied(spaceOp.space.id, spaceOpPlate)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))
@@ -586,7 +713,14 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   // ── Derived ─────────────────────────────────────────────────────
-  const spaceList   = mode === 'edit' ? drafts : (selZone?.spaces ?? [])
+  // Slots belong to one view of the camera. Showing another lens's boxes over
+  // this picture would draw them against a scene they were never placed in —
+  // the geometry is full-frame, so they would land somewhere plausible and
+  // wrong. Single-lens cameras have everything at lens 0 and are unaffected.
+  const allSpaces   = mode === 'edit' ? drafts : (selZone?.spaces ?? [])
+  const spaceList   = lensCount > 1
+    ? allSpaces.filter(s => (s.lens_index ?? 0) === lensIdx)
+    : allSpaces
   const selDraftSp  = drafts.find(s => s._id === selDraft)
   const liveSpaces  = selZone?.spaces ?? []
   // Bays are what the camera reads on this zone's map. Free/Occupied come from
@@ -741,9 +875,49 @@ export default function ParkingManagement({ embedded = false }) {
             the spaces go, so it must be watchable before any zone exists. */}
         <div className="pm-content-row">
         {!selZone ? (
-          <div className="pm-canvas-placeholder" style={{ flex: 1, minWidth: 0 }}>
-            <ParkingCircle size={36} />
-            <span>{loading ? 'Loading…' : 'Select or create a parking zone.'}</span>
+          <div className="pm-canvas-area" style={{ flex: 1, minWidth: 0 }}>
+            {/* No zone yet, but the camera still belongs on screen: choosing
+                which camera to draw a zone for is exactly what you need to see
+                to do. This used to be the sidebar's job.
+
+                One tile per lens, never the raw stacked frame. A dual-lens unit
+                packs two unrelated scenes into one picture, and showing it whole
+                squeezes both into a 16:9 box — neither view is usable, and it
+                reads as one broken camera rather than two working ones. */}
+            {pkActiveCam ? (
+              <div className={`pm-live-panes${livePanes > 1 ? ' pm-live-panes--split' : ''}`}>
+                {Array.from({ length: livePanes }, (_, i) => (
+                  <div className="pm-live-pane" key={i}>
+                    <div className="pm-canvas-wrapper">
+                      <canvas
+                        className="pm-canvas-live"
+                        ref={el => registerPkCanvas(pkActiveCam.id, el, livePanes > 1 ? i : undefined)}
+                      />
+                    </div>
+                    {livePanes > 1 && (
+                      <span className="pm-live-pane-tag">Lens {i + 1}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="pm-canvas-wrapper">
+                <div className="pm-canvas-no-img">
+                  <ParkingCircle size={26} />
+                  <p className="pm-canvas-no-img-title">
+                    {loading ? 'Loading…' : 'Select or create a parking zone'}
+                  </p>
+                  <p className="pm-canvas-no-img-sub">
+                    Connect a parking camera to see it here.
+                  </p>
+                </div>
+              </div>
+            )}
+            <div className="pm-legend">
+              <span className="pm-legend-note">
+                {loading ? 'Loading…' : 'Pick a zone above, or create one for this camera below.'}
+              </span>
+            </div>
           </div>
         ) : (
           <div className="pm-canvas-area" style={{ flex: 1, minWidth: 0 }}>
@@ -762,44 +936,21 @@ export default function ParkingManagement({ embedded = false }) {
                     className={`pm-mode-btn${mode === 'edit' ? ' pm-mode-btn--active' : ''}`}
                     onClick={() => setMode('edit')}
                   >
-                    <Pencil size={13} /> Edit Layout
+                    <Pencil size={13} /> Edit Parking Slots
                   </button>
                 </div>
 
-                <div className="pm-cam-assign">
-                  <Video size={13} />
-                  <select
-                    className="pm-cam-assign-select"
-                    value={selZone.camera ?? ''}
-                    onChange={handleAssignCamera}
-                    disabled={assigning}
-                  >
-                    <option value="">No camera assigned</option>
-                    {deviceCams.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {deviceCams.length === 0 && (
-                    <span style={{ color: '#9DB6C9' }}>None registered — add one in Device Management</span>
-                  )}
-                </div>
 
+                {/* No on/off switch: a zone with a camera detects, full stop.
+                    The detector is supervised server-side (detection_supervisor)
+                    and comes back by itself after a restart, so a button here
+                    could only ever take it away — and a zone silently switched
+                    off looks exactly like a zone whose camera has failed. What
+                    remains is the status, because "is it running" is a real
+                    question a person needs answered. */}
                 {mode === 'live' && selZone.camera != null && (
-                  <button
-                    className="pm-btn pm-btn--outline"
-                    onClick={toggleDetection}
-                    disabled={toggling}
-                  >
-                    {toggling
-                      ? <Loader2 size={13} className="pm-spin" />
-                      : <Video size={13} />}
-                    {camRunning[selZone.id] ? 'Stop Detection' : 'Start Detection'}
-                  </button>
-                )}
-
-                {mode === 'live' && (
                   <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
-                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Auto-detect off'}
+                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Starting detector…'}
                   </span>
                 )}
 
@@ -822,10 +973,12 @@ export default function ParkingManagement({ embedded = false }) {
                   </div>
                 )}
 
-                {mode === 'edit' && tool === 'box' && (
-                  <span className="pm-edit-hint">Click-drag on the image to draw a space box</span>
-                )}
-
+                {/* No box hint here: the footer already says "Click-drag to
+                    draw · click a box to rename or delete" for this tool, and
+                    saying it twice only widened an already crowded toolbar. The
+                    pen hint below stays because it is stateful — it counts the
+                    points placed and says how to close the shape, which the
+                    footer cannot. */}
                 {mode === 'edit' && tool === 'pen' && (
                   <>
                     <span className="pm-edit-hint">
@@ -907,16 +1060,141 @@ export default function ParkingManagement({ embedded = false }) {
               </div>
             )}
 
-            {/* Canvas */}
-            <div className="pm-canvas-wrapper">
-              {/* Background: reference image OR placeholder */}
-              {selZone.reference_image_url ? (
-                <img src={selZone.reference_image_url} className="pm-canvas-img" draggable={false} alt="" />
-              ) : (
+            {/* Canvas.
+                Live View draws the bays over the *live feed*; only Edit Parking
+                Slots falls back to the still reference image. Drawing on moving
+                video is guesswork, and a "Live View" that was really a photo of
+                the car park read as a frozen feed. */}
+            <div className="pm-canvas-wrapper" ref={camFs.setRef('parking')}>
+              {/* Fullscreen the picture itself. It moved here with the live
+                  feed — it was attached to the sidebar view that no longer
+                  exists. */}
+              {mode === 'live' && pkActiveCam && (
+                <button
+                  className="pm-cam-fs"
+                  onClick={async () => {
+                    if (!(await camFs.toggle('parking'))) toast.error('Fullscreen was blocked by the browser.')
+                  }}
+                  title={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                  aria-label={camFs.isFullscreen('parking') ? 'Exit fullscreen' : 'Fullscreen'}
+                >
+                  {camFs.isFullscreen('parking') ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
+              )}
+              {/* The live picture. Registered per lens, so a stacked dual-lens
+                  camera shows the one view being worked on rather than both
+                  squeezed into a 16:9 box. */}
+              {/* Hidden, and deliberately the WHOLE frame.
+                  The visible canvas above shows one lens, but a reference image
+                  captured from that would be a single view — while every bay
+                  coordinate, and the editor's own lens cropping, is expressed
+                  against the full stacked frame. Capturing the crop would make
+                  the picture and the geometry disagree by exactly one lens.
+                  CameraContext keys canvases by pane, so a full-frame one and a
+                  per-lens one coexist and both receive frames. */}
+              {pkActiveCam && (
+                <canvas
+                  style={{ display: 'none' }}
+                  ref={el => {
+                    registerPkCanvas(pkActiveCam.id, el)
+                    camCanvasRefs.current[pkActiveCam.id] = el
+                  }}
+                />
+              )}
+
+              {mode === 'live' && (
+                pkActiveCam ? (
+                  <canvas
+                    className="pm-canvas-live"
+                    // Always an explicit pane, never undefined. `pane == null` is the
+                    // FULL_FRAME key, which the hidden capture canvas above already
+                    // holds — passing undefined here would make the two overwrite
+                    // each other on a single-lens camera and leave one of them
+                    // dark. With one lens the loop draws pane 0 and the whole
+                    // frame identically, so this costs nothing.
+                    ref={el => registerPkCanvas(pkActiveCam.id, el, lensIdx)}
+                  />
+                ) : (
+                  <div className="pm-canvas-no-img">
+                    <VideoOff size={26} />
+                    <p className="pm-canvas-no-img-title">No camera connected</p>
+                    <p className="pm-canvas-no-img-sub">
+                      Assign a camera to {selZone.name} to watch this zone live.
+                    </p>
+                  </div>
+                )
+              )}
+              {/* Background: reference image OR placeholder.
+                  `imgFailed` matters as much as the missing case: the URL is
+                  signed and expires, so a page left open overnight comes back
+                  to a dead link. Without onError that renders as a broken-image
+                  glyph on an empty void — no hint that a refresh fixes it. */}
+              {mode === 'edit' && selZone.reference_image_url && !imgFailed ? (
+                <img
+                  src={selZone.reference_image_url}
+                  className="pm-canvas-img"
+                  draggable={false}
+                  alt=""
+                  /* Stretch to lensCount x height and slide the wanted band
+                     into the wrapper, which clips. object-fit is `fill`, so the
+                     band fills the viewport exactly as the viewBox expects. */
+                  style={lensCount > 1 ? {
+                    height: `${lensCount * 100}%`,
+                    top: `${-lensIdx * 100}%`,
+                    bottom: 'auto',
+                  } : undefined}
+                  onError={() => setImgFailedFor(selZone.id)}
+                  onLoad={e => {
+                    setImgFailedFor(f => (f === selZone.id ? null : f))
+                    setImgDimsFor(m => ({ ...m, [selZone.id]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }))
+                  }}
+                />
+              ) : mode === 'edit' ? (
                 <div className="pm-canvas-no-img">
-                  {mode === 'edit'
-                    ? 'No image yet — draw boxes directly or upload a reference photo'
-                    : 'No reference image. Switch to Edit Layout to upload one.'}
+                  {imgFailed ? (
+                    <>
+                      <AlertTriangle size={26} />
+                      <p className="pm-canvas-no-img-title">Reference image could not be loaded</p>
+                      <p className="pm-canvas-no-img-sub">
+                        The link may have expired. Refresh to get a fresh one, or
+                        capture a new image from the live feed.
+                      </p>
+                      <button className="pm-btn pm-btn--outline" onClick={loadZones}>
+                        <RefreshCw size={13} /> Refresh
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Camera size={26} />
+                      <p className="pm-canvas-no-img-title">No reference image yet</p>
+                      <p className="pm-canvas-no-img-sub">
+                        Draw slots directly, upload a photo, or capture one from the live feed.
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : null}
+
+              {/* One view at a time, and the choice comes first.
+                  A stacked frame is two unrelated scenes; a bay drawn across
+                  the join describes neither, and the geometry is stored against
+                  the whole frame so nothing downstream would flag it. */}
+              {needsLensChoice && (
+                <div className="pm-lens-prompt">
+                  <LayoutGrid size={26} />
+                  <p className="pm-lens-prompt-title">This camera has {lensCount} views</p>
+                  <p className="pm-lens-prompt-sub">
+                    {selZone.camera_name || 'This camera'} stacks {lensCount} pictures into one
+                    frame. Pick the view this zone covers — you can set up the other one
+                    afterwards.
+                  </p>
+                  <div className="pm-lens-prompt-actions">
+                    {Array.from({ length: lensCount }, (_, i) => (
+                      <button key={i} className="pm-btn pm-btn--primary" onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}>
+                        Lens {i + 1}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -924,7 +1202,10 @@ export default function ParkingManagement({ embedded = false }) {
               <svg
                 ref={svgEl}
                 className="pm-canvas-svg"
-                viewBox="0 0 1 1"
+                /* One band of the full frame. Every bay is stored in
+                   full-frame coordinates, so narrowing the viewBox is all it
+                   takes to show a single lens — no geometry is rewritten. */
+                viewBox={lensCount > 1 ? `0 ${lensIdx / lensCount} 1 ${1 / lensCount}` : '0 0 1 1'}
                 preserveAspectRatio="none"
                 style={{ cursor: mode === 'edit' ? 'crosshair' : 'default' }}
                 onMouseDown={onMouseDown}
@@ -1033,6 +1314,34 @@ export default function ParkingManagement({ embedded = false }) {
                     ))}
                   </g>
                 )}
+
+                {/* What the detector sees. Dashed until the vehicle settles —
+                    only a settled one is allowed to claim a bay. */}
+                {mode === 'live' && (detections?.ignored ?? []).map((v, i) => (
+                  <rect
+                    key={`ign-${i}`}
+                    x={v.bbox.x} y={v.bbox.y}
+                    width={v.bbox.width} height={v.bbox.height}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.45)"
+                    strokeWidth={0.0015}
+                    strokeDasharray="0.006 0.006"
+                    pointerEvents="none"
+                  />
+                ))}
+
+                {mode === 'live' && (detections?.vehicles ?? []).map(v => (
+                  <rect
+                    key={`veh-${v.id}`}
+                    x={v.bbox.x} y={v.bbox.y}
+                    width={v.bbox.width} height={v.bbox.height}
+                    fill="rgba(246, 206, 17, 0.12)"
+                    stroke="#F6CE11"
+                    strokeWidth={0.0025}
+                    strokeDasharray={v.settled ? undefined : '0.012 0.008'}
+                    pointerEvents="none"
+                  />
+                ))}
               </svg>
 
               {/* Space label popover (edit mode) */}
@@ -1060,6 +1369,50 @@ export default function ParkingManagement({ embedded = false }) {
               )}
             </div>
 
+            {/* Camera options, under the picture rather than above it: the feed
+                is the subject of this screen, and the controls that pick which
+                camera and which of its views you are looking at belong beneath
+                it like the controls of a player. */}
+            <div className="pm-cam-bar">
+              <div className="pm-cam-bar-group">
+                <Video size={14} className="pm-cam-bar-icon" />
+                <select
+                  className="pm-cam-assign-select"
+                  value={selZone.camera ?? ''}
+                  onChange={handleAssignCamera}
+                  disabled={assigning}
+                  aria-label="Camera for this zone"
+                >
+                  <option value="">No camera assigned</option>
+                  {deviceCams.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {assigning && <Loader2 size={13} className="pm-spin" />}
+                {deviceCams.length === 0 && (
+                  <span className="pm-cam-bar-note">None registered — add one in Device Management</span>
+                )}
+              </div>
+
+              {lensCount > 1 && (
+                <div className="pm-lens-picker" role="group" aria-label="Camera view">
+                  <span className="pm-lens-label">View</span>
+                  {Array.from({ length: lensCount }, (_, i) => (
+                    <button
+                      key={i}
+                      className={`pm-lens-btn${lensView === i ? ' pm-lens-btn--active' : ''}`}
+                      onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
+                    >
+                      Lens {i + 1}
+                    </button>
+                  ))}
+                  <span className="pm-cam-bar-note">
+                    {spaceList.length} slot{spaceList.length === 1 ? '' : 's'} on this view
+                  </span>
+                </div>
+              )}
+            </div>
+
             {/* Legend */}
             <div className="pm-legend">
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--free" />Free</span>
@@ -1075,236 +1428,213 @@ export default function ParkingManagement({ embedded = false }) {
           </div>
         )}{/* /pm-canvas-area */}
 
-          {/* ── Camera Sidebar ── */}
-          {showCamPanel && (
-            <div className="pm-cam-sidebar">
 
-              {/* Sidebar header */}
-              <div className="pm-cam-sidebar-header">
-                <span className="pm-cam-panel-title">
-                  <Video size={14} /> {selZone ? selZone.name : 'Parking Cameras'}
-                  {parkingCams.length > 0 && (
-                    <span className="pm-cam-live-badge">
-                      {parkingCams.filter(c => c.streamConnected).length}/{parkingCams.length} live
-                    </span>
-                  )}
-                </span>
-                <button
-                  className="pm-btn pm-btn--outline"
-                  style={{ padding: '3px 8px', fontSize: 11 }}
-                  onClick={() => setShowCamPanel(false)}
-                >
-                  <X size={12} />
-                </button>
-              </div>
 
-              {/* Main camera view — shows active cam at full size */}
-              <div className="pm-cam-main-wrap">
-                {parkingCams.length > 0 ? (
-                  <>
-                    {parkingCams.map((cam, idx) => (
-                      <div
-                        key={cam.id}
-                        style={{ display: pkActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
-                      >
-                        <canvas
-                          ref={el => { registerPkCanvas(cam.id, el); camCanvasRefs.current[cam.id] = el }}
-                          style={{ width: '100%', display: 'block', background: '#000', minHeight: 180 }}
-                        />
-                      </div>
-                    ))}
-                    {/* Connecting overlay */}
-                    {pkActiveCam && !pkActiveCam.streamConnected && pkActiveCam.wsActive && (
-                      <div className="pm-cam-overlay">
-                        <div className="pm-spin-sm" />
-                        <span>{pkActiveCam.statusMsg || 'Connecting…'}</span>
-                      </div>
-                    )}
-                    {/* Name + status badge */}
-                    <div className="pm-cam-main-badge">
-                      <span
-                        style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                          background: pkActiveCam?.streamConnected ? '#1BA968' : pkActiveCam?.wsActive ? '#E0B00C' : '#5C7B92' }}
-                      />
-                      {pkActiveCam?.name || 'Camera'}
-                    </div>
-                  </>
-                ) : (
-                  <div className="pm-cam-empty" style={{ minHeight: 160 }}>
-                    <Video size={28} style={{ color: '#2E4C63' }} />
-                    <p>Add a camera below</p>
-                  </div>
-                )}
-              </div>
-
-              {/* ── Is this camera zoned? ──
-                  Every camera can have its own zone (and more than one), but
-                  nothing on the page used to say which ones already do. An
-                  admin looking at an unzoned feed would draw bays into whatever
-                  zone happened to be selected — a zone fed by a different
-                  camera — and the layout would silently never match. */}
-              {activeCamUnzoned && (
-                <div className="pm-cam-notice pm-cam-notice--warn">
-                  <div className="pm-cam-notice-head">
-                    <AlertTriangle size={13} /> Camera not yet zoned
-                  </div>
-                  <p className="pm-cam-notice-body">
-                    <strong>{activeDeviceCam.name}</strong> has no parking zone drawn for it.
-                    {selZone
-                      ? <> Anything you draw now is saved to <strong>{selZone.name}</strong>, which
-                          is watched by <strong>{selZoneCamName ?? 'no camera'}</strong>.</>
-                      : <> Create a zone for it before drawing any bays.</>}
-                  </p>
-                  <button
-                    className="pm-btn pm-btn--primary pm-cam-notice-btn"
-                    onClick={() => openNewZone(activeDeviceCam.id)}
-                  >
-                    <Plus size={13} /> Create Zone for {activeDeviceCam.name}
-                  </button>
-                </div>
-              )}
-
-              {/* The camera is zoned, just not with the zone on screen. */}
-              {!activeCamUnzoned && camZoneMismatch && (
-                <div className="pm-cam-notice pm-cam-notice--info">
-                  <div className="pm-cam-notice-head">
-                    <Video size={13} /> Different camera
-                  </div>
-                  <p className="pm-cam-notice-body">
-                    This feed is <strong>{activeDeviceCam.name}</strong>; the selected zone{' '}
-                    <strong>{selZone.name}</strong> is watched by{' '}
-                    <strong>{selZoneCamName ?? 'no camera'}</strong>.
-                  </p>
-                  <button
-                    className="pm-btn pm-btn--outline pm-cam-notice-btn"
-                    onClick={() => { setSelId(activeCamZones[0].id); setMode('live') }}
-                  >
-                    <LayoutGrid size={13} /> Switch to {activeCamZones[0].name}
-                  </button>
-                </div>
-              )}
-
-              {/* A captured frame becomes a zone's reference image, so it needs
-                  a zone to belong to. */}
-              {parkingCams.length > 0 && !selZone && (
-                <p className="pm-cam-hint">
-                  Create a zone to use this view as its reference image.
-                </p>
-              )}
-
-              {parkingCams.length > 0 && selZone && (
-                <button
-                  className="pm-btn pm-btn--primary"
-                  style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
-                  onClick={handleCapture}
-                  disabled={capturing || !pkActiveCam?.streamConnected}
-                  title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
-                >
-                  {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
-                  Use as Reference Image for {selZone.name}
-                </button>
-              )}
-
-              {/* ── Bay scoring method ──
-                  The detector is the default. The baseline method needs no
-                  model at all, but it only works while the camera stays put —
-                  it judges each bay against a picture of that same bay empty. */}
-              {selZone && (
-                <div className="pm-method-box">
-                  <div className="pm-method-head">
-                    <SlidersHorizontal size={12} /> Bay Detection
-                  </div>
-
-                  <div className="pm-method-tabs">
-                    {[
-                      { key: 'ml',      label: 'Detector' },
-                      { key: 'classic', label: 'Baseline' },
-                    ].map(m => (
-                      <button
-                        key={m.key}
-                        className={`pm-method-tab${(selZone.occupancy_method ?? 'ml') === m.key ? ' pm-method-tab--active' : ''}`}
-                        onClick={() => handleMethodChange(m.key)}
-                        disabled={methodSaving}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {(selZone.occupancy_method ?? 'ml') === 'classic' && (
-                    <>
-                      <button
-                        className="pm-btn pm-btn--outline"
-                        style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
-                        onClick={handleSetBaseline}
-                        disabled={baselineSaving || !camRunning[selZone.id]}
-                        title={camRunning[selZone.id]
-                          ? 'Capture the current frame as the empty-lot reference'
-                          : 'Start this zone’s camera first'}
-                      >
-                        {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
-                        {selZone.has_baseline ? 'Re-capture Baseline' : 'Set Empty Baseline'}
-                      </button>
-
-                      {/* Says which method is really running, not which was
-                          picked — without a baseline this zone is still on the
-                          detector, and silently doing so would be worse. */}
-                      <p className={`pm-method-note${selZone.has_baseline ? '' : ' pm-method-note--warn'}`}>
-                        {selZone.has_baseline
-                          ? `Baseline captured ${selZone.baseline_captured_at
-                              ? new Date(selZone.baseline_captured_at).toLocaleString()
-                              : ''}. Re-capture it after moving the camera.`
-                          : 'No baseline yet — this zone is still using the detector. Capture one with the lot empty.'}
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Thumbnail strip — only when 2+ cameras */}
-              {parkingCams.length > 1 && (
-                <div className="pm-cam-thumb-strip">
-                  {parkingCams.map(cam => {
-                    const dev     = deviceCamFor(cam)
-                    const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
-                    return (
-                      <div
-                        key={`st-${cam.id}`}
-                        className={`pm-cam-strip-thumb ${pkActiveCamId === cam.id ? 'active' : ''}`}
-                        onClick={() => setPkActiveCam(cam.id)}
-                        title={unzoned ? `${cam.name} — no zone drawn yet` : cam.name}
-                      >
-                        <span
-                          className="pm-cam-strip-dot"
-                          style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
-                        />
-                        <Wifi size={14} />
-                        <span className="pm-cam-strip-label">{cam.name}</span>
-                        {/* Which feeds still need a zone, without clicking through each */}
-                        {unzoned && <span className="pm-cam-strip-badge">No zone</span>}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              {parkingCams.length === 0 && (
-                <p style={{ fontSize: 12, color: '#6B8CA6', margin: '8px 0 0', textAlign: 'center' }}>
-                  No parking cameras configured — add them in Device Management.
-                </p>
-              )}
-
-            </div>
-          )}
 
         </div>{/* /pm-content-row */}
+
+        {/* ── Cameras, beneath the picture ─────────────────────────────────
+            The live feed used to run in a right-hand sidebar while the main
+            canvas showed a still photo, so the screen had two camera views and
+            the bigger one was not the live one. The main canvas is the live
+            view now, which leaves this as what it should always have been:
+            the controls and status for the camera being watched, under it. */}
+        {showCamPanel && camPanelHasContent && (
+        <div className="pm-cam-panel">
+            {/* ── Is this camera zoned? ──
+                Every camera can have its own zone (and more than one), but
+                nothing on the page used to say which ones already do. An
+                admin looking at an unzoned feed would draw bays into whatever
+                zone happened to be selected — a zone fed by a different
+                camera — and the layout would silently never match. */}
+            {activeCamUnzoned && (
+              <div className="pm-cam-notice pm-cam-notice--warn">
+                <div className="pm-cam-notice-head">
+                  <AlertTriangle size={13} /> Camera not yet zoned
+                </div>
+                <p className="pm-cam-notice-body">
+                  <strong>{activeDeviceCam.name}</strong> has no parking zone drawn for it.
+                  {selZone
+                    ? <> Anything you draw now is saved to <strong>{selZone.name}</strong>, which
+                        is watched by <strong>{selZoneCamName ?? 'no camera'}</strong>.</>
+                    : <> Create a zone for it before drawing any bays.</>}
+                </p>
+                <button
+                  className="pm-btn pm-btn--primary pm-cam-notice-btn"
+                  onClick={() => openNewZone(activeDeviceCam.id)}
+                >
+                  <Plus size={13} /> Create Zone for {activeDeviceCam.name}
+                </button>
+              </div>
+            )}
+
+            {/* The camera is zoned, just not with the zone on screen. */}
+            {!activeCamUnzoned && camZoneMismatch && (
+              <div className="pm-cam-notice pm-cam-notice--info">
+                <div className="pm-cam-notice-head">
+                  <Video size={13} /> Different camera
+                </div>
+                <p className="pm-cam-notice-body">
+                  This feed is <strong>{activeDeviceCam.name}</strong>; the selected zone{' '}
+                  <strong>{selZone.name}</strong> is watched by{' '}
+                  <strong>{selZoneCamName ?? 'no camera'}</strong>.
+                </p>
+                <button
+                  className="pm-btn pm-btn--outline pm-cam-notice-btn"
+                  onClick={() => { setSelId(activeCamZones[0].id); setMode('live') }}
+                >
+                  <LayoutGrid size={13} /> Switch to {activeCamZones[0].name}
+                </button>
+              </div>
+            )}
+
+            {/* A captured frame becomes a zone's reference image, so it needs
+                a zone to belong to. */}
+            {parkingCams.length > 0 && !selZone && (
+              <p className="pm-cam-hint">
+                Create a zone to use this view as its reference image.
+              </p>
+            )}
+
+            {/* Setup, not monitoring: capturing a reference image and choosing
+                how bays are scored are both things you do while laying a zone
+                out. On the Live View they were permanent clutter under a feed
+                someone is watching. */}
+            {parkingCams.length > 0 && selZone && mode === 'edit' && (
+              <button
+                className="pm-btn pm-btn--primary"
+                style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                onClick={handleCapture}
+                disabled={capturing || !pkActiveCam?.streamConnected}
+                title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
+              >
+                {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
+                Use as Reference Image for {selZone.name}
+              </button>
+            )}
+
+            {/* ── Bay scoring method ──
+                The detector is the default. The baseline method needs no
+                model at all, but it only works while the camera stays put —
+                it judges each bay against a picture of that same bay empty. */}
+            {selZone && mode === 'edit' && (
+              <div className="pm-method-box">
+                <div className="pm-method-head">
+                  <SlidersHorizontal size={12} /> Bay Detection
+                </div>
+
+                <div className="pm-method-tabs">
+                  {[
+                    { key: 'ml',      label: 'Detector' },
+                    { key: 'classic', label: 'Baseline' },
+                  ].map(m => (
+                    <button
+                      key={m.key}
+                      className={`pm-method-tab${(selZone.occupancy_method ?? 'ml') === m.key ? ' pm-method-tab--active' : ''}`}
+                      onClick={() => handleMethodChange(m.key)}
+                      disabled={methodSaving}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                {(selZone.occupancy_method ?? 'ml') === 'classic' && (
+                  <>
+                    <button
+                      className="pm-btn pm-btn--outline"
+                      style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                      onClick={handleSetBaseline}
+                      disabled={baselineSaving || !camRunning[selZone.id]}
+                      title={camRunning[selZone.id]
+                        ? 'Capture the current frame as the empty-lot reference'
+                        : 'Start this zone’s camera first'}
+                    >
+                      {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
+                      {selZone.has_baseline ? 'Re-capture Baseline' : 'Set Empty Baseline'}
+                    </button>
+
+                    {/* Says which method is really running, not which was
+                        picked — without a baseline this zone is still on the
+                        detector, and silently doing so would be worse. */}
+                    <p className={`pm-method-note${selZone.has_baseline ? '' : ' pm-method-note--warn'}`}>
+                      {selZone.has_baseline
+                        ? `Baseline captured ${selZone.baseline_captured_at
+                            ? new Date(selZone.baseline_captured_at).toLocaleString()
+                            : ''}. Re-capture it after moving the camera.`
+                        : 'No baseline yet — this zone is still using the detector. Capture one with the lot empty.'}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Thumbnail strip — only when 2+ cameras */}
+            {parkingCams.length > 1 && (
+              <div className="pm-cam-search">
+                <Search size={13} className="pm-cam-search-icon" />
+                <input
+                  type="search"
+                  placeholder="Search cameras…"
+                  value={camQuery}
+                  onChange={e => setCamQuery(e.target.value)}
+                  aria-label="Search parking cameras"
+                />
+                {camQ && (
+                  <>
+                    <span className="pm-cam-search-count">{shownCams.length}/{parkingCams.length}</span>
+                    <button type="button" className="pm-cam-search-clear"
+                      onClick={() => setCamQuery('')} title="Clear search" aria-label="Clear search">
+                      <X size={12} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {parkingCams.length > 1 && (
+              <div className="pm-cam-thumb-strip">
+                {shownCams.length === 0 && (
+                  <div className="pm-cam-thumb-none">No cameras match “{camQuery.trim()}”</div>
+                )}
+                {shownCams.map(cam => {
+                  const dev     = deviceCamFor(cam)
+                  const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
+                  return (
+                    <div
+                      key={`st-${cam.id}`}
+                      className={`pm-cam-strip-thumb ${pkActiveCamId === cam.id ? 'active' : ''}`}
+                      onClick={() => setPkActiveCam(cam.id)}
+                      title={unzoned ? `${cam.name} — no zone drawn yet` : cam.name}
+                    >
+                      <span
+                        className="pm-cam-strip-dot"
+                        style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
+                      />
+                      <Wifi size={14} />
+                      <span className="pm-cam-strip-label">{cam.name}</span>
+                      {/* Which feeds still need a zone, without clicking through each */}
+                      {unzoned && <span className="pm-cam-strip-badge">No zone</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {parkingCams.length === 0 && (
+              <p style={{ fontSize: 12, color: '#6B8CA6', margin: '8px 0 0', textAlign: 'center' }}>
+                No parking cameras configured — add them in Device Management.
+              </p>
+            )}
+        </div>
+        )}
 
       </div>
 
       {/* ── Modal: New Zone ── */}
       {showNew && (
         <div className="pm-overlay" onClick={() => setShowNew(false)}>
-          <form className="pm-modal" onSubmit={handleAddZone} onClick={e => e.stopPropagation()}>
+          <form className="pm-modal" noValidate onSubmit={handleAddZone} onClick={e => e.stopPropagation()}>
             <div className="pm-modal-header">
               <span>Create Parking Zone</span>
               <button type="button" className="pm-modal-close" onClick={() => setShowNew(false)}><X size={16} /></button>
@@ -1356,10 +1686,39 @@ export default function ParkingManagement({ embedded = false }) {
                   No parking cameras registered yet — add one in Device Management, then assign it here.
                 </p>
               )}
+
+              {/* Which view of the camera. Only asked for a camera that is
+                  actually sending more than one — a stacked dual-lens unit
+                  watches two different places, and a zone covers one of them.
+                  Asked here so the answer is stored with the zone instead of
+                  being re-picked in the editor every session. */}
+              {newZoneLensCount > 1 && (
+                <>
+                  <label className="pm-modal-label" style={{ marginTop: 16 }}>
+                    Camera View <span className="pm-req">*</span>
+                  </label>
+                  <div className="pm-lens-picker" style={{ width: 'fit-content' }}>
+                    {Array.from({ length: newZoneLensCount }, (_, i) => (
+                      <button
+                        type="button"
+                        key={i}
+                        className={`pm-lens-btn${Number(newZone.lens_index ?? 0) === i ? ' pm-lens-btn--active' : ''}`}
+                        onClick={() => setNewZone(p => ({ ...p, lens_index: i }))}
+                      >
+                        Lens {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="pm-modal-note">
+                    This camera sends {newZoneLensCount} views in one frame. The zone covers the
+                    one you pick — create a second zone for the other.
+                  </p>
+                </>
+              )}
             </div>
             <div className="pm-modal-footer">
               <button type="button" className="pm-btn pm-btn--outline" onClick={() => setShowNew(false)}>Cancel</button>
-              <button type="submit" className="pm-btn pm-btn--primary" disabled={addingZone || !newZone.name.trim()}>
+              <button type="submit" className="pm-btn pm-btn--primary" disabled={addingZone}>
                 {addingZone ? <Loader2 size={13} className="pm-spin" /> : <Plus size={13} />} Create Zone
               </button>
             </div>
@@ -1388,7 +1747,7 @@ export default function ParkingManagement({ embedded = false }) {
             </div>
             <div className="pm-modal-footer">
               <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>
-              <button className="pm-btn pm-btn--primary" onClick={confirmOccupy} disabled={!spaceOpPlate.trim()}>
+              <button className="pm-btn pm-btn--primary" onClick={confirmOccupy}>
                 <CheckCircle2 size={13} /> Confirm Occupied
               </button>
             </div>
@@ -1396,18 +1755,16 @@ export default function ParkingManagement({ embedded = false }) {
         </div>
       )}
 
-      {/* ── Modal: Free ── */}
+      {/* ── Modal: occupied bay ── */}
       {spaceOp?.type === 'free' && (
         <div className="pm-overlay" onClick={() => setSpaceOp(null)}>
-          <div className="pm-modal" onClick={e => e.stopPropagation()}>
+          <div className="pm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="pm-modal-header">
-              <span>Free Up Space {spaceOp.space.space_number}</span>
+              <span>Space {spaceOp.space.space_number} — Occupied</span>
               <button className="pm-modal-close" onClick={() => setSpaceOp(null)}><X size={16} /></button>
             </div>
             <div className="pm-modal-body">
-              <p className="pm-modal-msg">
-                Occupied by <strong>{spaceOp.space.occupied_by}</strong>. Mark as free?
-              </p>
+              <BayOccupantDetails plate={spaceOp.space.occupied_by} />
             </div>
             <div className="pm-modal-footer">
               <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>

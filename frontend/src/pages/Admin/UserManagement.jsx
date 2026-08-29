@@ -13,9 +13,9 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Printer, Smartphone,
+  Shield, Info, Lock, Smartphone,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
 
 const DEFAULT_AGENCY = 'RANNIAG'
@@ -56,8 +56,6 @@ export default function UserManagement() {
   const [editForm, setEditForm]           = useState(null)
   const [editAgencyMode, setEditAgencyMode] = useState(DEFAULT_AGENCY)
 
-  /* ── registration re-print state ── */
-  const [printingReg, setPrintingReg] = useState(false)
 
   /* ── QR state ── */
   const [qrUser,    setQrUser]    = useState(null)
@@ -232,7 +230,6 @@ export default function UserManagement() {
   const menuItemCount = (u) => (
     1                                     /* View Profile */
     + (u.role === 'security' ? 1 : 0)     /* QR Badge */
-    + (u.role === 'vehicle_owner' ? 1 : 0)/* Print Registration */
     + (u.role !== 'security' ? 1 : 0)     /* Reset 2FA */
     + 1                                   /* Disable / Enable */
   )
@@ -300,7 +297,7 @@ export default function UserManagement() {
     if (!editForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (selectedUser.role === 'security' && !editForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
-    if (Object.keys(errors).length > 0) return
+    if (await notify.validation(errors)) return
     setSubmitting(true)
     try {
       const payload = {
@@ -323,20 +320,22 @@ export default function UserManagement() {
       for (const f of ['full_name', 'email', 'agency', 'contact', 'address']) {
         if (data?.[f]) fieldErrors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
       }
-      if (Object.keys(fieldErrors).length > 0) setFormErrors(fieldErrors)
-      else toast.error('Failed to update user.')
+      if (Object.keys(fieldErrors).length > 0) {
+        setFormErrors(fieldErrors)
+        notify.validation(fieldErrors, { title: 'User not updated' })
+      } else toast.error('Failed to update user.')
     } finally { setSubmitting(false) }
   }
 
   /* ── guard validation & submit ── */
-  const validateGuard = () => {
+  const validateGuard = async () => {
     const errors = {}
     if (!guardForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!guardForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (!guardForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
-    return Object.keys(errors).length === 0
+    return !(await notify.validation(errors))
   }
 
   const handleAddGuard = async () => {
@@ -359,25 +358,26 @@ export default function UserManagement() {
       if (Object.keys(fieldErrors).length > 0) {
         setFormErrors(fieldErrors)
         setModal('add')
+        notify.validation(fieldErrors, { title: 'Guard not created' })
       } else {
         showResult('Failed to create guard.', 'error')
       }
     } finally { setSubmitting(false) }
   }
 
-  const onAddClick = () => {
-    if (addType === 'guard')  { if (!validateGuard()) return;  setModal('confirmAdd') }
-    if (addType === 'admin')  { if (!validateAdmin()) return;  setModal('confirmAdd') }
+  const onAddClick = async () => {
+    if (addType === 'guard')  { if (!(await validateGuard())) return;  setModal('confirmAdd') }
+    if (addType === 'admin')  { if (!(await validateAdmin())) return;  setModal('confirmAdd') }
   }
 
   /* ── admin validation ── */
-  const validateAdmin = () => {
+  const validateAdmin = async () => {
     const errors = {}
     if (!adminForm.full_name.trim()) errors.full_name = 'Full name is required.'
     if (!adminForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email)) errors.email = 'Invalid email format.'
     setFormErrors(errors)
-    return Object.keys(errors).length === 0
+    return !(await notify.validation(errors))
   }
 
   const handleReplaceAdmin = async () => {
@@ -396,45 +396,9 @@ export default function UserManagement() {
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         setFormErrors(errors); setModal('add')
+        notify.validation(errors, { title: 'CDSO not replaced' })
       } else { showResult('Failed to replace CDSO', 'error') }
       setSubmitting(false)
-    }
-  }
-
-  /* ── Registration confirmation → PDF re-print ──
-     For an owner who lost the copy emailed to them on approval. The server
-     rebuilds the same document, so the reprint matches the original. */
-  // Takes the user explicitly: the row menu calls this straight after
-  // setSelectedUser, and reading that state back here would still see the
-  // previous value.
-  const printRegistrationFor = async (user) => {
-    if (!user) return
-    setPrintingReg(true)
-    try {
-      const blob = await usersApi.getRegistrationPdf(user.id)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `SLC Vehicle Registration - ${user.full_name}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success('Registration PDF downloaded.')
-    } catch (err) {
-      // responseType 'blob' means an error body arrives as a Blob, not JSON —
-      // read it back or the toast would only ever say "failed".
-      let message = 'Failed to generate the registration PDF.'
-      try {
-        const body = err.response?.data
-        if (body instanceof Blob) {
-          const parsed = JSON.parse(await body.text())
-          if (parsed?.detail) message = parsed.detail
-        } else if (body?.detail) {
-          message = body.detail
-        }
-      } catch { /* keep the generic message */ }
-      toast.error(message)
-    } finally {
-      setPrintingReg(false)
     }
   }
 
@@ -574,103 +538,98 @@ export default function UserManagement() {
             <p>{search ? 'Try a different search term.' : 'Click "Add User" to create the first account.'}</p>
           </div>
         ) : (
-          <table className="um-table">
-            <thead>
-              <tr>
-                <th>User ID</th>
-                <th>Full Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#5C7B92', fontWeight: 600 }}>
-                      {u.user_code || `#${u.id}`}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="um-user-cell">
-                      <div className={`um-user-avatar ${roleBadgeClass(u)}`}>
-                        {u.full_name.charAt(0).toUpperCase()}
-                      </div>
-                      <span className="um-user-name">{u.full_name}</span>
-                    </div>
-                  </td>
-                  <td>{u.email || '—'}</td>
-                  <td>
-                    <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
-                  </td>
-                  <td>
-                    <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
-                      <span className="status-dot" />
-                      {u.is_active ? 'Active' : 'Disabled'}
-                    </span>
-                  </td>
-                  {/* QR lives in View Profile — no column here */}
-                  <td>
-                    <button
-                      className="um-action-btn"
-                      onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
-                    >
-                      <MoreVertical size={16} />
-                    </button>
-                    {activeMenu === u.id && menuAnchor && createPortal(
-                      <div
-                        ref={menuRef}
-                        className="um-actions-dropdown"
-                        style={menuAnchor.style}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
-                          <Eye size={15} /> View Profile
-                        </button>
-                        {u.role === 'security' && (
-                          <button
-                            className="um-dropdown-item view"
-                            disabled={badgeLocked(u)}
-                            title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
-                            onClick={() => { closeMenu(); openQrModal(u) }}
-                          >
-                            {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
-                          </button>
-                        )}
-                        {u.role === 'vehicle_owner' && (
-                          <button
-                            className="um-dropdown-item view"
-                            title="Re-download the approved registration PDF emailed to this owner"
-                            onClick={() => { setSelectedUser(u); closeMenu(); printRegistrationFor(u) }}
-                          >
-                            <Printer size={15} /> Print Registration
-                          </button>
-                        )}
-                        {u.role !== 'security' && (
-                          <button
-                            className="um-dropdown-item view"
-                            title="Clear this user's authenticator so they can pair a new phone"
-                            onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
-                          >
-                            <Smartphone size={15} /> Reset 2FA
-                          </button>
-                        )}
-                        <button
-                          className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
-                          onClick={() => { openToggle(u); closeMenu() }}
-                        >
-                          {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
-                        </button>
-                      </div>,
-                      document.body
-                    )}
-                  </td>
+          /* Only the table scrolls sideways — the tabs, toolbar and pager
+             above and below it stay put on a narrow screen. */
+          <div className="um-table-scroll">
+            <table className="um-table">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Full Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#5C7B92', fontWeight: 600 }}>
+                        {u.user_code || `#${u.id}`}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="um-user-cell">
+                        <div className={`um-user-avatar ${roleBadgeClass(u)}`}>
+                          {u.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="um-user-name">{u.full_name}</span>
+                      </div>
+                    </td>
+                    <td>{u.email || '—'}</td>
+                    <td>
+                      <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
+                    </td>
+                    <td>
+                      <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
+                        <span className="status-dot" />
+                        {u.is_active ? 'Active' : 'Disabled'}
+                      </span>
+                    </td>
+                    {/* QR lives in View Profile — no column here */}
+                    <td>
+                      <button
+                        className="um-action-btn"
+                        onClick={(e) => { e.stopPropagation(); toggleMenu(e, u) }}
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                      {activeMenu === u.id && menuAnchor && createPortal(
+                        <div
+                          ref={menuRef}
+                          className="um-actions-dropdown"
+                          style={menuAnchor.style}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button className="um-dropdown-item view" onClick={() => { openView(u); closeMenu() }}>
+                            <Eye size={15} /> View Profile
+                          </button>
+                          {u.role === 'security' && (
+                            <button
+                              className="um-dropdown-item view"
+                              disabled={badgeLocked(u)}
+                              title={badgeLocked(u) ? 'Locked — guard must log in and change their temporary password first' : undefined}
+                              onClick={() => { closeMenu(); openQrModal(u) }}
+                            >
+                              {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
+                            </button>
+                          )}
+                          {u.role !== 'security' && (
+                            <button
+                              className="um-dropdown-item view"
+                              title="Clear this user's authenticator so they can pair a new phone"
+                              onClick={() => { setSelectedUser(u); setModal('reset2fa'); closeMenu() }}
+                            >
+                              <Smartphone size={15} /> Reset 2FA
+                            </button>
+                          )}
+                          <button
+                            className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
+                            onClick={() => { openToggle(u); closeMenu() }}
+                          >
+                            {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
+                          </button>
+                        </div>,
+                        document.body
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {!loading && users.length > 0 && totalPages > 1 && (
@@ -745,7 +704,6 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
                       onBlur={e => setGuardForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="e.g. Juan Dela Cruz" />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -755,7 +713,6 @@ export default function UserManagement() {
                       onChange={e => setGuardForm({ ...guardForm, email: e.target.value })}
                       onBlur={e => setGuardForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="e.g. guard@slc.edu.ph" />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Agency <span className="um-required">*</span></label>
@@ -778,7 +735,6 @@ export default function UserManagement() {
                         onChange={e => setGuardForm({ ...guardForm, agency: e.target.value })}
                         placeholder="Enter agency name" />
                     )}
-                    {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                   </div>
                 </>
               )}
@@ -804,7 +760,6 @@ export default function UserManagement() {
                       onChange={e => setAdminForm({ ...adminForm, full_name: e.target.value })}
                       onBlur={e => setAdminForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
                       placeholder="Enter full name" />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -813,7 +768,6 @@ export default function UserManagement() {
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
                       onBlur={e => setAdminForm(f => ({ ...f, email: normalizeEmail(e.target.value) }))}
                       placeholder="Enter email address" />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                 </>
               )}
@@ -875,7 +829,6 @@ export default function UserManagement() {
                     <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
                       value={editForm.full_name}
                       onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
-                    {formErrors.full_name && <div className="um-form-error">{formErrors.full_name}</div>}
                   </div>
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
@@ -883,7 +836,6 @@ export default function UserManagement() {
                       type="email"
                       value={editForm.email}
                       onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
-                    {formErrors.email && <div className="um-form-error">{formErrors.email}</div>}
                   </div>
                   {selectedUser.role === 'security' && (
                     <div className="um-form-group">
@@ -907,7 +859,6 @@ export default function UserManagement() {
                           onChange={e => setEditForm({ ...editForm, agency: e.target.value })}
                           placeholder="Enter agency name" />
                       )}
-                      {formErrors.agency && <div className="um-form-error">{formErrors.agency}</div>}
                     </div>
                   )}
                   {selectedUser.role === 'vehicle_owner' && (
@@ -999,16 +950,6 @@ export default function UserManagement() {
                   <button className="um-btn-secondary" onClick={startEdit}>
                     <Pencil size={15} /> Edit Details
                   </button>
-                  {selectedUser.role === 'vehicle_owner' && (
-                    <button
-                      className="um-btn-secondary"
-                      disabled={printingReg}
-                      title="Re-download the approved registration PDF that was emailed to this owner"
-                      onClick={() => printRegistrationFor(selectedUser)}
-                    >
-                      <Printer size={15} /> {printingReg ? 'Preparing…' : 'Print Registration'}
-                    </button>
-                  )}
                   <button
                     className="um-btn-primary"
                     disabled={badgeLocked(selectedUser)}

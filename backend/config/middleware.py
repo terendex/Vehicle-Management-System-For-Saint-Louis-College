@@ -1,5 +1,7 @@
 """Project-wide middleware."""
 
+import logging
+import os
 import time
 
 from django.db import connection
@@ -48,3 +50,58 @@ class IdleConnectionHealthCheckMiddleware:
             return self.get_response(request)
         finally:
             connection._last_used_at = time.monotonic()
+
+
+# ── Slow request logging ──────────────────────────────────────────────────────
+#
+# Added because "submitting is slow" kept being diagnosed by reading code and
+# guessing, which was wrong twice. This makes the server say where the time
+# went instead: total wall time, how much of it was the database, and how many
+# queries it took. Anything left over is time spent outside Postgres — the
+# channel-layer fan-out on every write, an R2 upload, an email handed to a
+# thread that turned out not to be one.
+#
+# Only slow requests are logged, so a healthy server stays quiet.
+
+SLOW_REQUEST_SECONDS = float(os.getenv('SLOW_REQUEST_SECONDS', '3'))
+
+log = logging.getLogger(__name__)
+
+
+class SlowRequestLogMiddleware:
+    """Log any request that takes longer than SLOW_REQUEST_SECONDS.
+
+    Query timing comes from `connection.execute_wrapper`, not `connection.queries`
+    — the latter only records anything when DEBUG is on, which is exactly when
+    nobody is looking at a production stall.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        stats = {'count': 0, 'seconds': 0.0}
+
+        def timer(execute, sql, params, many, context):
+            started = time.monotonic()
+            try:
+                return execute(sql, params, many, context)
+            finally:
+                stats['count'] += 1
+                stats['seconds'] += time.monotonic() - started
+
+        started = time.monotonic()
+        with connection.execute_wrapper(timer):
+            response = self.get_response(request)
+        total = time.monotonic() - started
+
+        if total >= SLOW_REQUEST_SECONDS:
+            log.warning(
+                "[slow] %s %s -> %s | total=%.2fs db=%.2fs (%d queries) "
+                "| non-db=%.2fs",
+                request.method, request.path,
+                getattr(response, 'status_code', '?'),
+                total, stats['seconds'], stats['count'],
+                total - stats['seconds'],
+            )
+        return response

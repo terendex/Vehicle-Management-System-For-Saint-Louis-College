@@ -91,6 +91,9 @@ MIDDLEWARE = [
     # First in the list: revive a stale pooled DB connection before anything
     # else (sessions, auth) tries to query with it.
     'config.middleware.IdleConnectionHealthCheckMiddleware',
+    # Wraps everything below it, so its timing covers the whole stack rather
+    # than just the view. Logs only requests over SLOW_REQUEST_SECONDS.
+    'config.middleware.SlowRequestLogMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Serves the built React bundle and Django's own static files straight from
@@ -193,17 +196,43 @@ REDIS_IS_LOOPBACK = any(h in REDIS_URL for h in ('127.0.0.1', 'localhost', '::1'
 REALTIME_CROSS_HOST = bool(REDIS_URL) and not REDIS_IS_LOOPBACK
 
 if REDIS_URL:
+    # Timeouts are not optional here. `broadcast_change` runs inline on every
+    # post_save, so an unreachable or slow Redis does not merely stop live
+    # updates — it blocks the database write that triggered it, for as long as
+    # the socket takes to give up. Without these, redis-py's default is to wait
+    # forever, which turns "live updates are broken" into "saving anything
+    # hangs". A dict entry is passed straight through to
+    # ConnectionPool.from_url (channels_redis.utils.create_pool), so these are
+    # ordinary redis-py kwargs.
+    _REDIS_CONNECT_TIMEOUT = float(os.getenv('REDIS_CONNECT_TIMEOUT', '3'))
+    _REDIS_SOCKET_TIMEOUT  = float(os.getenv('REDIS_SOCKET_TIMEOUT', '5'))
+
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {'hosts': [REDIS_URL], 'capacity': 1500, 'expiry': 10},
+            'CONFIG': {
+                'hosts': [{
+                    'address': REDIS_URL,
+                    'socket_connect_timeout': _REDIS_CONNECT_TIMEOUT,
+                    'socket_timeout': _REDIS_SOCKET_TIMEOUT,
+                }],
+                'capacity': 1500,
+                'expiry': 10,
+            },
         },
     }
     CACHES = {
         'default': {
             'BACKEND': 'django_redis.cache.RedisCache',
             'LOCATION': REDIS_URL,
-            'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'SOCKET_CONNECT_TIMEOUT': _REDIS_CONNECT_TIMEOUT,
+                'SOCKET_TIMEOUT': _REDIS_SOCKET_TIMEOUT,
+                # A cache is an optimisation; a dead one must degrade to a miss
+                # rather than raise into whatever view happened to touch it.
+                'IGNORE_EXCEPTIONS': True,
+            },
             'KEY_PREFIX': 'slcvms',
         }
     }
@@ -444,6 +473,13 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 # there the two are the same. The campus .env is where it matters: set it to the
 # Railway URL there.
 PUBLIC_SITE_URL = (os.getenv('PUBLIC_SITE_URL') or FRONTEND_URL).rstrip('/')
+
+# Acceptance mail is handed to a background thread so a reviewer approving a
+# registration does not wait on Brevo or SMTP. Off under test, where a thread
+# would make `mail.outbox` and log assertions race the assertion itself; the
+# failure contract (log + admin notification) is identical either way, so the
+# tests still cover it.
+EMAIL_SEND_ASYNC = os.getenv('EMAIL_SEND_ASYNC', 'true').lower() == 'true' and not _TESTING
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')

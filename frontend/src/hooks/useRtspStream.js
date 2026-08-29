@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../components/Feedback/notify";
 import { WS_BASE } from "../api/wsBase";
+
+// A flapping camera or scanner re-raises the same message on every retry.
+// These dialogs stay dismissed for this long afterwards so a dead socket
+// cannot bury the screen a guard is working on.
+const STREAM_THROTTLE = 30000
 
 
 // ── Bounding-box colours (must match backend CLASS_NAMES) ────────────────────
@@ -205,7 +210,7 @@ export function useRtspStream(token) {
         }
 
         if (msg.type === "error") {
-          toast.error(msg.message);
+          toast.error(msg.message, { title: "Camera error", throttleMs: STREAM_THROTTLE });
           setStreamConnected(false);
           return;
         }
@@ -240,7 +245,7 @@ export function useRtspStream(token) {
       }
     };
 
-    ws.onerror = () => toast.error("RTSP WebSocket connection error");
+    ws.onerror = () => toast.error("RTSP WebSocket connection error", { title: "Camera error", throttleMs: STREAM_THROTTLE });
     ws.onclose = () => {
       setWsActive(false);
       setStreamConnected(false);
