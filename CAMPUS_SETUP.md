@@ -22,7 +22,185 @@ The campus half runs on hardware you already own, so it adds no hosting cost.
 
 ---
 
-## One-time setup
+## Install with the setup program
+
+Build it once, on your own machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1
+```
+
+That fetches the Inno Setup compiler through winget the first time, regenerates
+the icon and wizard artwork from `frontend\src\assets\slclogo.jpg`, and writes
+**`installer\out\SLC-VMS-Campus-Setup.exe`** — about 2 MB.
+
+Copy that one file to the campus machine and run it. The wizard asks for the
+install location, the branch to track and the port, then hands off to a setup
+window that:
+
+- installs **Git**, **Python 3.11** and **Node.js LTS** through winget, skipping
+  any that are already there;
+- clones this repository into `<install>\app`;
+- opens the port in Windows Firewall;
+- leaves a Start Menu entry, an optional desktop shortcut, and an optional
+  "start when this computer starts" shortcut.
+
+It does *not* build the virtualenv or the React bundle. Those already happen on
+the first run of `run-campus.ps1`, where the launcher streams them into a log
+you can watch — twenty silent minutes behind an installer progress bar is how a
+slow download becomes indistinguishable from a hang.
+
+It does not ask for credentials either. The launcher has a panel for those and
+opens it by itself on a machine that is not configured yet, so there is one
+form in one place.
+
+**The setup .exe carries no application code.** That is why it is 2 MB rather
+than several hundred, and it is the whole update story: the installed half is a
+git checkout, so `git pull` *is* the update. You reissue the installer only when
+something in `installer\` changes — the bootstrap, the shortcut, the artwork —
+never for an ordinary code change.
+
+The download is about **182 MB** — a measured full clone of one branch, most of
+it the two model weight files under `backend/scanning/ml/runs/`. Budget a few
+minutes on campus wifi. (A long-lived local `.git` can be many times that from
+unreachable objects on other branches; that is not what the server sends.)
+
+> **The branch must already carry these files.** The installer clones from
+> GitHub, so `scripts\campus-launcher.ps1` has to be pushed to the branch you
+> tell it to track. If it is not, the setup window says so by name rather than
+> failing vaguely — push, then use **Repair installation** from the Start Menu.
+
+`{app}` is installed outside Program Files and granted Users:modify on purpose.
+A checkout under Program Files can only be written by an elevated process, which
+would mean a UAC prompt on every routine update at the gate.
+
+**Keep the install path short.** Windows still caps most paths at 260
+characters, and git reports hitting that as `fatal: '$GIT_DIR' too big` — an
+error naming neither the path nor the limit. Both the wizard and the bootstrap
+refuse an over-long folder up front for that reason. `C:\SLC-VMS` is the
+default and is well clear of it.
+
+---
+
+## The launcher
+
+The shortcut opens a window rather than a console. It is a shell around
+`scripts\run-campus.ps1`, not a replacement for it — the server logic stays in
+one place, and the window starts that script, reads its output, and turns the
+lines it already prints into:
+
+- **one state** — Stopped / Starting / Running, and the LAN URL, copyable, with
+  buttons that open the two entry points guards actually need;
+- **three health pills** — Database, Cameras, Realtime. All three are parsed
+  from the server's own startup output, so nothing extra runs to produce them.
+  `Cameras 3 up, 1 down` is the same NO ROUTE warning the console prints;
+- **the whole log**, live, so a failure is visible instead of silent. It is also
+  written to `%LOCALAPPDATA%\SLC-VMS\logs\campus-<date>.log`.
+
+Closing the window stops the server. That is deliberate: a daphne left running
+headless would hold the port and the RTSP sessions, and the next start would
+fail with an address-already-in-use that has no visible cause.
+
+### Opening the two logins
+
+The launcher has a button for each, and they are genuinely different audiences:
+
+- **Guard terminal** → `/security/guard-login`, the gate scanner
+- **Admin login** → `/login`, the account login for CDSO and vehicle owners
+
+Both open in **kiosk mode** by default: full screen, no address bar, no tabs.
+That is the point on a gate terminal — a guard gets the scanner and nothing
+else, with no address bar to mistype and no way to wander off into another tab.
+**Alt+F4 closes it.** Turn kiosk off in Settings on a machine someone also does
+paperwork on.
+
+**Open automatically once the server is up** picks one of the two to launch by
+itself when the server finishes starting — set it to *Guard terminal* on a box
+that lives at a gate, and it comes up scanning after a power cut with nobody
+touching it. It fires when daphne actually has the socket, not a second earlier,
+so the guard never lands on a connection-refused page.
+
+Kiosk needs **Chrome or Edge**; with neither installed the page opens in the
+default browser and the log says so rather than pretending. Two details that
+matter and are easy to get wrong:
+
+- the kiosk runs in **its own browser profile** under
+  `%LOCALAPPDATA%\SLC-VMS\browser`. Without one, a browser that is already
+  running takes the request into its existing window and ignores kiosk
+  entirely — and the guard's session stays separate from anything else this
+  machine browses.
+- on Edge, `--edge-kiosk-type=fullscreen` is set explicitly, because Edge's
+  default kiosk is InPrivate and wipes the session on an idle timer — a guard
+  who steps away would come back logged out mid-shift.
+
+Closing the launcher closes the kiosk window with it. A full-screen browser with
+no address bar, still pointing at a server that has stopped, is the worst thing
+to leave on a gate terminal.
+
+### Updates
+
+The launcher fetches the tracked branch every few minutes. When commits have
+landed it shows how many and the subject of the newest one, with an **Update and
+restart** button. Pressing it stops the server, `git pull --ff-only`s, and starts
+again — `run-campus.ps1` rebuilds the React bundle by itself if the sources
+moved.
+
+**It never pulls on its own.** This machine serves live gate scanning, and a
+restart drops the camera feeds for the length of a rebuild. That is someone's
+decision, not a surprise mid-shift.
+
+Two things it refuses to do rather than guess:
+
+- if the checkout has uncommitted changes, it says so and stops. Discarding
+  someone's local edit to make an update succeed is never the right trade;
+- it pulls `--ff-only`. A merge commit created on the campus box would exist
+  nowhere else, and would make the *next* pull fail in a way nobody at a gate
+  can fix.
+
+If an update replaces `campus-launcher.ps1` itself, the window reopens itself —
+PowerShell read the old file into memory at launch, so the change would
+otherwise not take effect until someone happened to restart it.
+
+Port, branch, kiosk and poll interval live in
+`%LOCALAPPDATA%\SLC-VMS\launcher.json`, outside the checkout, so a pull or a
+reinstall never resets them.
+
+---
+
+## Uninstalling
+
+Add/Remove Programs, or **Uninstall SLC Vehicle Management** in the Start Menu.
+Either way it closes a running launcher first — targeted by window title, so it
+cannot take out an unrelated PowerShell session — because a running server locks
+files under the checkout and the uninstall would otherwise fail halfway.
+
+The firewall rule it created goes without asking. Leaving an inbound allow rule
+behind for a port nothing serves is an open hole with no owner.
+
+Then it asks **one** question, about the two things that are yours rather than
+the installer's:
+
+| | |
+|---|---|
+| `{app}\app` | the checkout — `backend\.env` with the shared Railway secret key and Neon URL, the virtualenv, and any model weights trained on this machine |
+| `%LOCALAPPDATA%\SLC-VMS` | launcher settings, the kiosk browser profile, and the activity logs |
+
+**Keep** leaves both, so reinstalling later needs no download and no
+reconfiguration — that is the right answer for a version upgrade or a repair.
+**Delete** removes them, including the saved secret key and database URL, and
+cannot be undone.
+
+Deleting the checkout never touches the shared database. This half owns no data
+of its own; every record lives in Neon, which the Railway deployment is still
+serving.
+
+---
+
+## One-time setup, by hand
+
+The installer above does steps 2 and 3 for you. This is the same thing typed out
+— useful on a machine where winget is unavailable, and the reference for what
+the installer is actually doing.
 
 **1. Pick the machine.** Any campus PC that can reach the cameras. If it has the
 RTX 3060, detection runs on the GPU and is markedly faster.
@@ -161,7 +339,9 @@ deliberate. Two instances racing to migrate a shared database — possibly from
 different commits — is how a shared database gets corrupted. Deploy schema
 changes through Railway, then `git pull` on the campus machine.
 
-**Keep both halves on the same commit.** After any deploy:
+**Keep both halves on the same commit.** After any deploy, press **Update and
+restart** in the launcher — that is exactly what it is for, and it will already
+be offering the update. Without the launcher:
 
 ```powershell
 git pull
@@ -170,6 +350,12 @@ powershell -ExecutionPolicy Bypass -File scripts\run-campus.ps1
 
 Campus code older than the database schema is the one combination that will
 break in confusing ways.
+
+Which branch the campus box tracks is a real decision, not a default. Tracking
+your working branch means every push reaches the gate within minutes, which is
+what you want while still building; tracking `main` means only merged work gets
+there, which is what you want once guards depend on it. Change it in the
+launcher's Settings card.
 
 ---
 
