@@ -111,6 +111,45 @@ if (-not (Test-Path $python)) {
     Say 'Dependencies installed.' 'Green'
 }
 
+# ── 1b. CUDA wheels, when there is a card to use them ────────────────────────
+# requirements.txt pins plain `torch==2.12.0`, which resolves to the CPU wheels.
+# That is correct for Railway, which has no GPU, and wrong for a gate terminal
+# with an RTX in it: the plate and vehicle detectors then run on the CPU and the
+# feed visibly lags. The note in requirements.txt describes the swap; nothing
+# was doing it, so every installed machine was CPU-bound.
+#
+# Guarded by a marker rather than re-checked every start: importing torch costs
+# a few seconds, and this only needs deciding once per virtualenv.
+$gpuMarker = Join-Path $repo 'backend\venv\.gpu-checked'
+if (-not (Test-Path $gpuMarker)) {
+    $nvidia = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'NVIDIA' })
+    if ($nvidia.Count -eq 0) {
+        Say 'No NVIDIA GPU found - detection will run on the CPU.' 'Yellow'
+    } else {
+        Say "Found $($nvidia[0].Name) - checking whether torch can use it..."
+        $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>$null)
+        if ("$cuda".Trim() -eq 'True') {
+            Say 'torch already has CUDA. Detection will run on the GPU.' 'Green'
+        } else {
+            Say 'torch is the CPU build - installing the CUDA wheels (about 2 GB, one time)...' 'Yellow'
+            & $python -m pip install --force-reinstall --no-deps `
+                torch==2.12.0 torchvision==0.27.0 `
+                --index-url https://download.pytorch.org/whl/cu130
+            if ($LASTEXITCODE -ne 0) {
+                # Not fatal: the CPU build still works, just slower. Saying so is
+                # better than failing a machine that would otherwise serve.
+                Say 'CUDA install failed - carrying on with the CPU build. Detection will be slower.' 'Yellow'
+            } else {
+                $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>$null)
+                if ("$cuda".Trim() -eq 'True') { Say 'CUDA is available. Detection will run on the GPU.' 'Green' }
+                else { Say 'CUDA wheels installed but the GPU is still not visible - check the NVIDIA driver.' 'Yellow' }
+            }
+        }
+    }
+    New-Item -ItemType File -Path $gpuMarker -Force | Out-Null
+}
+
 # ── 2. .env — created from the template, secrets asked for once ──────────────
 $envFile  = Join-Path $repo 'backend\.env'
 $template = Join-Path $repo 'backend\.env.campus.example'
