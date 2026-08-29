@@ -1409,6 +1409,39 @@ $ui.BtnSecrets.Add_Click({ Show-Secrets })
 $ui.BtnSecretsCancel.Add_Click({ $ui.SecretsOverlay.Visibility = 'Collapsed' })
 $ui.BtnSecretsSave.Add_Click({ Save-Secrets })
 
+# The toggles take effect the moment they are flipped, and persist themselves.
+#
+# They used to need "Save settings" pressed afterwards, which meant a ticked
+# kiosk box that was not actually on - the checkbox said one thing and the
+# behaviour did another, with nothing on screen to explain the gap. A switch
+# that does not switch anything is worse than no switch. Port keeps the Save
+# button because it is typed text that has to be validated first.
+function Save-Toggles {
+    if (-not $Booted) { return }   # ignore the events fired while populating the UI
+    $cfg.AutoStart   = [bool]$ui.ChkAuto.IsChecked
+    $cfg.Kiosk       = [bool]$ui.ChkKiosk.IsChecked
+    if ($ui.CmbOpen.SelectedItem) { $cfg.OpenOnStart = "$($ui.CmbOpen.SelectedItem.Tag)" }
+    Save-CampusLauncherConfig $cfg
+}
+
+$ui.ChkKiosk.Add_Click({
+    Save-Toggles
+    Write-Log $(if ($cfg.Kiosk) {
+        'Kiosk mode on - pages open full screen in their own browser. Alt+F4 closes one.'
+    } else {
+        'Kiosk mode off - pages open in your normal browser.'
+    }) 'ok'
+})
+$ui.ChkAuto.Add_Click({
+    Save-Toggles
+    Write-Log $(if ($cfg.AutoStart) { 'Will start the server when this window opens.' }
+                else { 'Will not start the server automatically.' }) 'ok'
+})
+$ui.CmbOpen.Add_SelectionChanged({
+    Save-Toggles
+    if ($Booted) { Write-Log "Auto-open set to: $($cfg.OpenOnStart)" 'ok' }
+})
+
 $ui.BtnSave.Add_Click({
     $p = 0
     if ([int]::TryParse($ui.TxtPort.Text.Trim(), [ref]$p) -and $p -gt 0 -and $p -lt 65536) {
@@ -1419,9 +1452,8 @@ $ui.BtnSave.Add_Click({
     }
     # Branch is intentionally absent - it is fixed at install time and there is
     # no control here to read it from.
-    $cfg.AutoStart   = [bool]$ui.ChkAuto.IsChecked
-    $cfg.Kiosk       = [bool]$ui.ChkKiosk.IsChecked
-    $cfg.OpenOnStart = "$($ui.CmbOpen.SelectedItem.Tag)"
+    # The toggles already persisted themselves as they were flipped; this only
+    # has to commit the port.
     Save-CampusLauncherConfig $cfg
     $ui.BranchText.Text = $cfg.Branch
     Write-Log "Settings saved. Port $($cfg.Port), tracking $($cfg.Branch), kiosk $(if($cfg.Kiosk){'on'}else{'off'}), auto-open $($cfg.OpenOnStart)." 'ok'
@@ -1528,6 +1560,12 @@ function Set-LogoImage {
     }
 }
 
+# Set before the UI is populated. Assigning IsChecked and SelectedIndex below
+# raises the same events the user's clicks do, and without this guard the
+# launcher would rewrite its own config from half-initialised controls on every
+# start.
+$Booted = $false
+
 $ui.TxtPort.Text    = $cfg.Port
 # BranchText is the read-only chip on the UPDATES card - the only place the
 # branch is shown now that it cannot be edited.
@@ -1539,6 +1577,9 @@ $ui.RepoText.Text   = $App.Repo
 $ui.CommitText.Text = "$($cfg.Branch) @ ..."
 
 $win.Add_ContentRendered({
+    # The controls now hold the saved values, so their events mean the user.
+    $script:Booted = $true
+
     Set-LogoImage 36
     Set-State 'Stopped'
     Write-Log 'Smart Parking and Vehicle Verification System - campus launcher' 'note'
