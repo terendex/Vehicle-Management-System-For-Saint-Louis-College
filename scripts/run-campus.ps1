@@ -128,7 +128,23 @@ if (-not (Test-Path $gpuMarker)) {
         Say 'No NVIDIA GPU found - detection will run on the CPU.' 'Yellow'
     } else {
         Say "Found $($nvidia[0].Name) - checking whether torch can use it..."
-        $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>$null)
+
+        # The probe is guarded because `import torch` does not merely return
+        # False on a broken install - it raises. A pip run interrupted partway
+        # leaves site-packages\torch without torch.dll, and the import dies with
+        # "WinError 126: The specified module could not be found". Treating that
+        # as "no CUDA" is right: the reinstall below rewrites the package and
+        # repairs it as a side effect.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try   { $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>&1 | Select-Object -Last 1) }
+        catch { $cuda = '' }
+        finally { $ErrorActionPreference = $prevEAP }
+
+        if ("$cuda" -match 'WinError|Traceback|Error loading') {
+            Say 'torch is present but will not load - the install is incomplete. Reinstalling it.' 'Yellow'
+            $cuda = ''
+        }
         if ("$cuda".Trim() -eq 'True') {
             Say 'torch already has CUDA. Detection will run on the GPU.' 'Green'
         } else {
@@ -141,9 +157,14 @@ if (-not (Test-Path $gpuMarker)) {
                 # better than failing a machine that would otherwise serve.
                 Say 'CUDA install failed - carrying on with the CPU build. Detection will be slower.' 'Yellow'
             } else {
-                $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>$null)
+                $prevEAP = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try   { $cuda = (& $python -c "import torch; print(torch.cuda.is_available())" 2>&1 | Select-Object -Last 1) }
+                catch { $cuda = '' }
+                finally { $ErrorActionPreference = $prevEAP }
+
                 if ("$cuda".Trim() -eq 'True') { Say 'CUDA is available. Detection will run on the GPU.' 'Green' }
-                else { Say 'CUDA wheels installed but the GPU is still not visible - check the NVIDIA driver.' 'Yellow' }
+                else { Say "torch still will not report CUDA ($cuda) - check the NVIDIA driver." 'Yellow' }
             }
         }
     }
