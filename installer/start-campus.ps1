@@ -31,8 +31,8 @@ if ($Repair -or -not (Test-Path $entry)) {
         [void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms')
         [System.Windows.Forms.MessageBox]::Show(
             "The application folder is missing and the repair tool is not there either.`n`n" +
-            "Expected: $entry`n`nReinstall SLC Vehicle Management to fix this.",
-            'SLC Vehicle Management', 'OK', 'Error') | Out-Null
+            "Expected: $entry`n`nReinstall the Smart Parking and Vehicle Verification System to fix this.",
+            'Smart Parking and Vehicle Verification System', 'OK', 'Error') | Out-Null
         exit 1
     }
     # Elevated: repair reinstalls prerequisites and touches the firewall rule.

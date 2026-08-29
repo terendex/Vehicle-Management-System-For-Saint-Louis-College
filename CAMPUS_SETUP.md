@@ -169,7 +169,7 @@ reinstall never resets them.
 
 ## Uninstalling
 
-Add/Remove Programs, or **Uninstall SLC Vehicle Management** in the Start Menu.
+Add/Remove Programs, or **Uninstall Smart Parking and Vehicle Verification System** in the Start Menu.
 Either way it closes a running launcher first — targeted by window title, so it
 cannot take out an unrelated PowerShell session — because a running server locks
 files under the checkout and the uninstall would otherwise fail halfway.

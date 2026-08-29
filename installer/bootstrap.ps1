@@ -38,7 +38,7 @@ param(
     # department that manages Python or Git centrally can deselect those and
     # this will not touch them. Defaults to everything so running this script
     # by hand, or as the Repair shortcut, still does the whole job.
-    [string]$Steps = 'git,python,node,app,firewall'
+    [string]$Steps = 'git,python,node,app,credentials,firewall'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +60,7 @@ $PathAdds   = New-Object System.Collections.Generic.List[string]
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SLC Vehicle Management - Setup"
+        Title="Smart Parking and Vehicle Verification System - Setup"
         Width="640" Height="580" ResizeMode="NoResize" WindowStyle="None"
         WindowStartupLocation="CenterScreen" Background="#FFEEF4F9"
         FontFamily="Inter, Segoe UI"
@@ -156,8 +156,9 @@ $xaml = @'
                    RenderOptions.BitmapScalingMode="HighQuality"/>
         </Grid>
         <StackPanel Margin="13,0,0,0" VerticalAlignment="Center">
-          <TextBlock Text="Vehicle Management System" Foreground="White" FontSize="15" FontWeight="SemiBold"/>
-          <TextBlock Text="Saint Louis College - campus installation" Foreground="#FFCFE3F5" FontSize="11.5"/>
+          <TextBlock Text="SAINT LOUIS COLLEGE" Foreground="White" FontSize="13.5" FontWeight="Bold"/>
+          <TextBlock Text="Smart Parking and Vehicle Verification System" Foreground="#FFCFE3F5" FontSize="11.5"/>
+          <TextBlock Text="Campus installation" Foreground="#FF9FC4E8" FontSize="10.5" Margin="0,2,0,0"/>
         </StackPanel>
       </StackPanel>
     </Border>
@@ -330,6 +331,37 @@ function Clear-Proc {
     foreach ($s in $script:Subs) { try { Unregister-Event -SubscriptionId $s.Id -ErrorAction SilentlyContinue } catch { } }
     $script:Subs = @()
     $script:Proc = $null
+}
+
+# ---------------------------------------------------------------------------
+#  Embedded credentials
+# ---------------------------------------------------------------------------
+# Present only in an installer built with build.ps1 -WithCredentials. See the
+# header of embed-credentials.ps1: this is OBFUSCATED, NOT ENCRYPTED. The key is
+# three lines below the data because the installer must open it with nobody
+# present to type a passphrase. Anyone holding such an installer can recover the
+# live database URL and the JWT signing key.
+#
+# Duplicated from embed-credentials.ps1 on purpose - this file ships inside the
+# installer and runs before the repository exists, so it cannot dot-source
+# anything out of scripts\.
+function Get-ObfuscationKey {
+    $seed = 'SLC-VMS::campus-installer::v1'
+    return [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+        [System.Text.Encoding]::UTF8.GetBytes($seed))
+}
+
+function Unprotect-Blob {
+    param([byte[]]$Bytes)
+    $aes = [System.Security.Cryptography.Aes]::Create()
+    $aes.Key = Get-ObfuscationKey
+    $iv = New-Object byte[] 16
+    [Array]::Copy($Bytes, 0, $iv, 0, 16)
+    $aes.IV = $iv
+    $dec = $aes.CreateDecryptor()
+    $plain = $dec.TransformFinalBlock($Bytes, 16, $Bytes.Length - 16)
+    $dec.Dispose(); $aes.Dispose()
+    return [System.Text.Encoding]::UTF8.GetString($plain)
 }
 
 # ---------------------------------------------------------------------------
@@ -508,6 +540,69 @@ $Steps = @(
             }
             return @{ Failed = $true; Note = "download failed (exit $ExitCode)" }
          }
+       } },
+
+    @{ Id = 'credentials'; Title = 'Shared credentials'; Note = 'waiting'
+       Spec  = @{
+         Begin = {
+            # After the clone on purpose: this writes backend\.env inside the
+            # checkout, and it seeds from the campus template that arrives with
+            # it, so every commented explanation in that template survives.
+            $blobFile = Join-Path $PSScriptRoot 'credentials.dat'
+            if (-not (Test-Path $blobFile)) {
+                return @{ Done = $true
+                          Note = 'none embedded - the launcher will ask on first run' }
+            }
+            $envFile = Join-Path $AppDir 'backend\.env'
+            if (-not (Test-Path $AppDir)) {
+                return @{ Done = $true; Failed = $true
+                          Note = 'no application folder to write backend\.env into' }
+            }
+
+            try {
+                $text = Unprotect-Blob ([System.IO.File]::ReadAllBytes($blobFile))
+            } catch {
+                return @{ Done = $true; Failed = $true
+                          Note = "the embedded credentials could not be read ($($_.Exception.Message.Trim()))" }
+            }
+
+            $template = Join-Path $AppDir 'backend\.env.campus.example'
+            if ((-not (Test-Path $envFile)) -and (Test-Path $template)) {
+                Copy-Item $template $envFile
+            }
+
+            # Written with a plain rewrite, never -replace: a SECRET_KEY or a
+            # Neon password containing a dollar sign would come back mangled,
+            # because "$1" in a replacement string is a capture reference.
+            $lines = @()
+            if (Test-Path $envFile) { $lines = @([System.IO.File]::ReadAllLines($envFile)) }
+            $count = 0
+            foreach ($line in ($text -split "`n")) {
+                $t = $line.Trim()
+                if (-not $t) { continue }
+                $eq = $t.IndexOf('=')
+                if ($eq -lt 1) { continue }
+                $key = $t.Substring(0, $eq)
+                $val = $t.Substring($eq + 1)
+                $found = $false
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    if ($lines[$i] -like "$key=*") { $lines[$i] = "$key=$val"; $found = $true; break }
+                }
+                if (-not $found) { $lines += "$key=$val" }
+                $count++
+            }
+            # No BOM: python-dotenv reads .env as plain utf-8 and would fold a
+            # BOM into the first key's name.
+            [System.IO.File]::WriteAllLines($envFile, $lines, (New-Object System.Text.UTF8Encoding($false)))
+
+            # The blob has done its job. Leaving a second copy of the
+            # credentials sitting in the launcher folder serves nothing -
+            # backend\.env is what the server actually reads.
+            try { Remove-Item $blobFile -Force -ErrorAction Stop } catch { }
+
+            return @{ Done = $true; Note = "$count values written to backend\.env" }
+         }
+         End = { param($ExitCode) return @{} }
        } },
 
     @{ Id = 'firewall'; Title = 'Firewall'; Note = 'waiting'

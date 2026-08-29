@@ -18,7 +18,7 @@ target = fso.BuildPath(here, "start-campus.ps1")
 
 If Not fso.FileExists(target) Then
     MsgBox "start-campus.ps1 is missing from" & vbCrLf & here & vbCrLf & vbCrLf & _
-           "Reinstall SLC Vehicle Management to fix this.", vbCritical, "SLC Vehicle Management"
+           "Reinstall the Smart Parking and Vehicle Verification System to fix this.", vbCritical, "Smart Parking and Vehicle Verification System"
     WScript.Quit 1
 End If
 

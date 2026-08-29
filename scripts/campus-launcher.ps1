@@ -96,7 +96,7 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SLC Vehicle Management - Campus"
+        Title="Smart Parking and Vehicle Verification System - Campus"
         Width="1060" Height="900" MinWidth="900" MinHeight="620"
         WindowStyle="None" ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterScreen"
@@ -385,12 +385,22 @@ $xaml = @'
             <Ellipse x:Name="Logo" Stroke="#66FFFFFF" StrokeThickness="1"
                      RenderOptions.BitmapScalingMode="HighQuality"/>
           </Grid>
+          <!-- The same two-line lockup the web pages carry, in the same order:
+               the college on top, the system name under it. Taken from
+               frontend\src\...\header-title / header-subtitle. The system name
+               is never abbreviated or truncated - that is the rule the shared
+               slc-header.css exists to enforce, and it holds here too. -->
           <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-            <TextBlock Text="Vehicle Management System" Foreground="White"
-                       FontSize="14" FontWeight="SemiBold"/>
-            <TextBlock Text="Saint Louis College - campus gate terminal" Foreground="#FFCFE3F5"
-                       FontSize="10.5" Margin="0,1,0,0"/>
+            <TextBlock Text="SAINT LOUIS COLLEGE" Foreground="White"
+                       FontSize="13" FontWeight="Bold"/>
+            <TextBlock Text="Smart Parking and Vehicle Verification System" Foreground="#FFCFE3F5"
+                       FontSize="11" Margin="0,1,0,0"/>
           </StackPanel>
+          <Border Background="#33FFFFFF" CornerRadius="20" Padding="10,3" Margin="14,0,0,0"
+                  VerticalAlignment="Center">
+            <TextBlock Text="CAMPUS GATE TERMINAL" Foreground="White" FontSize="9.5"
+                       FontWeight="SemiBold"/>
+          </Border>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Stretch">
           <Button x:Name="BtnMin"   Style="{StaticResource Chrome}" Content="&#xE921;"/>
@@ -1425,7 +1435,7 @@ $ui.CommitText.Text = "$($cfg.Branch) @ ..."
 $win.Add_ContentRendered({
     Set-LogoImage 36
     Set-State 'Stopped'
-    Write-Log 'SLC Vehicle Management - campus launcher' 'note'
+    Write-Log 'Smart Parking and Vehicle Verification System - campus launcher' 'note'
     Write-Log "Repository: $($S.Repo)" 'dim'
 
     $missing = Get-CampusMissingSecrets -EnvFile $S.EnvFile -RequiredOnly

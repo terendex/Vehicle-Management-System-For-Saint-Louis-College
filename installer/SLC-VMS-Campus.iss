@@ -1,5 +1,5 @@
 ; ============================================================================
-;  SLC Vehicle Management System - campus installer
+;  Smart Parking and Vehicle Verification System - campus installer
 ;
 ;  Build it with installer\build.ps1, which fetches Inno Setup if it is not
 ;  already on the machine and generates the icon and wizard artwork first.
@@ -17,7 +17,7 @@
 ;    * {app} is granted Users:modify so updates never need elevation
 ; ============================================================================
 
-#define AppName        "SLC Vehicle Management"
+#define AppName        "Smart Parking and Vehicle Verification System"
 #define AppShortName   "SLC VMS"
 #define AppVersion     "1.0.0"
 #define AppPublisher   "Saint Louis College"
@@ -60,7 +60,13 @@ OutputBaseFilename=SLC-VMS-Campus-Setup-UITEST
 DefaultDirName={sd}\SLC-VMS
 ; The bootstrap installs Python, Node and Git and adds a firewall rule.
 PrivilegesRequired=admin
+#ifdef WITHCREDS
+; Named differently on purpose. This build carries the live credentials, and the
+; one thing that must never happen is publishing it in place of the clean one.
+OutputBaseFilename=SLC-VMS-Campus-Setup-CONFIGURED
+#else
 OutputBaseFilename=SLC-VMS-Campus-Setup
+#endif
 #endif
 
 ; Windows 10 1809 is where winget became available; without it the prerequisite
@@ -128,6 +134,15 @@ Source: "start-campus.vbs";   DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "LICENSE.txt";        DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "assets\slc-vms.ico"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "assets\slclogo.jpg"; DestDir: "{app}\launcher"; Flags: ignoreversion
+
+#ifdef WITHCREDS
+; Only in a build.ps1 -WithCredentials installer. bootstrap.ps1 writes these
+; into backend\.env and then deletes this file. OBFUSCATED, NOT ENCRYPTED - the
+; key ships alongside, because nobody is present to type a passphrase. Anyone
+; holding this installer can recover the live database URL and the JWT signing
+; key; see the header of embed-credentials.ps1.
+Source: "credentials.dat"; DestDir: "{app}\launcher"; Flags: ignoreversion
+#endif
 
 [Registry]
 ; This is what a later install reads to work out fresh / upgrade / reinstall,
@@ -482,7 +497,10 @@ function GetSteps(Param: String): String;
 var
   S: String;
 begin
-  S := 'app';
+  // 'credentials' is always passed. In a build without embedded credentials
+  // the step finds no file and reports that the launcher will ask instead, so
+  // there is nothing to gate it on.
+  S := 'app,credentials';
   if WizardIsComponentSelected('prereq\git')    then S := S + ',git';
   if WizardIsComponentSelected('prereq\python') then S := S + ',python';
   if WizardIsComponentSelected('prereq\node')   then S := S + ',node';
@@ -538,7 +556,7 @@ var
   Rc: Integer;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'),
-       '/F /T /FI "WINDOWTITLE eq SLC Vehicle Management - Campus*"',
+       '/F /T /FI "WINDOWTITLE eq Smart Parking and Vehicle Verification*"',
        '', SW_HIDE, ewWaitUntilTerminated, Rc);
 end;
 

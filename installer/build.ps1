@@ -20,6 +20,12 @@
       -UiTest           throwaway unelevated build, for walking the wizard
                         pages on a machine where a UAC prompt cannot be
                         answered. Installs nowhere useful. Never ship it.
+      -WithCredentials  bake installer\credentials.dat into the setup, so it
+                        installs with no credential entry at all. Produces
+                        SLC-VMS-Campus-Setup-CONFIGURED.exe. Run
+                        embed-credentials.ps1 first. READ ITS HEADER: the
+                        result is as sensitive as the credentials themselves,
+                        because anyone holding it can recover them.
 #>
 
 [CmdletBinding()]
@@ -27,7 +33,8 @@ param(
     [string]$Version,
     [switch]$SkipAssets,
     [switch]$Sign,
-    [switch]$UiTest
+    [switch]$UiTest,
+    [switch]$WithCredentials
 )
 
 $ErrorActionPreference = 'Stop'
@@ -104,6 +111,23 @@ if ($UiTest) {
     $isccArgs += '/DUITEST'
     Say 'UI-TEST BUILD - runs unelevated, installs nowhere useful. Do not ship it.' 'Yellow'
 }
+if ($WithCredentials) {
+    $blob = Join-Path $here 'credentials.dat'
+    if (-not (Test-Path $blob)) {
+        Write-Error 'No installer\credentials.dat. Run embed-credentials.ps1 -FromEnv first.'
+    }
+    $isccArgs += '/DWITHCREDS'
+    Write-Host ''
+    Write-Host '  ###############################################################' -ForegroundColor Red
+    Write-Host '  #  BUILDING AN INSTALLER THAT CARRIES LIVE CREDENTIALS         #' -ForegroundColor Red
+    Write-Host '  #                                                             #' -ForegroundColor Red
+    Write-Host '  #  Obfuscated, NOT encrypted - the key ships with it. Anyone   #' -ForegroundColor Red
+    Write-Host '  #  who gets this exe can recover the Neon DATABASE_URL and     #' -ForegroundColor Red
+    Write-Host '  #  the JWT SECRET_KEY. Hand it only to people you would give   #' -ForegroundColor Red
+    Write-Host '  #  direct database access. Never upload it anywhere.           #' -ForegroundColor Red
+    Write-Host '  ###############################################################' -ForegroundColor Red
+    Write-Host ''
+}
 $isccArgs += "`"$iss`""
 
 Say 'Compiling...'
@@ -116,7 +140,10 @@ try {
 }
 if ($code -ne 0) { Write-Error "ISCC exited with $code" }
 
-$exe = Join-Path $out $(if ($UiTest) { 'SLC-VMS-Campus-Setup-UITEST.exe' } else { 'SLC-VMS-Campus-Setup.exe' })
+$exe = Join-Path $out $(
+    if     ($UiTest)          { 'SLC-VMS-Campus-Setup-UITEST.exe' }
+    elseif ($WithCredentials) { 'SLC-VMS-Campus-Setup-CONFIGURED.exe' }
+    else                      { 'SLC-VMS-Campus-Setup.exe' })
 if (-not (Test-Path $exe)) { Write-Error 'The compiler reported success but produced no exe.' }
 
 # --- optional signing -------------------------------------------------------

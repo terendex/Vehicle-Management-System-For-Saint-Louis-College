@@ -233,10 +233,14 @@ function Write-WizardLarge([string]$Path) {
 
     $white = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
     $muted = New-Object System.Drawing.SolidBrush($SubTint)
-    $c.G.DrawString("Vehicle`nManagement`nSystem", $title, $white,
-        (New-Object System.Drawing.RectangleF(8, 152, ($W - 16), 70)), $fmt)
-    $c.G.DrawString("Saint Louis College`nCampus deployment", $sub, $muted,
-        (New-Object System.Drawing.RectangleF(8, 232, ($W - 16), 50)), $fmt)
+    # The college on top, the system name under it - the same order and the same
+    # words as the web header lockup.
+    $c.G.DrawString("SAINT LOUIS`nCOLLEGE", $title, $white,
+        (New-Object System.Drawing.RectangleF(8, 152, ($W - 16), 50)), $fmt)
+    $c.G.DrawString("Smart Parking and`nVehicle Verification`nSystem", $sub, $muted,
+        (New-Object System.Drawing.RectangleF(8, 208, ($W - 16), 60)), $fmt)
+    $c.G.DrawString("Campus deployment", $sub, $muted,
+        (New-Object System.Drawing.RectangleF(8, 276, ($W - 16), 20)), $fmt)
 
     $white.Dispose(); $muted.Dispose(); $title.Dispose(); $sub.Dispose(); $fmt.Dispose()
     Write-Bmp $c.Bitmap $Path
