@@ -32,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 
 That fetches the Inno Setup compiler through winget the first time, regenerates
 the icon and wizard artwork from `frontend\src\assets\slclogo.jpg`, and writes
-**`installer\out\SLC-VMS-Campus-Setup.exe`** — about 2 MB.
+**`installer\out\SLC-Smart-Parking-Campus-Setup.exe`** — about 2 MB.
 
 Copy that one file to the campus machine and run it. The wizard asks for the
 install location, the branch to track and the port, then hands off to a setup

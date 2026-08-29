@@ -52,7 +52,7 @@ AllowNoIcons=yes
 ; defined on the ISCC command line.
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\SLC-VMS-UITest
-OutputBaseFilename=SLC-VMS-Campus-Setup-UITEST
+OutputBaseFilename=SLC-Smart-Parking-Campus-Setup-UITEST
 #else
 ; Not Program Files. The application half is a git checkout that updates itself,
 ; and a checkout under Program Files can only be written by an elevated process
@@ -63,9 +63,9 @@ PrivilegesRequired=admin
 #ifdef WITHCREDS
 ; Named differently on purpose. This build carries the live credentials, and the
 ; one thing that must never happen is publishing it in place of the clean one.
-OutputBaseFilename=SLC-VMS-Campus-Setup-CONFIGURED
+OutputBaseFilename=SLC-Smart-Parking-Campus-Setup-CONFIGURED
 #else
-OutputBaseFilename=SLC-VMS-Campus-Setup
+OutputBaseFilename=SLC-Smart-Parking-Campus-Setup
 #endif
 #endif
 

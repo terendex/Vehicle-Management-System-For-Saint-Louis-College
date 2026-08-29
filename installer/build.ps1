@@ -1,5 +1,5 @@
 <#
-    build.ps1 - produce installer\out\SLC-VMS-Campus-Setup.exe.
+    build.ps1 - produce installer\out\SLC-Smart-Parking-Campus-Setup.exe.
 
         powershell -ExecutionPolicy Bypass -File installer\build.ps1
 
@@ -22,7 +22,8 @@
                         answered. Installs nowhere useful. Never ship it.
       -WithCredentials  bake installer\credentials.dat into the setup, so it
                         installs with no credential entry at all. Produces
-                        SLC-VMS-Campus-Setup-CONFIGURED.exe. Run
+                        SLC-Smart-Parking-Campus-Setup-CONFIGURED.exe.
+                        Run
                         embed-credentials.ps1 first. READ ITS HEADER: the
                         result is as sensitive as the credentials themselves,
                         because anyone holding it can recover them.
@@ -141,9 +142,9 @@ try {
 if ($code -ne 0) { Write-Error "ISCC exited with $code" }
 
 $exe = Join-Path $out $(
-    if     ($UiTest)          { 'SLC-VMS-Campus-Setup-UITEST.exe' }
-    elseif ($WithCredentials) { 'SLC-VMS-Campus-Setup-CONFIGURED.exe' }
-    else                      { 'SLC-VMS-Campus-Setup.exe' })
+    if     ($UiTest)          { 'SLC-Smart-Parking-Campus-Setup-UITEST.exe' }
+    elseif ($WithCredentials) { 'SLC-Smart-Parking-Campus-Setup-CONFIGURED.exe' }
+    else                      { 'SLC-Smart-Parking-Campus-Setup.exe' })
 if (-not (Test-Path $exe)) { Write-Error 'The compiler reported success but produced no exe.' }
 
 # --- optional signing -------------------------------------------------------

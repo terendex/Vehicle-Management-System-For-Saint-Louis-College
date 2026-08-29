@@ -5,7 +5,7 @@
         powershell -ExecutionPolicy Bypass -File installer\build.ps1 -WithCredentials
 
     Produces installer\credentials.dat, which build.ps1 -WithCredentials compiles
-    into a setup named SLC-VMS-Campus-Setup-CONFIGURED.exe. That installer needs
+    into a setup named SLC-Smart-Parking-Campus-Setup-CONFIGURED.exe. That installer needs
     no credential entry at all: it writes backend\.env itself and the launcher
     comes up ready to start.
 

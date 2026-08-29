@@ -776,26 +776,39 @@ function Set-State {
 # them against ten separate patterns made the common case ten times more
 # expensive than it needed to be. Named groups say which alternative hit, so a
 # single pass both decides and dispatches.
-$StatusRe = New-Object regex(
+# The pattern is built into a variable FIRST, then handed to the constructor.
+# Concatenating it inline in the argument list silently breaks it: PowerShell
+# binds the comma tighter than +, so
+#     New-Object regex('a' + 'b', $options)
+# is parsed as 'a' + ('b', $options) - the options enum is stringified onto the
+# end of the last alternative and passed as part of the pattern, and the
+# constructor gets no options at all. The symptom was the realtime pill sitting
+# on "checking" forever while the line it needed sat plainly in the log, because
+# the last alternative had become "(?<realtime>...) Compiled".
+$statusPattern =
     '(?<origin>Serving on\s+(?<url>http://\S+))' +
     '|(?<listen>Listening on TCP address)' +
     '|(?<camok>^\s*reachable\s*:)' +
     '|(?<cambad>^\s*NO ROUTE\s*:)' +
     '|(?<camnone>no cameras registered yet)' +
     '|(?<dbfail>could not read the camera list)' +
-    '|(?<realtime>\[settings\] realtime:)',
-    ([System.Text.RegularExpressions.RegexOptions]::Compiled))
+    '|(?<realtime>\[settings\] realtime:)'
+$StatusRe = New-Object regex($statusPattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled))
 
-$SeverityRe = New-Object regex(
+$severityPattern =
     '(?<err>build FAILED|Traceback|CommandError|\bERROR\b|Error:|FATAL)' +
     '|(?<warn>\bWARNING\b|Warning:)' +
-    '|(?<note>^\[campus\])',
-    ([System.Text.RegularExpressions.RegexOptions]::Compiled))
+    '|(?<note>^\[campus\])'
+$SeverityRe = New-Object regex($severityPattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled))
+
+# Child processes colour their output. npm and vite emit SGR escapes, which
+# reach the log pane as literal "[33m...[0m" noise around the text.
+$AnsiRe = New-Object regex("`e\[[0-9;]*[A-Za-z]", ([System.Text.RegularExpressions.RegexOptions]::Compiled))
 
 function Read-ServerLine {
     param([string]$Line)
 
-    $t = $Line.TrimEnd()
+    $t = $AnsiRe.Replace($Line, '').TrimEnd()
     if ($t.Length -eq 0) { return }
 
     $kind = 'info'
@@ -1008,7 +1021,8 @@ function Start-Server {
 
     $S.LogPath = Join-Path $LogDir ("campus-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
     try {
-        $S.LogWriter = New-Object System.IO.StreamWriter($S.LogPath, $true)
+        # UTF-8 without a BOM, to match what we now read from the child.
+        $S.LogWriter = New-Object System.IO.StreamWriter($S.LogPath, $true, (New-Object System.Text.UTF8Encoding($false)))
         # Deliberately NOT AutoFlush. That would be one flush syscall per line;
         # Update-LogView flushes once per tick instead.
         $S.LogWriter.AutoFlush = $false
@@ -1023,6 +1037,12 @@ function Start-Server {
     $psi.CreateNoWindow         = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true
+    # Without these, .NET decodes the child's bytes with the console's ANSI code
+    # page. npm and vite emit UTF-8 box-drawing and check marks, which then
+    # arrive as mojibake ("Î“Ã¶Ã©" where a tick should be) in both the log pane
+    # and the log file.
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
     # Without this, Python buffers 8 KB before flushing and the log pane sits
     # empty through the whole startup, which reads as a hang.
     $psi.EnvironmentVariables['PYTHONUNBUFFERED'] = '1'

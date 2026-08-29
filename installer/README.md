@@ -1,6 +1,6 @@
 # Campus installer
 
-Builds `SLC-VMS-Campus-Setup.exe`, the setup program for the on-site half of the
+Builds `SLC-Smart-Parking-Campus-Setup.exe`, the setup program for the on-site half of the
 hybrid deployment. What it installs and why the campus half exists at all is in
 [CAMPUS_SETUP.md](../CAMPUS_SETUP.md); this file is about the build.
 
@@ -133,7 +133,7 @@ changes and old values have to be rewritten.
 powershell -ExecutionPolicy Bypass -File installer\build.ps1 -UiTest
 ```
 
-Builds `SLC-VMS-Campus-Setup-UITEST.exe`, which runs unelevated and installs to
+Builds `SLC-Smart-Parking-Campus-Setup-UITEST.exe`, which runs unelevated and installs to
 a throwaway folder, so the pages can be walked through on a machine where a UAC
 prompt cannot be answered. `UITEST` is only ever defined on the ISCC command
 line; the shipped build is the `#else` branch. Never distribute the UITEST exe.
