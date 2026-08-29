@@ -124,6 +124,33 @@ foreach ($required in @('assets\slc-vms.ico', 'assets\wizard-large.bmp', 'assets
 # --- compile ----------------------------------------------------------------
 if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out -Force | Out-Null }
 
+# Refuse to quietly replace a credential-carrying installer with a clean one.
+#
+# This is not hypothetical. Once the CONFIGURED exe has been renamed to the
+# plain name - which is what you do to hand it out - any later `build.ps1` with
+# no flags writes to that exact filename and silently destroys it. The marker
+# below records that the file currently sitting there was built with
+# credentials, so the next plain build has to say so out loud.
+$marker = Join-Path $out '.built-with-credentials'
+if (-not $WithCredentials -and -not $UiTest -and (Test-Path $marker)) {
+    $guarded = (Get-Content $marker -Raw).Trim()
+    if (Test-Path $guarded) {
+        Write-Host ''
+        Write-Host '  STOP: this build would overwrite an installer that carries live credentials.' -ForegroundColor Red
+        Write-Host "        $guarded" -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  Rebuild it with credentials instead:' -ForegroundColor Yellow
+        Write-Host '      installer\build.ps1 -EmbedCredentials' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Or move that exe somewhere safe first, then delete:' -ForegroundColor DarkGray
+        Write-Host "      $marker" -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Error 'Refusing to overwrite a configured installer.'
+    }
+    # The exe it guarded is gone, so the marker is stale.
+    Remove-Item $marker -Force -ErrorAction SilentlyContinue
+}
+
 # Deliberately NOT /Q. Quiet mode suppresses compiler warnings, and one of them
 # was a real bug: Inno warned that a per-user area ({userstartup}) was being
 # written by an elevated install, which would have put the auto-start shortcut
@@ -199,6 +226,13 @@ if ($Sign) {
     Say 'Signing...'
     & signtool.exe ($env:SIGNTOOL_ARGS -split ' ') $exe
     if ($LASTEXITCODE -ne 0) { Write-Error "signtool exited with $LASTEXITCODE" }
+}
+
+# Record what this file is, so a later plain build cannot silently replace it.
+# Written after a successful compile only, and pointed at the exe by full path
+# so renaming the exe invalidates the guard rather than misfiring on it.
+if ($WithCredentials) {
+    Set-Content -Path (Join-Path $out '.built-with-credentials') -Value $exe -Encoding UTF8
 }
 
 $size = [math]::Round((Get-Item $exe).Length / 1MB, 2)
