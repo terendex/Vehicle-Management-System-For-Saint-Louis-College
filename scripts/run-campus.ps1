@@ -22,6 +22,9 @@
         database — Railway owns the schema
       * rebuilds the React bundle only when the sources are newer than the
         last build, and reinstalls node modules only when the lockfile moved
+      * pre-compresses that bundle to .gz/.br. That is the only thing that
+        makes WhiteNoise serve it compressed - there is no edge proxy on
+        this half to do it the way Railway's does
       * pings the cameras actually registered in the database
 
     Flags
@@ -259,6 +262,57 @@ if ($needBuild) {
     }
 } elseif (-not $SkipFrontend) {
     Say 'Bundle is current - skipping the rebuild.' 'DarkGray'
+}
+
+# ── 5b. Pre-compress the bundle for WhiteNoise ───────────────────────────────
+# WhiteNoise never compresses on the fly. It serves a .gz or .br only when one
+# is already sitting next to the original on disk, and nothing else here puts
+# them there: CompressedStaticFilesStorage runs inside collectstatic, so it
+# only ever reaches STATIC_ROOT, while the bundle is served from
+# WHITENOISE_ROOT (backend\frontend_build). GZipMiddleware cannot cover for it
+# either - it sits BELOW WhiteNoise in MIDDLEWARE, and WhiteNoise answers a
+# static request in process_request, so that response is returned without ever
+# travelling back down through the gzip layer.
+#
+# Railway hides this, because its edge proxy gzips on the way out. This half
+# has no proxy in front of it. Without this step the gate serves the React
+# bundle raw - a measured 2.8 MB of JS+CSS where 830 KB would do, on every
+# cold load, over campus wifi.
+#
+# It runs on the bundle-is-current path too, not just after a rebuild. An
+# install that has never been compressed would otherwise stay raw until
+# something forced a rebuild, which on a stable gate machine is never.
+#
+# And it must finish BEFORE daphne starts: WhiteNoise indexes the directory
+# once at startup, so a .gz written after that is invisible until the next run.
+if (Test-Path $buildDir) {
+    $haveGz = @(Get-ChildItem $buildDir -Recurse -File -Filter *.gz -ErrorAction SilentlyContinue)
+    if ($needBuild -or $haveGz.Count -eq 0) {
+        Say 'Pre-compressing the bundle (gzip + brotli)...'
+        # -q because the default is one line per file, which would bury
+        # everything else this script prints into the launcher's log pane.
+        & $python -m whitenoise.compress -q $buildDir
+        if ($LASTEXITCODE -ne 0) {
+            # Not fatal, and deliberately so: an uncompressed bundle is slow,
+            # not broken. A gate that serves pages slowly beats one that
+            # refuses to start. "WARNING" is what the launcher's severity
+            # pattern matches on - see $severityPattern in campus-launcher.ps1.
+            Say 'WARNING: could not pre-compress the bundle - it will be served uncompressed.' 'Yellow'
+        } else {
+            $plain = @(Get-ChildItem $buildDir -Recurse -File -Include *.js, *.css)
+            $rawKb = [math]::Round((($plain | Measure-Object Length -Sum).Sum) / 1KB)
+            $gzKb  = [math]::Round(((@($plain | ForEach-Object {
+                         Get-Item ($_.FullName + '.gz') -ErrorAction SilentlyContinue
+                     }) | Measure-Object Length -Sum).Sum) / 1KB)
+            if ($rawKb -gt 0 -and $gzKb -gt 0) {
+                Say "Bundle compressed: $rawKb KB of JS/CSS is $gzKb KB over the wire." 'Green'
+            } else {
+                Say 'Bundle compressed.' 'Green'
+            }
+        }
+    } else {
+        Say 'Bundle is already compressed - skipping.' 'DarkGray'
+    }
 }
 
 # ── 6. Serve ─────────────────────────────────────────────────────────────────
