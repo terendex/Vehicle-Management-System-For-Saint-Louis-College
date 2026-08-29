@@ -21,12 +21,15 @@
                         pages on a machine where a UAC prompt cannot be
                         answered. Installs nowhere useful. Never ship it.
       -WithCredentials  bake installer\credentials.dat into the setup, so it
-                        installs with no credential entry at all. Produces
-                        SLC-Smart-Parking-Campus-Setup-CONFIGURED.exe.
-                        Run
-                        embed-credentials.ps1 first. READ ITS HEADER: the
-                        result is as sensitive as the credentials themselves,
-                        because anyone holding it can recover them.
+                        installs with no credential entry at all. Run
+                        embed-credentials.ps1 first, or use -EmbedCredentials
+                        which does both. The output is
+                        SLC-Smart-Parking-Campus-Setup.exe - the SAME filename
+                        a plain build produces, so nothing but the marker file
+                        distinguishes them. READ the header of
+                        embed-credentials.ps1: the result is as sensitive as
+                        the credentials themselves, because anyone holding it
+                        can recover them.
 #>
 
 [CmdletBinding()]
@@ -126,11 +129,11 @@ if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out -Force | Ou
 
 # Refuse to quietly replace a credential-carrying installer with a clean one.
 #
-# This is not hypothetical. Once the CONFIGURED exe has been renamed to the
-# plain name - which is what you do to hand it out - any later `build.ps1` with
-# no flags writes to that exact filename and silently destroys it. The marker
-# below records that the file currently sitting there was built with
-# credentials, so the next plain build has to say so out loud.
+# This is not hypothetical - it happened twice. Both build kinds now write the
+# same filename, so any later `build.ps1` with no flags overwrites a
+# credential-carrying installer and says nothing. The marker records that the
+# file currently sitting there was built with credentials, and is now the ONLY
+# thing telling the two apart.
 $marker = Join-Path $out '.built-with-credentials'
 if (-not $WithCredentials -and -not $UiTest -and (Test-Path $marker)) {
     $guarded = (Get-Content $marker -Raw).Trim()
@@ -208,10 +211,12 @@ if ($warnings.Count) {
     Write-Host ''
 }
 
+# Credential builds now share the plain filename, so there is exactly one
+# installer to hand out. Which kind it is lives in the marker file written
+# below, not in the name.
 $exe = Join-Path $out $(
-    if     ($UiTest)          { 'SLC-Smart-Parking-Campus-Setup-UITEST.exe' }
-    elseif ($WithCredentials) { 'SLC-Smart-Parking-Campus-Setup-CONFIGURED.exe' }
-    else                      { 'SLC-Smart-Parking-Campus-Setup.exe' })
+    if ($UiTest) { 'SLC-Smart-Parking-Campus-Setup-UITEST.exe' }
+    else         { 'SLC-Smart-Parking-Campus-Setup.exe' })
 if (-not (Test-Path $exe)) { Write-Error 'The compiler reported success but produced no exe.' }
 
 # --- optional signing -------------------------------------------------------

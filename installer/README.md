@@ -153,6 +153,28 @@ a throwaway folder, so the pages can be walked through on a machine where a UAC
 prompt cannot be answered. `UITEST` is only ever defined on the ISCC command
 line; the shipped build is the `#else` branch. Never distribute the UITEST exe.
 
+## Building an installer that needs no credential entry
+
+Double-click **`Build installer with credentials.cmd`**, or run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -EmbedCredentials
+```
+
+It reads `backend\.env`, shows what it is about to embed with the secrets masked,
+and requires you to type `EMBED`. The output is
+`SLC-Smart-Parking-Campus-Setup.exe` - the same name a plain build produces - which writes `backend\.env`
+itself so the launcher's credentials panel never appears.
+
+**You do not need this for the machine you are sitting at.** Fill the panel in
+once and press Save; `backend\.env` then persists across updates. Embedding is
+only worth doing for installers handed to someone else.
+
+**A configured build is as sensitive as the credentials.** Obfuscated, not
+encrypted — the key ships with it. After building, `build.ps1` records which exe
+carries credentials and refuses to let a later plain build silently overwrite
+it; delete `out\.built-with-credentials` if you genuinely want to replace it.
+
 ## Notes
 
 **The artwork is a build output.** `make-assets.ps1` derives the icon and both

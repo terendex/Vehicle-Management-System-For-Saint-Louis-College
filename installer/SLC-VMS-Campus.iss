@@ -77,13 +77,14 @@ OutputBaseFilename=SLC-Smart-Parking-Campus-Setup-UITEST
 DefaultDirName={sd}\Smart Parking and Vehicle Verification System
 ; The bootstrap installs Python, Node and Git and adds a firewall rule.
 PrivilegesRequired=admin
-#ifdef WITHCREDS
-; Named differently on purpose. This build carries the live credentials, and the
-; one thing that must never happen is publishing it in place of the clean one.
-OutputBaseFilename=SLC-Smart-Parking-Campus-Setup-CONFIGURED
-#else
+; One filename whether or not credentials are baked in, by request - the
+; installer handed out should not be named differently from the one built.
+;
+; That means the NAME no longer tells you which kind you have. The guard is now
+; entirely in build.ps1: a credential build writes out\.built-with-credentials
+; recording this exe, and a later plain build refuses rather than silently
+; replacing it. If that marker is deleted, nothing distinguishes them.
 OutputBaseFilename=SLC-Smart-Parking-Campus-Setup
-#endif
 #endif
 
 ; Windows 10 1809 is where winget became available; without it the prerequisite
