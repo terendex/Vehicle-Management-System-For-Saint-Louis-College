@@ -1085,13 +1085,54 @@ function Wait-PortFree {
     return $false
 }
 
+# Kill a daphne left holding the port with no launcher behind it.
+#
+# Deliberately narrow. It only ever targets a python running
+# "daphne ... config.asgi:application" on this port - this application's own
+# server and nothing else. Whatever else happens to be listening is reported
+# and left alone: silently killing an unrelated process to free a port is far
+# worse than refusing to start.
+function Clear-OrphanedServer {
+    param([int]$Port)
+    $killed = 0
+    try {
+        $holders = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                     Select-Object -ExpandProperty OwningProcess -Unique)
+        foreach ($holderPid in $holders) {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$holderPid" -ErrorAction SilentlyContinue
+            if (-not $proc) { continue }
+            if ($proc.Name -ne 'python.exe' -or $proc.CommandLine -notmatch 'daphne' -or
+                $proc.CommandLine -notmatch 'config\.asgi') {
+                Write-Log ("Port $Port is held by $($proc.Name) (pid $holderPid), which this " +
+                           'launcher did not start - leaving it alone.') 'warn'
+                continue
+            }
+            # /T as well: daphne spawns workers, and killing only the parent
+            # leaves them holding the socket - which is the whole problem.
+            Start-Process taskkill -ArgumentList @('/PID', $holderPid, '/T', '/F') `
+                          -NoNewWindow -Wait -ErrorAction SilentlyContinue | Out-Null
+            $killed++
+        }
+    } catch { }
+    return $killed
+}
+
 function Start-Server {
     if ($App.Proc -and -not $App.Proc.HasExited) { return }
 
-    if (-not (Wait-PortFree -Port $cfg.Port)) {
-        Write-Log ("Port $($cfg.Port) is still held by the previous server. " +
-                   'Waiting longer, then trying anyway.') 'warn'
-        [void](Wait-PortFree -Port $cfg.Port -TimeoutSeconds 20)
+    if (-not (Wait-PortFree -Port $cfg.Port -TimeoutSeconds 8)) {
+        # Still held after a graceful wait, so this is not a shutdown in
+        # progress - it is an orphan. A power cut, a killed session, or a
+        # launcher that went away without stopping its child all leave a daphne
+        # behind holding the port, and nothing else will ever clear it.
+        $freed = Clear-OrphanedServer -Port $cfg.Port
+        if ($freed -gt 0) {
+            Write-Log "Cleared $freed orphaned server process(es) still holding port $($cfg.Port)." 'warn'
+            [void](Wait-PortFree -Port $cfg.Port -TimeoutSeconds 10)
+        } else {
+            Write-Log ("Port $($cfg.Port) is held by something this launcher did not start. " +
+                       'Close it, or change the port in Settings.') 'warn'
+        }
     }
 
     $missing = Get-CampusMissingSecrets -EnvFile $App.EnvFile -RequiredOnly
