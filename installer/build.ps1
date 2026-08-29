@@ -39,7 +39,11 @@ param(
     [switch]$SkipAssets,
     [switch]$Sign,
     [switch]$UiTest,
-    [switch]$WithCredentials
+    [switch]$WithCredentials,
+    # Read backend\.env, bake it in, and build - the whole configured-installer
+    # flow in one command, so it is not possible to do half of it and ship a
+    # setup that still asks for credentials.
+    [switch]$EmbedCredentials
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,6 +96,16 @@ if (-not $iscc) {
     if (-not $iscc) { Write-Error 'winget finished but ISCC.exe is still not on this machine.' }
 }
 Say "Compiler: $iscc"
+
+# --- optional: bake the credentials in first --------------------------------
+if ($EmbedCredentials) {
+    Say 'Reading backend\.env and baking the credentials in...' 'Yellow'
+    & (Join-Path $here 'embed-credentials.ps1') -FromEnv
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error 'Credential embedding was cancelled or failed - nothing was built.'
+    }
+    $WithCredentials = $true
+}
 
 # --- artwork ----------------------------------------------------------------
 if ($SkipAssets) {
