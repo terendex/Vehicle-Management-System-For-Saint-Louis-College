@@ -35,7 +35,7 @@ the icon and wizard artwork from `frontend\src\assets\slclogo.jpg`, and writes
 **`installer\out\SLC-Smart-Parking-Campus-Setup.exe`** — about 2 MB.
 
 Copy that one file to the campus machine and run it. The wizard asks for the
-install location, the branch to track and the port, then hands off to a setup
+install location and the port, then hands off to a setup
 window that:
 
 - installs **Git**, **Python 3.11** and **Node.js LTS** through winget, skipping

@@ -213,7 +213,10 @@ function Convert-CampusLauncherConfig {
 function Get-CampusLauncherConfig {
     $defaults = [ordered]@{
         ConfigVersion     = $script:CampusConfigVersion
-        Branch            = 'jonas'
+        # Only a fallback for a checkout with no launcher.json - a real install
+        # gets its branch from the installer, which fixes it at build time.
+        # main because it is the branch that only receives merged work.
+        Branch            = 'main'
         Port              = 8000
         UpdatePollMinutes = 5
         AutoStart         = $true

@@ -66,7 +66,7 @@ updated by a pull like any other file.
 ## What the wizard asks
 
 Welcome → **License** (accept required; `LICENSE.txt`) → **Install location** →
-**Components** → **Deployment options** (branch, port) → **Prerequisites**
+**Components** → **Deployment options** (port) → **Prerequisites**
 (what is already installed, checked *before* committing) → **Start Menu folder**
 → **Additional tasks** → **Ready** → install → **Launch now**.
 
@@ -74,6 +74,21 @@ Components are real, not decoration: the selection becomes `-Steps git,python,
 node,app,firewall` on the bootstrap command line, and a deselected prerequisite
 is left alone and shown as *not selected* rather than silently skipped. An IT
 department that manages Python centrally can turn it off.
+
+**The tracked branch is not a wizard field.** It is fixed when the installer is
+built — `#define DefaultBranch` in the `.iss`, defaulting to `main` — and there
+is no way to change it during installation or afterwards. A gate terminal that
+whoever is standing at it can repoint at an arbitrary branch is a way to put
+untested code in front of guards. To build one that follows a different branch:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Branch jonas
+```
+
+which prints a warning, because every machine installed from that exe follows
+that branch permanently. To move an existing machine, reinstall over the top
+with an installer built for the new branch — an in-place upgrade keeps the
+checkout, credentials and settings.
 
 Additional tasks are desktop shortcut, open-on-startup, and add-to-PATH. There
 is **no file association** — this application owns no file type, and inventing

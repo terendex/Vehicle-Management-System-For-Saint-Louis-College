@@ -31,7 +31,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$InstallDir,
     [string]$RepoUrl = 'https://github.com/terendex/Vehicle-Management-System-For-Saint-Louis-College.git',
-    [string]$Branch  = 'jonas',
+    [string]$Branch  = 'main',
     [int]$Port       = 8000,
 
     # Which steps the operator selected on the wizard's component page. An IT

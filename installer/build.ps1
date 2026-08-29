@@ -32,6 +32,10 @@
 [CmdletBinding()]
 param(
     [string]$Version,
+    # The branch every machine installed from the resulting exe will track.
+    # Fixed here because it is not a wizard field and cannot be changed after
+    # installation - this is the one place that decision is made.
+    [string]$Branch = 'main',
     [switch]$SkipAssets,
     [switch]$Sign,
     [switch]$UiTest,
@@ -113,6 +117,12 @@ if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out -Force | Ou
 # Warnings are surfaced below rather than hidden.
 $isccArgs = @()
 if ($Version) { $isccArgs += "/DAppVersion=$Version" }
+$isccArgs += "/DDefaultBranch=$Branch"
+if ($Branch -ne 'main') {
+    Say "Tracking branch '$Branch' - NOT main. Every machine installed from this exe follows it permanently." 'Yellow'
+} else {
+    Say "Tracking branch 'main'."
+}
 if ($UiTest) {
     $isccArgs += '/DUITEST'
     Say 'UI-TEST BUILD - runs unelevated, installs nowhere useful. Do not ship it.' 'Yellow'

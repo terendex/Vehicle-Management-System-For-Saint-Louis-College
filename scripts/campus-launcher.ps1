@@ -488,7 +488,7 @@ $xaml = @'
               <Border HorizontalAlignment="Right" Background="{StaticResource Sky50}"
                       BorderBrush="{StaticResource LineStrong}" BorderThickness="1"
                       CornerRadius="20" Padding="9,2" Margin="0,-3,0,0">
-                <TextBlock x:Name="BranchText" Text="jonas" Foreground="{StaticResource Navy}"
+                <TextBlock x:Name="BranchText" Text="main" Foreground="{StaticResource Navy}"
                            FontFamily="Consolas" FontSize="10.5"/>
               </Border>
             </Grid>

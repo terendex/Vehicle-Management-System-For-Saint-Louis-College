@@ -22,7 +22,18 @@
 #define AppVersion     "1.0.0"
 #define AppPublisher   "Saint Louis College"
 #define AppURL         "https://github.com/terendex/Vehicle-Management-System-For-Saint-Louis-College"
-#define DefaultBranch  "jonas"
+; The branch every machine built from this script will track, forever. It is
+; NOT a wizard field: whoever installs must not be able to repoint a gate
+; terminal at an arbitrary branch, and once installed there is no way to change
+; it short of reinstalling. That makes this line the single decision, and it
+; belongs to whoever builds the installer, not whoever runs it.
+;
+; main is the default because it is the branch that only receives merged work.
+; Override at build time for a machine you are testing on yourself:
+;     installer\build.ps1 -Branch jonas
+#ifndef DefaultBranch
+  #define DefaultBranch "main"
+#endif
 #define DefaultPort    "8000"
 #define RegKey         "Software\Saint Louis College\SLC VMS"
 
@@ -373,13 +384,13 @@ procedure InitializeWizard;
 begin
   OptPage := CreateInputQueryPage(wpSelectComponents,
     'Deployment options',
-    'Which code should this machine run, and where should guards reach it?',
-    'The branch is what the launcher watches for updates. It checks every few minutes and offers the update; ' +
-    'it never restarts the server on its own, because that would drop the camera feeds mid-shift.');
-  OptPage.Add('Git branch to track:', False);
+    'Where should guards reach this machine?',
+    'This installer tracks the "{#DefaultBranch}" branch and updates itself from it. That is fixed when the ' +
+    'installer is built and cannot be changed here or afterwards, so a gate terminal can never end up running ' +
+    'code nobody intended. The launcher checks every few minutes and offers the update; it never restarts the ' +
+    'server on its own, because that would drop the camera feeds mid-shift.');
   OptPage.Add('Port to serve on:', False);
-  OptPage.Values[0] := '{#DefaultBranch}';
-  OptPage.Values[1] := '{#DefaultPort}';
+  OptPage.Values[0] := '{#DefaultPort}';
 
   PrereqPage := CreateOutputMsgMemoPage(OptPage.ID,
     'Prerequisites', 'What this machine already has',
@@ -465,13 +476,9 @@ begin
 
   if CurPageID = OptPage.ID then
   begin
-    if Trim(OptPage.Values[0]) = '' then
-    begin
-      MsgBox('Enter the branch this machine should track, for example "main".', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-    P := StrToIntDef(Trim(OptPage.Values[1]), 0);
+    // Port is the page's only field now, so it is Values[0]. It used to be
+    // Values[1] with the branch ahead of it - reindexed when that was removed.
+    P := StrToIntDef(Trim(OptPage.Values[0]), 0);
     if (P <= 0) or (P > 65535) then
     begin
       MsgBox('Enter a port between 1 and 65535. The default is 8000.', mbError, MB_OK);
@@ -480,14 +487,15 @@ begin
   end;
 end;
 
+// Fixed at compile time, not asked for. See the DefaultBranch define at the top.
 function GetBranch(Param: String): String;
 begin
-  Result := Trim(OptPage.Values[0]);
+  Result := '{#DefaultBranch}';
 end;
 
 function GetPort(Param: String): String;
 begin
-  Result := Trim(OptPage.Values[1]);
+  Result := Trim(OptPage.Values[0]);
 end;
 
 function GetToday(Param: String): String;
