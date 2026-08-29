@@ -62,7 +62,13 @@ if ($PSBoundParameters.ContainsKey('Branch')) { $cfg.Branch = $Branch }
 # PATH.
 Add-CampusToolPaths $cfg
 
-$S = [ordered]@{
+# Named $App, not $S. PowerShell variable names are case-INSENSITIVE, so a
+# single-letter $S is silently the same variable as the $s in any nearby
+# `foreach ($s in ...)`. That is not hypothetical: it clobbered this state
+# object mid-loop and the launcher died with "The property 'Subs' cannot be
+# found on this object" - which names the symptom and hides the cause
+# completely. Keep this name distinctive.
+$App = [ordered]@{
     Repo        = $repo
     EnvFile     = Join-Path $repo 'backend\.env'
     Proc        = $null          # the run-campus.ps1 child
@@ -708,23 +714,23 @@ function Write-Log {
     }
     $stamp = (Get-Date).ToString('HH:mm:ss')
     $LogItems.Add([pscustomobject]@{ Time = $stamp; Text = $Text; Brush = $lineBrush })
-    $S.LogDirty = $true
-    if ($S.LogWriter) { try { $S.LogWriter.WriteLine("$stamp  $Text") } catch { } }
+    $App.LogDirty = $true
+    if ($App.LogWriter) { try { $App.LogWriter.WriteLine("$stamp  $Text") } catch { } }
 }
 
 # Called once per tick, not once per line. The trim is amortised: it runs only
 # after 400 lines have accumulated past the cap, so the per-line cost of keeping
 # the list bounded is constant.
 function Update-LogView {
-    if (-not $S.LogDirty) { return }
-    $S.LogDirty = $false
+    if (-not $App.LogDirty) { return }
+    $App.LogDirty = $false
 
     if ($LogItems.Count -gt $LogCapHigh) {
         $drop = $LogItems.Count - $LogCapKeep
         for ($i = 0; $i -lt $drop; $i++) { $LogItems.RemoveAt(0) }
     }
     if ($LogItems.Count -gt 0) { $ui.LogList.ScrollIntoView($LogItems[$LogItems.Count - 1]) }
-    if ($S.LogWriter) { try { $S.LogWriter.Flush() } catch { } }
+    if ($App.LogWriter) { try { $App.LogWriter.Flush() } catch { } }
 }
 
 # ---------------------------------------------------------------------------
@@ -748,7 +754,7 @@ function Set-Pill {
 
 function Set-State {
     param([string]$State, [string]$Detail = '')
-    $S.State = $State
+    $App.State = $State
     switch ($State) {
         'Stopped' {
             $ui.Dot.Fill = $Palette.Disabled
@@ -797,9 +803,9 @@ function Set-State {
         }
     }
     if ($Detail) { $ui.SubText.Text = $Detail }
-    $ui.BtnGuard.IsEnabled = [bool]$S.Origin
-    $ui.BtnAdmin.IsEnabled = [bool]$S.Origin
-    $ui.BtnCopy.IsEnabled  = [bool]$S.Origin
+    $ui.BtnGuard.IsEnabled = [bool]$App.Origin
+    $ui.BtnAdmin.IsEnabled = [bool]$App.Origin
+    $ui.BtnCopy.IsEnabled  = [bool]$App.Origin
 }
 
 # ---------------------------------------------------------------------------
@@ -861,8 +867,8 @@ function Read-ServerLine {
 
     if ($m.Success) {
         if ($m.Groups['origin'].Success) {
-            $S.Origin = $m.Groups['url'].Value
-            $ui.OriginText.Text = $S.Origin
+            $App.Origin = $m.Groups['url'].Value
+            $ui.OriginText.Text = $App.Origin
             $ui.OriginText.Foreground = $Palette.Blue
             $kind = 'note'
         }
@@ -876,20 +882,20 @@ function Read-ServerLine {
             # Only now, not on "Serving on": opening the browser a second before
             # daphne has the socket gives the guard a connection-refused page
             # they then have to know to reload.
-            if (-not $S.AutoOpened -and $cfg.OpenOnStart -ne 'none') {
-                $S.AutoOpened = $true
+            if (-not $App.AutoOpened -and $cfg.OpenOnStart -ne 'none') {
+                $App.AutoOpened = $true
                 Open-CampusPage $cfg.OpenOnStart
             }
         }
         elseif ($m.Groups['camok'].Success) {
-            $S.CamOk++
-            Set-Pill 'Cam' "$($S.CamOk) reachable" $(if ($S.CamBad) { 'warn' } else { 'ok' })
+            $App.CamOk++
+            Set-Pill 'Cam' "$($App.CamOk) reachable" $(if ($App.CamBad) { 'warn' } else { 'ok' })
             Set-Pill 'Db' 'connected' 'ok'
             $kind = 'ok'
         }
         elseif ($m.Groups['cambad'].Success) {
-            $S.CamBad++
-            Set-Pill 'Cam' "$($S.CamOk) up, $($S.CamBad) down" $(if ($S.CamOk) { 'warn' } else { 'bad' })
+            $App.CamBad++
+            Set-Pill 'Cam' "$($App.CamOk) up, $($App.CamBad) down" $(if ($App.CamOk) { 'warn' } else { 'bad' })
             Set-Pill 'Db' 'connected' 'ok'
             $kind = 'warn'
         }
@@ -976,12 +982,12 @@ function Close-KioskBrowser {
 function Open-CampusPage {
     param([ValidateSet('guard', 'admin')][string]$Which)
 
-    if (-not $S.Origin) {
+    if (-not $App.Origin) {
         Write-Log 'Nothing is serving yet - start the server first.' 'warn'
         return
     }
     $path = if ($Which -eq 'guard') { '/security/guard-login' } else { '/login' }
-    $url  = "$($S.Origin)$path"
+    $url  = "$($App.Origin)$path"
     $name = if ($Which -eq 'guard') { 'guard terminal' } else { 'admin login' }
 
     if (-not $cfg.Kiosk) {
@@ -1050,9 +1056,9 @@ function Open-CampusPage {
 #  Start / stop
 # ---------------------------------------------------------------------------
 function Start-Server {
-    if ($S.Proc -and -not $S.Proc.HasExited) { return }
+    if ($App.Proc -and -not $App.Proc.HasExited) { return }
 
-    $missing = Get-CampusMissingSecrets -EnvFile $S.EnvFile -RequiredOnly
+    $missing = Get-CampusMissingSecrets -EnvFile $App.EnvFile -RequiredOnly
     if ($missing.Count -gt 0) {
         Write-Log ("Cannot start: " + (($missing | ForEach-Object { $_.Key }) -join ', ') + " not set.") 'error'
         Set-State 'Failed' 'Fill in the shared credentials first.'
@@ -1060,24 +1066,24 @@ function Start-Server {
         return
     }
 
-    $S.CamOk = 0; $S.CamBad = 0; $S.Origin = ''; $S.AutoOpened = $false
+    $App.CamOk = 0; $App.CamBad = 0; $App.Origin = ''; $App.AutoOpened = $false
     Set-State 'Starting' 'Preparing the environment. A first run installs dependencies and can take several minutes.'
     Set-Pill 'Db' 'checking' 'none'; Set-Pill 'Cam' 'checking' 'none'; Set-Pill 'Rt' 'checking' 'none'
 
-    $S.LogPath = Join-Path $LogDir ("campus-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
+    $App.LogPath = Join-Path $LogDir ("campus-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
     try {
         # UTF-8 without a BOM, to match what we now read from the child.
-        $S.LogWriter = New-Object System.IO.StreamWriter($S.LogPath, $true, (New-Object System.Text.UTF8Encoding($false)))
+        $App.LogWriter = New-Object System.IO.StreamWriter($App.LogPath, $true, (New-Object System.Text.UTF8Encoding($false)))
         # Deliberately NOT AutoFlush. That would be one flush syscall per line;
         # Update-LogView flushes once per tick instead.
-        $S.LogWriter.AutoFlush = $false
-    } catch { $S.LogWriter = $null }
+        $App.LogWriter.AutoFlush = $false
+    } catch { $App.LogWriter = $null }
 
     $script = Join-Path $PSScriptRoot 'run-campus.ps1'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = (Get-Command powershell.exe).Source
     $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -Port $($cfg.Port) -NonInteractive"
-    $psi.WorkingDirectory       = $S.Repo
+    $psi.WorkingDirectory       = $App.Repo
     $psi.UseShellExecute        = $false
     $psi.CreateNoWindow         = $true
     $psi.RedirectStandardOutput = $true
@@ -1092,29 +1098,29 @@ function Start-Server {
     # empty through the whole startup, which reads as a hang.
     $psi.EnvironmentVariables['PYTHONUNBUFFERED'] = '1'
 
-    $S.Proc = New-Object System.Diagnostics.Process
-    $S.Proc.StartInfo = $psi
-    $S.Proc.EnableRaisingEvents = $true
+    $App.Proc = New-Object System.Diagnostics.Process
+    $App.Proc.StartInfo = $psi
+    $App.Proc.EnableRaisingEvents = $true
 
     # The queue, not a direct UI write: these handlers fire on threadpool
     # threads, and touching a WPF control from one throws. A timer on the UI
     # thread drains it.
-    $S.Subs = @(
-        (Register-ObjectEvent -InputObject $S.Proc -EventName OutputDataReceived -MessageData $S.Queue -Action {
+    $App.Subs = @(
+        (Register-ObjectEvent -InputObject $App.Proc -EventName OutputDataReceived -MessageData $App.Queue -Action {
             if ($null -ne $EventArgs.Data) { $Event.MessageData.Enqueue($EventArgs.Data) } }),
-        (Register-ObjectEvent -InputObject $S.Proc -EventName ErrorDataReceived -MessageData $S.Queue -Action {
+        (Register-ObjectEvent -InputObject $App.Proc -EventName ErrorDataReceived -MessageData $App.Queue -Action {
             if ($null -ne $EventArgs.Data) { $Event.MessageData.Enqueue($EventArgs.Data) } })
     )
 
-    [void]$S.Proc.Start()
-    $S.Proc.BeginOutputReadLine()
-    $S.Proc.BeginErrorReadLine()
-    Write-Log "Starting run-campus.ps1 on port $($cfg.Port) (pid $($S.Proc.Id))" 'note'
+    [void]$App.Proc.Start()
+    $App.Proc.BeginOutputReadLine()
+    $App.Proc.BeginErrorReadLine()
+    Write-Log "Starting run-campus.ps1 on port $($cfg.Port) (pid $($App.Proc.Id))" 'note'
 }
 
 function Stop-Server {
     param([switch]$Quiet)
-    if (-not $S.Proc -or $S.Proc.HasExited) {
+    if (-not $App.Proc -or $App.Proc.HasExited) {
         Clear-Server
         if (-not $Quiet) { Set-State 'Stopped' 'Press Start to bring the gate terminal up.' }
         return
@@ -1127,18 +1133,18 @@ function Stop-Server {
     # the RTSP sessions. Orphaned ffmpeg is exactly what freezes the feeds on
     # the next start.
     try {
-        Start-Process taskkill -ArgumentList @('/PID', $S.Proc.Id, '/T', '/F') -NoNewWindow -Wait -ErrorAction Stop
+        Start-Process taskkill -ArgumentList @('/PID', $App.Proc.Id, '/T', '/F') -NoNewWindow -Wait -ErrorAction Stop
     } catch {
-        try { $S.Proc.Kill() } catch { }
+        try { $App.Proc.Kill() } catch { }
     }
 }
 
 function Clear-Server {
-    foreach ($s in $S.Subs) { try { Unregister-Event -SubscriptionId $s.Id -ErrorAction SilentlyContinue } catch { } }
-    $S.Subs = @()
-    if ($S.LogWriter) { try { $S.LogWriter.Flush(); $S.LogWriter.Dispose() } catch { }; $S.LogWriter = $null }
-    $S.Proc = $null
-    $S.Origin = ''
+    foreach ($sub in $App.Subs) { try { Unregister-Event -SubscriptionId $sub.Id -ErrorAction SilentlyContinue } catch { } }
+    $App.Subs = @()
+    if ($App.LogWriter) { try { $App.LogWriter.Flush(); $App.LogWriter.Dispose() } catch { }; $App.LogWriter = $null }
+    $App.Proc = $null
+    $App.Origin = ''
 }
 
 # ---------------------------------------------------------------------------
@@ -1165,7 +1171,13 @@ function Invoke-Git {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out  = & git.exe -c "safe.directory=$($S.Repo)" -C $S.Repo @GitArgs 2>&1
+        # Forward slashes, not the native backslashes. Git compares
+        # safe.directory against its own internal spelling of the path, which
+        # on Windows uses '/'. Passing "C:\Smart Parking\app" does not match
+        # "C:/Smart Parking/app" and the ownership check still refuses - which
+        # is exactly what git's own hint tells you when it fails.
+        $safe = 'safe.directory=' + $App.Repo.Replace('\', '/')
+        $out  = & git.exe -c $safe -C $App.Repo @GitArgs 2>&1
         $code = $LASTEXITCODE
     } catch {
         return @{ Ok = $false; Out = @($_.Exception.Message) }
@@ -1181,23 +1193,27 @@ function Start-UpdateCheck {
         $ui.UpdateSub.Text  = 'Updates cannot be checked or applied on this machine.'
         return
     }
-    if ($S.FetchProc -and -not $S.FetchProc.HasExited) { return }
+    if ($App.FetchProc -and -not $App.FetchProc.HasExited) { return }
 
     $ui.UpdateHead.Text = 'Checking for updates...'
     $ui.UpdateSub.Text  = ''
     # Fetch is the only network call here, so it is the only one that runs out
     # of process. rev-list afterwards reads the local object store and is
     # instant, so it can safely happen on the UI thread.
-    $S.FetchProc = Start-Process git.exe `
-        -ArgumentList @('-c', "safe.directory=`"$($S.Repo)`"",
-                        '-C', "`"$($S.Repo)`"", 'fetch', '--quiet', 'origin', $cfg.Branch) `
+    # The whole "-c name=value" value is one quoted token. Quoting only part of
+    # it, as in safe.directory="C:\path", leaves the quotes inside the value
+    # where git compares them literally and never matches.
+    $safeArg = '"safe.directory=' + $App.Repo.Replace('\', '/') + '"'
+    $App.FetchProc = Start-Process git.exe `
+        -ArgumentList @('-c', $safeArg,
+                        '-C', "`"$($App.Repo)`"", 'fetch', '--quiet', 'origin', $cfg.Branch) `
         -NoNewWindow -PassThru
 }
 
 function Complete-UpdateCheck {
-    $S.FetchProc = $null
-    $S.LastCheck = Get-Date
-    $ui.LastCheckText.Text = "last checked " + $S.LastCheck.ToString('HH:mm')
+    $App.FetchProc = $null
+    $App.LastCheck = Get-Date
+    $ui.LastCheckText.Text = "last checked " + $App.LastCheck.ToString('HH:mm')
 
     $count = Invoke-Git @('rev-list', '--count', "HEAD..origin/$($cfg.Branch)")
     if (-not $count.Ok) {
@@ -1209,23 +1225,23 @@ function Complete-UpdateCheck {
 
     $behind = 0
     if (-not [int]::TryParse("$($count.Out)".Trim(), [ref]$behind)) { $behind = 0 }
-    $S.Behind = $behind
+    $App.Behind = $behind
 
     $head = Invoke-Git @('log', '-1', '--pretty=format:%h %s', "origin/$($cfg.Branch)")
-    $S.HeadSubject = if ($head.Ok) { "$($head.Out)".Trim() } else { '' }
+    $App.HeadSubject = if ($head.Ok) { "$($head.Out)".Trim() } else { '' }
 
     $local = Invoke-Git @('log', '-1', '--pretty=format:%h')
     $short = if ($local.Ok) { "$($local.Out)".Trim() } else { '?' }
     $ui.CommitText.Text = "$($cfg.Branch) @ $short"
 
-    if ($S.Behind -gt 0) {
-        $word = if ($S.Behind -eq 1) { 'commit' } else { 'commits' }
-        $ui.UpdateHead.Text = "$($S.Behind) new $word available"
-        $ui.UpdateSub.Text  = $S.HeadSubject
+    if ($App.Behind -gt 0) {
+        $word = if ($App.Behind -eq 1) { 'commit' } else { 'commits' }
+        $ui.UpdateHead.Text = "$($App.Behind) new $word available"
+        $ui.UpdateSub.Text  = $App.HeadSubject
         $ui.BtnUpdate.Visibility = 'Visible'
     } else {
         $ui.UpdateHead.Text = 'Up to date'
-        $ui.UpdateSub.Text  = $S.HeadSubject
+        $ui.UpdateSub.Text  = $App.HeadSubject
         $ui.BtnUpdate.Visibility = 'Collapsed'
     }
 }
@@ -1245,8 +1261,8 @@ function Invoke-Update {
         return
     }
 
-    if ($S.State -eq 'Running' -or $S.State -eq 'Starting') {
-        $S.Restarting = $true
+    if ($App.State -eq 'Running' -or $App.State -eq 'Starting') {
+        $App.Restarting = $true
         Stop-Server
         return   # picked back up in Complete-Update once the process is gone
     }
@@ -1254,7 +1270,7 @@ function Invoke-Update {
 }
 
 function Complete-Update {
-    $S.Restarting = $false
+    $App.Restarting = $false
 
     $current = Invoke-Git @('rev-parse', '--abbrev-ref', 'HEAD')
     if ($current.Ok -and "$($current.Out)".Trim() -ne $cfg.Branch) {
@@ -1308,7 +1324,7 @@ function Show-Secrets {
 
     # One read of .env for the whole form. Asking Get-CampusEnvValue per key
     # would re-read and re-scan the file once for each of the nine rows.
-    $envMap = Get-CampusEnvMap $S.EnvFile
+    $envMap = Get-CampusEnvMap $App.EnvFile
     $fieldStyle = $win.FindResource('Field')
 
     foreach ($s in Get-CampusSecretSpec) {
@@ -1350,22 +1366,22 @@ function Show-Secrets {
 }
 
 function Save-Secrets {
-    if (-not (Test-Path $S.EnvFile)) {
-        $template = Join-Path $S.Repo 'backend\.env.campus.example'
-        if (Test-Path $template) { Copy-Item $template $S.EnvFile }
+    if (-not (Test-Path $App.EnvFile)) {
+        $template = Join-Path $App.Repo 'backend\.env.campus.example'
+        if (Test-Path $template) { Copy-Item $template $App.EnvFile }
     }
     $saved = 0
     foreach ($key in $SecretBoxes.Keys) {
         $v = $SecretBoxes[$key].Text
-        if ($v -and $v.Trim()) { Set-CampusEnvValue -EnvFile $S.EnvFile -Key $key -Value $v.Trim(); $saved++ }
+        if ($v -and $v.Trim()) { Set-CampusEnvValue -EnvFile $App.EnvFile -Key $key -Value $v.Trim(); $saved++ }
     }
     $ui.SecretsOverlay.Visibility = 'Collapsed'
     Write-Log "Saved $saved value(s) to backend\.env" 'ok'
 
-    $missing = Get-CampusMissingSecrets -EnvFile $S.EnvFile -RequiredOnly
+    $missing = Get-CampusMissingSecrets -EnvFile $App.EnvFile -RequiredOnly
     if ($missing.Count -gt 0) {
         Write-Log ("Still missing: " + (($missing | ForEach-Object { $_.Key }) -join ', ')) 'warn'
-    } elseif ($S.State -ne 'Running') {
+    } elseif ($App.State -ne 'Running') {
         Set-State 'Stopped' 'Credentials are complete. Press Start.'
     }
 }
@@ -1378,12 +1394,12 @@ $ui.BtnMin.Add_Click({ $win.WindowState = 'Minimized' })
 $ui.BtnClose.Add_Click({ $win.Close() })
 
 $ui.BtnStart.Add_Click({
-    if ($S.State -eq 'Running' -or $S.State -eq 'Starting') { Stop-Server } else { Start-Server }
+    if ($App.State -eq 'Running' -or $App.State -eq 'Starting') { Stop-Server } else { Start-Server }
 })
 $ui.BtnGuard.Add_Click({ Open-CampusPage 'guard' })
 $ui.BtnAdmin.Add_Click({ Open-CampusPage 'admin' })
 $ui.BtnCopy.Add_Click({
-    if ($S.Origin) { [Windows.Clipboard]::SetText($S.Origin); Write-Log "Copied $($S.Origin)" 'dim' }
+    if ($App.Origin) { [Windows.Clipboard]::SetText($App.Origin); Write-Log "Copied $($App.Origin)" 'dim' }
 })
 $ui.BtnCheck.Add_Click({ Start-UpdateCheck })
 $ui.BtnUpdate.Add_Click({ Invoke-Update })
@@ -1409,7 +1425,7 @@ $ui.BtnSave.Add_Click({
     Save-CampusLauncherConfig $cfg
     $ui.BranchText.Text = $cfg.Branch
     Write-Log "Settings saved. Port $($cfg.Port), tracking $($cfg.Branch), kiosk $(if($cfg.Kiosk){'on'}else{'off'}), auto-open $($cfg.OpenOnStart)." 'ok'
-    if ($S.State -eq 'Running') { Write-Log 'A port change takes effect on the next start.' 'dim' }
+    if ($App.State -eq 'Running') { Write-Log 'A port change takes effect on the next start.' 'dim' }
     Start-UpdateCheck
 })
 
@@ -1430,17 +1446,17 @@ $timer.Add_Tick({
     # 1. drain the server's output
     $line = ''
     $n = 0
-    while ($n -lt 300 -and $S.Queue.TryDequeue([ref]$line)) { Read-ServerLine $line; $n++ }
+    while ($n -lt 300 -and $App.Queue.TryDequeue([ref]$line)) { Read-ServerLine $line; $n++ }
     Update-LogView
 
     # 2. did the server exit?
-    if ($S.Proc -and $S.Proc.HasExited) {
-        $code = $S.Proc.ExitCode
+    if ($App.Proc -and $App.Proc.HasExited) {
+        $code = $App.Proc.ExitCode
         Clear-Server
-        if ($S.Restarting) {
+        if ($App.Restarting) {
             Write-Log 'Server stopped for the update.' 'dim'
             Complete-Update
-        } elseif ($S.State -eq 'Stopping') {
+        } elseif ($App.State -eq 'Stopping') {
             Set-State 'Stopped' 'Stopped. Guards cannot reach this machine while it is down.'
             Write-Log 'Server stopped.' 'note'
         } else {
@@ -1450,7 +1466,7 @@ $timer.Add_Tick({
     }
 
     # 3. did the background fetch finish?
-    if ($S.FetchProc -and $S.FetchProc.HasExited) { Complete-UpdateCheck }
+    if ($App.FetchProc -and $App.FetchProc.HasExited) { Complete-UpdateCheck }
 
     # 4. time for another check?
     $every = [int]$cfg.UpdatePollMinutes
@@ -1458,7 +1474,7 @@ $timer.Add_Tick({
     if ($script:tick % ($every * 240) -eq 0) { Start-UpdateCheck }
 
     # 5. keep the pulse on the state dot honest while starting
-    if ($S.State -eq 'Starting') {
+    if ($App.State -eq 'Starting') {
         $ui.Dot.Opacity = 0.35 + 0.65 * [math]::Abs([math]::Sin($script:tick / 6.0))
     } elseif ($ui.Dot.Opacity -ne 1) {
         $ui.Dot.Opacity = 1
@@ -1519,16 +1535,16 @@ $ui.BranchText.Text = $cfg.Branch
 $ui.ChkAuto.IsChecked  = [bool]$cfg.AutoStart
 $ui.ChkKiosk.IsChecked = [bool]$cfg.Kiosk
 $ui.CmbOpen.SelectedIndex = switch ("$($cfg.OpenOnStart)") { 'guard' { 1 } 'admin' { 2 } default { 0 } }
-$ui.RepoText.Text   = $S.Repo
+$ui.RepoText.Text   = $App.Repo
 $ui.CommitText.Text = "$($cfg.Branch) @ ..."
 
 $win.Add_ContentRendered({
     Set-LogoImage 36
     Set-State 'Stopped'
     Write-Log 'Smart Parking and Vehicle Verification System - campus launcher' 'note'
-    Write-Log "Repository: $($S.Repo)" 'dim'
+    Write-Log "Repository: $($App.Repo)" 'dim'
 
-    $missing = Get-CampusMissingSecrets -EnvFile $S.EnvFile -RequiredOnly
+    $missing = Get-CampusMissingSecrets -EnvFile $App.EnvFile -RequiredOnly
     if ($missing.Count -gt 0) {
         Write-Log ("Shared credentials not set yet: " + (($missing | ForEach-Object { $_.Key }) -join ', ')) 'warn'
         Set-State 'Stopped' 'This machine is not configured yet.'
@@ -1545,7 +1561,7 @@ $win.Add_ContentRendered({
 # fail with an address already in use that has no visible cause.
 $win.Add_Closing({
     $timer.Stop()
-    if ($S.Proc -and -not $S.Proc.HasExited) { Stop-Server -Quiet }
+    if ($App.Proc -and -not $App.Proc.HasExited) { Stop-Server -Quiet }
     Clear-Server
 
     # Take the kiosk window with us. A full-screen browser with no address bar,

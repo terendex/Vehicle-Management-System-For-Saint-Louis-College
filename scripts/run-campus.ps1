@@ -63,17 +63,24 @@ $python = Join-Path $repo 'backend\venv\Scripts\python.exe'
 if (-not (Test-Path $python)) {
     Say 'No virtualenv found - creating backend\venv (one-time, a few minutes)...'
 
-    # `py -3.11` before a bare `python`: EasyOCR and OpenCV are the constraint
-    # here, and a machine that also has 3.9 or 3.13 on PATH would otherwise
-    # build the venv on whichever one happens to win, then fail much later
-    # inside a wheel with an error that names none of this.
+    # 3.12 first, and that is not arbitrary. requirements.txt pins packages that
+    # are 3.12-only - tifffile==2026.5.15 declares requires_python >=3.12 - so a
+    # 3.11 virtualenv cannot resolve them at all. pip reports that as "no
+    # matching distribution", listing only the older versions 3.11 can take,
+    # which reads like a bad pin rather than a wrong interpreter.
+    #
+    # The README says "use 3.11 specifically" for EasyOCR and OpenCV. That note
+    # is older than these pins; the environment this project actually runs on is
+    # 3.12. If 3.11 ever becomes right again, the pins have to move with it.
     $created = $false
     if (Get-Command py.exe -ErrorAction SilentlyContinue) {
-        & py -3.11 -m venv (Join-Path $repo 'backend\venv') 2>$null
-        $created = Test-Path $python
+        foreach ($want in @('-3.12', '-3.11')) {
+            & py $want -m venv (Join-Path $repo 'backend\venv') 2>$null
+            if (Test-Path $python) { $created = $true; break }
+        }
     }
     if (-not $created) {
-        Say 'Python 3.11 not found via the launcher - falling back to the default python.' 'Yellow'
+        Say 'No suitable Python found via the launcher - falling back to the default python.' 'Yellow'
         & python -m venv (Join-Path $repo 'backend\venv')
     }
     if (-not (Test-Path $python)) {
@@ -81,11 +88,23 @@ if (-not (Test-Path $python)) {
     }
 
     $ver = (& $python -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null)
-    if ($ver -and $ver.Trim() -ne '3.11') {
-        Say "WARNING: the virtualenv is on Python $($ver.Trim()); 3.11 is what this project is tested on." 'Yellow'
+    if ($ver -and $ver.Trim() -ne '3.12') {
+        Say "WARNING: the virtualenv is on Python $($ver.Trim()); requirements.txt needs 3.12." 'Yellow'
     }
     & $python -m pip install --upgrade pip --quiet
     & $python -m pip install -r (Join-Path $repo 'requirements.txt')
+
+    # pip's exit code, checked. Without this the script announced "Dependencies
+    # installed." whether or not pip had just failed, and the first sign of
+    # trouble was Django throwing an import traceback two steps later - which
+    # points at the wrong thing entirely. A half-built environment is not
+    # something to carry on from.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("pip failed (exit $LASTEXITCODE). The virtualenv is incomplete, so the server " +
+                     "cannot start. The pip output above says which package could not be installed - " +
+                     "a 'no matching distribution' there usually means the virtualenv is on the wrong " +
+                     "Python version for the pins in requirements.txt.")
+    }
     Say 'Dependencies installed.' 'Green'
 }
 
@@ -148,8 +167,23 @@ $origin = Set-CampusRuntimeEnvironment -Lan $lan -Port $Port
 # hiding them is what let that failure masquerade as "no cameras registered".
 Say 'Checking the cameras registered in the database...'
 Push-Location (Join-Path $repo 'backend')
-$camOut = & $python manage.py camera_hosts 2>&1
-$camOk  = ($LASTEXITCODE -eq 0)
+# ErrorActionPreference is dropped to Continue for exactly this call. With it
+# at Stop, `2>&1` on a NATIVE command turns every stderr line into a
+# terminating ErrorRecord - so a Django warning, or a database it cannot reach,
+# killed this whole script at line 151 with a NativeCommandError instead of
+# falling through to the "could not read the camera list" branch three lines
+# below that exists to handle precisely that. The server then never started.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $camOut = & $python manage.py camera_hosts 2>&1
+    $camOk  = ($LASTEXITCODE -eq 0)
+} catch {
+    $camOut = @($_.Exception.Message)
+    $camOk  = $false
+} finally {
+    $ErrorActionPreference = $prevEAP
+}
 Pop-Location
 
 $cams = @()

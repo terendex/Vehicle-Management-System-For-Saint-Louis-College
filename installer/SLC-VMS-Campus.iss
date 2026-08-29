@@ -126,7 +126,7 @@ Name: "core";          Description: "Campus launcher and application files"; \
   Types: full custom; Flags: fixed
 Name: "prereq";        Description: "Prerequisites"; Types: full custom
 Name: "prereq\git";    Description: "Git - required for updates"; Types: full custom
-Name: "prereq\python"; Description: "Python 3.11 - runs the server and the detector"; Types: full custom
+Name: "prereq\python"; Description: "Python 3.12 - runs the server and the detector"; Types: full custom
 Name: "prereq\node";   Description: "Node.js LTS - builds the web interface"; Types: full custom
 Name: "firewall";      Description: "Windows Firewall rule, so guards can reach this machine"; \
   Types: full custom
@@ -270,15 +270,15 @@ begin
               RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\git.exe', '', S);
 end;
 
-function IsPython311Installed(): Boolean;
+function IsPython312Installed(): Boolean;
 var S: String;
 begin
-  Result := FileExists(ExpandConstant('{localappdata}\Programs\Python\Python311\python.exe')) or
-            FileExists(ExpandConstant('{pf}\Python311\python.exe')) or
-            FileExists('C:\Python311\python.exe');
+  Result := FileExists(ExpandConstant('{localappdata}\Programs\Python\Python312\python.exe')) or
+            FileExists(ExpandConstant('{pf}\Python312\python.exe')) or
+            FileExists('C:\Python312\python.exe');
   if not Result then
-    Result := RegQueryStringValue(HKLM, 'SOFTWARE\Python\PythonCore\3.11\InstallPath', '', S) or
-              RegQueryStringValue(HKCU, 'SOFTWARE\Python\PythonCore\3.11\InstallPath', '', S);
+    Result := RegQueryStringValue(HKLM, 'SOFTWARE\Python\PythonCore\3.12\InstallPath', '', S) or
+              RegQueryStringValue(HKCU, 'SOFTWARE\Python\PythonCore\3.12\InstallPath', '', S);
 end;
 
 function IsNodeInstalled(): Boolean;
@@ -463,7 +463,7 @@ begin
     Exit;
 
   S := StatusLine('Git', IsGitInstalled()) +
-       StatusLine('Python 3.11', IsPython311Installed()) +
+       StatusLine('Python 3.12', IsPython312Installed()) +
        StatusLine('Node.js', IsNodeInstalled()) + #13#10;
 
   if IsWingetAvailable() then

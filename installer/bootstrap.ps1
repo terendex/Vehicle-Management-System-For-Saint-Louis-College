@@ -9,7 +9,7 @@
     What it does, in order:
 
         1. Git            - needed for every update after this one
-        2. Python 3.11    - the version EasyOCR and OpenCV are tested against
+        2. Python 3.12    - the version requirements.txt pins resolve against
         3. Node.js LTS    - builds the React bundle
         4. Application    - clones the repository into <InstallDir>\app
         5. Firewall       - opens the port so guards can reach this machine
@@ -386,18 +386,19 @@ function Find-Git {
     return $null
 }
 
-# Specifically 3.11. A machine with 3.9 or 3.13 on PATH will build a venv that
-# fails much later inside an EasyOCR or OpenCV wheel, with an error naming
-# neither the version nor this decision.
-function Find-Python311 {
+# Specifically 3.12: requirements.txt pins packages that declare
+# requires_python >=3.12, so a 3.11 venv cannot resolve them at all. pip calls
+# that a missing distribution, which reads like a bad pin rather than a wrong
+# interpreter.
+function Find-Python312 {
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) {
-        $probe = & $py.Source -3.11 -c "import sys; print(sys.executable)" 2>$null
+        $probe = & $py.Source -3.12 -c "import sys; print(sys.executable)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $probe) { return "$probe".Trim() }
     }
-    foreach ($p in @("$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-                     "$env:ProgramFiles\Python311\python.exe",
-                     "C:\Python311\python.exe")) {
+    foreach ($p in @("$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+                     "$env:ProgramFiles\Python312\python.exe",
+                     "C:\Python312\python.exe")) {
         if (Test-Path $p) { return $p }
     }
     return $null
@@ -457,8 +458,8 @@ function New-WingetStep {
 $StepPlan = @(
     @{ Id = 'git'; Title = 'Git'; Note = 'checking...'
        Spec  = (New-WingetStep -Id 'Git.Git'          -Finder { Find-Git }        -Human 'Git') },
-    @{ Id = 'python'; Title = 'Python 3.11'; Note = 'checking...'
-       Spec  = (New-WingetStep -Id 'Python.Python.3.11' -Finder { Find-Python311 } -Human 'Python 3.11') },
+    @{ Id = 'python'; Title = 'Python 3.12'; Note = 'checking...'
+       Spec  = (New-WingetStep -Id 'Python.Python.3.12' -Finder { Find-Python312 } -Human 'Python 3.12') },
     @{ Id = 'node'; Title = 'Node.js'; Note = 'checking...'
        Spec  = (New-WingetStep -Id 'OpenJS.NodeJS.LTS' -Finder { Find-Node }       -Human 'Node.js') },
 
@@ -522,13 +523,21 @@ $StepPlan = @(
                     # Registering it in the SYSTEM config (not --global, which
                     # would only cover the installing administrator) makes it
                     # trusted for every account that will ever use this machine.
+                    # Registered with FORWARD slashes: git compares
+                    # safe.directory against its own spelling of the path, and
+                    # on Windows that uses '/'. A backslash form is stored
+                    # happily and then never matches anything. Both are added
+                    # because it costs nothing and removes the guesswork.
                     $git = Find-Git
                     if ($git) {
-                        $existing = & $git config --system --get-all safe.directory 2>$null
-                        if (@($existing) -notcontains $AppDir) {
-                            & $git config --system --add safe.directory $AppDir 2>&1 | Out-Null
-                            Write-Log "Registered $AppDir as a safe git directory for all users."
+                        $forward  = $AppDir.Replace('\', '/')
+                        $existing = @(& $git config --system --get-all safe.directory 2>$null)
+                        foreach ($form in @($forward, $AppDir)) {
+                            if ($existing -notcontains $form) {
+                                & $git config --system --add safe.directory $form 2>&1 | Out-Null
+                            }
                         }
+                        Write-Log "Registered $forward as a safe git directory for all users."
                     }
                     return @{ Note = $AppDir }
                 }
