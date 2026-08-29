@@ -514,6 +514,22 @@ $StepPlan = @(
             # 300 MB of good download and fetched it all again.
             if ($ExitCode -eq 0) {
                 if (Test-Path (Join-Path $AppDir 'scripts\campus-launcher.ps1')) {
+                    # This clone was made by an ELEVATED process, so the folder
+                    # belongs to Administrators. The launcher afterwards runs as
+                    # whichever ordinary account is signed in, and git refuses a
+                    # repository it thinks someone else owns:
+                    #     fatal: detected dubious ownership in repository at ...
+                    # Registering it in the SYSTEM config (not --global, which
+                    # would only cover the installing administrator) makes it
+                    # trusted for every account that will ever use this machine.
+                    $git = Find-Git
+                    if ($git) {
+                        $existing = & $git config --system --get-all safe.directory 2>$null
+                        if (@($existing) -notcontains $AppDir) {
+                            & $git config --system --add safe.directory $AppDir 2>&1 | Out-Null
+                            Write-Log "Registered $AppDir as a safe git directory for all users."
+                        }
+                    }
                     return @{ Note = $AppDir }
                 }
                 return @{ Failed = $true

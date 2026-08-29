@@ -1146,10 +1146,33 @@ function Clear-Server {
 # ---------------------------------------------------------------------------
 function Test-Git { return [bool](Get-Command git.exe -ErrorAction SilentlyContinue) }
 
+# Two things here are not decoration.
+#
+# -c safe.directory: the installer clones this checkout while ELEVATED, so the
+# folder ends up owned by Administrators. Every later git command runs as the
+# ordinary account the guard is signed in as, and git refuses to touch a
+# repository it thinks belongs to someone else - "fatal: detected dubious
+# ownership". Naming this one path is deliberate; safe.directory=* would switch
+# the check off for every repository on the machine.
+#
+# ErrorActionPreference: with it set to Stop, `2>&1` on a NATIVE command turns
+# each stderr line into a terminating ErrorRecord. Git writes plenty to stderr
+# while succeeding, so a routine warning would take the whole launcher down.
+# This is exactly how the dubious-ownership message became a crash instead of a
+# handled failure.
 function Invoke-Git {
     param([string[]]$GitArgs)
-    $out = & git.exe -C $S.Repo @GitArgs 2>&1
-    return @{ Ok = ($LASTEXITCODE -eq 0); Out = @($out) }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out  = & git.exe -c "safe.directory=$($S.Repo)" -C $S.Repo @GitArgs 2>&1
+        $code = $LASTEXITCODE
+    } catch {
+        return @{ Ok = $false; Out = @($_.Exception.Message) }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    return @{ Ok = ($code -eq 0); Out = @($out) }
 }
 
 function Start-UpdateCheck {
@@ -1166,7 +1189,8 @@ function Start-UpdateCheck {
     # of process. rev-list afterwards reads the local object store and is
     # instant, so it can safely happen on the UI thread.
     $S.FetchProc = Start-Process git.exe `
-        -ArgumentList @('-C', "`"$($S.Repo)`"", 'fetch', '--quiet', 'origin', $cfg.Branch) `
+        -ArgumentList @('-c', "safe.directory=`"$($S.Repo)`"",
+                        '-C', "`"$($S.Repo)`"", 'fetch', '--quiet', 'origin', $cfg.Branch) `
         -NoNewWindow -PassThru
 }
 
