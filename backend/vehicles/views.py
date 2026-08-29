@@ -1053,6 +1053,25 @@ def _upsert_vehicle_for_registration(registration, user):
     return vehicle_obj
 
 
+def _assign_system_id(registration):
+    """Stamp the registration's system ID on acceptance and return it.
+
+    The prefix names what the holder actually is — a fetcher is not staff, so
+    minting them an SLC-EMP- code mislabels them on their own dashboard. Only
+    two columns exist to hold the value: students get their own, and everyone
+    else shares `system_employee_id` as the non-student slot. Storage is not
+    the label, so the fetcher's code lands in that slot carrying SLC-FET-.
+    Every reader already falls back across the two columns."""
+    padded_id = str(registration.pk).zfill(6)
+    kind = registration.registrant_type
+    if kind == 'student':
+        registration.system_student_id = f"SLC-STU-{padded_id}"
+        return registration.system_student_id
+    prefix = 'SLC-FET' if kind == 'fetcher' else 'SLC-EMP'
+    registration.system_employee_id = f"{prefix}-{padded_id}"
+    return registration.system_employee_id
+
+
 def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
@@ -1582,11 +1601,7 @@ class AcceptRegistrationView(APIView):
             vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
             # Auto-generate unique system ID
-            padded_id = str(registration.pk).zfill(6)
-            if registration.registrant_type == 'student':
-                registration.system_student_id = f"SLC-STU-{padded_id}"
-            else:
-                registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            _assign_system_id(registration)
 
             registration.or_number = or_number
             if unpaid:
@@ -1860,11 +1875,7 @@ class CdsoDirectRegisterView(APIView):
 
             vehicle_obj = _upsert_vehicle_for_registration(registration, user)
 
-            padded_id = str(registration.pk).zfill(6)
-            if registrant_type == 'student':
-                registration.system_student_id = f"SLC-STU-{padded_id}"
-            else:
-                registration.system_employee_id = f"SLC-EMP-{padded_id}"
+            _assign_system_id(registration)
             registration.user = user
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
             registration.save()

@@ -297,7 +297,11 @@ class VehicleRegistration(models.Model):
     is_special_case      = models.BooleanField(default=False)
     special_case_reason  = models.TextField(blank=True)
 
-    # Auto-assigned unique system IDs (populated on acceptance)
+    # Auto-assigned unique system IDs (populated on acceptance). Two columns,
+    # three registrant types: students get their own, and employees and fetchers
+    # share the second as the "not a student" slot. The prefix, not the column,
+    # is what says which — SLC-EMP- vs SLC-FET-. See _assign_system_id in
+    # vehicles/views.py; every reader falls back across both columns.
     system_student_id  = models.CharField(max_length=30, blank=True, unique=True, null=True)
     system_employee_id = models.CharField(max_length=30, blank=True, unique=True, null=True)
 

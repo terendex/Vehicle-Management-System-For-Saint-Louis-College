@@ -284,8 +284,12 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
              r.get_department_type_display() if r.department_type else ''),
         ]
     else:  # fetcher
+        # Held in the employee column for want of a third one, but a fetcher is
+        # not staff — label it for what it is. See _assign_system_id in
+        # vehicles/views.py, which mints it with the SLC-FET- prefix.
         specific = [
             ('Fetcher Type', r.get_fetcher_type_display() if r.fetcher_type else ''),
+            ('System Fetcher ID', r.system_employee_id),
         ]
         for i, s in enumerate(r.fetcher_students or [], start=1):
             if not isinstance(s, dict):
