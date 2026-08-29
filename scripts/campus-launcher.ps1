@@ -511,16 +511,22 @@ $xaml = @'
         <Border Style="{StaticResource Card}" Margin="0,12,0,0">
           <StackPanel>
             <TextBlock Text="SETTINGS" Style="{StaticResource H}"/>
-            <UniformGrid Rows="1" Columns="2" Margin="0,11,0,0">
-              <StackPanel Margin="0,0,6,0">
+            <!-- Port only. The branch this machine tracks is deliberately NOT
+                 editable here: it is decided once, during installation, and a
+                 gate terminal pointed at an arbitrary branch by whoever is
+                 sitting at it is a way to put untested code in front of guards.
+                 It stays visible as the chip on the UPDATES card above, so it
+                 can still be read at a glance - just not changed. -->
+            <Grid Margin="0,11,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0" Margin="0,0,6,0">
                 <TextBlock Text="Port" Foreground="{StaticResource Muted}" FontSize="11.5"/>
                 <TextBox x:Name="TxtPort" Style="{StaticResource Field}" FontFamily="Consolas" Margin="0,5,0,0"/>
               </StackPanel>
-              <StackPanel Margin="6,0,0,0">
-                <TextBlock Text="Branch" Foreground="{StaticResource Muted}" FontSize="11.5"/>
-                <TextBox x:Name="TxtBranch" Style="{StaticResource Field}" FontFamily="Consolas" Margin="0,5,0,0"/>
-              </StackPanel>
-            </UniformGrid>
+            </Grid>
             <CheckBox x:Name="ChkAuto" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,12,0,0"
                       Content=" Start the server when this window opens"/>
             <CheckBox x:Name="ChkKiosk" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,9,0,0"
@@ -628,7 +634,7 @@ $ui = @{}
 foreach ($n in @('TitleBar','Logo','LogoFallback','BtnMin','BtnClose','Dot','StateText','OriginText','SubText',
                  'PillDb','PillDbDot','PillCam','PillCamDot','PillRt','PillRtDot','BtnStart','BtnGuard','BtnAdmin',
                  'BtnCopy','UpdateHead','UpdateSub','BtnUpdate','BtnCheck','LastCheckText','BranchText','TxtPort',
-                 'TxtBranch','ChkAuto','ChkKiosk','CmbOpen','BtnSave','BtnSecrets','LogList','BtnClear','BtnLogFolder','RepoText',
+                 'ChkAuto','ChkKiosk','CmbOpen','BtnSave','BtnSecrets','LogList','BtnClear','BtnLogFolder','RepoText',
                  'CommitText','SecretsOverlay','SecretsPanel','BtnSecretsSave','BtnSecretsCancel')) {
     $ui[$n] = $win.FindName($n)
 }
@@ -803,7 +809,14 @@ $SeverityRe = New-Object regex($severityPattern, ([System.Text.RegularExpression
 
 # Child processes colour their output. npm and vite emit SGR escapes, which
 # reach the log pane as literal "[33m...[0m" noise around the text.
-$AnsiRe = New-Object regex("`e\[[0-9;]*[A-Za-z]", ([System.Text.RegularExpressions.RegexOptions]::Compiled))
+#
+# \x1B is the REGEX escape for ESC, written inside a single-quoted PowerShell
+# string so PowerShell does not touch it. Do not reach for PowerShell's own `e
+# here: that escape only exists from PowerShell 6 onward, and Windows
+# PowerShell 5.1 - which is what runs this - silently reads it as the letter
+# "e", leaving a pattern that matches nothing and strips nothing.
+$ansiPattern = '\x1B\[[0-9;]*[A-Za-z]' + '|\x1B\][^\x07]*(\x07|\x1B\\)'
+$AnsiRe = New-Object regex($ansiPattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled))
 
 function Read-ServerLine {
     param([string]$Line)
@@ -1332,8 +1345,8 @@ $ui.BtnSave.Add_Click({
         Write-Log "Ignoring an invalid port: '$($ui.TxtPort.Text)'" 'warn'
         $ui.TxtPort.Text = $cfg.Port
     }
-    $b = $ui.TxtBranch.Text.Trim()
-    if ($b) { $cfg.Branch = $b }
+    # Branch is intentionally absent - it is fixed at install time and there is
+    # no control here to read it from.
     $cfg.AutoStart   = [bool]$ui.ChkAuto.IsChecked
     $cfg.Kiosk       = [bool]$ui.ChkKiosk.IsChecked
     $cfg.OpenOnStart = "$($ui.CmbOpen.SelectedItem.Tag)"
@@ -1444,7 +1457,8 @@ function Set-LogoImage {
 }
 
 $ui.TxtPort.Text    = $cfg.Port
-$ui.TxtBranch.Text  = $cfg.Branch
+# BranchText is the read-only chip on the UPDATES card - the only place the
+# branch is shown now that it cannot be edited.
 $ui.BranchText.Text = $cfg.Branch
 $ui.ChkAuto.IsChecked  = [bool]$cfg.AutoStart
 $ui.ChkKiosk.IsChecked = [bool]$cfg.Kiosk

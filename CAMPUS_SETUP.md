@@ -354,8 +354,15 @@ break in confusing ways.
 Which branch the campus box tracks is a real decision, not a default. Tracking
 your working branch means every push reaches the gate within minutes, which is
 what you want while still building; tracking `main` means only merged work gets
-there, which is what you want once guards depend on it. Change it in the
-launcher's Settings card.
+there, which is what you want once guards depend on it.
+
+**It is chosen once, in the installer, and cannot be changed afterwards.** The
+launcher shows it as a read-only chip on the Updates card but offers no way to
+edit it — a gate terminal repointed at an arbitrary branch by whoever happens to
+be sitting at it is a way to put untested code in front of guards. To change it
+on a machine that is already installed, reinstall over the top and pick the new
+branch on the deployment options page; the checkout, credentials and settings
+all survive an in-place upgrade.
 
 ---
 

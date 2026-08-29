@@ -180,7 +180,12 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; Tasks: desktopicon
 
-Name: "{userstartup}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
+; {commonstartup}, not {userstartup}. Setup runs elevated, so a per-user area
+; resolves to the INSTALLING ADMINISTRATOR's Startup folder - and a gate
+; terminal is installed by IT and then signed into by guards under a different
+; account, who would never see it start. All Users is what "open when this
+; computer starts" has to mean on a shared machine.
+Name: "{commonstartup}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; Tasks: startup
 

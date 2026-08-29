@@ -106,7 +106,12 @@ foreach ($required in @('assets\slc-vms.ico', 'assets\wizard-large.bmp', 'assets
 # --- compile ----------------------------------------------------------------
 if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out -Force | Out-Null }
 
-$isccArgs = @('/Q')
+# Deliberately NOT /Q. Quiet mode suppresses compiler warnings, and one of them
+# was a real bug: Inno warned that a per-user area ({userstartup}) was being
+# written by an elevated install, which would have put the auto-start shortcut
+# in the installing administrator's Startup folder instead of the guard's.
+# Warnings are surfaced below rather than hidden.
+$isccArgs = @()
 if ($Version) { $isccArgs += "/DAppVersion=$Version" }
 if ($UiTest) {
     $isccArgs += '/DUITEST'
@@ -134,12 +139,23 @@ $isccArgs += "`"$iss`""
 Say 'Compiling...'
 Push-Location $here
 try {
-    & $iscc @isccArgs
+    $isccOut = & $iscc @isccArgs 2>&1
     $code = $LASTEXITCODE
 } finally {
     Pop-Location
 }
-if ($code -ne 0) { Write-Error "ISCC exited with $code" }
+if ($code -ne 0) {
+    $isccOut | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    Write-Error "ISCC exited with $code"
+}
+
+$warnings = @($isccOut | Select-String -Pattern 'Warning:|Deprecated')
+if ($warnings.Count) {
+    Write-Host ''
+    Say "$($warnings.Count) compiler warning(s) - read them, they are not noise:" 'Yellow'
+    $warnings | ForEach-Object { Write-Host "  $($_.Line.Trim())" -ForegroundColor Yellow }
+    Write-Host ''
+}
 
 $exe = Join-Path $out $(
     if     ($UiTest)          { 'SLC-Smart-Parking-Campus-Setup-UITEST.exe' }
