@@ -22,5 +22,18 @@ If Not fso.FileExists(target) Then
     WScript.Quit 1
 End If
 
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & target & """"
+' Anything passed to this script is forwarded on, so the Repair shortcut can be
+' the same no-console entry point with "-Repair" after it. Each argument is
+' re-quoted: the install path routinely contains spaces.
+Dim extra, i
+extra = ""
+For i = 0 To WScript.Arguments.Count - 1
+    extra = extra & " """ & WScript.Arguments(i) & """"
+Next
+
+cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & target & """" & extra
+
+' The 0 is the whole point of this file: window style 0 means the PowerShell
+' host is never given a console, so nothing flashes on screen. The script it
+' runs draws its own WPF window, which is unaffected.
 shell.Run cmd, 0, False

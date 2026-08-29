@@ -454,7 +454,7 @@ function New-WingetStep {
     }
 }
 
-$Steps = @(
+$StepPlan = @(
     @{ Id = 'git'; Title = 'Git'; Note = 'checking...'
        Spec  = (New-WingetStep -Id 'Git.Git'          -Finder { Find-Git }        -Human 'Git') },
     @{ Id = 'python'; Title = 'Python 3.11'; Note = 'checking...'
@@ -629,7 +629,7 @@ $Steps = @(
        } }
 )
 
-foreach ($s in $Steps) { $Rows += ,(Add-StepRow $s.Title $s.Note) }
+foreach ($s in $StepPlan) { $Rows += ,(Add-StepRow $s.Title $s.Note) }
 
 # ---------------------------------------------------------------------------
 #  Driver
@@ -639,6 +639,7 @@ $Started      = $false
 $Failures     = 0
 $Finished     = $false
 $CloneAttempt = 0
+$Cancelled    = $false
 
 function Complete-Run {
     $script:Finished = $true
@@ -674,8 +675,36 @@ function Complete-Run {
         Write-Log "Could not write the launcher config: $($_.Exception.Message)"
     }
 
-    if ($Failures -gt 0) {
-        $ui.Phase.Text = "Finished with $Failures problem(s) - open Details before starting the server."
+    # The one thing that actually matters is whether the application is on disk.
+    # Every other step can be skipped deliberately, but without this there is
+    # nothing to launch - so it is checked at the end rather than trusted to the
+    # step having reported success earlier.
+    $entry = Join-Path $AppDir 'scripts\campus-launcher.ps1'
+    if (($Wanted -contains 'app') -and -not (Test-Path $entry)) {
+        $script:Failures++
+        Write-Log "FAILED: the application was not downloaded - $entry is missing."
+    }
+
+    # The checkout is created here, after Inno has finished, so it cannot be
+    # hidden from the [Dirs] section. Hiding it keeps the install folder down to
+    # the launcher shortcut, the licence and the uninstaller. Git is entirely
+    # happy working inside a hidden directory.
+    if (Test-Path $AppDir) {
+        try {
+            $d = Get-Item $AppDir -Force
+            $d.Attributes = $d.Attributes -bor [System.IO.FileAttributes]::Hidden
+        } catch {
+            Write-Log "Could not hide $AppDir : $($_.Exception.Message.Trim())"
+        }
+    }
+
+    if ($script:Cancelled) {
+        $ui.Phase.Text = 'CANCELLED - setup did not finish. Nothing is installed. ' +
+                         'Use "Repair installation" in the Start Menu to complete it.'
+        $ui.LogBox.Visibility = 'Visible'
+    } elseif ($Failures -gt 0) {
+        $ui.Phase.Text = "Finished with $Failures problem(s) - open Details, and use " +
+                         '"Repair installation" in the Start Menu once they are resolved.'
         $ui.LogBox.Visibility = 'Visible'
     } else {
         $ui.Phase.Text = 'Ready. The launcher will ask for the shared credentials the first time it opens.'
@@ -692,7 +721,7 @@ function Complete-Step($Result) {
     if ($Result -and $Result.Failed) {
         $script:Failures++
         Set-StepState $Index 'failed' $Result.Note
-        Write-Log "FAILED: $($Steps[$Index].Title) - $($Result.Note)"
+        Write-Log "FAILED: $($StepPlan[$Index].Title) - $($Result.Note)"
     } else {
         $note = if ($Result -and $Result.Note) { $Result.Note } else { 'done' }
         Set-StepState $Index 'done' $note
@@ -712,13 +741,13 @@ $timer.Add_Tick({
         if (-not $script:Proc.HasExited) { return }
         $code = $script:Proc.ExitCode
         Clear-Proc
-        $end = & $Steps[$Index].Spec.End $code
+        $end = & $StepPlan[$Index].Spec.End $code
         Complete-Step $end
         return
     }
 
     if ($script:Finished) { return }
-    if ($Index -ge $Steps.Count) { Complete-Run; return }
+    if ($Index -ge $StepPlan.Count) { Complete-Run; return }
 
     if (-not $script:Started) {
         $script:Started = $true
@@ -726,19 +755,19 @@ $timer.Add_Tick({
         # Deselected on the wizard's component page. Shown rather than hidden:
         # someone reading this window later needs to know that Python was not
         # touched because it was not asked for, not because it was missed.
-        $id = $Steps[$Index].Id
+        $id = $StepPlan[$Index].Id
         if ($Wanted -notcontains $id) {
             Set-StepState $Index 'skipped' 'not selected - left alone'
-            Write-Log "Skipping $($Steps[$Index].Title): not selected."
+            Write-Log "Skipping $($StepPlan[$Index].Title): not selected."
             $script:Index++
             $script:Started = $false
             return
         }
 
         Set-StepState $Index 'running' 'working...'
-        $ui.Phase.Text = "Step $($Index + 1) of $($Steps.Count) - $($Steps[$Index].Title)"
+        $ui.Phase.Text = "Step $($Index + 1) of $($StepPlan.Count) - $($StepPlan[$Index].Title)"
         try {
-            $r = & $Steps[$Index].Spec.Begin
+            $r = & $StepPlan[$Index].Spec.Begin
         } catch {
             Complete-Step @{ Failed = $true; Note = $_.Exception.Message.Trim() }
             return
@@ -791,7 +820,14 @@ $ui.BtnCancel.Add_Click({
     # Killing a half-finished winget or clone leaves a mess someone has to
     # untangle by hand, so cancel stops after the step in flight rather than
     # in the middle of it.
-    $script:Index = $Steps.Count
+    #
+    # The flag matters as much as the jump. Without it, cancelling skipped
+    # straight to the finish and reported "Ready" with a zero exit code, so a
+    # cancelled setup looked exactly like a completed one - the wizard still
+    # wrote its registry key saying the product was installed, while the
+    # application had never been downloaded at all.
+    $script:Cancelled = $true
+    $script:Index = $StepPlan.Count
     $ui.Phase.Text = 'Cancelling after the current step...'
     $ui.BtnCancel.IsEnabled = $false
 })
@@ -813,4 +849,4 @@ $timer.Start()
 
 # Inno reads this: a non-zero code makes the wizard say setup did not fully
 # succeed, which is the honest outcome when a prerequisite is still missing.
-exit $(if ($Failures -gt 0) { 1 } else { 0 })
+exit $(if ($Failures -gt 0 -or $Cancelled) { 1 } else { 0 })

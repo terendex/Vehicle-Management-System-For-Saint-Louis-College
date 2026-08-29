@@ -136,15 +136,22 @@ Name: "addtopath";   Description: "Add the launcher folder to the system PATH"; 
 ; The point of installing outside Program Files: an ordinary account has to be
 ; able to `git pull` into {app}\app without being elevated first.
 Name: "{app}";        Permissions: users-modify
-Name: "{app}\launcher"
+; Hidden so the install folder shows only the three things anyone has a reason
+; to open: the launcher shortcut, the licence, and the uninstaller. The
+; machinery underneath still works exactly the same - a hidden attribute
+; changes what Explorer lists, not what can run.
+Name: "{app}\launcher"; Attribs: hidden
 
 [Files]
-Source: "bootstrap.ps1";      DestDir: "{app}\launcher"; Flags: ignoreversion
-Source: "start-campus.ps1";   DestDir: "{app}\launcher"; Flags: ignoreversion
-Source: "start-campus.vbs";   DestDir: "{app}\launcher"; Flags: ignoreversion
-Source: "LICENSE.txt";        DestDir: "{app}\launcher"; Flags: ignoreversion
-Source: "assets\slc-vms.ico"; DestDir: "{app}\launcher"; Flags: ignoreversion
-Source: "assets\slclogo.jpg"; DestDir: "{app}\launcher"; Flags: ignoreversion
+; Everything the operator never needs to open by hand is hidden. The licence is
+; the exception - it is the one document here somebody may legitimately want to
+; read, so it sits at the top level in plain sight.
+Source: "bootstrap.ps1";      DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "start-campus.ps1";   DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "start-campus.vbs";   DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "assets\slc-vms.ico"; DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "assets\slclogo.jpg"; DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "LICENSE.txt";        DestDir: "{app}";          Flags: ignoreversion
 
 #ifdef WITHCREDS
 ; Only in a build.ps1 -WithCredentials installer. bootstrap.ps1 writes these
@@ -156,6 +163,11 @@ Source: "credentials.dat"; DestDir: "{app}\launcher"; Flags: ignoreversion
 #endif
 
 [Registry]
+#ifndef UITEST
+; Skipped in the UI-test build, which runs unelevated: an HKLM write fails with
+; "Access is denied" and Inno rolls the whole install back, so the layout it
+; exists to demonstrate never survives long enough to be looked at.
+;
 ; This is what a later install reads to work out fresh / upgrade / reinstall,
 ; and what tells a support call which version is actually on the machine.
 Root: HKLM; Subkey: "{#RegKey}"; Flags: uninsdeletekeyifempty
@@ -171,8 +183,17 @@ Root: HKLM; Subkey: "{#RegKey}"; ValueType: string; ValueName: "InstalledOn"; Va
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
   ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\launcher"; \
   Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}\launcher'))
+#endif
 
 [Icons]
+; The one visible entry point inside the install folder itself, so opening
+; C:\SLC-VMS shows the system by name with its own logo rather than a pile of
+; scripts. Same target as the Start Menu entry.
+Name: "{app}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
+  Parameters: """{app}\launcher\start-campus.vbs"""; \
+  WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
+  Comment: "Start the campus gate terminal"
+
 ; Pointed at the .vbs rather than at powershell.exe so starting the launcher
 ; does not flash a console window on the guard's screen.
 Name: "{group}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
@@ -180,8 +201,10 @@ Name: "{group}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
   Comment: "Start the campus gate terminal"
 
-Name: "{group}\Repair installation"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\launcher\start-campus.ps1"" -Repair"; \
+; Through the .vbs like everything else - pointing this at powershell.exe
+; directly puts a console window on screen before the setup window appears.
+Name: "{group}\Repair installation"; Filename: "{sys}\wscript.exe"; \
+  Parameters: """{app}\launcher\start-campus.vbs"" -Repair"; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
   Comment: "Re-check the prerequisites and re-download the application"
 
@@ -203,10 +226,14 @@ Name: "{commonstartup}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
 [Run]
 ; The long part of the install. bootstrap.ps1 draws its own progress window, so
 ; the wizard just waits behind it.
+; runhidden suppresses the PowerShell host's console window. Without it a black
+; console flashes up over the wizard for a second before bootstrap.ps1 gets far
+; enough to draw its own window. The WPF window it creates is shown explicitly
+; by the script, so hiding the host does not hide the setup UI.
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\launcher\bootstrap.ps1"" -InstallDir ""{app}"" -Branch ""{code:GetBranch}"" -Port {code:GetPort} -Steps ""{code:GetSteps}"""; \
   StatusMsg: "Installing prerequisites and downloading the application..."; \
-  Flags: waituntilterminated
+  Flags: waituntilterminated runhidden
 
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\launcher\start-campus.vbs"""; \
   Description: "Open the campus launcher now"; \
@@ -270,6 +297,29 @@ end;
 // ---------------------------------------------------------------------------
 //  Version handling
 // ---------------------------------------------------------------------------
+// unins000.dat is Inno's own bookkeeping file and it cannot be given an
+// attribute from [Files], so it is hidden afterwards. Only the .exe is left
+// visible - that is the one someone would double-click.
+procedure HideUninstallData();
+var
+  Rc: Integer;
+  Dat: String;
+begin
+  Dat := ExpandConstant('{app}\unins000.dat');
+  if not FileExists(Dat) then
+    Exit;
+  Exec(ExpandConstant('{sys}\attrib.exe'), '+h "' + Dat + '"', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+end;
+
+// Deliberately in DeinitializeSetup, not CurStepChanged(ssPostInstall). Inno
+// finalises unins000.dat after the post-install step runs, so hiding it there
+// is undone moments later - the file reappears in Explorer looking like the
+// attribute never took.
+procedure DeinitializeSetup();
+begin
+  HideUninstallData();
+end;
+
 function GetPreviousVersion(): String;
 begin
   Result := '';

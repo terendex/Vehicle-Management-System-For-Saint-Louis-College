@@ -36,9 +36,11 @@ if ($Repair -or -not (Test-Path $entry)) {
         exit 1
     }
     # Elevated: repair reinstalls prerequisites and touches the firewall rule.
-    Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$bootstrap`"",
-        '-InstallDir', "`"$install`""
+    # -WindowStyle Hidden so the elevated host does not flash a console before
+    # bootstrap.ps1 draws its own window.
+    Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        '-File', "`"$bootstrap`"", '-InstallDir', "`"$install`""
     )
     if (-not (Test-Path $entry)) { exit 1 }
 }
