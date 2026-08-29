@@ -68,7 +68,13 @@ OutputBaseFilename=SLC-Smart-Parking-Campus-Setup-UITEST
 ; Not Program Files. The application half is a git checkout that updates itself,
 ; and a checkout under Program Files can only be written by an elevated process
 ; - which would mean a UAC prompt on every routine update at the gate.
-DefaultDirName={sd}\SLC-VMS
+; Named for the system, not an abbreviation. Length is the constraint that
+; makes this a judgement rather than a preference: Windows caps most paths at
+; 260 characters and the deepest tracked file in the checkout sits about 60
+; below its root, so "C:\Smart Parking and Vehicle Verification System" (47)
+; plus "\app\" plus 60 lands near 110 - comfortable, and the wizard still
+; refuses anything past 110 on top of that.
+DefaultDirName={sd}\Smart Parking and Vehicle Verification System
 ; The bootstrap installs Python, Node and Git and adds a firewall rule.
 PrivilegesRequired=admin
 #ifdef WITHCREDS
@@ -631,15 +637,15 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  AppDir, DataDir: String;
+  AppDir, DataDir, InstallDir: String;
   Rc: Integer;
-  KeepData: Boolean;
 begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
 
-  AppDir  := ExpandConstant('{app}\app');
-  DataDir := ExpandConstant('{localappdata}\SLC-VMS');
+  InstallDir := ExpandConstant('{app}');
+  AppDir     := ExpandConstant('{app}\app');
+  DataDir    := ExpandConstant('{localappdata}\SLC-VMS');
 
   // Ours to remove. Leaving an allow rule behind for a port nothing serves is
   // an open hole with no owner.
@@ -652,22 +658,25 @@ begin
   if not (DirExists(AppDir) or DirExists(DataDir)) then
     Exit;
 
-  KeepData := MsgBox(
-    'Keep this machine''s data?' + #13#10 + #13#10 +
-    'KEEP  (Yes)  leaves the downloaded application, the shared credentials in' + #13#10 +
-    '             backend\.env, the Python environment, and the launcher''s' + #13#10 +
-    '             settings and logs in place. Reinstalling later then needs no' + #13#10 +
-    '             download and no reconfiguration.' + #13#10 + #13#10 +
-    'DELETE (No)  removes all of it, including the saved Railway secret key and' + #13#10 +
-    '             database URL. This cannot be undone.' + #13#10 + #13#10 +
-    'Neither choice touches the shared database - every record lives in Neon,' + #13#10 +
-    'which the cloud deployment is still serving.' + #13#10 + #13#10 +
-    AppDir + #13#10 + DataDir,
-    mbConfirmation, MB_YESNO) = IDYES;
+  // Unconditional. Uninstall leaves nothing behind: the checkout, the shared
+  // credentials in backend\.env, the virtualenv, the launcher's settings, logs
+  // and browser profile all go.
+  //
+  // No confirmation, deliberately. A prompt here was worse than useless: Inno
+  // answers a suppressed mbConfirmation with NO, so every silent or scripted
+  // uninstall quietly kept a 300 MB checkout and reported success. An uninstall
+  // that only sometimes uninstalls is the wrong failure to design in.
+  //
+  // Safe to be this blunt because none of it is unique data - every record
+  // lives in the shared Neon database, which the cloud deployment still serves.
+  // The worst case is retyping the credentials on the next install.
+  if DirExists(DataDir) then
+    DelTree(DataDir, True, True, True);
 
-  if KeepData then
-    Exit;
-
+  // The whole install folder, not just {app}\app: the checkout, the hidden
+  // launcher folder and anything else left beside them go together. Inno is
+  // still running out of this folder, so its own uninstaller cannot be removed
+  // here - that is what the deleteafterinstall-style self-delete below is for.
   if DirExists(AppDir) then
   begin
     if not DelTree(AppDir, True, True, True) then
@@ -675,6 +684,17 @@ begin
              'could not be removed - something is probably still using them. ' +
              'Delete the folder by hand after the next restart.', mbInformation, MB_OK);
   end;
-  if DirExists(DataDir) then
-    DelTree(DataDir, True, True, True);
+  DelTree(InstallDir + '\launcher', True, True, True);
+end;
+
+// Runs after Inno has removed its own uninstaller, so the now-empty install
+// folder can go too. Without this the folder survives every uninstall,
+// containing nothing.
+procedure DeinitializeUninstall();
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{app}');
+  if DirExists(Dir) then
+    RemoveDir(Dir);
 end;

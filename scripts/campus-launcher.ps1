@@ -630,6 +630,38 @@ $xaml = @'
 
 $win = [Windows.Markup.XamlReader]::Parse($xaml)
 
+# An exception thrown inside a WPF event handler or a dispatcher timer does not
+# propagate out to whoever started this script - it tears the message loop down
+# where nobody can see it. Under wscript there is no console either, so the
+# window just vanishes. This writes what happened somewhere findable and says
+# so, instead of disappearing.
+$win.Dispatcher.Add_UnhandledException({
+    param($sender, $e)
+    try {
+        $dir = Join-Path $env:LOCALAPPDATA 'SLC-VMS\logs'
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $file = Join-Path $dir ('crash-' + (Get-Date -Format 'yyyy-MM-dd_HHmmss') + '.txt')
+        @(
+            "Smart Parking and Vehicle Verification System - launcher UI crash"
+            (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+            "Repository : $repo"
+            ""
+            "Message    : $($e.Exception.Message)"
+            "Type       : $($e.Exception.GetType().FullName)"
+            ""
+            $e.Exception.StackTrace
+        ) -join [Environment]::NewLine | Set-Content -Path $file -Encoding UTF8
+
+        [System.Windows.Forms.MessageBox]::Show(
+            "The launcher hit an error and has to close." + [Environment]::NewLine + [Environment]::NewLine +
+            $e.Exception.Message + [Environment]::NewLine + [Environment]::NewLine +
+            "Details: $file",
+            'Smart Parking and Vehicle Verification System', 'OK', 'Error') | Out-Null
+    } catch { }
+    # Left unhandled on purpose: the state after a dispatcher exception is not
+    # trustworthy, and limping on would hide the fault rather than fix it.
+})
+
 $ui = @{}
 foreach ($n in @('TitleBar','Logo','LogoFallback','BtnMin','BtnClose','Dot','StateText','OriginText','SubText',
                  'PillDb','PillDbDot','PillCam','PillCamDot','PillRt','PillRtDot','BtnStart','BtnGuard','BtnAdmin',
