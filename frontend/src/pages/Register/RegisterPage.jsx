@@ -30,17 +30,19 @@ const ASSESSMENT_FILE_TYPES     = [...LICENSE_IMAGE_TYPES, 'application/pdf']
 
      SCHOOL_ID  College students. They are issued <8-digit ID>@slc-sflu.edu.ph,
                 so theirs is checked all the way down to the ID.
-     SCHOOL     Employees and fetchers. They get named accounts instead, so the
-                domain is the whole rule and the local part is left alone.
-     PERSONAL   Students below college — SHS, JHS, Elementary and SpEd. The
-                school issues them no address at all, so demanding one would
-                lock out every pupil whose parent registers for them. A working
-                personal address is what the CDSO's approval mail needs, and any
-                provider will do.
+     SCHOOL     Employees. They get named accounts instead, so the domain is
+                the whole rule and the local part is left alone.
+     PERSONAL   Fetchers, and students below college — SHS, JHS, Elementary and
+                SpEd. The school issues none of them an address: fetchers are
+                outsiders driving for someone enrolled, and the younger levels
+                get no account at all, so demanding a school domain would lock
+                out every parent and driver who registers. A working personal
+                address is what the CDSO's approval mail needs, and any provider
+                will do.
 
-   For everyone but that last group the domain is still the cheapest check that
-   the applicant belongs to SLC, and it keeps the address the approval mail goes
-   to one the school controls. */
+   For the two school groups the domain is still the cheapest check that the
+   applicant belongs to SLC, and it keeps the address the approval mail goes to
+   one the school controls. */
 const SCHOOL_EMAIL_DOMAIN   = 'slc-sflu.edu.ph'
 const STUDENT_EMAIL_REGEX   = /^\d{8}@slc-sflu\.edu\.ph$/
 const SCHOOL_EMAIL_REGEX    = /^[^\s@]+@slc-sflu\.edu\.ph$/
@@ -460,12 +462,14 @@ export default function RegisterPage() {
       .finally(() => setLoadingBarangays(false))
   }, [selectedCityCode])
 
-  /* Which email rule this applicant falls under. College is the only student
-     level the school issues an address to; the rest register with a personal
-     one. Recomputed every render, so switching registrant type or education
-     level re-points the field at the right rule immediately. */
+  /* Which email rule this applicant falls under. Employees and College
+     students are the only ones the school issues an address to; fetchers and
+     the lower student levels register with a personal one. Recomputed every
+     render, so switching registrant type or education level re-points the
+     field at the right rule immediately. */
   const emailMode =
-    registrantType !== 'student'           ? EMAIL_MODE.SCHOOL
+    registrantType === 'fetcher'           ? EMAIL_MODE.PERSONAL
+    : registrantType !== 'student'         ? EMAIL_MODE.SCHOOL
     : formData.student_level === 'college' ? EMAIL_MODE.SCHOOL_ID
     : EMAIL_MODE.PERSONAL
 
