@@ -60,7 +60,19 @@ api.interceptors.response.use(
     }
 
     if (status === 401 && !originalRequest._retry) {
-      const authEndpoints = ['/auth/login/', '/auth/refresh/', '/auth/verify/']
+      // A 401 from a login endpoint means "those credentials are wrong", not
+      // "your session expired" — there is no session to refresh yet. Letting
+      // these fall through would log out and bounce the page to /login, which
+      // at a gate kiosk throws the guard off the guard-login screen instead of
+      // showing them the failure in place.
+      const authEndpoints = [
+        '/auth/login/',
+        '/auth/refresh/',
+        '/auth/verify/',
+        '/auth/guard-login/',
+        '/auth/qr-login/',
+        '/accounts/guard-qr-login/',
+      ]
       if (authEndpoints.some(endpoint => originalRequest.url.includes(endpoint))) {
         return Promise.reject(error)
       }
