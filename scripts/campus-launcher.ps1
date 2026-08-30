@@ -50,6 +50,57 @@ $repo = Split-Path -Parent $PSScriptRoot
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
 # ---------------------------------------------------------------------------
+#  One instance only
+# ---------------------------------------------------------------------------
+# Two launchers means two servers racing for the same port, and the loser dies
+# with "Only one usage of each socket address" - which reads like a fault in the
+# app rather than a second copy of it. Double-clicking the shortcut again should
+# bring the window you already have to the front, not open another.
+#
+# Global\ rather than Local\ because the thing being protected - the TCP port -
+# is machine-wide, not per-session. Two signed-in users would otherwise each get
+# a launcher and fight over 8000. Falls back to Local\ where a Global mutex is
+# not permitted, which is better than refusing to start at all.
+Add-Type -Namespace Win32 -Name Fg -MemberDefinition @'
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@
+
+$SingleInstanceMutex = $null
+$createdNew = $false
+foreach ($scope in @('Global\SLC-SmartParking-Campus-Launcher', 'Local\SLC-SmartParking-Campus-Launcher')) {
+    try {
+        $SingleInstanceMutex = New-Object System.Threading.Mutex($true, $scope, [ref]$createdNew)
+        break
+    } catch [System.UnauthorizedAccessException] {
+        continue   # a Global mutex already exists but this account cannot open it
+    } catch {
+        continue
+    }
+}
+
+if ($SingleInstanceMutex -and -not $createdNew) {
+    # Already running. Restore and focus that window instead of adding a second.
+    $existing = Get-Process -Name 'powershell', 'pwsh' -ErrorAction SilentlyContinue |
+                Where-Object { $_.Id -ne $PID -and $_.MainWindowTitle -like 'Smart Parking*Campus*' } |
+                Select-Object -First 1
+    if ($existing) {
+        [void][Win32.Fg]::ShowWindow($existing.MainWindowHandle, 9)   # SW_RESTORE
+        [void][Win32.Fg]::SetForegroundWindow($existing.MainWindowHandle)
+    } else {
+        # Holding the mutex without a findable window means a previous copy died
+        # badly. Say so rather than exiting silently, which would look like the
+        # shortcut doing nothing at all.
+        [System.Windows.Forms.MessageBox]::Show(
+            'The campus launcher is already running, but its window could not be found.' +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'If no window is open, sign out and back in, or end any stray powershell.exe, then try again.',
+            'Smart Parking and Vehicle Verification System', 'OK', 'Information') | Out-Null
+    }
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
 #  State
 # ---------------------------------------------------------------------------
 $cfg = Get-CampusLauncherConfig
@@ -1693,6 +1744,12 @@ $win.Add_Closing({
     # left pointing at a server that just stopped, is the worst thing to leave
     # on a gate terminal: nothing to navigate away with and nothing behind it.
     [void](Close-KioskBrowser)
+
+    # Release the single-instance lock last, so the next launch can start.
+    if ($SingleInstanceMutex) {
+        try { $SingleInstanceMutex.ReleaseMutex() } catch { }
+        try { $SingleInstanceMutex.Dispose() } catch { }
+    }
 })
 
 $timer.Start()
