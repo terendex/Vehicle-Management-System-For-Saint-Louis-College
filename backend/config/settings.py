@@ -262,7 +262,14 @@ else:
 
 _db_url = os.getenv('DATABASE_URL')
 if _db_url:
-    DATABASES = {'default': dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=True)}
+    # conn_health_checks: connections are kept for 10 minutes, but Neon closes
+    # idle ones from its side well before that (and suspends the compute after
+    # inactivity). Without a health check Django hands the dead socket to the
+    # next request, which fails with "server closed the connection unexpectedly"
+    # - one wasted request per stale connection. This makes Django ping first
+    # and reconnect if needed: one cheap check, instead of a user-visible error.
+    DATABASES = {'default': dj_database_url.parse(
+        _db_url, conn_max_age=600, conn_health_checks=True, ssl_require=True)}
     # Neon is reached through its pgbouncer endpoint (-pooler), which runs in
     # transaction pooling mode. Django does not support server-side cursors
     # there — a named cursor can land on a different backend connection than
