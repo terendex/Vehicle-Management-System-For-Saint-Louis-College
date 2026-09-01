@@ -129,6 +129,7 @@ Name: "prereq";        Description: "Prerequisites"; Types: full custom
 Name: "prereq\git";    Description: "Git - required for updates"; Types: full custom
 Name: "prereq\python"; Description: "Python 3.12 - runs the server and the detector"; Types: full custom
 Name: "prereq\node";   Description: "Node.js LTS - builds the web interface"; Types: full custom
+Name: "prereq\ffmpeg"; Description: "FFmpeg - reads the camera streams"; Types: full custom
 Name: "firewall";      Description: "Windows Firewall rule, so guards can reach this machine"; \
   Types: full custom
 
@@ -286,6 +287,18 @@ function IsNodeInstalled(): Boolean;
 begin
   Result := FileExists(ExpandConstant('{pf}\nodejs\node.exe')) or
             FileExists(ExpandConstant('{pf32}\nodejs\node.exe'));
+end;
+
+// Deliberately looks in the same places bootstrap.ps1's Find-FFmpeg does. A
+// winget-installed FFmpeg is a portable package under WinGet\Links, not a
+// Program Files install, so checking only the usual folders would report "will
+// install" on a machine that already has it.
+function IsFFmpegInstalled(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{localappdata}\Microsoft\WinGet\Links\ffmpeg.exe')) or
+            FileExists(ExpandConstant('{pf}\ffmpeg\bin\ffmpeg.exe')) or
+            FileExists(ExpandConstant('{commonpf}\ffmpeg\bin\ffmpeg.exe')) or
+            FileExists('C:\ProgramData\chocolatey\bin\ffmpeg.exe');
 end;
 
 function IsWingetAvailable(): Boolean;
@@ -465,7 +478,8 @@ begin
 
   S := StatusLine('Git', IsGitInstalled()) +
        StatusLine('Python 3.12', IsPython312Installed()) +
-       StatusLine('Node.js', IsNodeInstalled()) + #13#10;
+       StatusLine('Node.js', IsNodeInstalled()) +
+       StatusLine('FFmpeg', IsFFmpegInstalled()) + #13#10;
 
   if IsWingetAvailable() then
     S := S + 'winget is available, so anything missing can be installed automatically.' + #13#10
@@ -574,6 +588,7 @@ begin
   if WizardIsComponentSelected('prereq\git')    then S := S + ',git';
   if WizardIsComponentSelected('prereq\python') then S := S + ',python';
   if WizardIsComponentSelected('prereq\node')   then S := S + ',node';
+  if WizardIsComponentSelected('prereq\ffmpeg') then S := S + ',ffmpeg';
   if WizardIsComponentSelected('firewall')      then S := S + ',firewall';
   Result := S;
 end;

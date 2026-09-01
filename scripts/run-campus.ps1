@@ -61,8 +61,66 @@ Set-Location $repo
 
 function Say($msg, $colour = 'Cyan') { Write-Host "[campus] $msg" -ForegroundColor $colour }
 
+# ── 0. Prerequisites ─────────────────────────────────────────────────────────
+# The installer installs Git, Python and Node before the first run, so normally
+# every one of these is already here and this loop is three cheap PATH lookups.
+# It exists for the machines the installer cannot speak for: one where winget
+# was unavailable at install time, where the prerequisite component was
+# deselected, where someone uninstalled Node later, or a plain `git clone` with
+# no installer involved at all. Without this the failure surfaces much further
+# down as a bare "npm is not recognized", which names the symptom and not the
+# cause.
+#
+# Not fatal when it cannot fix things: it says exactly what is missing and what
+# to run, then carries on so the steps that do not need that tool still happen.
+function Install-MissingTool {
+    param([string]$Exe, [string]$WingetId, [string]$Human)
+
+    if (Get-Command $Exe -ErrorAction SilentlyContinue) { return $true }
+
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Say "$Human is not installed and winget is unavailable - install $Human by hand." 'Yellow'
+        return $false
+    }
+
+    Say "$Human is not installed - installing it now (one time)..." 'Yellow'
+
+    # EAP guard: winget writes progress to stderr, and with EAP=Stop a native
+    # command's stderr becomes a terminating NativeCommandError - the install
+    # would be killed by its own progress output.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $winget.Source install --id $WingetId -e --source winget `
+            --accept-package-agreements --accept-source-agreements --silent 2>&1 |
+            ForEach-Object { Say "  $_" 'DarkGray' }
+    } catch {
+        Say "  $($_.Exception.Message)" 'DarkGray'
+    } finally { $ErrorActionPreference = $prevEAP }
+
+    # winget puts new tools on the machine PATH, which this already-running
+    # process does not see. Rebuild it from the registry rather than telling
+    # someone to reboot before the app will start.
+    $env:PATH = ([Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' +
+                 [Environment]::GetEnvironmentVariable('PATH', 'User'))
+
+    if (Get-Command $Exe -ErrorAction SilentlyContinue) {
+        Say "$Human installed." 'Green'
+        return $true
+    }
+    Say ("$Human could not be installed automatically. Run the installer again as " +
+         "administrator, or install $Human by hand, then start the server.") 'Yellow'
+    return $false
+}
+
+[void](Install-MissingTool -Exe 'git.exe'  -WingetId 'Git.Git'           -Human 'Git')
+[void](Install-MissingTool -Exe 'py.exe'   -WingetId 'Python.Python.3.12' -Human 'Python 3.12')
+[void](Install-MissingTool -Exe 'node.exe' -WingetId 'OpenJS.NodeJS.LTS'  -Human 'Node.js')
+
 # ── 1. Python environment ────────────────────────────────────────────────────
 $python = Join-Path $repo 'backend\venv\Scripts\python.exe'
+$script:FreshVenv = $false
 if (-not (Test-Path $python)) {
     Say 'No virtualenv found - creating backend\venv (one-time, a few minutes)...'
 
@@ -94,8 +152,36 @@ if (-not (Test-Path $python)) {
     if ($ver -and $ver.Trim() -ne '3.12') {
         Say "WARNING: the virtualenv is on Python $($ver.Trim()); requirements.txt needs 3.12." 'Yellow'
     }
+    $script:FreshVenv = $true
+}
+
+# Packages, whenever requirements.txt is newer than the last successful install.
+#
+# This used to sit inside the "no virtualenv" branch above, so pip ran exactly
+# once in the life of a machine. The update button pulls whatever landed on
+# main, and a commit that adds a dependency - requirements.txt has changed
+# several times already - left every installed machine with a virtualenv that
+# no longer matched it. The next start then died on ModuleNotFoundError for a
+# package nobody had been asked to install.
+#
+# Same stamp-file approach the frontend uses for package-lock.json below, and
+# for the same reason: a full pip run every start would add a minute to every
+# start, while comparing two timestamps costs nothing. The stamp is written
+# only after pip succeeds, so a failed install is retried on the next start
+# rather than being remembered as done.
+$reqFile  = Join-Path $repo 'requirements.txt'
+$reqStamp = Join-Path $repo 'backend\venv\.requirements-stamp'
+$needPip  = $script:FreshVenv -or (-not (Test-Path $reqStamp))
+if (-not $needPip -and (Test-Path $reqFile)) {
+    $needPip = (Get-Item $reqFile).LastWriteTime -gt (Get-Item $reqStamp).LastWriteTime
+}
+
+if ($needPip) {
+    if (-not $script:FreshVenv) {
+        Say 'requirements.txt changed since the last run - updating dependencies...' 'Yellow'
+    }
     & $python -m pip install --upgrade pip --quiet
-    & $python -m pip install -r (Join-Path $repo 'requirements.txt')
+    & $python -m pip install -r $reqFile
 
     # pip's exit code, checked. Without this the script announced "Dependencies
     # installed." whether or not pip had just failed, and the first sign of
@@ -108,7 +194,64 @@ if (-not (Test-Path $python)) {
                      "a 'no matching distribution' there usually means the virtualenv is on the wrong " +
                      "Python version for the pins in requirements.txt.")
     }
+    Set-Content -Path $reqStamp -Value (Get-Date -Format 'o') -Encoding utf8
     Say 'Dependencies installed.' 'Green'
+}
+
+# ── 1a. FFmpeg — every camera in the system depends on it ────────────────────
+# vehicles/ffmpeg_capture.py reads ALL RTSP through an ffmpeg subprocess. With
+# no ffmpeg it logs "no ffmpeg binary available" once and every feed stays
+# black - the server still starts and serves, so this looks like broken cameras
+# rather than a missing program, and nobody thinks to go looking for a codec.
+#
+# The installer now installs it as a prerequisite, but that only helps machines
+# installed after this change. This check also covers the ones it cannot: a box
+# where winget was unavailable, where the component was deselected, where
+# someone removed ffmpeg later, or a plain `git clone` with no installer at all.
+#
+# imageio-ffmpeg rather than winget as the repair: it is a pip install into the
+# virtualenv that already exists, so it needs no administrator, no UAC prompt
+# from a background script, and no PATH refresh to take effect. A system ffmpeg
+# is still preferred when present - ffmpeg_binary() checks PATH first.
+$haveFfmpeg = [bool](Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)
+if (-not $haveFfmpeg) {
+    # Same order ffmpeg_binary() uses, so this agrees with what the app will do.
+    foreach ($p in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\ffmpeg.exe",
+                     "$env:ProgramFiles\ffmpeg\bin\ffmpeg.exe",
+                     "$env:ProgramData\chocolatey\bin\ffmpeg.exe")) {
+        if (Test-Path $p) {
+            # Found but not on PATH - shutil.which() would miss it too, so put
+            # its folder on PATH for the server we are about to start.
+            $env:PATH = (Split-Path -Parent $p) + ';' + $env:PATH
+            $haveFfmpeg = $true
+            Say "Found ffmpeg at $p - added to PATH for this run."
+            break
+        }
+    }
+}
+if (-not $haveFfmpeg) {
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try   { $bundled = (& $python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())" 2>&1 | Select-Object -Last 1) }
+    catch { $bundled = '' }
+    finally { $ErrorActionPreference = $prevEAP }
+
+    if ("$bundled" -notmatch 'Error|Traceback' -and "$bundled".Trim() -and (Test-Path "$bundled".Trim())) {
+        Say 'ffmpeg is not installed system-wide, but the bundled build is present.' 'Yellow'
+        $haveFfmpeg = $true
+    } else {
+        Say 'No ffmpeg on this machine - cameras cannot be read. Installing it now (about 30 MB, one time)...' 'Yellow'
+        & $python -m pip install --quiet imageio-ffmpeg
+        if ($LASTEXITCODE -eq 0) {
+            Say 'ffmpeg installed. Cameras can be read.' 'Green'
+            $haveFfmpeg = $true
+        } else {
+            # Not fatal. Everything except the camera feeds still works, and a
+            # server that starts and says why is more use than one that refuses.
+            Say ('Could not install ffmpeg automatically. The system will run, but camera feeds ' +
+                 'will stay black until ffmpeg is installed (winget install Gyan.FFmpeg).') 'Yellow'
+        }
+    }
 }
 
 # ── 1b. CUDA wheels, when there is a card to use them ────────────────────────

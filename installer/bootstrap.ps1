@@ -11,8 +11,9 @@
         1. Git            - needed for every update after this one
         2. Python 3.12    - the version requirements.txt pins resolve against
         3. Node.js LTS    - builds the React bundle
-        4. Application    - clones the repository into <InstallDir>\app
-        5. Firewall       - opens the port so guards can reach this machine
+        4. FFmpeg         - reads the camera streams; without it no camera works
+        5. Application    - clones the repository into <InstallDir>\app
+        6. Firewall       - opens the port so guards can reach this machine
 
     What it deliberately does NOT do: create the virtualenv, pip install, or
     build the frontend. Those already happen on the first run of
@@ -38,7 +39,7 @@ param(
     # department that manages Python or Git centrally can deselect those and
     # this will not touch them. Defaults to everything so running this script
     # by hand, or as the Repair shortcut, still does the whole job.
-    [string]$Steps = 'git,python,node,app,credentials,firewall'
+    [string]$Steps = 'git,python,node,ffmpeg,app,credentials,firewall'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -413,6 +414,34 @@ function Find-Node {
     return $null
 }
 
+# Every camera in this system is read through ffmpeg - vehicles/ffmpeg_capture.py
+# shells out to it for all RTSP, and falls back to the imageio-ffmpeg wheel only
+# if that wheel happens to be present. Nothing here installed either, so on a
+# clean machine the app starts, serves, and logs "no ffmpeg binary available"
+# while every feed stays black. That reads as a broken camera rather than a
+# missing program, which is why it is a first-class step and not left to chance.
+#
+# winget's Gyan.FFmpeg is a portable package: it leaves a shim under
+# WinGet\Links rather than installing into Program Files, and that directory is
+# not on PATH for a process that started before it existed. Checked explicitly.
+function Find-FFmpeg {
+    $c = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    foreach ($p in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\ffmpeg.exe",
+                     "$env:ProgramFiles\ffmpeg\bin\ffmpeg.exe",
+                     "$env:ProgramData\chocolatey\bin\ffmpeg.exe")) {
+        if (Test-Path $p) { return $p }
+    }
+    # The package unpacks under a versioned folder name, so glob for it last.
+    $pkgs = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path $pkgs) {
+        $hit = Get-ChildItem -Path $pkgs -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+    return $null
+}
+
 function Add-ToolPath([string]$ExePath) {
     if (-not $ExePath) { return }
     $dir = Split-Path -Parent $ExePath
@@ -462,6 +491,8 @@ $StepPlan = @(
        Spec  = (New-WingetStep -Id 'Python.Python.3.12' -Finder { Find-Python312 } -Human 'Python 3.12') },
     @{ Id = 'node'; Title = 'Node.js'; Note = 'checking...'
        Spec  = (New-WingetStep -Id 'OpenJS.NodeJS.LTS' -Finder { Find-Node }       -Human 'Node.js') },
+    @{ Id = 'ffmpeg'; Title = 'FFmpeg'; Note = 'checking...'
+       Spec  = (New-WingetStep -Id 'Gyan.FFmpeg'       -Finder { Find-FFmpeg }     -Human 'FFmpeg') },
 
     @{ Id = 'app'; Title = 'Application files'; Note = 'waiting'
        Spec  = @{
