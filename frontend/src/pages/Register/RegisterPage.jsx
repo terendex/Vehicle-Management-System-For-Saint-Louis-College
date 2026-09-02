@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft, FileText } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft, FileText, ShieldCheck, ExternalLink } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
@@ -273,6 +273,154 @@ function SlcHeader({ onBack }) {
   )
 }
 
+/* ── Data privacy gate ──
+   RA 10173 consent is asked for the moment the page opens — before the
+   registrant type is picked, let alone anything typed. It used to be a checkbox
+   at the foot of a form ten screens long, so an applicant had already handed
+   over their address, licence and plate before being asked whether SLC may hold
+   any of it — consent with nothing left to decide. Declining costs nothing
+   here: nothing has been entered, so it just returns to the login page.
+
+   `review` re-opens the same notice read-only from the form, so what was
+   agreed to can be re-read without having to withdraw it first. */
+function PrivacyGateModal({ review, checked, onToggle, onAccept, onDecline, onClose }) {
+  // The page behind stays in the tab order, so the notice takes the focus when
+  // it opens — otherwise a keyboard user lands in controls they have not yet
+  // agreed to use.
+  const dialogRef = useRef(null)
+  useEffect(() => { dialogRef.current?.focus() }, [])
+
+  /* …and Tab must not then walk back out of it into the page it is gating. */
+  const keepFocusInside = (e) => {
+    if (e.key !== 'Tab') return
+    const focusable = dialogRef.current?.querySelectorAll(
+      'a[href], button:not(:disabled), input:not(:disabled)')
+    if (!focusable?.length) return
+    const first = focusable[0]
+    const last  = focusable[focusable.length - 1]
+    const on    = document.activeElement
+    if (e.shiftKey && (on === first || on === dialogRef.current)) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && on === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
+  return (
+    <div className="privacy-gate-overlay" role="dialog" aria-modal="true" aria-labelledby="privacy-gate-title">
+      <div className="privacy-gate-dialog" ref={dialogRef} tabIndex={-1} onKeyDown={keepFocusInside}>
+
+        <div className="privacy-gate-head">
+          <div className="privacy-gate-icon"><ShieldCheck size={24} strokeWidth={1.9} /></div>
+          <div className="privacy-gate-head-text">
+            <h2 className="privacy-gate-title" id="privacy-gate-title">Data Privacy Notice</h2>
+            <p className="privacy-gate-sub">Republic Act No. 10173 — Data Privacy Act of 2012</p>
+          </div>
+        </div>
+
+        <div className="privacy-gate-body">
+          <p className="privacy-gate-lead">
+            Before you start your application, please read how Saint Louis College handles the
+            information you are about to give.
+          </p>
+
+          <h3>What we collect</h3>
+          <ul>
+            <li>Your name, age, home address, contact number and email address.</li>
+            <li>Your school or employee ID and, for students, your level, program and class schedule.</li>
+            <li>Your driver's licence number and a photo of the licence, together with the assessment form and any other document you attach.</li>
+            <li>Your vehicle's plate or conduction number, type, colour and body number.</li>
+            <li>The date and time your vehicle enters and leaves the campus, and the gate images captured at those moments.</li>
+          </ul>
+
+          <h3>Why we collect it</h3>
+          <ul>
+            <li>To evaluate your vehicle pass application and issue your pass.</li>
+            <li>To verify your vehicle at the gates and log entry and exit for campus safety and security.</li>
+            <li>To assess and receipt the vehicle pass fee, where one applies.</li>
+            <li>To contact you about your application, your pass, and any violation recorded against it.</li>
+          </ul>
+
+          <h3>Who can see it</h3>
+          <p>
+            Only authorised SLC personnel with a legitimate official need — the CDSO, the security
+            team on duty at the gates, and the Accounting Office for the fee. Your information is
+            never sold, and is disclosed outside the College only where the law requires it.
+          </p>
+
+          <h3>How long we keep it</h3>
+          <p>
+            Your records are kept while your vehicle pass is valid and for the retention period set
+            by College policy, after which they are securely disposed of. You may ask to access or
+            correct your information, or raise a concern, at any time through the Data Protection
+            Officer at <a href="mailto:privacy@slc-sflu.edu.ph">privacy@slc-sflu.edu.ph</a>.
+          </p>
+
+          <a className="privacy-gate-policy-link" href="/policy" target="_blank" rel="noopener noreferrer">
+            <FileText size={14} />
+            Read the full Privacy Policy
+            <ExternalLink size={12} />
+          </a>
+        </div>
+
+        {review ? (
+          <div className="privacy-gate-agreed">
+            <CheckCircle size={17} />
+            <span>You agreed to this notice before starting your application.</span>
+          </div>
+        ) : (
+          <label className="privacy-gate-check">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={onToggle}
+              className="consent-checkbox"
+            />
+            <span>
+              <strong>DATA PRIVACY CONSENT:</strong> By filling-out this form, I give my consent to
+              SLC's collection, processing, storage and retention, and disposal of the provided
+              information pursuant to the provisions of Republic Act No. 10173 or the Data Privacy
+              Act of 2012. I also hereby certify that all information given are true and correct.
+            </span>
+          </label>
+        )}
+
+        <div className="privacy-gate-actions">
+          {review ? (
+            <button type="button" className="privacy-gate-btn privacy-gate-btn--primary" onClick={onClose}>
+              Close
+            </button>
+          ) : (
+            <>
+              <button type="button" className="privacy-gate-btn privacy-gate-btn--ghost" onClick={onDecline}>
+                Decline
+              </button>
+              <button
+                type="button"
+                className="privacy-gate-btn privacy-gate-btn--primary"
+                onClick={onAccept}
+                disabled={!checked}
+              >
+                Agree &amp; Continue
+              </button>
+            </>
+          )}
+        </div>
+
+        {!review && (
+          <p className="privacy-gate-foot">
+            You have to agree before you can start an application. Declining takes you back to the
+            login page.
+          </p>
+        )}
+
+      </div>
+    </div>
+  )
+}
+
 export default function RegisterPage() {
   const [searchParams] = useSearchParams()
   const directType = searchParams.get('type') // 'student' | 'employee' | 'fetcher'
@@ -301,6 +449,12 @@ export default function RegisterPage() {
   // what a retry needs: the row it attaches to, and the files themselves.
   const [pendingDocUpload, setPendingDocUpload] = useState(null)
   const [retryingDocUpload, setRetryingDocUpload] = useState(false)
+
+  /* Data privacy gate — see PrivacyGateModal. `privacyOpen` is only what is on
+     screen; `formData.privacy_consent` is the answer that gets submitted, and
+     it is what tells the modal to come back read-only instead of blocking. */
+  const [privacyOpen, setPrivacyOpen] = useState(true)
+  const [privacyChecked, setPrivacyChecked] = useState(false)
 
   // Schedule slots & reference lists
   const [scheduleSlots, setScheduleSlots] = useState(null)
@@ -862,7 +1016,13 @@ export default function RegisterPage() {
       problems.push("Attach a photo of the driver's license so CDSO can verify it.")
     }
 
-    if (!formData.privacy_consent) problems.push('Agree to the Data Privacy Consent.')
+    // Cannot normally fail — the gate sets it before the form is reachable —
+    // but if it ever does, put the notice back up rather than report a checkbox
+    // that is no longer on the page.
+    if (!formData.privacy_consent) {
+      problems.push('Agree to the Data Privacy Notice before submitting.')
+      setPrivacyOpen(true)
+    }
     if (!formData.details_confirmed) {
       problems.push('Confirm that all the details you entered are true, complete and correct.')
     }
@@ -1017,6 +1177,28 @@ export default function RegisterPage() {
     }
   }
 
+  /* ── Data privacy gate ── */
+  const acceptPrivacy = () => {
+    setFormData(prev => ({ ...prev, privacy_consent: true }))
+    setPrivacyOpen(false)
+  }
+
+  // Nothing has been filled in yet — the notice is the first thing on screen —
+  // so declining needs no "you will lose your answers" warning.
+  const declinePrivacy = () => navigate('/login')
+
+  /* The notice covers the page, which must not scroll away underneath it on a
+     phone. Cleanup clears the lock outright instead of restoring whatever was
+     there before: the acknowledgement dialogs in FeedbackHost lock the body the
+     same way, and two components each restoring a remembered value can leave
+     the page locked with nothing on screen to unlock it. Clearing can only ever
+     free the scroll too early, never strand it. */
+  useEffect(() => {
+    if (!privacyOpen) return
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [privacyOpen])
+
   /* ── Back to login ──
      Only the fields a person actually types are checked for "dirty"; several
      others get defaults the moment a registrant type is picked, and warning
@@ -1042,10 +1224,25 @@ export default function RegisterPage() {
     navigate('/login')
   }
 
+  /* The notice is the first thing on the page, before the registrant type is
+     even picked — so it is built once here and rendered by every screen below,
+     rather than only over the form. */
+  const privacyGate = privacyOpen ? (
+    <PrivacyGateModal
+      review={formData.privacy_consent}
+      checked={privacyChecked}
+      onToggle={(e) => setPrivacyChecked(e.target.checked)}
+      onAccept={acceptPrivacy}
+      onDecline={declinePrivacy}
+      onClose={() => setPrivacyOpen(false)}
+    />
+  ) : null
+
   /* ─── Loading ─── */
   if (loading) {
     return (
       <div className="register-page">
+        {privacyGate}
         <SlcHeader />
         <main className="register-main">
           <div className="register-container">
@@ -1060,6 +1257,7 @@ export default function RegisterPage() {
   if (!registrantType) {
     return (
       <div className="register-page">
+        {privacyGate}
         <SlcHeader onBack={handleBackToLogin} />
         <main className="register-main">
           <div className="register-card reg-type-selector-card">
@@ -1267,6 +1465,7 @@ export default function RegisterPage() {
   /* ─── Form ─── */
   return (
     <div className="register-page">
+      {privacyGate}
       <SlcHeader onBack={handleBackToLogin} />
 
       <main className="register-main">
@@ -2407,20 +2606,23 @@ export default function RegisterPage() {
                 </label>
               </div>
 
-              <div className="consent-section">
-                <label className="consent-label">
-                  <input
-                    type="checkbox"
-                    name="privacy_consent"
-                    checked={formData.privacy_consent}
-                    onChange={handleInputChange}
-                    required
-                    className="consent-checkbox"
-                  />
-                  <span>
-                    <strong>DATA PRIVACY CONSENT:</strong> By filling-out this form, I give my consent to SLC's collection, processing, storage and retention, and disposal of the provided information pursuant to the provisions of Republic Act No. 10173 or the Data Privacy Act of 2012. I also hereby certify that all information given are true and correct.
-                  </span>
-                </label>
+              {/* The consent itself was given before the form opened — see
+                  PrivacyGateModal. What stands here is the receipt for it, so an
+                  applicant reaching the end of the form can still see what they
+                  agreed to, and re-read it without leaving the page. */}
+              <div className="consent-section consent-section--granted">
+                <CheckCircle size={18} className="consent-granted-icon" />
+                <span className="consent-granted-text">
+                  <strong>DATA PRIVACY CONSENT:</strong> given when you opened this form, pursuant to
+                  Republic Act No. 10173 (Data Privacy Act of 2012).
+                </span>
+                <button
+                  type="button"
+                  className="consent-review-btn"
+                  onClick={() => setPrivacyOpen(true)}
+                >
+                  Review
+                </button>
               </div>
             </div>
 

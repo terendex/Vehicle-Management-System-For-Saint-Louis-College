@@ -1914,3 +1914,280 @@
   flex-shrink: 0;
   cursor: pointer;
 }
+
+/* ══ Data privacy gate ═══════════════════════════════
+   The notice that blocks the form until it is agreed to. It sits above the
+   sticky header (z-index 100) and stays below the acknowledgement dialogs in
+   components/Feedback/feedback.css, which have to remain the topmost layer —
+   the "leave this application?" confirm is raised from behind this.
+   ═════════════════════════════════════════════ */
+.privacy-gate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 18, 31, 0.55);
+  backdrop-filter: blur(3px);
+  animation: privacyFade 0.16s ease;
+}
+
+.privacy-gate-dialog {
+  width: 100%;
+  max-width: 620px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(4, 18, 31, 0.26);
+  padding: 24px 26px 20px;
+  animation: privacyIn 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* The dialog is focused programmatically when it opens, purely so the keyboard
+   starts inside it — that is not a keyboard user asking for a focus ring, and
+   the ring drawn around the whole panel reads as an error state. The controls
+   inside keep their own :focus-visible rings. */
+.privacy-gate-dialog:focus { outline: none; }
+
+@keyframes privacyFade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes privacyIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* --- Head --- */
+.privacy-gate-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1.5px solid #D3E1EC;
+}
+
+.privacy-gate-icon {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #EAF2F8;
+  color: #03396C;
+}
+
+.privacy-gate-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0B2340;
+  letter-spacing: 0.2px;
+}
+
+.privacy-gate-sub {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #5C7B92;
+}
+
+/* --- Body --- */
+/* The notice is long on purpose, so it scrolls inside the dialog rather than
+   pushing the checkbox and the buttons off the bottom of a phone screen. */
+.privacy-gate-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px 16px 0;
+  border-bottom: 1px solid #E4EDF4;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #2E4C63;
+  /* The notice is longer than the pane on every screen, so the scrollbar is
+     the only thing telling the reader there is more below the fold — keep its
+     gutter reserved rather than letting the text reflow when it appears. */
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.privacy-gate-lead {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #0B2340;
+  font-weight: 500;
+}
+
+.privacy-gate-body h3 {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #03396C;
+}
+
+.privacy-gate-body p { margin: 0 0 8px; }
+
+.privacy-gate-body ul {
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.privacy-gate-body li { margin-bottom: 5px; }
+
+.privacy-gate-body a {
+  color: #03396C;
+  font-weight: 600;
+}
+
+.privacy-gate-policy-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 16px;
+  padding: 9px 14px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FAFC;
+  font-size: 13px;
+  font-weight: 600;
+  color: #03396C;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.privacy-gate-policy-link:hover { background: #EAF2F8; border-color: #BDD4E5; }
+
+/* --- Consent --- */
+.privacy-gate-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #F7FAFC 0%, #EEF4F9 100%);
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 500;
+  color: #0B2340;
+  cursor: pointer;
+}
+.privacy-gate-check:hover { border-color: #BDD4E5; }
+.privacy-gate-check strong { color: #03396C; font-weight: 700; }
+
+.privacy-gate-agreed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 1.5px solid #A9DCC8;
+  border-radius: 12px;
+  background: #E6F5EF;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0F7A5A;
+}
+
+/* --- Actions --- */
+.privacy-gate-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.privacy-gate-btn {
+  min-width: 132px;
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: 1.5px solid transparent;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.privacy-gate-btn:focus-visible { outline: 2px solid #03396C; outline-offset: 2px; }
+
+.privacy-gate-btn--primary {
+  background: #03396C;
+  color: #FFFFFF;
+}
+.privacy-gate-btn--primary:hover:not(:disabled) { background: #032C55; }
+.privacy-gate-btn--primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.privacy-gate-btn--ghost {
+  background: #FFFFFF;
+  border-color: #BDD4E5;
+  color: #2E4C63;
+}
+.privacy-gate-btn--ghost:hover { background: #EAF2F8; color: #0B2340; }
+
+.privacy-gate-foot {
+  margin: 12px 0 0;
+  text-align: right;
+  font-size: 12px;
+  color: #5C7B92;
+}
+
+@media (max-width: 520px) {
+  .privacy-gate-dialog { padding: 20px 18px 16px; max-height: 94vh; }
+  .privacy-gate-actions { flex-direction: column-reverse; }
+  .privacy-gate-btn { width: 100%; }
+  .privacy-gate-foot { text-align: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .privacy-gate-overlay, .privacy-gate-dialog { animation: none; }
+}
+
+/* --- The receipt left at the foot of the form --- */
+.consent-section--granted {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #E6F5EF;
+  border-color: #A9DCC8;
+}
+.consent-section--granted:hover { border-color: #8CCFB6; }
+
+.consent-granted-icon {
+  flex-shrink: 0;
+  color: #0F7A5A;
+}
+
+.consent-granted-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 500;
+  color: #0B2340;
+}
+.consent-granted-text strong { color: #03396C; font-weight: 700; }
+
+.consent-review-btn {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border: 1.5px solid #A9DCC8;
+  border-radius: 8px;
+  background: #FFFFFF;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0F7A5A;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.consent-review-btn:hover { background: #F0FAF6; border-color: #8CCFB6; }
+
+@media (max-width: 520px) {
+  .consent-section--granted { flex-wrap: wrap; }
+  .consent-review-btn { width: 100%; }
+}
