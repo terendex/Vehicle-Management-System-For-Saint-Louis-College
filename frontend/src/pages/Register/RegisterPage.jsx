@@ -387,6 +387,10 @@ function PrivacyGateModal({ review, checked, onToggle, onAccept, onDecline, onCl
           </label>
         )}
 
+        {/* Buttons and the note under them travel together: on a short screen
+            they are pinned to the foot of the dialog while the notice scrolls
+            behind them. */}
+        <div className="privacy-gate-footer">
         <div className="privacy-gate-actions">
           {review ? (
             <button type="button" className="privacy-gate-btn privacy-gate-btn--primary" onClick={onClose}>
@@ -415,6 +419,7 @@ function PrivacyGateModal({ review, checked, onToggle, onAccept, onDecline, onCl
             login page.
           </p>
         )}
+        </div>
 
       </div>
     </div>
