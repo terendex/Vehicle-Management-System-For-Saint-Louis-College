@@ -1,29 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, Upload, X, ArrowLeft, FileText, ShieldCheck, ExternalLink } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Car, Info, User, Users, ChevronRight, Mail, Clock, ArrowLeft, FileText, ShieldCheck, ExternalLink } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
-import { compressImage } from '../../utils/imageCompress'
 import {
   IllustratedStep,
   PayAtAccountingArt, NoFeeArt, UploadOrArt, ApprovalMailArt, CdsoOfficeArt,
 } from '../../components/Illustrations/RegArt'
 
-const LICENSE_IMAGE_MAX_MB    = 5
-const LICENSE_IMAGE_MAX_BYTES = LICENSE_IMAGE_MAX_MB * 1024 * 1024
-const LICENSE_IMAGE_TYPES     = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
-
-/* ── Assessment form ──
-   The registrar's assessment form is what proves the applicant is genuinely
-   enrolled — a student number alone is trivial to make up. PDF is accepted
-   alongside the image types because that is what the student portal hands out;
-   most applicants photograph the printed copy instead. */
-const ASSESSMENT_FILE_MAX_MB    = 5
-const ASSESSMENT_FILE_MAX_BYTES = ASSESSMENT_FILE_MAX_MB * 1024 * 1024
-const ASSESSMENT_FILE_TYPES     = [...LICENSE_IMAGE_TYPES, 'application/pdf']
+/* ── TEMPORARY — Data Privacy Office trial ──
+   Nothing is uploaded from this form for the duration of the trial: no driver's
+   licence photo, no assessment form, no receipt image. The DPO's instruction was
+   that a copy of the licence need not be collected, and the attachments were
+   pulled with it rather than left as the only files still being gathered.
+   Everything CDSO verifies is now done from the typed values and at the counter. */
 
 /* ── Email address ──
    Which rule applies follows who the school actually issues an account to:
@@ -96,12 +89,6 @@ function describeEmail(value, { mode }) {
   return `Invalid email address format — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function formatRegDate(iso) {
   if (!iso) return null
   const d = new Date(iso + 'T00:00:00')
@@ -125,34 +112,6 @@ function formatDriversLicense(raw) {
   if (clean.length <= 3) return clean
   if (clean.length <= 5) return `${clean.slice(0, 3)}-${clean.slice(3)}`
   return `${clean.slice(0, 3)}-${clean.slice(3, 5)}-${clean.slice(5)}`
-}
-
-/* ── Philippine mobile numbers ──
-   The form stores the full +639XXXXXXXXX the API expects, but the field only
-   ever shows the 10 local digits — the "+63" sits beside the input as fixed
-   chrome so nobody has to guess whether to type 0917…, +63917… or 63917…. */
-const PH_DIAL_CODE = '+63'
-
-// Keeps only the 10 local digits, tolerating 0917…, 63917… and +63 917… pastes.
-function toLocalMobileDigits(raw) {
-  let d = String(raw).replace(/\D/g, '')
-  if (d.startsWith('63')) d = d.slice(2)
-  if (d.startsWith('0')) d = d.slice(1)
-  return d.slice(0, 10)
-}
-
-// '' stays '' so the required check still fires on an untouched field.
-const toStoredMobile = (raw) => {
-  const d = toLocalMobileDigits(raw)
-  return d ? PH_DIAL_CODE + d : ''
-}
-
-const toDisplayMobile = (stored) => toLocalMobileDigits(stored)
-
-// Ages offered in the dropdown. Guardian-driven students can be as young as 3;
-// anyone driving themselves starts at 15. Mirrors the old min/max exactly.
-function ageOptions(min) {
-  return Array.from({ length: 99 - min + 1 }, (_, i) => min + i)
 }
 
 /* Employee departments. `free` marks the one exempt from the vehicle pass fee
@@ -221,11 +180,10 @@ const SCHEDULE_GROUPS = [
 ]
 
 // Fetcher registrations must list at least one student being fetched.
-// Same info as a student registration except email, contact number and age.
-// assessment is the student's own enrolment proof (a File, never sent in the
-// JSON payload) — a fetcher is not enrolled, so their application proves nothing
-// about the students they collect.
-const EMPTY_FETCHER_STUDENT = { full_name: '', student_id: '', student_level: '', program_year: '', assessment: null }
+// TEMPORARY (DPO trial): name and level only — the student's ID number and their
+// assessment form are no longer collected, so a fetcher's list identifies the
+// students by name the same way the applicant themselves is identified.
+const EMPTY_FETCHER_STUDENT = { full_name: '', student_level: '', program_year: '' }
 
 /* Levels that can never be self-driven — the "who drives" choice is skipped and a
    parent, guardian, or authorized driver is always registered as the driver.
@@ -277,7 +235,7 @@ function SlcHeader({ onBack }) {
    RA 10173 consent is asked for the moment the page opens — before the
    registrant type is picked, let alone anything typed. It used to be a checkbox
    at the foot of a form ten screens long, so an applicant had already handed
-   over their address, licence and plate before being asked whether SLC may hold
+   over their licence and plate before being asked whether SLC may hold
    any of it — consent with nothing left to decide. Declining costs nothing
    here: nothing has been entered, so it just returns to the login page.
 
@@ -328,9 +286,9 @@ function PrivacyGateModal({ review, checked, onToggle, onAccept, onDecline, onCl
 
           <h3>What we collect</h3>
           <ul>
-            <li>Your name, age, home address, contact number and email address.</li>
-            <li>Your school or employee ID and, for students, your level, program and class schedule.</li>
-            <li>Your driver's licence number and a photo of the licence, together with the assessment form and any other document you attach.</li>
+            <li>Your name and email address.</li>
+            <li>For students, your education level, program and class schedule.</li>
+            <li>Your driver's licence number. No copy or photo of the licence is collected.</li>
             <li>Your vehicle's plate or conduction number, type, colour and body number.</li>
             <li>The date and time your vehicle enters and leaves the campus, and the gate images captured at those moments.</li>
           </ul>
@@ -440,20 +398,10 @@ export default function RegisterPage() {
   // vehiclePassFee is derived below, once formData exists — it depends on the
   // chosen department.
   const [formErrors, setFormErrors] = useState({})
-  const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/student_id/employee_id
+  const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/email/drivers_license
   const [banned, setBanned] = useState(null)     // set if the applicant reached max violations and may not register
   const [isNewVehicle, setIsNewVehicle] = useState(false) // brand-new car → conduction number instead of plate
   const [dupChecking, setDupChecking] = useState({})
-  const [licenseImage, setLicenseImage] = useState(null)
-  const [licensePreview, setLicensePreview] = useState(null)
-  const [assessmentFile, setAssessmentFile] = useState(null)
-  // Set when the registration row saved but its documents didn't. The driver's
-  // license photo is required, so this is an unfinished application rather than
-  // a footnote — and the row already exists, so the applicant cannot simply
-  // submit again (the backend would reject it as a duplicate). Holds exactly
-  // what a retry needs: the row it attaches to, and the files themselves.
-  const [pendingDocUpload, setPendingDocUpload] = useState(null)
-  const [retryingDocUpload, setRetryingDocUpload] = useState(false)
 
   /* Data privacy gate — see PrivacyGateModal. `privacyOpen` is only what is on
      screen; `formData.privacy_consent` is the answer that gets submitted, and
@@ -467,40 +415,22 @@ export default function RegisterPage() {
   const [departments, setDepartments] = useState([])
   const [programs, setPrograms] = useState([])
 
-  // Philippine address cascading dropdowns
-  const [provinces, setProvinces] = useState([])
-  const [cities, setCities] = useState([])
-  const [barangays, setBarangays] = useState([])
-  const [loadingCities, setLoadingCities] = useState(false)
-  const [loadingBarangays, setLoadingBarangays] = useState(false)
-  const [selectedProvinceCode, setSelectedProvinceCode] = useState('')
-  const [selectedCityCode, setSelectedCityCode] = useState('')
-
   const [formData, setFormData] = useState({
     last_name: '',
     first_name: '',
     middle_name: '',
     email: '',
-    student_id: '',
     student_level: '',
     student_strand: '',
     student_grade: '',
     student_program: '',
     student_year: '',
     program_year: '',
-    employee_id: '',
     department: '',
-    house_street: '',
-    barangay: '',
-    city_municipality: '',
-    province: '',
-    contact_number: '',
-    age: '',
     drivers_license: '',
     who_drives: '',            // 'self' | 'guardian' — form-only, not sent to the API
     driver_name: '',
     driver_relationship: '',
-    driver_contact: '',
     // schedule is the rotation the applicant picks (MWF / TTHF); campus_days is
     // the week it expands to. Both are sent — the backend re-derives one from
     // the other, so they can never disagree.
@@ -588,39 +518,6 @@ export default function RegisterPage() {
     setLoading(false)
   }, [directType, fetchScheduleSlots, fetchRefLists, fetchRegStatus])
 
-  // Fetch provinces once on mount
-  useEffect(() => {
-    fetch('https://psgc.gitlab.io/api/provinces/')
-      .then(r => r.json())
-      .then(data => setProvinces(data.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-  }, [])
-
-  // Fetch cities/municipalities when province changes
-  useEffect(() => {
-    if (!selectedProvinceCode) { setCities([]); setBarangays([]); return }
-    setLoadingCities(true)
-    setCities([])
-    setBarangays([])
-    fetch(`https://psgc.gitlab.io/api/provinces/${selectedProvinceCode}/cities-municipalities/`)
-      .then(r => r.json())
-      .then(data => setCities(data.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-      .finally(() => setLoadingCities(false))
-  }, [selectedProvinceCode])
-
-  // Fetch barangays when city/municipality changes
-  useEffect(() => {
-    if (!selectedCityCode) { setBarangays([]); return }
-    setLoadingBarangays(true)
-    setBarangays([])
-    fetch(`https://psgc.gitlab.io/api/cities-municipalities/${selectedCityCode}/barangays/`)
-      .then(r => r.json())
-      .then(data => setBarangays(data.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
-      .finally(() => setLoadingBarangays(false))
-  }, [selectedCityCode])
-
   /* Which email rule this applicant falls under. Employees and College
      students are the only ones the school issues an address to; fetchers and
      the lower student levels register with a personal one. Recomputed every
@@ -668,32 +565,12 @@ export default function RegisterPage() {
       message: 'Invalid conduction number. Use 5–12 alphanumeric characters.',
       hint: 'e.g. CS12345A678',
     },
-    contact_number: {
-      regex: /^\+639\d{9}$/,
-      message: 'Enter the 10 digits after +63, starting with 9',
-      hint: 'e.g. 9123456789',
-    },
-    driver_contact: {
-      regex: /^\+639\d{9}$/,
-      message: 'Enter the 10 digits after +63, starting with 9',
-      hint: 'e.g. 9123456789',
-    },
     drivers_license: {
       // LTO format: 1 office letter + 2-digit district + dash + 2-digit year + dash + 6-digit serial
       // Mask shown to the user: A00-00-000000
       regex: /^[A-Z]\d{2}-\d{2}-\d{6}$/i,
       message: 'Invalid LTO license number. Use format: A00-00-000000',
       hint: 'e.g. A00-00-000000',
-    },
-    student_id: {
-      regex: /^\d{8}$/,
-      message: 'Invalid student ID. Must be 8 digits (e.g. 12345678)',
-      hint: 'e.g. 12345678',
-    },
-    employee_id: {
-      regex: /^\d{8}$/,
-      message: 'Invalid employee ID. Must be 8 digits (e.g. 12345678)',
-      hint: 'e.g. 12345678',
     },
   }
 
@@ -727,7 +604,6 @@ export default function RegisterPage() {
       let formatted = value
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
-      else if (name === 'contact_number' || name === 'driver_contact') formatted = toStoredMobile(value)
       else if (name === 'email') formatted = formatted.toLowerCase()
       else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
@@ -741,7 +617,7 @@ export default function RegisterPage() {
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
       // Stale duplicate hint no longer applies to the value being typed — the debounced
       // check below will repopulate it once the new value settles
-      if (['plate_number', 'email', 'drivers_license', 'student_id', 'employee_id'].includes(name))
+      if (['plate_number', 'email', 'drivers_license'].includes(name))
         setDupErrors((prev) => ({ ...prev, [name]: null }))
     }
   }
@@ -761,152 +637,19 @@ export default function RegisterPage() {
     }))
   }
 
-  /* ── Supporting documents ──
-     Posted after the registration row exists, so a failure here leaves an
-     application on file with no driver's license photo attached — and CDSO
-     cannot review it without one. The single automatic retry absorbs the usual
-     transient blip; anything that survives it is handed back to the applicant
-     as a button they can press, not a warning they can only read. */
-  const uploadDocuments = async (registrationId, email, files) => {
-    try {
-      await registrationApi.uploadRegistrationDocuments(registrationId, email, files)
-      return true
-    } catch (firstErr) {
-      console.error('Registration document upload failed, retrying:', firstErr)
-      try {
-        await registrationApi.uploadRegistrationDocuments(registrationId, email, files)
-        return true
-      } catch (retryErr) {
-        console.error('Registration document upload failed again:', retryErr)
-        return false
-      }
-    }
-  }
-
-  const handleRetryDocUpload = async () => {
-    if (!pendingDocUpload || retryingDocUpload) return
-    setRetryingDocUpload(true)
-    const { registrationId, email, files } = pendingDocUpload
-    const ok = await uploadDocuments(registrationId, email, files)
-    setRetryingDocUpload(false)
-    if (ok) {
-      setPendingDocUpload(null)
-      notify.success(
-        'Your documents are now on file — nothing else is needed from you.',
-        { title: 'Upload complete' },
-      )
-    } else {
-      notify.error(
-        'The upload still did not go through. Check your connection and try again, or '
-        + 'bring the physical driver’s license to the CDSO Office.',
-        { title: 'Upload failed' },
-      )
-    }
-  }
-
-  /* ── Driver's license photo ── */
-  const handleLicenseImageChange = async (e) => {
-    const picked = e.target.files?.[0]
-    // Let the user re-pick the same file after removing it
-    e.target.value = ''
-    if (!picked) return
-
-    if (!LICENSE_IMAGE_TYPES.includes(picked.type)) {
-      notify.error('Please choose a JPG, PNG, WEBP or HEIC image.', { title: 'Unsupported file' })
-      return
-    }
-    if (picked.size > LICENSE_IMAGE_MAX_BYTES) {
-      notify.error(`That image is ${formatFileSize(picked.size)}. Please keep it under ${LICENSE_IMAGE_MAX_MB}MB.`, { title: 'Image too large' })
-      return
-    }
-
-    // Shrunk here rather than at submit time, so the chip below shows the size
-    // that will actually be uploaded and the work happens while the applicant
-    // is still filling in fields. Falls back to the original on any failure.
-    const file = await compressImage(picked)
-
-    setLicenseImage(file)
-    // HEIC won't render in most browsers — fall back to the filename-only chip.
-    // Built outside the updater so StrictMode's double-invoke can't leak a second URL.
-    const nextPreview = file.type === 'image/heic' || file.type === 'image/heif'
-      ? null
-      : URL.createObjectURL(file)
-    setLicensePreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev)
-      return nextPreview
-    })
-  }
-
-  const clearLicenseImage = () => {
-    setLicenseImage(null)
-    setLicensePreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev)
-      return null
-    })
-  }
-
-  /* ── Assessment form ──
-     No preview: half of these are PDFs, and the ones that aren't are dense
-     scans that read as noise at thumbnail size. The filename chip is enough
-     for the applicant to confirm they picked the right file. */
-  // Shared by the applicant's own assessment and by each fetched student's:
-  // same file rules, same messages, one place to change them.
-  const pickAssessmentFile = (e) => {
-    const file = e.target.files?.[0]
-    // Let the user re-pick the same file after removing it
-    e.target.value = ''
-    if (!file) return null
-
-    // Some browsers report an empty type for HEIC; fall back to the extension.
-    const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name)
-    if (!ASSESSMENT_FILE_TYPES.includes(file.type) && !extOk) {
-      notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
-      return null
-    }
-    if (file.size > ASSESSMENT_FILE_MAX_BYTES) {
-      notify.error(`That file is ${formatFileSize(file.size)}. Please keep it under ${ASSESSMENT_FILE_MAX_MB}MB.`, { title: 'File too large' })
-      return null
-    }
-
-    return file
-  }
-
-  // compressImage passes PDFs straight through — an assessment form is as often
-  // the portal's PDF as a photo of the printed copy.
-  const handleAssessmentChange = async (e) => {
-    const file = pickAssessmentFile(e)
-    if (file) setAssessmentFile(await compressImage(file))
-  }
-
-  const clearAssessmentFile = () => {
-    setAssessmentFile(null)
-  }
-
-  const handleFetcherAssessmentChange = async (index, e) => {
-    const file = pickAssessmentFile(e)
-    if (file) updateFetcherStudent(index, 'assessment', await compressImage(file))
-  }
-
-  // Release the last object URL when the form unmounts
-  useEffect(() => () => { if (licensePreview) URL.revokeObjectURL(licensePreview) }, [licensePreview])
-
   // Debounced live duplicate check — warns in the field hint before the user submits
   useEffect(() => {
     const plate = formData.plate_number?.trim()
     const conduction = formData.conduction_number?.trim()
     const email = formData.email?.trim()
     const license = formData.drivers_license?.trim()
-    const studentId = formData.student_id?.trim()
-    const employeeId = formData.employee_id?.trim()
 
     const plateValid = !isNewVehicle && plate && isValidPlateNumber(plate)
     const conductionValid = isNewVehicle && !!conduction && FIELD_PATTERNS.conduction_number.regex.test(conduction)
     const emailValid = !!email && FIELD_PATTERNS.email.regex.test(email)
     const licenseValid = !!license && FIELD_PATTERNS.drivers_license.regex.test(license)
-    const studentIdValid = registrantType === 'student' && /^\d{8}$/.test(studentId || '')
-    const employeeIdValid = registrantType === 'employee' && /^\d{8}$/.test(employeeId || '')
 
-    if (!plateValid && !conductionValid && !emailValid && !licenseValid && !studentIdValid && !employeeIdValid) return
+    if (!plateValid && !conductionValid && !emailValid && !licenseValid) return
 
     setDupChecking(prev => ({
       ...prev,
@@ -914,8 +657,6 @@ export default function RegisterPage() {
       conduction_number: conductionValid || prev.conduction_number,
       email: emailValid || prev.email,
       drivers_license: licenseValid || prev.drivers_license,
-      student_id: studentIdValid || prev.student_id,
-      employee_id: employeeIdValid || prev.employee_id,
     }))
 
     const timer = setTimeout(async () => {
@@ -925,8 +666,6 @@ export default function RegisterPage() {
           conduction_number: conductionValid ? conduction : '',
           email: emailValid ? email : '',
           drivers_license: licenseValid ? license : '',
-          student_id: studentIdValid ? studentId : '',
-          employee_id: employeeIdValid ? employeeId : '',
         })
         setDupErrors(prev => ({
           ...prev,
@@ -934,8 +673,6 @@ export default function RegisterPage() {
           ...(conductionValid && { conduction_number: result.conduction_number }),
           ...(emailValid && { email: result.email }),
           ...(licenseValid && { drivers_license: result.drivers_license }),
-          ...(studentIdValid && { student_id: result.student_id }),
-          ...(employeeIdValid && { employee_id: result.employee_id }),
         }))
         setBanned(result.banned || null)
       } catch {
@@ -947,13 +684,11 @@ export default function RegisterPage() {
           ...(conductionValid && { conduction_number: false }),
           ...(emailValid && { email: false }),
           ...(licenseValid && { drivers_license: false }),
-          ...(studentIdValid && { student_id: false }),
-          ...(employeeIdValid && { employee_id: false }),
         }))
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, formData.student_id, formData.employee_id, registrantType, emailMode])
+  }, [formData.plate_number, formData.conduction_number, isNewVehicle, formData.email, formData.drivers_license, registrantType, emailMode])
 
   const selectSchedule = (group) => {
     setFormData(prev => ({ ...prev, schedule: group.code, campus_days: [...group.days] }))
@@ -1000,7 +735,7 @@ export default function RegisterPage() {
 
     // Format checks. These still mark their fields red, so the list and the
     // form agree on what to look at.
-    const fieldsToValidate = ['email', 'plate_number', 'conduction_number', 'contact_number', 'drivers_license', 'driver_contact', 'student_id', 'employee_id']
+    const fieldsToValidate = ['email', 'plate_number', 'conduction_number', 'drivers_license']
     const newErrors = {}
     fieldsToValidate.forEach(name => {
       const err = validateField(name, formData[name])
@@ -1012,14 +747,8 @@ export default function RegisterPage() {
     }
 
     // Already-known duplicates from the live check (the backend re-checks regardless)
-    ;['plate_number', 'conduction_number', 'email', 'drivers_license', 'student_id', 'employee_id']
+    ;['plate_number', 'conduction_number', 'email', 'drivers_license']
       .forEach((name) => { if (dupErrors[name]) problems.push(dupErrors[name]) })
-
-    // The license number on its own is just typed text — the photo is what CDSO
-    // checks it against, so an application without one cannot be reviewed.
-    if (!licenseImage) {
-      problems.push("Attach a photo of the driver's license so CDSO can verify it.")
-    }
 
     // Cannot normally fail — the gate sets it before the form is reachable —
     // but if it ever does, put the notice back up rather than report a checkbox
@@ -1033,12 +762,6 @@ export default function RegisterPage() {
     }
 
     if (registrantType === 'student') {
-      // The whole point of the attachment is proving enrolment, so a student
-      // application without it can’t be reviewed — blocked here rather than
-      // letting CDSO chase it down after the fact.
-      if (!assessmentFile) {
-        problems.push('Attach your assessment form so CDSO can verify your enrolment.')
-      }
       if (!formData.student_level) {
         problems.push('Select your education level.')
       } else if (formData.student_level === 'college' && (!formData.student_program.trim() || !formData.student_year)) {
@@ -1068,13 +791,8 @@ export default function RegisterPage() {
         problems.push('Choose your fetcher classification: Fetcher/Drop & Go or Standby.')
       }
       fetcherStudents.forEach((st, i) => {
-        if (!st.full_name.trim() || !st.student_id.trim() || !st.student_level) {
-          problems.push(`Student #${i + 1}: full name, student ID and education level are required.`)
-        }
-        // Same reason a student applicant cannot skip theirs: without it there
-        // is nothing for CDSO to check the enrolment against.
-        if (!st.assessment) {
-          problems.push(`Student #${i + 1}: attach their assessment form.`)
+        if (!st.full_name.trim() || !st.student_level) {
+          problems.push(`Student #${i + 1}: full name and education level are required.`)
         }
       })
     }
@@ -1084,8 +802,6 @@ export default function RegisterPage() {
     setSubmitting(true)
     try {
       const full_name = [formData.last_name, formData.first_name, formData.middle_name]
-        .map(s => s.trim()).filter(Boolean).join(', ')
-      const address = [formData.house_street, formData.barangay, formData.city_municipality, formData.province]
         .map(s => s.trim()).filter(Boolean).join(', ')
 
       // Compose program_year from the level-specific fields
@@ -1112,22 +828,17 @@ export default function RegisterPage() {
         plate_number:      isNewVehicle ? '' : formData.plate_number,
         conduction_number: isNewVehicle ? formData.conduction_number : '',
         full_name,
-        address,
         program_year,
         registrant_type: registrantType,
         student_level: registrantType === 'student' ? formData.student_level : '',
         // Driver fields only apply to guardian-driven student registrations
         driver_name:         guardian ? formData.driver_name.trim() : '',
         driver_relationship: guardian ? formData.driver_relationship : '',
-        driver_contact:      guardian ? formData.driver_contact.trim() : '',
         // Fetcher classification + students being fetched
         fetcher_type:     registrantType === 'fetcher' ? fetcherType : '',
         fetcher_students: registrantType === 'fetcher'
-          // Text only: the assessment File is uploaded separately, against
-          // this same index, by uploadRegistrationDocuments below.
           ? fetcherStudents.map(s => ({
               full_name:     s.full_name.trim(),
-              student_id:    s.student_id.trim(),
               student_level: s.student_level,
               program_year:  s.program_year.trim(),
             }))
@@ -1139,34 +850,7 @@ export default function RegisterPage() {
       // UI-only helper for the colour dropdown — the backend stores vehicle_color.
       delete payload.vehicle_color_choice
 
-      const result = await registrationApi.submitOpenRegistration(payload)
-
-      // Only students have an assessment form; if one was attached before the
-      // applicant switched registrant type, it is dropped rather than filed
-      // against a registration nobody will look for it on.
-      const assessment = registrantType === 'student' ? assessmentFile : null
-      // One per fetched student, keyed by their position in fetcher_students —
-      // that index is what pairs the file with the student on the review screen.
-      const fetcherAssessments = registrantType === 'fetcher'
-        ? fetcherStudents.map(st => st.assessment || null)
-        : []
-      const hasFetcherAssessment = fetcherAssessments.some(Boolean)
-      if ((licenseImage || assessment || hasFetcherAssessment) && result?.id) {
-        const files = { license: licenseImage, assessment, fetcherAssessments }
-        if (!await uploadDocuments(result.id, payload.email, files)) {
-          // The registration itself is saved and cannot be submitted again, so
-          // the upload is parked for retry rather than lost. Raised as a modal
-          // too: the license photo is required, and a notice sitting on the
-          // success screen is exactly the kind of thing a relieved applicant
-          // scrolls straight past.
-          setPendingDocUpload({ registrationId: result.id, email: payload.email, files })
-          notify.error(
-            'Your application was submitted, but the driver’s license photo did not upload — '
-            + 'and CDSO needs it to review your application. Use “Retry upload” on the next screen.',
-            { title: 'Documents not uploaded' },
-          )
-        }
-      }
+      await registrationApi.submitOpenRegistration(payload)
 
       // Go straight to the success screen
       setSubmitted(true)
@@ -1209,9 +893,9 @@ export default function RegisterPage() {
      others get defaults the moment a registrant type is picked, and warning
      about those would fire on an empty form. */
   const TYPED_FIELDS = [
-    'last_name', 'first_name', 'middle_name', 'email', 'contact_number',
-    'plate_number', 'conduction_number', 'student_id', 'employee_id',
-    'drivers_license', 'house_street', 'driver_name', 'driver_contact',
+    'last_name', 'first_name', 'middle_name', 'email',
+    'plate_number', 'conduction_number',
+    'drivers_license', 'driver_name',
   ]
 
   const handleBackToLogin = async () => {
@@ -1363,27 +1047,6 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {pendingDocUpload && (
-              <div className="success-license-warn">
-                <AlertTriangle size={16} />
-                <div className="success-license-warn-body">
-                  <span>
-                    Your application was submitted, but your supporting documents could not be
-                    uploaded. The driver's license photo is required before CDSO can review your
-                    application — please retry, or bring the physical copies to the CDSO Office.
-                  </span>
-                  <button
-                    type="button"
-                    className="success-license-retry"
-                    onClick={handleRetryDocUpload}
-                    disabled={retryingDocUpload}
-                  >
-                    {retryingDocUpload ? 'Uploading…' : 'Retry upload'}
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Next steps. Each one is drawn as well as written — this screen is
                 read once, on a phone, and the applicant has to remember the
                 errand for days afterwards. */}
@@ -1401,8 +1064,8 @@ export default function RegisterPage() {
                       nothing to settle at the Accounting Office.
                     </IllustratedStep>
                     <IllustratedStep step={2} art={<CdsoOfficeArt />} title="Go to the CDSO Office">
-                      Bring a valid ID. The CDSO reviews your application and the documents you
-                      attached, then releases your vehicle pass.
+                      Bring a valid ID and your driver's licence. The CDSO reviews your
+                      application against them, then releases your vehicle pass.
                     </IllustratedStep>
                   </>
                 ) : (
@@ -1413,12 +1076,12 @@ export default function RegisterPage() {
                       title={`Pay ₱${vehiclePassFee.toFixed(2)} at the Accounting Office`}
                     >
                       Settle the vehicle pass fee at the counter and keep the Official Receipt (OR)
-                      they hand you — you will need both its number and a photo of it.
+                      they hand you — you will need its number, and the receipt itself at the CDSO.
                     </IllustratedStep>
-                    <IllustratedStep step={2} art={<UploadOrArt />} title="Upload your Official Receipt">
-                      Open the link in the email we just sent, enter the OR number and attach a
-                      clear photo of the receipt. Your application is not queued for review until
-                      this is done.
+                    <IllustratedStep step={2} art={<UploadOrArt />} title="File your Official Receipt number">
+                      Open the link in the email we just sent and enter the OR number printed on
+                      your receipt. Keep the receipt itself — the CDSO checks the paper copy at
+                      the counter. Your application is not queued for review until this is done.
                     </IllustratedStep>
                   </>
                 )}
@@ -1775,73 +1438,6 @@ export default function RegisterPage() {
                 />
               </div>
 
-              {/* Address */}
-              <div className="form-subsection col-span-2"><span>Address</span></div>
-
-              <div className="form-group">
-                <label>Province <span className="required">*</span></label>
-                <select
-                  value={selectedProvinceCode}
-                  onChange={e => {
-                    const opt = provinces.find(p => p.code === e.target.value)
-                    setSelectedProvinceCode(e.target.value)
-                    setSelectedCityCode('')
-                    setFormData(prev => ({ ...prev, province: opt?.name ?? '', city_municipality: '', barangay: '' }))
-                  }}
-                  required
-                >
-                  <option value="">Select Province</option>
-                  {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>City / Municipality <span className="required">*</span></label>
-                <select
-                  value={selectedCityCode}
-                  onChange={e => {
-                    const opt = cities.find(c => c.code === e.target.value)
-                    setSelectedCityCode(e.target.value)
-                    setFormData(prev => ({ ...prev, city_municipality: opt?.name ?? '', barangay: '' }))
-                  }}
-                  required
-                  disabled={!selectedProvinceCode || loadingCities}
-                >
-                  <option value="">
-                    {loadingCities ? 'Loading…' : !selectedProvinceCode ? 'Select province first' : 'Select City / Municipality'}
-                  </option>
-                  {cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Barangay <span className="required">*</span></label>
-                <select
-                  name="barangay"
-                  value={formData.barangay}
-                  onChange={e => setFormData(prev => ({ ...prev, barangay: e.target.value }))}
-                  required
-                  disabled={!selectedCityCode || loadingBarangays}
-                >
-                  <option value="">
-                    {loadingBarangays ? 'Loading…' : !selectedCityCode ? 'Select city first' : 'Select Barangay'}
-                  </option>
-                  {barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
-                </select>
-              </div>
-
-              <div className="form-group col-span-2">
-                <label>House / Unit No. &amp; Street <span className="required">*</span></label>
-                <input
-                  type="text"
-                  name="house_street"
-                  value={formData.house_street}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="e.g. 123 Rizal Street"
-                />
-              </div>
-
               {/* Other Information */}
               <div className="form-subsection col-span-2"><span>Other Information</span></div>
 
@@ -1919,24 +1515,6 @@ export default function RegisterPage() {
                       ))}
                     </div>
                   </div>
-
-                  {/* Student ID — always shown once level is picked */}
-                  {formData.student_level && (
-                    <div className="form-group">
-                      <label>Student ID Number <span className="required">*</span></label>
-                      <input
-                        type="text"
-                        name="student_id"
-                        value={formData.student_id}
-                        onChange={handleInputChange}
-                        required
-                        placeholder={FIELD_PATTERNS.student_id.hint}
-                        className={formErrors.student_id || dupErrors.student_id ? 'input-error' : ''}
-                      />
-                      <span className="field-hint">{FIELD_PATTERNS.student_id.hint}</span>
-                      {!formErrors.student_id && dupChecking.student_id && <span className="field-checking-msg">Checking availability…</span>}
-                    </div>
-                  )}
 
                   {/* College: separate program + year level fields */}
                   {formData.student_level === 'college' && (
@@ -2056,21 +1634,7 @@ export default function RegisterPage() {
               {/* Employee-specific */}
               {isEmployee && (
                 <>
-                  <div className="form-group">
-                    <label>Employee ID <span className="required">*</span></label>
-                    <input
-                      type="text"
-                      name="employee_id"
-                      value={formData.employee_id}
-                      onChange={handleInputChange}
-                      required
-                      placeholder={FIELD_PATTERNS.employee_id.hint}
-                      className={formErrors.employee_id || dupErrors.employee_id ? 'input-error' : ''}
-                    />
-                    <span className="field-hint">{FIELD_PATTERNS.employee_id.hint}</span>
-                    {!formErrors.employee_id && dupChecking.employee_id && <span className="field-checking-msg">Checking availability…</span>}
-                  </div>
-                  <div className="form-group">
+                  <div className="form-group col-span-2">
                     <label>Department <span className="required">*</span></label>
                     <select
                       name="department"
@@ -2087,35 +1651,6 @@ export default function RegisterPage() {
                   </div>
                 </>
               )}
-
-              <div className="form-group">
-                <label>Contact Number <span className="required">*</span></label>
-                <div className={`phone-field${formErrors.contact_number ? ' input-error' : ''}`}>
-                  <span className="phone-prefix">{PH_DIAL_CODE}</span>
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    maxLength={10}
-                    name="contact_number"
-                    value={toDisplayMobile(formData.contact_number)}
-                    onChange={handleInputChange}
-                    required
-                    placeholder="9123456789"
-                  />
-                </div>
-                <span className="field-hint">10 digits after +63 — e.g. 9123456789</span>
-              </div>
-
-              <div className="form-group">
-                <label>{guardianDriven ? "Student's Age" : 'Age'}</label>
-                <select name="age" value={formData.age} onChange={handleInputChange}>
-                  <option value="">Select Age</option>
-                  {ageOptions(guardianDriven ? 3 : 15).map(a => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
 
               {/* Who drives — students only. JHS/Elementary/SpEd skip the choice. */}
               {isStudent && formData.student_level && (
@@ -2144,7 +1679,7 @@ export default function RegisterPage() {
                             onClick={() => setFormData(prev => ({
                               ...prev,
                               who_drives: opt.id,
-                              ...(opt.id === 'self' ? { driver_name: '', driver_relationship: '', driver_contact: '' } : {}),
+                              ...(opt.id === 'self' ? { driver_name: '', driver_relationship: '' } : {}),
                             }))}
                           >
                             {opt.label}
@@ -2258,23 +1793,6 @@ export default function RegisterPage() {
                     />
                     <span className="field-hint">The authorized driver's LTO license — {FIELD_PATTERNS.drivers_license.hint}</span>
                   </div>
-                  <div className="form-group">
-                    <label>Driver's Contact Number</label>
-                    <div className={`phone-field${formErrors.driver_contact ? ' input-error' : ''}`}>
-                      <span className="phone-prefix">{PH_DIAL_CODE}</span>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        autoComplete="tel-national"
-                        maxLength={10}
-                        name="driver_contact"
-                        value={toDisplayMobile(formData.driver_contact)}
-                        onChange={handleInputChange}
-                        placeholder="9123456789"
-                      />
-                    </div>
-                    <span className="field-hint">10 digits after +63 — e.g. 9123456789</span>
-                  </div>
                 </>
               ) : (
                 <div className="form-group col-span-2">
@@ -2293,97 +1811,6 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              <div className="form-group col-span-2">
-                <label>Driver's License Photo <span className="required">*</span></label>
-
-                {!licenseImage ? (
-                  <label className="license-upload">
-                    <input
-                      type="file"
-                      accept={LICENSE_IMAGE_TYPES.join(',')}
-                      onChange={handleLicenseImageChange}
-                      className="license-upload-input"
-                    />
-                    <Upload size={18} className="license-upload-icon" />
-                    <span className="license-upload-text">
-                      <strong>Choose a photo</strong>
-                      <span>JPG, PNG, WEBP or HEIC · up to {LICENSE_IMAGE_MAX_MB}MB</span>
-                    </span>
-                  </label>
-                ) : (
-                  <div className="license-preview">
-                    {licensePreview ? (
-                      <img src={licensePreview} alt="Driver's license preview" className="license-preview-img" />
-                    ) : (
-                      <div className="license-preview-img license-preview-noimg">HEIC</div>
-                    )}
-                    <div className="license-preview-meta">
-                      <span className="license-preview-name" title={licenseImage.name}>{licenseImage.name}</span>
-                      <span className="license-preview-size">{formatFileSize(licenseImage.size)}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="license-preview-remove"
-                      onClick={clearLicenseImage}
-                      aria-label="Remove driver's license photo"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                )}
-
-                <span className="field-hint">
-                  Attach a clear, readable photo of the driver's license — CDSO checks it against
-                  the license number above before approving the application.
-                </span>
-              </div>
-
-              {/* Assessment form — the enrolment proof. Students only: an employee
-                  or a fetching parent has no assessment to show. */}
-              {isStudent && (
-                <div className="form-group col-span-2">
-                  <label>Assessment Form <span className="required">*</span></label>
-
-                  {!assessmentFile ? (
-                    <label className="license-upload">
-                      <input
-                        type="file"
-                        accept={ASSESSMENT_FILE_TYPES.join(',')}
-                        onChange={handleAssessmentChange}
-                        className="license-upload-input"
-                      />
-                      <Upload size={18} className="license-upload-icon" />
-                      <span className="license-upload-text">
-                        <strong>Choose a file</strong>
-                        <span>JPG, PNG, WEBP, HEIC or PDF · up to {ASSESSMENT_FILE_MAX_MB}MB</span>
-                      </span>
-                    </label>
-                  ) : (
-                    <div className="license-preview">
-                      <div className="license-preview-img license-preview-noimg">
-                        <FileText size={20} />
-                      </div>
-                      <div className="license-preview-meta">
-                        <span className="license-preview-name" title={assessmentFile.name}>{assessmentFile.name}</span>
-                        <span className="license-preview-size">{formatFileSize(assessmentFile.size)}</span>
-                      </div>
-                      <button
-                        type="button"
-                        className="license-preview-remove"
-                        onClick={clearAssessmentFile}
-                        aria-label="Remove assessment form"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  )}
-
-                  <span className="field-hint">
-                    Your latest registrar's assessment form — this is what confirms you are an
-                    enrolled SLC student. A clear photo or the PDF from the student portal both work.
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* ── Fetcher Classification & Students ── */}
@@ -2415,8 +1842,8 @@ export default function RegisterPage() {
                 <hr className="divider" />
                 <h3 className="section-heading">Students to Fetch <span className="required">*</span></h3>
                 <p className="field-hint" style={{ display: 'block', marginBottom: 12 }}>
-                  List at least one student you will be fetching, and attach each one's assessment
-                  form. Use "Add another student" if you fetch more than one.
+                  List at least one student you will be fetching. Use "Add another student" if you
+                  fetch more than one.
                 </p>
                 {fetcherStudents.map((s, i) => (
                   <div key={i} className="fetcher-student-card">
@@ -2443,15 +1870,6 @@ export default function RegisterPage() {
                         />
                       </div>
                       <div className="form-group">
-                        <label>Student ID <span className="required">*</span></label>
-                        <input
-                          type="text"
-                          value={s.student_id}
-                          onChange={e => updateFetcherStudent(i, 'student_id', e.target.value)}
-                          placeholder={FIELD_PATTERNS.student_id.hint}
-                        />
-                      </div>
-                      <div className="form-group">
                         <label>Education Level <span className="required">*</span></label>
                         <select
                           value={s.student_level}
@@ -2473,49 +1891,6 @@ export default function RegisterPage() {
                         />
                       </div>
 
-                      {/* Enrolment proof for this student. No preview, for the
-                          same reason as the applicant's own: most are PDFs and
-                          the rest are dense scans. */}
-                      <div className="form-group col-span-2">
-                        <label>Assessment Form <span className="required">*</span></label>
-                        {!s.assessment ? (
-                          <label className="license-upload">
-                            <input
-                              type="file"
-                              accept={ASSESSMENT_FILE_TYPES.join(',')}
-                              onChange={e => handleFetcherAssessmentChange(i, e)}
-                              className="license-upload-input"
-                            />
-                            <Upload size={18} className="license-upload-icon" />
-                            <span className="license-upload-text">
-                              <strong>Choose a file</strong>
-                              <span>JPG, PNG, WEBP, HEIC or PDF · up to {ASSESSMENT_FILE_MAX_MB}MB</span>
-                            </span>
-                          </label>
-                        ) : (
-                          <div className="license-preview">
-                            <div className="license-preview-img license-preview-noimg">
-                              <FileText size={20} />
-                            </div>
-                            <div className="license-preview-meta">
-                              <span className="license-preview-name" title={s.assessment.name}>{s.assessment.name}</span>
-                              <span className="license-preview-size">{formatFileSize(s.assessment.size)}</span>
-                            </div>
-                            <button
-                              type="button"
-                              className="license-preview-remove"
-                              onClick={() => updateFetcherStudent(i, 'assessment', null)}
-                              aria-label={`Remove assessment form for student #${i + 1}`}
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
-                        )}
-                        <span className="field-hint">
-                          This student's latest registrar's assessment form — what confirms they
-                          are enrolled at SLC.
-                        </span>
-                      </div>
                     </div>
                   </div>
                 ))}
@@ -2603,8 +1978,8 @@ export default function RegisterPage() {
                   />
                   <span>
                     <strong>CONFIRMATION OF DETAILS:</strong> I confirm that all the details I
-                    have entered in this form — my personal information, vehicle details and the
-                    documents I attached — are <strong>true, complete and correct</strong>. I
+                    have entered in this form — my personal information and vehicle details —
+                    are <strong>true, complete and correct</strong>. I
                     understand that any false or misleading information is grounds for the denial
                     or revocation of my vehicle pass.
                   </span>

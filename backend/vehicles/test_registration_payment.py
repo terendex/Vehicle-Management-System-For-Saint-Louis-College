@@ -81,11 +81,20 @@ class PaymentTestCase(TestCase):
         return VehicleRegistration.objects.get(pk=res.data['id'])
 
     def pay(self, reg, or_number='1380093', **over):
-        payload = {'token': str(reg.payment_token), 'or_number': or_number,
-                   'receipt': receipt_file()}
+        # TEMPORARY (DPO trial): the OR number alone, sent as JSON — the receipt
+        # image is not collected any more. See pay_with_file below for what a
+        # browser still running the previous bundle does.
+        payload = {'token': str(reg.payment_token), 'or_number': or_number}
         payload.update(over)
         return self.client.post('/api/vehicles/register/payment/', payload,
-                                format='multipart')
+                                format='json')
+
+    def pay_with_file(self, reg, or_number='1380093', receipt=None):
+        """What a stale bundle still posts: multipart, with a receipt attached."""
+        return self.client.post('/api/vehicles/register/payment/', {
+            'token': str(reg.payment_token), 'or_number': or_number,
+            'receipt': receipt if receipt is not None else receipt_file(),
+        }, format='multipart')
 
     def accept(self, reg, **body):
         self.client.force_authenticate(user=self.admin)
@@ -139,7 +148,7 @@ class ReceiptUploadTests(PaymentTestCase):
         self.assertEqual(Decimal(res.data['amount_due']),
                          SystemSettings.get().vehicle_pass_fee)
 
-    def test_uploading_a_receipt_settles_the_application(self):
+    def test_filing_the_or_number_settles_the_application(self):
         reg = self.submit()
         res = self.pay(reg, or_number='1380093')
         self.assertEqual(res.status_code, 200, res.data)
@@ -147,9 +156,11 @@ class ReceiptUploadTests(PaymentTestCase):
         reg.refresh_from_db()
         self.assertEqual(reg.payment_status, PS.PAID)
         self.assertEqual(reg.or_number, '1380093')
-        self.assertTrue(reg.or_receipt_image)
         self.assertIsNotNone(reg.paid_at)
         self.assertEqual(reg.amount_paid, SystemSettings.get().vehicle_pass_fee)
+        # TEMPORARY (DPO trial): no image is kept — the CDSO checks the paper
+        # receipt at the counter instead.
+        self.assertFalse(reg.or_receipt_image)
 
     def test_the_amount_is_snapshotted_not_looked_up(self):
         """A later fee change must not rewrite what this applicant paid."""
@@ -165,14 +176,16 @@ class ReceiptUploadTests(PaymentTestCase):
         self.assertEqual(reg.amount_paid, original,
                          'raising the fee retroactively rewrote a past payment')
 
-    def test_a_receipt_is_required(self):
+    def test_a_receipt_photo_is_no_longer_required(self):
+        """TEMPORARY — Data Privacy Office trial. The number is the whole step."""
         reg = self.submit()
         res = self.client.post('/api/vehicles/register/payment/',
                                {'token': str(reg.payment_token), 'or_number': '1380093'},
                                format='multipart')
-        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.status_code, 200, res.data)
         reg.refresh_from_db()
-        self.assertEqual(reg.payment_status, PS.UNPAID)
+        self.assertEqual(reg.payment_status, PS.PAID)
+        self.assertFalse(reg.or_receipt_image)
 
     def test_an_or_number_is_required(self):
         reg = self.submit()
@@ -187,14 +200,26 @@ class ReceiptUploadTests(PaymentTestCase):
                 reg = self.submit()
                 self.assertEqual(self.pay(reg, or_number=bad).status_code, 400)
 
-    def test_an_executable_is_not_a_receipt(self):
-        reg = self.submit()
-        res = self.pay(reg, receipt=SimpleUploadedFile(
-            'receipt.exe', b'MZ', content_type='application/octet-stream'))
-        self.assertEqual(res.status_code, 400)
+    def test_an_attached_file_is_ignored_rather_than_stored(self):
+        """TEMPORARY — Data Privacy Office trial.
+
+        A browser still running the previous bundle posts multipart with a file.
+        The payment must still go through — the applicant did pay — but nothing
+        of the file may reach storage, whatever it turns out to be.
+        """
+        for upload in (receipt_file(),
+                       SimpleUploadedFile('receipt.exe', b'MZ',
+                                          content_type='application/octet-stream')):
+            with self.subTest(name=upload.name):
+                reg = self.submit()
+                res = self.pay_with_file(reg, receipt=upload)
+                self.assertEqual(res.status_code, 200, res.data)
+                reg.refresh_from_db()
+                self.assertEqual(reg.payment_status, PS.PAID)
+                self.assertFalse(reg.or_receipt_image)
 
     def test_a_receipt_can_be_replaced_while_pending(self):
-        """A blurry first photo must not lock the applicant out."""
+        """A mistyped first number must not lock the applicant out."""
         reg = self.submit()
         self.assertEqual(self.pay(reg, or_number='1111111').status_code, 200)
         self.assertEqual(self.pay(reg, or_number='2222222').status_code, 200)

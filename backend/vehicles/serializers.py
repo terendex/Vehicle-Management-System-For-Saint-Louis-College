@@ -32,6 +32,16 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
     # single list of what the review process owns.
     DOCUMENT_FIELDS = ('drivers_license_image', 'assessment_form', 'or_receipt_image')
 
+    # TEMPORARY — Data Privacy Office trial. The columns still exist (the schema
+    # is shared with the other branches and must not move), and rows filed before
+    # the trial still hold values in them, but nothing this API serves may carry
+    # them: the reviewer screens, the owner portal and the vehicle profile a
+    # guard can open all read this serializer. Dropped on the way out rather than
+    # excluded from `fields`, so `fields = '__all__'` stays the one list and a
+    # revert is one block of code.
+    WITHHELD_FIELDS = ('address', 'contact_number', 'age',
+                       'student_id', 'employee_id', 'driver_contact')
+
     class Meta:
         model = VehicleRegistration
         fields = '__all__'
@@ -109,27 +119,25 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         # instance.department is a FK: without select_related('department') on
         # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
-        # What is stored is an object key; what the reviewer's browser needs is
-        # a URL it can fetch. See document_urls for why that is not the bucket's
-        # public path.
-        request = self.context.get('request')
+        # TEMPORARY (DPO trial): what is stored is an object key, and what the
+        # reviewer's browser used to get back was a signed URL for it (see
+        # document_urls). Nothing is uploaded any more, so every slot is reported
+        # empty instead — a legacy row's file is not handed out either.
         for name in self.DOCUMENT_FIELDS:
-            data[name] = signed_document_url(getattr(instance, name), request)
-        # A fetcher's students each attach their own enrolment proof. The files
-        # live in their own table (FetcherStudentAssessment) but the reviewer
-        # reads them per student, so each one is folded into the entry it
-        # belongs to rather than handed over as a separate list to re-pair.
-        # Prefetch 'fetcher_assessments' on the queryset or this costs a query
-        # per row.
+            data[name] = None
+        for name in self.WITHHELD_FIELDS:
+            data.pop(name, None)
+        # A fetcher's students used to each carry their own enrolment proof,
+        # folded in here from FetcherStudentAssessment so the reviewer read it
+        # against the right child.
+        # TEMPORARY (DPO trial): a fetched student is identified by name and
+        # level only — no ID number, and no enrolment proof to pair with them.
         students = data.get('fetcher_students')
         if isinstance(students, list) and students:
-            by_index = {a.student_index: a for a in instance.fetcher_assessments.all()}
             data['fetcher_students'] = [
-                {**entry,
-                 'assessment_form': signed_document_url(
-                     by_index[i].assessment_form, request) if i in by_index else None}
+                {k: v for k, v in entry.items() if k != 'student_id'}
                 if isinstance(entry, dict) else entry
-                for i, entry in enumerate(students)
+                for entry in students
             ]
         # payment_token is the secret in the applicant's receipt-upload link.
         # This serializer feeds the CDSO queue and the vehicle profile a guard

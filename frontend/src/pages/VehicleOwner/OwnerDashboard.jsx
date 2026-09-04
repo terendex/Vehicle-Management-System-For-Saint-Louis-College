@@ -501,21 +501,15 @@ export default function OwnerDashboard() {
                     <div className="od-detail"><span className="od-detail-label">Full Name</span><span className="od-detail-val">{reg.full_name}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Email</span><span className="od-detail-val">{reg.email}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Type</span><span className="od-detail-val od-capitalize">{reg.registrant_type}</span></div>
+                    {/* TEMPORARY (DPO trial): Student/Employee ID, contact
+                        number, age and address are not collected any more, so
+                        the rows that showed them are gone. */}
                     {reg.registrant_type === 'student' ? (
-                      <>
-                        <div className="od-detail"><span className="od-detail-label">Student ID</span><span className="od-detail-val">{reg.student_id || '—'}</span></div>
-                        <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Program &amp; Year</span><span className="od-detail-val">{reg.program_year || '—'}</span></div>
-                      </>
+                      <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Program &amp; Year</span><span className="od-detail-val">{reg.program_year || '—'}</span></div>
                     ) : reg.registrant_type === 'employee' ? (
-                      <>
-                        <div className="od-detail"><span className="od-detail-label">Employee ID</span><span className="od-detail-val">{reg.employee_id || '—'}</span></div>
-                        <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Department</span><span className="od-detail-val">{reg.department || '—'}</span></div>
-                      </>
+                      <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Department</span><span className="od-detail-val">{reg.department || '—'}</span></div>
                     ) : null}
-                    <div className="od-detail"><span className="od-detail-label">Contact Number</span><span className="od-detail-val">{reg.contact_number || '—'}</span></div>
-                    <div className="od-detail"><span className="od-detail-label">Age</span><span className="od-detail-val">{reg.age || '—'}</span></div>
-                    <div className="od-detail"><span className="od-detail-label">Driver's License</span><span className="od-detail-val">{reg.drivers_license || '—'}</span></div>
-                    <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Address</span><span className="od-detail-val">{reg.address || '—'}</span></div>
+                    <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Driver's License</span><span className="od-detail-val">{reg.drivers_license || '—'}</span></div>
                     {(reg.campus_days?.length > 0 || reg.schedule) && (
                       <div className="od-detail" style={{ gridColumn: 'span 2' }}>
                         <span className="od-detail-label">Assigned Schedule</span>

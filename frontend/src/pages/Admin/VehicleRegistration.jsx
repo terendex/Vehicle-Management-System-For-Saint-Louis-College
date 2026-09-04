@@ -4,7 +4,7 @@ import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, Maximize2, SlidersHorizontal, FileText, Paperclip, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, SlidersHorizontal, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
@@ -96,65 +96,6 @@ function StatTile({ variant, icon, count, label, active, onSelect, title }) {
     >
       {body}
     </button>
-  )
-}
-
-/* An upload the applicant attached, shown as the thing it is.
-
-   Reviewing an application means reading the licence against the name and the
-   receipt against the OR number — a filename shows the reviewer neither, so
-   anything the browser can draw is drawn inline and links to its full size.
-   PDFs keep the named link (a first-page thumbnail is not worth an embed), and
-   so does any picture the browser turns out not to decode: an iPhone HEIC is
-   accepted at upload and renders nowhere but Safari, which used to leave a
-   broken-image icon with no way to reach the file. */
-function AttachmentPreview({ url, alt, emptyText = 'Not provided' }) {
-  // Keyed by url, not a bare flag: the modal reuses this component across
-  // registrations, and a stale failure would hide the next applicant's photo.
-  const [failedUrl, setFailedUrl] = useState(null)
-
-  // An empty slot keeps the tile. Three documents that line up whether or not
-  // they arrived is what makes a gap read as a gap — the same fact written as a
-  // bare line of italics just leaves a hole in the row.
-  if (!url) {
-    return (
-      <div className="vr-attach vr-attach--empty">
-        <span className="vr-attach-box vr-attach-box--empty">{emptyText}</span>
-      </div>
-    )
-  }
-
-  const path     = url.split('?')[0]
-  const fileName = decodeURIComponent(path.split('/').pop())
-  const asLink   = /\.pdf$/i.test(path) || failedUrl === url
-
-  return (
-    <a
-      className="vr-attach"
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={`Open ${fileName} full size in a new tab`}
-    >
-      {asLink ? (
-        <span className="vr-attach-box vr-attach-file">
-          <FileText size={22} />
-          <span className="vr-attach-name">{fileName}</span>
-        </span>
-      ) : (
-        <img
-          className="vr-attach-box vr-attach-img"
-          src={url}
-          alt={alt}
-          loading="lazy"
-          onError={() => setFailedUrl(url)}
-        />
-      )}
-      <span className="vr-attach-hint">
-        <Maximize2 size={11} />
-        {asLink ? 'Open in a new tab' : 'Click to view full size'}
-      </span>
-    </a>
   )
 }
 
@@ -752,27 +693,15 @@ export default function VehicleRegistration() {
               </div>
 
               {selectedReg.registrant_type === 'student' ? (
-                <>
-                  <div className="detail-item">
-                    <div className="detail-label">Student ID</div>
-                    <div className="detail-value">{selectedReg.student_id}</div>
-                  </div>
-                  <div className="detail-item">
-                    <div className="detail-label">Program &amp; Year</div>
-                    <div className="detail-value">{selectedReg.program_year}</div>
-                  </div>
-                </>
+                <div className="detail-item">
+                  <div className="detail-label">Program &amp; Year</div>
+                  <div className="detail-value">{selectedReg.program_year}</div>
+                </div>
               ) : selectedReg.registrant_type === 'employee' ? (
-                <>
-                  <div className="detail-item">
-                    <div className="detail-label">Employee ID</div>
-                    <div className="detail-value">{selectedReg.employee_id}</div>
-                  </div>
-                  <div className="detail-item">
-                    <div className="detail-label">Department</div>
-                    <div className="detail-value">{selectedReg.department}</div>
-                  </div>
-                </>
+                <div className="detail-item">
+                  <div className="detail-label">Department</div>
+                  <div className="detail-value">{selectedReg.department}</div>
+                </div>
               ) : selectedReg.registrant_type === 'fetcher' ? (
                 <>
                   <div className="detail-item">
@@ -792,7 +721,6 @@ export default function VehicleRegistration() {
                         {selectedReg.fetcher_students.map((s, i) => (
                           <div key={i} style={{ padding: '6px 12px', background: '#F7FAFC', border: '1px solid #D3E1EC', borderRadius: 8, fontSize: 13 }}>
                             <strong>{s.full_name}</strong>
-                            {s.student_id && <span style={{ color: '#6B8CA6' }}> · ID: {s.student_id}</span>}
                             {s.student_level && <span style={{ color: '#6B8CA6' }}> · {s.student_level.toUpperCase()}</span>}
                             {s.program_year && <span style={{ color: '#6B8CA6' }}> · {s.program_year}</span>}
                           </div>
@@ -804,82 +732,14 @@ export default function VehicleRegistration() {
               ) : null}
 
               <div className="detail-item">
-                <div className="detail-label">Address</div>
-                <div className="detail-value">{selectedReg.address || 'N/A'}</div>
-              </div>
-              <div className="detail-item">
-                <div className="detail-label">Age</div>
-                <div className="detail-value">{selectedReg.age || 'N/A'}</div>
-              </div>
-              <div className="detail-item">
-                <div className="detail-label">Contact Number</div>
-                <div className="detail-value">{selectedReg.contact_number}</div>
-              </div>
-              <div className="detail-item">
                 <div className="detail-label">Driver's License</div>
                 <div className="detail-value">{selectedReg.drivers_license || 'N/A'}</div>
               </div>
-              {/* Attachments sit together and are always rendered: "nothing was
-                  submitted" is itself a review finding, and an omitted block
-                  reads as a missing field instead. */}
-              <div className="detail-item vr-attach-block">
-                <div className="detail-section-title vr-attach-heading">
-                  <Paperclip size={14} /> Submitted Documents
-                </div>
-                <div className="vr-attach-grid">
-                  <div className="vr-attach-cell">
-                    <div className="detail-label">Driver's License Photo</div>
-                    <AttachmentPreview
-                      url={selectedReg.drivers_license_image}
-                      alt={`Driver's license of ${selectedReg.full_name}`}
-                    />
-                  </div>
-
-                  {/* Students must attach the enrolment proof; anyone else who
-                      attached one still gets it shown. */}
-                  {(selectedReg.registrant_type === 'student' || selectedReg.assessment_form) && (
-                    <div className="vr-attach-cell">
-                      <div className="detail-label">Assessment Form</div>
-                      <AttachmentPreview
-                        url={selectedReg.assessment_form}
-                        alt={`Assessment form of ${selectedReg.full_name}`}
-                      />
-                    </div>
-                  )}
-
-                  {/* A fetcher proves nothing about their own enrolment — the
-                      documents that matter are the ones for the students they
-                      collect, one tile each so a missing form is visible against
-                      the name it belongs to. */}
-                  {selectedReg.registrant_type === 'fetcher'
-                    && (selectedReg.fetcher_students || []).map((s, i) => (
-                      <div className="vr-attach-cell" key={i}>
-                        <div className="detail-label">
-                          Assessment Form — {s.full_name || `Student #${i + 1}`}
-                        </div>
-                        <AttachmentPreview
-                          url={s.assessment_form}
-                          alt={`Assessment form of ${s.full_name || `student #${i + 1}`}`}
-                        />
-                      </div>
-                    ))}
-
-                  {/* The receipt is an upload like the other two and belongs on
-                      the same row. What it means for the fee stays in Payment
-                      below — the badge and OR number are the reviewer's answer
-                      to "is this settled", the picture is only the proof. */}
-                  <div className="vr-attach-cell">
-                    <div className="detail-label">Official Receipt</div>
-                    <AttachmentPreview
-                      url={selectedReg.or_receipt_image}
-                      alt={`Official receipt of ${selectedReg.full_name}`}
-                      emptyText={selectedReg.payment_status === 'exempt'
-                        ? 'No fee due — exempt'
-                        : 'Not uploaded'}
-                    />
-                  </div>
-                </div>
-              </div>
+              {/* TEMPORARY — Data Privacy Office trial. The attachments block used
+                  to sit here. Nothing is uploaded any more (no licence photo, no
+                  assessment form, no receipt image), so there is nothing to show
+                  — the licence number above and the OR number below are what a
+                  reviewer checks, against the paper the applicant brings. */}
 
               {/* ── Payment ──
                   Always rendered: "no receipt submitted" is the single most
@@ -1388,10 +1248,6 @@ export default function VehicleRegistration() {
                   <div className="account-info-item">
                     <span className="account-info-label">Type</span>
                     <span className="account-info-val account-info-cap">{accountModal.registrant_type}</span>
-                  </div>
-                  <div className="account-info-item">
-                    <span className="account-info-label">Contact</span>
-                    <span className="account-info-val">{accountModal.contact_number || '—'}</span>
                   </div>
                   <div className="account-info-item">
                     <span className="account-info-label">Schedule</span>

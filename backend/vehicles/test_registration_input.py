@@ -129,11 +129,32 @@ class ReviewFieldsAreNotApplicantWritableTests(RegistrationInputTestCase):
 
     def test_the_normal_fields_still_go_through(self):
         """The lock-down must not cost the applicant their own details."""
-        reg = self.submit_ok(vehicle_color='Blue', program_year='BSIT 4',
-                             address='Bauang, La Union')
+        reg = self.submit_ok(vehicle_color='Blue', program_year='BSIT 4')
         self.assertEqual(reg.vehicle_color, 'Blue')
         self.assertEqual(reg.program_year, 'BSIT 4')
-        self.assertEqual(reg.address, 'Bauang, La Union')
+        self.assertEqual(reg.status, VehicleRegistration.Status.PENDING)
+
+    def test_withheld_fields_are_dropped_even_when_a_payload_sends_them(self):
+        """TEMPORARY — Data Privacy Office trial.
+
+        The columns still exist and the serializer would happily write them, so
+        the only thing stopping a stale bundle (or a hand-rolled POST) from
+        filing the data the DPO asked us to stop collecting is the strip in the
+        view. Pin it: a submission carrying every withheld field must store none
+        of them, and must still be accepted rather than 400'd — the applicant is
+        not at fault for a client that has not caught up.
+        """
+        reg = self.submit_ok(address='Bauang, La Union',
+                             contact_number='+639171234567',
+                             age=21, student_id='12345678',
+                             employee_id='87654321',
+                             driver_contact='+639179876543')
+        self.assertEqual(reg.address, '')
+        self.assertEqual(reg.contact_number, '')
+        self.assertIsNone(reg.age)
+        self.assertEqual(reg.student_id, '')
+        self.assertEqual(reg.employee_id, '')
+        self.assertEqual(reg.driver_contact, '')
         self.assertEqual(reg.status, VehicleRegistration.Status.PENDING)
 
 

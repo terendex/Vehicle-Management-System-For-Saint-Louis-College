@@ -1,26 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Upload, X, FileText, Receipt, ArrowLeft } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Receipt, ArrowLeft } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
-import { compressImage } from '../../utils/imageCompress'
 import {
-  IllustratedStep, PayAtAccountingArt, OrNumberArt, ReceiptPhotoArt, CdsoReviewArt,
+  IllustratedStep, PayAtAccountingArt, OrNumberArt, CdsoReviewArt,
 } from '../../components/Illustrations/RegArt'
 import slcLogo from '../../assets/slclogo.jpg'
 import './PaymentPage.css'
 
-const RECEIPT_MAX_MB    = 5
-const RECEIPT_MAX_BYTES = RECEIPT_MAX_MB * 1024 * 1024
-const RECEIPT_TYPES     = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf']
-
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+/* TEMPORARY — Data Privacy Office trial.
+   The receipt photo is no longer collected: this page files the OR number
+   alone, and the CDSO checks the paper receipt at the counter instead of an
+   image on the review screen. */
 
 const TYPE_LABEL = {
   student:  'Student',
@@ -47,9 +41,8 @@ function SlcHeader() {
 /* The applicant's own proof-of-payment step.
 
    They pay the Vehicle Pass fee at the Accounting Office, then land here from
-   the link in their pending email to file the Official Receipt themselves. CDSO
-   verifies the photo against the number at review time instead of re-keying it
-   at a counter, which is what the whole flow used to depend on. */
+   the link in their pending email to file the Official Receipt number
+   themselves, rather than having CDSO re-key it at a counter. */
 export default function PaymentPage() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
@@ -60,8 +53,6 @@ export default function PaymentPage() {
   const [loadError, setLoadError] = useState(null)
 
   const [orNumber, setOrNumber] = useState('')
-  const [receipt, setReceipt]   = useState(null)
-  const [preview, setPreview]   = useState(null)
 
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
@@ -75,8 +66,8 @@ export default function PaymentPage() {
     try {
       const data = await registrationApi.getPaymentDetails(token)
       setDetails(data)
-      // Pre-fill so a returning applicant correcting a blurry photo does not
-      // have to find the receipt number again.
+      // Pre-fill so a returning applicant correcting a mistyped number does not
+      // have to find the receipt again.
       if (data.or_number) setOrNumber(data.or_number)
     } catch (err) {
       setLoadError(
@@ -90,50 +81,6 @@ export default function PaymentPage() {
 
   useEffect(() => { load() }, [load])
 
-  // Release the last object URL when the page unmounts
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
-
-  const handleFileChange = async (e) => {
-    const picked = e.target.files?.[0]
-    // Let the user re-pick the same file after removing it
-    e.target.value = ''
-    if (!picked) return
-
-    // Some browsers report an empty type for HEIC; fall back to the extension.
-    const extOk = /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(picked.name)
-    if (!RECEIPT_TYPES.includes(picked.type) && !extOk) {
-      notify.error('Please choose a JPG, PNG, WEBP, HEIC or PDF file.', { title: 'Unsupported file' })
-      return
-    }
-    if (picked.size > RECEIPT_MAX_BYTES) {
-      notify.error(`That file is ${formatFileSize(picked.size)}. Please keep it under ${RECEIPT_MAX_MB}MB.`, { title: 'File too large' })
-      return
-    }
-
-    // A photographed receipt is the whole payload of this page, so shrinking it
-    // here is most of what the applicant feels on Submit. PDFs pass through.
-    const file = await compressImage(picked)
-
-    setReceipt(file)
-    // PDFs and HEIC won't render — those fall back to the filename chip.
-    // Built outside the updater so StrictMode's double-invoke can't leak a URL.
-    const nextPreview = /^image\/(jpeg|png|webp)$/.test(file.type)
-      ? URL.createObjectURL(file)
-      : null
-    setPreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev)
-      return nextPreview
-    })
-  }
-
-  const clearReceipt = () => {
-    setReceipt(null)
-    setPreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev)
-      return null
-    })
-  }
-
   // 6-7 digits, matching the CDSO accept panel exactly. A looser rule here let
   // an applicant file a 4-digit number that the reviewer's panel then refused,
   // leaving the application impossible to approve from either side.
@@ -143,12 +90,11 @@ export default function PaymentPage() {
     e.preventDefault()
     const problems = [...fieldProblems(e.currentTarget)]
     if (!orValid) problems.push('Enter the Official Receipt number — 6 or 7 digits, numbers only.')
-    if (!receipt) problems.push('Attach a photo or scan of your Official Receipt.')
     if (await notify.validation(problems, { title: 'Receipt not submitted' })) return
 
     setSubmitting(true)
     try {
-      await registrationApi.submitPaymentReceipt(token, orNumber, receipt)
+      await registrationApi.submitPaymentReceipt(token, orNumber)
       setSubmitted(true)
     } catch (err) {
       notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
@@ -207,7 +153,7 @@ export default function PaymentPage() {
             <div className="paypage-icon paypage-icon--ok">
               <CheckCircle size={48} strokeWidth={1.8} />
             </div>
-            <h2 className="paypage-title">Receipt Received</h2>
+            <h2 className="paypage-title">Receipt Number Filed</h2>
             <p className="paypage-muted">
               Your application is now marked <strong>paid</strong> and queued for CDSO review.
               You will get an email once a decision has been made.
@@ -227,7 +173,8 @@ export default function PaymentPage() {
               </div>
             </div>
             <p className="paypage-muted paypage-muted--small">
-              Keep the physical receipt — the CDSO Office may still ask to see it.
+              Keep the physical receipt — the CDSO Office checks it against this number when
+              you collect your pass.
             </p>
             <button className="paypage-btn-ghost" onClick={() => navigate('/login')}>
               <ArrowLeft size={15} /> Back to Login
@@ -255,7 +202,7 @@ export default function PaymentPage() {
             <h2 className="paypage-title">No Payment Required</h2>
             <p className="paypage-muted">
               Your department is <strong>exempt</strong> from the Vehicle Pass fee, so there is
-              nothing to settle at the Accounting Office and no receipt to upload.
+              nothing to settle at the Accounting Office and no receipt number to file.
             </p>
             <p className="paypage-muted paypage-muted--small">
               Your application is already queued for CDSO review. Watch for the approval email.
@@ -284,7 +231,7 @@ export default function PaymentPage() {
               <Receipt size={26} strokeWidth={1.9} />
             </div>
             <div>
-              <h1 className="paypage-title paypage-title--left">Upload Your Official Receipt</h1>
+              <h1 className="paypage-title paypage-title--left">File Your Official Receipt Number</h1>
               <p className="paypage-muted paypage-muted--small">
                 For <strong>{details?.full_name}</strong>
                 {details?.registrant_type && <> · {TYPE_LABEL[details.registrant_type] || details.registrant_type}</>}
@@ -303,8 +250,8 @@ export default function PaymentPage() {
             <div className="paypage-note paypage-note--ok">
               <CheckCircle size={14} />
               <span>
-                A receipt is already on file for this application. Uploading again
-                <strong> replaces</strong> it — useful if the first photo was unclear.
+                A receipt number is already on file for this application. Filing again
+                <strong> replaces</strong> it — useful if the first one was mistyped.
               </span>
             </div>
           )}
@@ -320,15 +267,11 @@ export default function PaymentPage() {
                 they hand you.
               </IllustratedStep>
               <IllustratedStep step={2} art={<OrNumberArt />} title="Enter the OR number">
-                Copy it from the receipt exactly as printed — the CDSO checks the number against
-                the photo you attach.
+                Copy it from the receipt exactly as printed. Keep the receipt itself — the CDSO
+                checks the paper copy against this number when you collect your pass.
               </IllustratedStep>
-              <IllustratedStep step={3} art={<ReceiptPhotoArt />} title="Attach a photo of the receipt">
-                The whole receipt, flat and in focus, with every corner in frame. A blurred or
-                cropped photo has to be retaken.
-              </IllustratedStep>
-              <IllustratedStep step={4} art={<CdsoReviewArt />} title="The CDSO reviews it">
-                Your application is not queued for review until the receipt is filed. You will be
+              <IllustratedStep step={3} art={<CdsoReviewArt />} title="The CDSO reviews it">
+                Your application is not queued for review until the number is filed. You will be
                 emailed the outcome.
               </IllustratedStep>
             </div>
@@ -356,60 +299,8 @@ export default function PaymentPage() {
               </span>
             </div>
 
-            <div className="paypage-field">
-              <label className="paypage-label">
-                Photo of the Receipt <span className="paypage-req">*</span>
-              </label>
-
-              {!receipt ? (
-                <label className="paypage-upload">
-                  <input
-                    type="file"
-                    accept={RECEIPT_TYPES.join(',')}
-                    onChange={handleFileChange}
-                    className="paypage-upload-input"
-                    disabled={submitting}
-                  />
-                  <Upload size={18} className="paypage-upload-icon" />
-                  <span className="paypage-upload-text">
-                    <strong>Choose a photo or file</strong>
-                    <span>JPG, PNG, WEBP, HEIC or PDF · up to {RECEIPT_MAX_MB}MB</span>
-                  </span>
-                </label>
-              ) : (
-                <div className="paypage-preview">
-                  {preview ? (
-                    <img src={preview} alt="Official receipt preview" className="paypage-preview-img" />
-                  ) : (
-                    <div className="paypage-preview-img paypage-preview-noimg">
-                      <FileText size={20} />
-                    </div>
-                  )}
-                  <div className="paypage-preview-meta">
-                    <span className="paypage-preview-name" title={receipt.name}>{receipt.name}</span>
-                    <span className="paypage-preview-size">{formatFileSize(receipt.size)}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="paypage-preview-remove"
-                    onClick={clearReceipt}
-                    aria-label="Remove receipt"
-                    disabled={submitting}
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-              )}
-
-              <span className="paypage-hint">
-                Make sure the receipt number and amount are readable — a blurry photo sends
-                your application back to you.
-              </span>
-            </div>
-
-
             <button type="submit" className="paypage-btn-submit" disabled={submitting}>
-              {submitting ? 'Submitting…' : 'Submit Receipt'}
+              {submitting ? 'Submitting…' : 'Submit Receipt Number'}
             </button>
           </form>
         </div>

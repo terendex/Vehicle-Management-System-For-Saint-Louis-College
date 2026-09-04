@@ -169,14 +169,16 @@ def registrant_type_label(registration):
 
 def _fetcher_student_lines(registration):
     """One readable line per student a fetcher collects, e.g.
-    'DELA CRUZ, JUAN - ID 23100174 - Grade 7'. Empty list if there are none."""
+    'DELA CRUZ, JUAN - Grade 7'. Empty list if there are none.
+
+    TEMPORARY (DPO trial): the student's ID number is not collected any more and
+    is left out even where an older row still carries one.
+    """
     lines = []
     for i, student in enumerate(registration.fetcher_students or [], start=1):
         if not isinstance(student, dict):
             continue
         bits = [student.get('full_name') or f'Student #{i}']
-        if student.get('student_id'):
-            bits.append(f"ID {student['student_id']}")
         if student.get('program_year'):
             bits.append(student['program_year'])
         lines.append(' - '.join(bits))
@@ -214,8 +216,7 @@ def _authorized_driver_row(registration, pad='8px'):
     val = esc(registration.driver_name)
     if rel:
         val += f' ({esc(rel)})'
-    if registration.driver_contact:
-        val += f' &middot; {esc(registration.driver_contact)}'
+    # TEMPORARY (DPO trial): the driver's contact number is not collected.
     return (
         f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;">Authorized Driver</td>'
         f'<td style="padding:{pad} 0;font-weight:600;">{val}</td></tr>'
@@ -238,22 +239,16 @@ def _fee_settled(registration):
 def _registration_pdf_attachment(registration, pending=False):
     """The (filename, bytes, mimetype) triple for the registration PDF.
 
-    Built with the applicant's uploaded documents included, so the copy in the
-    owner's inbox is the same document the CDSO files from Vehicle Registration
-    Management — one builder, one layout, nothing to drift apart.
-
     `pending` builds the acknowledgement copy — same record, stated as an
-    application under review rather than an approved pass. The uploads are left
-    out of that one: at the moment it is built they have only just been sent,
-    and mailing them straight back doubles the size of the first email an
-    applicant receives for nothing they do not already have.
+    application under review rather than an approved pass.
+
+    TEMPORARY (DPO trial): no uploads are collected, so neither copy carries the
+    documents section that used to print them into the approved copy.
     """
     from registration_pdf import (registration_confirmation_pdf,
                                   registration_pdf_filename)
     return (registration_pdf_filename(registration, pending=pending),
-            registration_confirmation_pdf(registration,
-                                          include_documents=not pending,
-                                          pending=pending),
+            registration_confirmation_pdf(registration, pending=pending),
             'application/pdf')
 
 
@@ -275,22 +270,18 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         # that read "Employee ID: —, Department: —" to every fetcher.
         identity_rows = _fetcher_rows(registration, pad='8px')
     else:
+        # TEMPORARY (DPO trial): the student/employee ID row is gone with the
+        # field — what is left is the one detail that still describes them.
         if registration.registrant_type == 'student':
-            id_label  = 'Student ID'
-            id_value  = esc_or_dash(registration.student_id)
-            id2_label = 'Program &amp; Year'
-            id2_value = esc_or_dash(registration.program_year)
+            id_label  = 'Program &amp; Year'
+            id_value  = esc_or_dash(registration.program_year)
         else:
-            id_label  = 'Employee ID'
-            id_value  = esc_or_dash(registration.employee_id)
-            id2_label = 'Department'
-            id2_value = esc_or_dash(department_label(registration))
+            id_label  = 'Department'
+            id_value  = esc_or_dash(department_label(registration))
 
         identity_rows = (
             f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
             f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
-            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">{id2_label}</td>'
-            f'<td style="padding:8px 0;font-weight:600;">{id2_value}</td></tr>'
         )
 
     # Campus days row (only for students) — built separately to avoid nested f-string
@@ -306,8 +297,6 @@ def send_acceptance_email(registration, temp_password, user_code=None):
 
     # Portal account ID (use table layout — flex not supported in many email clients)
     portal_id_display   = esc_or_dash(user_code)
-    contact_val         = esc_or_dash(registration.contact_number)
-    address_val         = esc_or_dash(registration.address)
     license_val         = esc_or_dash(registration.drivers_license)
     color_val           = esc_or_dash(registration.vehicle_color)
     conduction_val      = esc_or_dash(registration.conduction_number)
@@ -358,8 +347,6 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Email</td><td style="padding:8px 0;font-weight:600;">{email_val}</td></tr>
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Type</td><td style="padding:8px 0;font-weight:600;text-transform:capitalize;">{registrant_type_val}</td></tr>
                         {identity_rows}
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Contact</td><td style="padding:8px 0;font-weight:600;">{contact_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Address</td><td style="padding:8px 0;font-weight:600;">{address_val}</td></tr>
                         <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:8px 0;font-weight:600;">{license_val}</td></tr>
                         {_authorized_driver_row(registration)}
                         {campus_days_row}
@@ -464,11 +451,10 @@ def send_pending_email(registration):
     submitted_at = registration.created_at.strftime('%B %d, %Y at %I:%M %p') if registration.created_at else '—'
 
     # Identity rows differ by registrant type
+    # TEMPORARY (DPO trial): no student/employee ID row — the field is not collected.
     if registration.registrant_type == 'student':
         id_rows = (
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Student ID</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{esc_or_dash(registration.student_id)}</td></tr>'
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Program &amp; Year</td>'
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Program &amp; Year</td>'
             f'<td style="padding:7px 0;font-weight:600;">{esc_or_dash(registration.program_year)}</td></tr>'
         )
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
@@ -482,9 +468,7 @@ def send_pending_email(registration):
     elif registration.registrant_type == 'employee':
         dept_name = esc_or_dash(department_label(registration))
         id_rows = (
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Employee ID</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{esc_or_dash(registration.employee_id)}</td></tr>'
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Department</td>'
+            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Department</td>'
             f'<td style="padding:7px 0;font-weight:600;">{dept_name}</td></tr>'
         )
         schedule_row = ''
@@ -499,8 +483,6 @@ def send_pending_email(registration):
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)
-    contact_val      = esc_or_dash(registration.contact_number)
-    address_val      = esc_or_dash(registration.address)
     license_val      = esc_or_dash(registration.drivers_license)
     plate_val        = esc_or_dash(registration.plate_number)
     vehicle_type_val = esc(registration.vehicle_type)
@@ -538,14 +520,15 @@ def send_pending_email(registration):
                     <h4 style="color:#1E40AF;margin:0 0 8px;font-size:14px;">Next Step &#8212; Pay &amp; Upload Your Receipt</h4>
                     <p style="color:#1D4ED8;font-size:13px;margin:0 0 14px;line-height:1.7;">
                         Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the
-                        <strong>Accounting Office</strong>, then upload a photo of your Official Receipt
-                        using the button below. Your application stays <strong>unpaid</strong> and is not
-                        queued for review until the receipt is received.
+                        <strong>Accounting Office</strong>, then file the Official Receipt number
+                        using the button below. Keep the receipt itself — the CDSO checks the paper
+                        copy when you collect your pass. Your application stays <strong>unpaid</strong>
+                        and is not queued for review until the number is received.
                     </p>
                     <a href="{payment_link}"
                        style="display:inline-block;background:#1D4ED8;color:#FFFFFF;text-decoration:none;
                               padding:11px 22px;border-radius:8px;font-size:13px;font-weight:700;">
-                        Upload Official Receipt
+                        File Official Receipt Number
                     </a>
                     <p style="color:#60A5FA;font-size:11px;margin:12px 0 0;word-break:break-all;">
                         Or paste this link into your browser: {payment_link}
@@ -553,13 +536,14 @@ def send_pending_email(registration):
                 </div>"""
         payment_steps = (
             f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
-            f"Office, then <strong>upload your Official Receipt</strong> using the link above.</li>"
+            f"Office, then <strong>file your Official Receipt number</strong> using the link above.</li>"
         )
         payment_text = (
-            f"NEXT STEP - PAY AND UPLOAD YOUR RECEIPT\n"
-            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then upload\n"
-            f"a photo of your Official Receipt here:\n{payment_link}\n\n"
-            f"Your application is not queued for review until the receipt is received.\n\n"
+            f"NEXT STEP - PAY AND FILE YOUR RECEIPT NUMBER\n"
+            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then file\n"
+            f"the Official Receipt number here:\n{payment_link}\n\n"
+            f"Keep the receipt itself - the CDSO checks the paper copy at the counter.\n"
+            f"Your application is not queued for review until the number is received.\n\n"
         )
 
     html_message = f"""
@@ -614,8 +598,6 @@ def send_pending_email(registration):
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Full Name</td><td style="padding:7px 0;font-weight:600;">{full_name_val}</td></tr>
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Email</td><td style="padding:7px 0;font-weight:600;">{email_val}</td></tr>
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Registrant Type</td><td style="padding:7px 0;font-weight:600;">{esc(type_label)}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Contact No.</td><td style="padding:7px 0;font-weight:600;">{contact_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Address</td><td style="padding:7px 0;font-weight:600;">{address_val}</td></tr>
                         <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:7px 0;font-weight:600;">{license_val}</td></tr>
                         {_authorized_driver_row(registration, pad='7px')}
                         {id_rows}
@@ -644,7 +626,7 @@ def send_pending_email(registration):
                     <h4 style="color:#2A2B61;margin:0 0 12px;font-size:14px;">What Happens Next?</h4>
                     <ol style="margin:0;padding-left:20px;color:#5A5F72;font-size:13px;line-height:1.9;">
                         {payment_steps}
-                        <li>The CDSO office will review your submitted documents and information.</li>
+                        <li>The CDSO office will review the information you submitted.</li>
                         <li>You will receive an email once your registration is <strong>approved</strong> or <strong>declined</strong>.</li>
                         <li>If approved, your portal login credentials and vehicle QR code will be sent to this email.</li>
                     </ol>

@@ -1,11 +1,17 @@
-"""Per-student enrolment proof on a fetcher registration.
+"""What a fetcher registration carries — TEMPORARY, Data Privacy Office trial.
 
-A fetcher is not enrolled anywhere, so their own assessment slot is always
-empty — what proves the trip is legitimate is a form for each student they
-collect. Those files arrive at the shared document endpoint as
-`fetcher_assessment_<index>`, the index being the position in fetcher_students,
-and that pairing is the whole feature: get it wrong and the reviewer sees a
-document filed against the wrong child, or none at all.
+This file used to cover the per-student enrolment proof: one assessment form per
+student a fetcher collects, arriving at the shared document endpoint as
+`fetcher_assessment_<index>`, the index being the position in fetcher_students.
+That pairing was the whole feature, and getting it wrong filed a document
+against the wrong child.
+
+Nothing is uploaded any more. The DPO's instruction was that a copy of the
+driver's licence need not be collected, and the rest of the attachments were
+withdrawn with it, so what is left to pin is the shape of the closure: the
+endpoint answers plainly instead of accepting a file, and no student ID rides
+along in the review payload or the emails. The upload tests are kept as their
+inverse rather than deleted — they are what a revert has to make pass again.
 
 The email tests cover the other half of the same gap — a fetcher's confirmation
 used to carry nothing specific to their application, and their approval email
@@ -25,6 +31,8 @@ from vehicles.models import (FetcherStudentAssessment, RegistrationPeriod,
 
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
 
+# The ID is still written into the JSON here on purpose: rows filed before the
+# trial carry one, and neither the review payload nor the emails may show it.
 STUDENTS = [
     {'full_name': 'DELA CRUZ, JUAN', 'student_id': '23100174',
      'student_level': 'jhs', 'program_year': 'Grade 7'},
@@ -38,8 +46,13 @@ def a_file(name='assessment.pdf'):
 
 
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
-class FetcherAssessmentUploadTests(TestCase):
-    """The upload endpoint's half: which files land against which student."""
+class DocumentUploadIsClosedTests(TestCase):
+    """The endpoint is kept and refuses, rather than removed.
+
+    A browser still running the previous bundle would read a 404 as a network
+    fault and retry, and the retry would be an upload we must not accept — so
+    the route answers 410 Gone and says why.
+    """
 
     URL = '/api/vehicles/register/documents/'
 
@@ -52,100 +65,56 @@ class FetcherAssessmentUploadTests(TestCase):
         self.reg = VehicleRegistration.objects.create(
             registrant_type='fetcher', full_name='FETCHER, PARENT',
             email='fetcher-assess@example.com', plate_number='FTA 0001',
-            vehicle_type='car', contact_number='+639171234567',
-            address='San Fernando, La Union', drivers_license='N01-20-900001',
+            vehicle_type='car', drivers_license='N01-20-900001',
             fetcher_type='drop_and_go', fetcher_students=list(STUDENTS),
             status=VehicleRegistration.Status.PENDING,
         )
 
-    def _cleanup(self, assessment):
-        self.addCleanup(assessment.assessment_form.delete, save=False)
+    def _post(self, **extra):
+        payload = {'registration_id': self.reg.id, 'email': self.reg.email}
+        payload.update(extra)
+        return self.client.post(self.URL, payload, format='multipart')
 
-    def test_file_lands_against_the_student_at_that_index(self):
-        res = self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-            'fetcher_assessment_1': a_file(),
-        }, format='multipart')
-        self.assertEqual(res.status_code, 200)
+    def test_a_licence_photo_is_refused(self):
+        res = self._post(image=SimpleUploadedFile(
+            'licence.jpg', b'\xff\xd8\xff', content_type='image/jpeg'))
+        self.assertEqual(res.status_code, 410)
+        self.assertTrue(res.data['uploads_disabled'])
 
-        rows = list(self.reg.fetcher_assessments.all())
-        self.assertEqual(len(rows), 1)
-        self._cleanup(rows[0])
-        self.assertEqual(rows[0].student_index, 1)
-        self.assertEqual(rows[0].student_name(), 'DELA CRUZ, MARIA')
+    def test_an_assessment_form_is_refused(self):
+        res = self._post(assessment_form=a_file())
+        self.assertEqual(res.status_code, 410)
 
-    def test_one_file_per_student(self):
-        res = self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-            'fetcher_assessment_0': a_file('first.pdf'),
-            'fetcher_assessment_1': a_file('second.pdf'),
-        }, format='multipart')
-        self.assertEqual(res.status_code, 200)
-
-        rows = list(self.reg.fetcher_assessments.all())
-        for row in rows:
-            self._cleanup(row)
-        self.assertEqual([r.student_index for r in rows], [0, 1])
-
-    def test_reupload_replaces_rather_than_duplicating(self):
-        """A retried submit must not leave the reviewer two forms for one child."""
-        for name in ('first.pdf', 'second.pdf'):
-            res = self.client.post(self.URL, {
-                'registration_id': self.reg.id,
-                'email': self.reg.email,
-                'fetcher_assessment_0': a_file(name),
-            }, format='multipart')
-            self.assertEqual(res.status_code, 200)
-
-        rows = list(self.reg.fetcher_assessments.all())
-        self.assertEqual(len(rows), 1)
-        self._cleanup(rows[0])
-        self.assertIn('second', rows[0].assessment_form.name)
-
-    def test_index_with_no_student_behind_it_is_rejected(self):
-        res = self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-            'fetcher_assessment_7': a_file(),
-        }, format='multipart')
-        self.assertEqual(res.status_code, 400)
+    def test_a_per_student_assessment_is_refused_and_stores_nothing(self):
+        res = self._post(fetcher_assessment_0=a_file('first.pdf'),
+                         fetcher_assessment_1=a_file('second.pdf'))
+        self.assertEqual(res.status_code, 410)
         self.assertFalse(FetcherStudentAssessment.objects.exists())
 
-    def test_non_document_extension_is_rejected(self):
-        res = self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-            'fetcher_assessment_0': SimpleUploadedFile(
-                'payload.exe', b'MZ', content_type='application/octet-stream'),
-        }, format='multipart')
-        self.assertEqual(res.status_code, 400)
-        self.assertFalse(FetcherStudentAssessment.objects.exists())
+    def test_the_refusal_tells_the_applicant_nothing_more_is_needed(self):
+        """A retried upload must not read as an application left unfinished."""
+        res = self._post(fetcher_assessment_0=a_file())
+        self.assertIn('no longer collected', res.data['error'])
+        self.assertIn('CDSO Office', res.data['error'])
 
-    def test_a_request_carrying_no_file_is_still_a_client_bug(self):
-        res = self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-        }, format='multipart')
-        self.assertEqual(res.status_code, 400)
-
-    def test_review_payload_pairs_each_document_with_its_student(self):
-        """The reviewer reads these per student, so the URL rides on the entry."""
+    def test_review_payload_carries_no_document_and_no_student_id(self):
+        """The reviewer reads names and levels; the ID and the file are gone."""
         from vehicles.serializers import VehicleRegistrationSerializer
 
-        self.client.post(self.URL, {
-            'registration_id': self.reg.id,
-            'email': self.reg.email,
-            'fetcher_assessment_0': a_file(),
-        }, format='multipart')
-        row = self.reg.fetcher_assessments.get()
-        self._cleanup(row)
-
-        self.reg.refresh_from_db()
-        students = VehicleRegistrationSerializer(self.reg).data['fetcher_students']
-        self.assertTrue(students[0]['assessment_form'])
-        self.assertIsNone(students[1]['assessment_form'])
+        data = VehicleRegistrationSerializer(self.reg).data
+        students = data['fetcher_students']
+        self.assertEqual([s['full_name'] for s in students],
+                         ['DELA CRUZ, JUAN', 'DELA CRUZ, MARIA'])
+        for student in students:
+            self.assertNotIn('student_id', student)
+            self.assertNotIn('assessment_form', student)
+        self.assertIsNone(data['drivers_license_image'])
+        self.assertIsNone(data['assessment_form'])
+        self.assertIsNone(data['or_receipt_image'])
+        # The applicant's own withheld fields go the same way.
+        for name in ('address', 'contact_number', 'age',
+                     'student_id', 'employee_id', 'driver_contact'):
+            self.assertNotIn(name, data)
 
 
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
@@ -156,8 +125,7 @@ class FetcherEmailTests(TestCase):
         self.reg = VehicleRegistration.objects.create(
             registrant_type='fetcher', full_name='FETCHER, PARENT',
             email='fetcher-mail@example.com', plate_number='FTM 0001',
-            vehicle_type='car', contact_number='+639171234567',
-            address='San Fernando, La Union', drivers_license='N01-20-900002',
+            vehicle_type='car', drivers_license='N01-20-900002',
             fetcher_type='standby', fetcher_students=list(STUDENTS),
             status=VehicleRegistration.Status.PENDING,
         )
@@ -168,7 +136,12 @@ class FetcherEmailTests(TestCase):
         self.assertIn('Standby', body)
         self.assertIn('DELA CRUZ, JUAN', body)
         self.assertIn('DELA CRUZ, MARIA', body)
-        self.assertIn('23100174', body)
+
+    def test_pending_email_does_not_print_a_student_id(self):
+        """TEMPORARY (DPO trial) — the row exists but the number is withheld."""
+        send_pending_email(self.reg)
+        self.assertNotIn('23100174', mail.outbox[-1].alternatives[0][0])
+        self.assertNotIn('23100174', mail.outbox[-1].body)
 
     def test_pending_plain_text_lists_the_students_too(self):
         send_pending_email(self.reg)
@@ -185,6 +158,59 @@ class FetcherEmailTests(TestCase):
 
 
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
+class WithheldFieldsAreAbsentFromEmailsTests(TestCase):
+    """TEMPORARY — Data Privacy Office trial.
+
+    Rows filed before the trial still hold an address, a contact number and an
+    ID. The emails are rebuilt from the row every time they are sent, so a
+    legacy row is exactly the case that would put the withheld data back in
+    front of someone.
+    """
+
+    def setUp(self):
+        self.reg = VehicleRegistration.objects.create(
+            registrant_type='student', full_name='LEGACY, TESTER',
+            email='legacy-test@example.com', plate_number='LEG 0001',
+            vehicle_type='car', drivers_license='N01-20-900004',
+            # Pre-trial values, as an older row would carry them.
+            address='123 Rizal Street, San Fernando, La Union',
+            contact_number='+639171234567', age=21, student_id='23100999',
+            driver_name='DELA CRUZ, PEDRO', driver_relationship='parent',
+            driver_contact='+639179876543',
+            program_year='BSIT - 4', student_level='college',
+            campus_days=['Monday'], status=VehicleRegistration.Status.PENDING,
+        )
+
+    def _assert_withheld(self, text):
+        for value in ('Rizal Street', '+639171234567', '+639179876543',
+                      '23100999'):
+            self.assertNotIn(value, text)
+        for label in ('Address', 'Contact No.', 'Student ID'):
+            self.assertNotIn(label, text)
+
+    def test_pending_email_withholds_them(self):
+        send_pending_email(self.reg)
+        self._assert_withheld(mail.outbox[-1].alternatives[0][0])
+
+    def test_acceptance_email_withholds_them(self):
+        send_acceptance_email(self.reg, 'temp-pass-123', user_code='VO-0002')
+        body = mail.outbox[-1].alternatives[0][0]
+        self._assert_withheld(body)
+        # The authorized driver is still named — only their number is withheld.
+        self.assertIn('DELA CRUZ, PEDRO', body)
+
+    def test_the_pdf_still_builds_for_a_legacy_row(self):
+        """The rows the trial dropped were part of every section it prints."""
+        from registration_pdf import registration_confirmation_pdf
+
+        for pending in (True, False):
+            with self.subTest(pending=pending):
+                pdf = registration_confirmation_pdf(
+                    self.reg, include_documents=True, pending=pending)
+                self.assertTrue(pdf.startswith(b'%PDF'))
+
+
+@override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com')
 class PendingAcknowledgementPdfTests(TestCase):
     """The registration-received email carries proof of application.
 
@@ -197,9 +223,8 @@ class PendingAcknowledgementPdfTests(TestCase):
         self.reg = VehicleRegistration.objects.create(
             registrant_type='student', full_name='ACK, TESTER',
             email='ack-test@example.com', plate_number='ACK 0001',
-            vehicle_type='car', contact_number='+639171234567',
-            address='San Fernando, La Union', drivers_license='N01-20-900003',
-            student_id='23100999', program_year='BSIT - 4',
+            vehicle_type='car', drivers_license='N01-20-900003',
+            program_year='BSIT - 4',
             student_level='college', campus_days=['Monday'],
             status=VehicleRegistration.Status.PENDING,
         )

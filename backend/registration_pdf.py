@@ -200,12 +200,12 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
     Bytes rather than an HttpResponse: this is attached to an email, not
     served over HTTP. Portrait A4 with the same SLC letterhead as the reports.
 
-    `include_documents` appends the scans the applicant uploaded. Off by
-    default, because the copy that goes out by email is going to the person who
-    uploaded them — it would be mailing someone their own licence back, on a
-    document that is already the largest thing the approval email carries. The
-    CDSO's own printout turns it on: that is the copy that gets filed, and the
-    file is meant to hold the evidence.
+    `include_documents` is accepted and ignored for the duration of the Data
+    Privacy Office trial — TEMPORARY. No scans are collected any more, so the
+    documents section would print a page of empty slots on every copy, CDSO's
+    filed printout included. The parameter is kept rather than removed so the
+    two callers that still pass it (and the tests that exercise them) keep
+    working unchanged.
 
     `pending` builds the acknowledgement instead: the same record of what was
     submitted, but saying plainly that the application is still under review and
@@ -269,7 +269,6 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
     kind = r.registrant_type
     if kind == 'student':
         specific = [
-            ('Student ID', r.student_id),
             ('System Student ID', r.system_student_id),
             ('Level', r.get_student_level_display() if r.student_level else ''),
             ('Program', r.program.name if r.program else ''),
@@ -277,7 +276,6 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
         ]
     elif kind == 'employee':
         specific = [
-            ('Employee ID', r.employee_id),
             ('System Employee ID', r.system_employee_id),
             ('Department', r.department.name if r.department else ''),
             ('Department Type',
@@ -295,8 +293,6 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
             if not isinstance(s, dict):
                 continue
             bits = [s.get('full_name') or '']
-            if s.get('student_id'):
-                bits.append(f"ID {s['student_id']}")
             if s.get('program_year'):
                 bits.append(s['program_year'])
             specific.append((f'Student Fetched #{i}',
@@ -332,13 +328,12 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
 
     story += section('Registration Summary', summary)
 
+    # TEMPORARY (DPO trial): contact number, address and age are not collected,
+    # and are left off even where an older row still carries them.
     story += section('Registrant Details', [
         ('Full Name', r.full_name),
         ('Registrant Type', r.get_registrant_type_display()),
         ('Email', r.email),
-        ('Contact Number', r.contact_number),
-        ('Address', r.address),
-        ('Age', str(r.age) if r.age else ''),
         ("Driver's License", r.drivers_license),
     ] + specific)
 
@@ -347,7 +342,6 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
         ('Name', r.driver_name),
         ('Relationship',
          r.get_driver_relationship_display() if r.driver_relationship else ''),
-        ('Contact Number', r.driver_contact),
     ])
 
     story += section('Vehicle Details', [
@@ -364,9 +358,6 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
         ('Special Case', 'Yes' if r.is_special_case else ''),
         ('Special Case Reason', r.special_case_reason),
     ])
-
-    if include_documents:
-        story += _documents_story(r, 170 * mm, head_style, note_style)
 
     closing = ('This document is system-generated and valid without a signature. '
                'Report any change of vehicle or contact information to the CDSO office.')

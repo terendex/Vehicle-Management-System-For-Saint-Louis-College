@@ -281,8 +281,6 @@ export default function UserManagement() {
       full_name: selectedUser.full_name || '',
       email:     selectedUser.email || '',
       agency:    selectedUser.agency || DEFAULT_AGENCY,
-      contact:   selectedUser.contact || '',
-      address:   selectedUser.address || '',
     })
     setEditAgencyMode(
       !selectedUser.agency || selectedUser.agency === DEFAULT_AGENCY ? DEFAULT_AGENCY : 'other'
@@ -305,10 +303,8 @@ export default function UserManagement() {
         email:     editForm.email.trim(),
       }
       if (selectedUser.role === 'security') payload.agency = editForm.agency.trim()
-      if (selectedUser.role === 'vehicle_owner') {
-        payload.contact = editForm.contact.trim()
-        payload.address = editForm.address.trim()
-      }
+      // TEMPORARY (DPO trial): an owner's contact number and address are not
+      // collected any more, so they are not editable here either.
       await usersApi.updateUser(selectedUser.id, payload)
       setSelectedUser({ ...selectedUser, ...payload })
       setEditMode(false)
@@ -317,7 +313,7 @@ export default function UserManagement() {
     } catch (err) {
       const data = err.response?.data
       const fieldErrors = {}
-      for (const f of ['full_name', 'email', 'agency', 'contact', 'address']) {
+      for (const f of ['full_name', 'email', 'agency']) {
         if (data?.[f]) fieldErrors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
       }
       if (Object.keys(fieldErrors).length > 0) {
@@ -861,24 +857,9 @@ export default function UserManagement() {
                       )}
                     </div>
                   )}
-                  {selectedUser.role === 'vehicle_owner' && (
-                    <>
-                      <div className="um-form-group">
-                        <label>Contact Number</label>
-                        <input className="um-form-input"
-                          value={editForm.contact}
-                          onChange={e => setEditForm({ ...editForm, contact: e.target.value })}
-                          placeholder="e.g. 09xxxxxxxxx" />
-                      </div>
-                      <div className="um-form-group">
-                        <label>Address</label>
-                        <input className="um-form-input"
-                          value={editForm.address}
-                          onChange={e => setEditForm({ ...editForm, address: e.target.value })}
-                          placeholder="Home address" />
-                      </div>
-                    </>
-                  )}
+                  {/* TEMPORARY (DPO trial): the owner's contact number and
+                      address fields used to sit here. Neither is collected any
+                      more, so neither is editable. */}
                 </>
               ) : (
                 // Field order pairs the short values into columns and gives the
@@ -919,20 +900,8 @@ export default function UserManagement() {
                       </div>
                     </>
                   )}
-                  {selectedUser.role === 'vehicle_owner' && (
-                    <>
-                      <div className="um-profile-item">
-                        <span className="um-profile-label">Contact Number</span>
-                        <span className="um-profile-value">{selectedUser.contact || '—'}</span>
-                      </div>
-                      {/* Full width: an address is the one free-text field long
-                          enough to wrap and drag the row beside it out of line. */}
-                      <div className="um-profile-item full-width">
-                        <span className="um-profile-label">Address</span>
-                        <span className="um-profile-value">{selectedUser.address || '—'}</span>
-                      </div>
-                    </>
-                  )}
+                  {/* TEMPORARY (DPO trial): contact number and address are not
+                      collected, so they are not shown on the profile either. */}
                 </div>
               )}
             </div>

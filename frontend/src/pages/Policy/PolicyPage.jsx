@@ -330,11 +330,15 @@ export default function PolicyPage() {
               </p>
 
               <section className="policy-section">
+                {/* TEMPORARY (DPO trial): the requirement used to be a
+                    photocopy submitted with the application. Nothing is
+                    uploaded now, so the documents are presented at the CDSO
+                    Office instead. */}
                 <h3>Application Requirement</h3>
                 <p>
-                  Applicants must submit <strong>(1) photocopy of the school-issued ID card</strong> or
-                  the <strong>assessment or enrolment form</strong> together with the vehicle pass
-                  application.
+                  Applicants <strong>present</strong> their school-issued ID card and driver's
+                  licence at the <strong>CDSO Office</strong> when they collect their pass. No copy
+                  of either document is uploaded with, or kept alongside, the online application.
                 </p>
               </section>
 

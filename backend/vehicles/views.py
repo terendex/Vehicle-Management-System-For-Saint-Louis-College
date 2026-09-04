@@ -886,11 +886,11 @@ async def parking_stream_view(request, pk):
 
 from rest_framework.views import APIView
 from rest_framework import status
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import FetcherStudentAssessment, VehicleRegistration
+from .models import VehicleRegistration
 from .serializers import VehicleRegistrationSerializer
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
@@ -1576,8 +1576,8 @@ class AcceptRegistrationView(APIView):
                 owner_type=owner_type,
                 schedule=schedule,
                 campus_days=campus_days,
-                contact=registration.contact_number,
-                address=registration.address,
+                # TEMPORARY (DPO trial): contact and address are not collected,
+                # so nothing is carried onto the account either.
             )
 
             # Record that CDSO knowingly accepted a flagged plate (audit trail)
@@ -1687,11 +1687,7 @@ class AcceptRegistrationView(APIView):
                 "plate_number": registration.plate_number,
                 "vehicle_type": registration.vehicle_type,
                 "vehicle_color": registration.vehicle_color,
-                "contact_number": registration.contact_number,
-                "address": registration.address,
-                "student_id": registration.student_id,
                 "program_year": registration.program_year,
-                "employee_id": registration.employee_id,
                 "department": registration.department.name if registration.department else '',
                 # Both halves of the schedule, not just the days. The account
                 # modal formats `schedule` into "Mon · Wed · Fri" and only falls
@@ -1869,8 +1865,8 @@ class CdsoDirectRegisterView(APIView):
                 owner_type=owner_type,
                 schedule=schedule,
                 campus_days=campus_days,
-                contact=registration.contact_number,
-                address=registration.address,
+                # TEMPORARY (DPO trial): contact and address are not collected,
+                # so nothing is carried onto the account either.
             )
 
             vehicle_obj = _upsert_vehicle_for_registration(registration, user)
@@ -2108,6 +2104,15 @@ class PublicOpenRegistrationView(APIView):
                       'privacy_consent'):
             data.pop(extra, None)
 
+        # TEMPORARY — Data Privacy Office trial. These columns still exist (the
+        # schema is shared with the other branches and must not move), but the
+        # form no longer asks for them and nothing may write them from here: a
+        # stale bundle or a hand-rolled POST would otherwise still file the very
+        # data the DPO asked us to stop collecting.
+        for withheld in ('address', 'contact_number', 'age',
+                         'student_id', 'employee_id', 'driver_contact'):
+            data.pop(withheld, None)
+
         driver_error = _validate_authorized_driver(registrant_type, data)
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
@@ -2137,15 +2142,17 @@ class PublicOpenRegistrationView(APIView):
             for s in students:
                 if not isinstance(s, dict):
                     return Response({"error": "Invalid student entry."}, status=status.HTTP_400_BAD_REQUEST)
+                # TEMPORARY (DPO trial): the fetched student's ID number is no
+                # longer collected — they are identified by name and level, the
+                # same way the applicant themselves now is.
                 entry = {
                     'full_name':     (s.get('full_name') or '').strip(),
-                    'student_id':    (s.get('student_id') or '').strip(),
                     'student_level': (s.get('student_level') or '').strip(),
                     'program_year':  (s.get('program_year') or '').strip(),
                 }
-                if not entry['full_name'] or not entry['student_id'] or not entry['student_level']:
+                if not entry['full_name'] or not entry['student_level']:
                     return Response(
-                        {"error": "Each student needs a full name, student ID and education level."},
+                        {"error": "Each student needs a full name and education level."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 if entry['student_level'] not in valid_levels:
@@ -2247,111 +2254,31 @@ class PublicOpenRegistrationView(APIView):
 
 
 class UploadRegistrationDocumentsView(APIView):
-    """Public follow-up step to PublicOpenRegistrationView — attaches the applicant's
-    supporting documents (driver's license photo, assessment form) to a just-submitted
-    registration. Kept as a separate multipart request so the main JSON registration
-    payload (with its nested campus_days / fetcher_students structures) doesn't have
-    to be reworked into form-data.
+    """Closed for the Data Privacy Office trial — TEMPORARY.
 
-    A fetcher is not enrolled themselves, so the enrolment proofs for the students
-    they collect arrive here too — one file per listed student, as
-    `fetcher_assessment_<index>`, the index being the position in fetcher_students.
+    This used to attach the applicant's supporting documents (driver's licence
+    photo, assessment form, and one assessment form per student a fetcher
+    collects) to a just-submitted registration. The DPO's instruction was that a
+    copy of the licence need not be collected, and the rest of the attachments
+    were withdrawn with it, so nothing is uploaded from the public form any more.
 
-    Every file is optional individually, but at least one has to be present —
-    a request carrying none is a client bug, not a no-op worth recording."""
+    The route is kept and answers plainly rather than being removed: a browser
+    still running the previous bundle would otherwise get a 404 it reads as a
+    network fault and retry, and the retry would be an upload we must not accept.
+    The reply is 410 Gone — the endpoint existed, and is deliberately closed.
+    """
     permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser, FormParser]
 
-    # Mirrors the model's FileExtensionValidator on assessment_form. Checked here
-    # too so the applicant gets a plain 400 instead of a 500 from full_clean.
-    ASSESSMENT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
-    FETCHER_ASSESSMENT_PREFIX = 'fetcher_assessment_'
-
-    def _fetcher_assessments(self, request):
-        """The per-student files, as ({student_index: uploaded_file}, error).
-
-        A field name that is not `prefix + digits` is reported rather than
-        silently skipped: a quietly dropped attachment reads to the applicant
-        as one that was accepted.
-        """
-        files = {}
-        for key in request.FILES:
-            if not key.startswith(self.FETCHER_ASSESSMENT_PREFIX):
-                continue
-            suffix = key[len(self.FETCHER_ASSESSMENT_PREFIX):]
-            if not suffix.isdigit():
-                return None, "Malformed attachment field '%s'." % key
-            files[int(suffix)] = request.FILES[key]
-        return files, None
-
-    def _bad_extension(self, upload):
-        return upload.name.lower().rsplit('.', 1)[-1] not in self.ASSESSMENT_EXTENSIONS
+    CLOSED_MESSAGE = (
+        "Supporting documents are no longer collected online. Nothing further is "
+        "needed from you — bring your driver's licence to the CDSO Office when you "
+        "collect your vehicle pass."
+    )
 
     def post(self, request):
-        registration_id = request.data.get('registration_id')
-        email = (request.data.get('email') or '').strip()
-        image = request.FILES.get('image')
-        assessment = request.FILES.get('assessment_form')
-
-        fetcher_files, field_error = self._fetcher_assessments(request)
-        if field_error:
-            return Response({"error": field_error}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not registration_id or not email:
-            return Response({"error": "registration_id and email are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not image and not assessment and not fetcher_files:
-            return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
-        if assessment and self._bad_extension(assessment):
-            return Response(
-                {"error": "The assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        for upload in fetcher_files.values():
-            if self._bad_extension(upload):
-                return Response(
-                    {"error": "Each student's assessment form must be a JPG, PNG, WEBP, HEIC or PDF file."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        try:
-            registration = VehicleRegistration.objects.get(
-                id=registration_id,
-                email__iexact=email,
-                status=VehicleRegistration.Status.PENDING,
-            )
-        except VehicleRegistration.DoesNotExist:
-            return Response({"error": "Registration not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # An index with no student behind it would file a document the review
-        # screen has no row to show it against.
-        listed = len(registration.fetcher_students or [])
-        if any(not 0 <= i < listed for i in fetcher_files):
-            return Response(
-                {"error": "An assessment form was sent for a student who is not on this registration."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        updated = []
-        if image:
-            registration.drivers_license_image = image
-            updated.append('drivers_license_image')
-        if assessment:
-            registration.assessment_form = assessment
-            updated.append('assessment_form')
-        if updated:
-            registration.save(update_fields=updated)
-
-        for index, upload in sorted(fetcher_files.items()):
-            # update_or_create, not create: a retried upload replaces the file
-            # on record instead of tripping the uniqueness constraint that keeps
-            # the reviewer looking at exactly one document per student.
-            FetcherStudentAssessment.objects.update_or_create(
-                registration=registration, student_index=index,
-                defaults={'assessment_form': upload},
-            )
-            updated.append('%s%d' % (self.FETCHER_ASSESSMENT_PREFIX, index))
-
-        return Response({"message": "Documents uploaded.", "uploaded": updated}, status=status.HTTP_200_OK)
+        return Response({"error": self.CLOSED_MESSAGE, "uploads_disabled": True},
+                        status=status.HTTP_410_GONE)
 
 
 # The old name, kept so the previously built frontend bundle's
@@ -2386,18 +2313,22 @@ class RegistrationPaymentView(APIView):
     """The applicant's own proof-of-payment step.
 
     They pay at the Accounting Office, then follow the link in their pending
-    email to upload the Official Receipt themselves — CDSO verifies the image
-    against the number at review time instead of re-keying it at a counter.
+    email to file the Official Receipt number themselves, instead of a reviewer
+    re-keying it at a counter.
+
+    TEMPORARY (DPO trial): the receipt photo that used to accompany the number is
+    no longer collected. CDSO checks the paper receipt the applicant brings
+    against the number on file, rather than an image on the review screen. A file
+    sent by a browser still running the previous bundle is ignored, not stored.
 
     Authorised by the unguessable payment_token alone. The (id, email) pair the
     document upload uses is not a secret any more: school addresses are now
     <8-digit ID>@slc-sflu.edu.ph and registration ids are sequential.
     """
     permission_classes = [permissions.AllowAny]
-    parser_classes = [MultiPartParser, FormParser]
-
-    RECEIPT_EXTENSIONS = ('jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf')
-    RECEIPT_MAX_BYTES  = 5 * 1024 * 1024
+    # JSON is what the form sends now; the multipart parsers stay so an older
+    # bundle's upload is parsed and discarded rather than 415'd.
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request):
         """Everything the upload page needs to render, and nothing more.
@@ -2442,7 +2373,6 @@ class RegistrationPaymentView(APIView):
             )
 
         or_number = (request.data.get('or_number') or '').strip()
-        receipt   = request.FILES.get('receipt')
 
         # Same shape the accept flow has always enforced, applied at the point
         # the number is actually typed instead of days later at the counter.
@@ -2452,35 +2382,24 @@ class RegistrationPaymentView(APIView):
         if not or_number.isdigit() or len(or_number) > 7:
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
                             status=status.HTTP_400_BAD_REQUEST)
-        if not receipt:
-            return Response({"error": "A photo or scan of the Official Receipt is required."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        if receipt.name.lower().rsplit('.', 1)[-1] not in self.RECEIPT_EXTENSIONS:
-            return Response({"error": "The receipt must be a JPG, PNG, WEBP, HEIC or PDF file."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        if receipt.size > self.RECEIPT_MAX_BYTES:
-            return Response({"error": "Please keep the receipt under 5MB."},
-                            status=status.HTTP_400_BAD_REQUEST)
 
         registration.or_number        = or_number
-        registration.or_receipt_image = receipt
         # Snapshot of what was owed at the moment of payment — see the field.
         registration.amount_paid      = registration.pass_fee()
         registration.paid_at          = timezone.now()
         registration.payment_status   = VehicleRegistration.PaymentStatus.PAID
         registration.save(update_fields=[
-            'or_number', 'or_receipt_image', 'amount_paid', 'paid_at', 'payment_status',
+            'or_number', 'amount_paid', 'paid_at', 'payment_status',
         ])
 
-        # The receipt is what completes the registration form, so this is the
-        # mail that carries it: the PDF the CDSO files, with the uploaded
-        # documents printed into it. Backgrounded like the approval mail — the
-        # applicant is waiting on an upload, not on a mail server, and a dead
-        # SMTP host must not fail a payment that is already recorded.
+        # The receipt number is what completes the registration form, so this is
+        # the mail that carries it: the PDF the CDSO files. Backgrounded like the
+        # approval mail — a dead SMTP host must not fail a payment that is
+        # already recorded.
         send_in_background(send_receipt_received_email, registration)
 
         return Response(
-            {"message": "Receipt received. Your application is now queued for CDSO review.",
+            {"message": "Receipt number received. Your application is now queued for CDSO review.",
              "payment_status": registration.payment_status},
             status=status.HTTP_200_OK,
         )

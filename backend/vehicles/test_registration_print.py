@@ -76,16 +76,20 @@ class ReadDocumentTests(TestCase):
 
 
 class RegistrationPdfBuilderTests(TestCase):
-    def test_documents_are_only_added_when_asked_for(self):
-        # The emailed copy goes to the person who uploaded them; only the CDSO's
-        # filed copy carries the scans back.
+    def test_documents_are_never_added_during_the_privacy_trial(self):
+        """TEMPORARY — Data Privacy Office trial.
+
+        `include_documents` used to make the CDSO's filed copy carry the scans
+        back. Nothing is uploaded any more, so it is accepted and ignored: both
+        copies are the same document, and neither prints a page of empty slots.
+        """
         reg = _registration(
             drivers_license_image=SimpleUploadedFile('l.jpg', _jpeg(), content_type='image/jpeg'))
         self.addCleanup(reg.drivers_license_image.delete, save=False)
 
         plain = registration_confirmation_pdf(reg)
         filed = registration_confirmation_pdf(reg, include_documents=True)
-        self.assertGreater(len(filed), len(plain))
+        self.assertEqual(len(filed), len(plain))
         self.assertTrue(plain.startswith(b'%PDF'))
         self.assertTrue(filed.startswith(b'%PDF'))
 
