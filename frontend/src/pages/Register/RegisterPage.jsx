@@ -901,6 +901,23 @@ export default function RegisterPage() {
     return () => { document.body.style.overflow = '' }
   }, [privacyOpen])
 
+  /* ── Landing on the confirmation ──
+     Submitting swaps the form for the success screen, but the browser keeps
+     whatever scroll position the form had. The form is long, and the submit
+     button is at the very bottom of it, so on a phone the applicant lands on
+     the confirmation already scrolled past everything that answers "did that
+     work?" — the tick, the reference to their inbox, and the address the mail
+     went to. What they actually see is step 3 and a Back to Login button,
+     which reads as though the application went nowhere.
+
+     The document is the scroller here (.register-page is min-height:100vh with
+     no inner overflow), so this is window-level. Instant rather than smooth:
+     the top of a screen they have not seen yet is not a journey worth
+     animating, it is just the answer arriving late. */
+  useEffect(() => {
+    if (submitted) window.scrollTo(0, 0)
+  }, [submitted])
+
   /* ── Back to login ──
      Only the fields a person actually types are checked for "dirty"; several
      others get defaults the moment a registrant type is picked, and warning
