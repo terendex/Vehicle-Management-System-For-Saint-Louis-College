@@ -3,6 +3,7 @@ import {
   AlertCircle, Copy, Download, KeyRound, RefreshCw, ShieldCheck, Smartphone,
 } from 'lucide-react'
 import { twofaApi } from '../../api/twofa'
+import AuthenticatorSetup from './AuthenticatorSetup'
 import CodeField from './CodeField'
 import notify from '../Feedback/notify'
 import './twofactor.css'
@@ -219,15 +220,13 @@ export default function SecurityPanel({ compact = false }) {
       <div className="tfa-sec">
         <h3 className="tfa-sec-title">Pair a new device</h3>
         <p className="tfa-hint" style={{ marginTop: 0 }}>
-          Scan this in Google Authenticator on the phone you want to use from now
-          on, then enter the code it shows. Works whether you still have the old
-          device or lost it &mdash; whatever was paired before stops working as
-          soon as you finish.
+          Add this account to Google Authenticator on the phone you want to use
+          from now on, then enter the code it shows. Works whether you still have
+          the old device or lost it &mdash; whatever was paired before stops
+          working as soon as you finish.
         </p>
 
-        <div className="tfa-qr-wrap">
-          <img src={enrollment.qr_code} alt="QR code for your authenticator app" />
-        </div>
+        <AuthenticatorSetup enrollment={enrollment} />
 
         <form onSubmit={(e) => { e.preventDefault(); confirmPairing() }}>
           <CodeField
