@@ -435,3 +435,76 @@
   .tfa-sec-row { flex-direction: column; gap: 8px; }
   .tfa-sec-badge { min-width: 0; }
 }
+
+/* ── Authenticator enrollment: link, QR, key ──────────────────────────────
+   Three routes to the same secret. Which one leads is a question about the
+   device, so a media query answers it rather than a user-agent string: a
+   coarse pointer means the person is most likely holding the phone that has
+   to end up with the secret, and cannot scan the screen they are reading. */
+.tfa-enroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tfa-enroll-open { order: 2; }
+.tfa-enroll-qr   { order: 1; }
+.tfa-enroll-key  { order: 3; }
+
+@media (pointer: coarse) {
+  .tfa-enroll-open { order: 1; }
+  .tfa-enroll-qr   { order: 2; }
+}
+
+.tfa-enroll-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5C7B92;
+}
+
+/* The link is a full-width target: it is the primary action on the device
+   where it works, and a thumb is a blunter instrument than a cursor. */
+.tfa-open-app {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.tfa-enroll-note {
+  margin: 8px 0 0;
+  text-align: center;
+}
+
+.tfa-enroll .tfa-qr-wrap { margin-bottom: 0; }
+
+.tfa-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #F7FAFC;
+  border: 1px solid #DCE7EF;
+  border-radius: 10px;
+}
+
+.tfa-secret {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  letter-spacing: 0.06em;
+  color: #0B2340;
+  /* The key wraps rather than scrolling sideways: it is transcribed by eye,
+     and a value half out of frame is the one that gets typed wrong. */
+  overflow-wrap: anywhere;
+}
+
+.tfa-secret-copy { flex: none; }

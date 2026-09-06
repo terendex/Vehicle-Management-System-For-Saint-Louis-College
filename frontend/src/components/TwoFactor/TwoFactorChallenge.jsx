@@ -3,6 +3,7 @@ import {
   AlertCircle, ArrowLeft, Copy, Download, KeyRound, ShieldCheck, Smartphone,
 } from 'lucide-react'
 import { twofaApi } from '../../api/twofa'
+import AuthenticatorSetup from './AuthenticatorSetup'
 import CodeField from './CodeField'
 import notify from '../Feedback/notify'
 import './twofactor.css'
@@ -248,17 +249,18 @@ export default function TwoFactorChallenge({
           </p>
         </div>
 
+        {/* Step 2 no longer says "scan", because on a phone that is the one
+            thing the person cannot do — see AuthenticatorSetup. */}
         <ol className="tfa-steps">
           <li>Install <strong>Google Authenticator</strong> on your phone
             (Authy and Microsoft Authenticator work too).</li>
-          <li>Open it, tap <strong>+</strong>, and scan the code below.</li>
+          <li>Add this account to it, using whichever option below suits the
+            device you are on.</li>
           <li>Enter the 6-digit code it shows to finish.</li>
         </ol>
 
         {enrollment ? (
-          <div className="tfa-qr-wrap">
-            <img src={enrollment.qr_code} alt="QR code for your authenticator app" />
-          </div>
+          <AuthenticatorSetup enrollment={enrollment} />
         ) : (
           <div className="tfa-qr-wrap">
             <Smartphone size={30} color="#5C7B92" />
