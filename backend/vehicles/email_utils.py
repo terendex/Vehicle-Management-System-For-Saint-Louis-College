@@ -185,42 +185,35 @@ def _fetcher_student_lines(registration):
     return lines
 
 
-def _fetcher_rows(registration, pad='7px'):
-    """Identity rows for a fetcher: what they are classified as, and who they
-    collect. Without these the application summary a fetcher receives is the
-    only one with nothing in it that is specific to their application."""
+def _fetcher_pairs(registration):
+    """(label, value) rows for a fetcher: what they are classified as, and who
+    they collect. Without these the application summary a fetcher receives is
+    the only one with nothing in it specific to their application.
+
+    Pairs rather than finished <tr> markup, so the caller can hand the whole
+    section to _kv() and have it stack on a phone like every other row.
+    """
     fetcher_type = (registration.get_fetcher_type_display()
                     if registration.fetcher_type else '')
-    rows = (
-        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;width:150px;">Classification</td>'
-        f'<td style="padding:{pad} 0;font-weight:600;">{esc_or_dash(fetcher_type)}</td></tr>'
-    )
+    pairs = [('Classification', esc_or_dash(fetcher_type))]
     lines = _fetcher_student_lines(registration)
-    if not lines:
-        return rows
-    listed = '<br />'.join(esc(line) for line in lines)
-    label = 'Student to Fetch' if len(lines) == 1 else 'Students to Fetch'
-    rows += (
-        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;vertical-align:top;">{label}</td>'
-        f'<td style="padding:{pad} 0;font-weight:600;line-height:1.7;">{listed}</td></tr>'
-    )
-    return rows
+    if lines:
+        label = 'Student to Fetch' if len(lines) == 1 else 'Students to Fetch'
+        pairs.append((label, '<br />'.join(esc(line) for line in lines)))
+    return pairs
 
 
-def _authorized_driver_row(registration, pad='8px'):
-    """Table row naming the authorized adult driver — present when the
-    registrant is a minor / non-driving student. Empty string otherwise."""
+def _authorized_driver_pairs(registration):
+    """Names the authorized adult driver — present when the registrant is a
+    minor / non-driving student. Empty list otherwise."""
     if not registration.driver_name:
-        return ''
+        return []
     rel = registration.get_driver_relationship_display() if registration.driver_relationship else ''
     val = esc(registration.driver_name)
     if rel:
         val += f' ({esc(rel)})'
     # TEMPORARY (DPO trial): the driver's contact number is not collected.
-    return (
-        f'<tr><td style="padding:{pad} 0;color:#5A5F72;font-size:13px;">Authorized Driver</td>'
-        f'<td style="padding:{pad} 0;font-weight:600;">{val}</td></tr>'
-    )
+    return [('Authorized Driver', val)]
 
 
 def _fee_settled(registration):
@@ -252,6 +245,220 @@ def _registration_pdf_attachment(registration, pending=False):
             'application/pdf')
 
 
+# ── Palette ──────────────────────────────────────────────────────────────────
+# Taken from the app's own stylesheets rather than chosen again here. The mails
+# had drifted onto a separate indigo scheme (#2A2B61 / #6366F1 / #F0F2F7) that
+# appears nowhere in the product, so an approval mail and the portal it links to
+# did not look like the same institution. These are the values the site
+# actually uses, by frequency, in frontend/src.
+BRAND        = '#03396C'
+INK          = '#0B2340'
+MUTED        = '#4A6B85'
+FAINT        = '#6B8CA6'
+PAGE_BG      = '#EEF4F9'
+PANEL_BG     = '#F7FAFC'
+TINT_BG      = '#EAF2F8'
+BORDER       = '#D3E1EC'
+BORDER_FIRM  = '#BDD4E5'
+OK_INK       = '#0F7A5A'
+OK_BG        = '#E7F5EF'
+OK_BORDER    = '#A8DCC6'
+WARN_INK     = '#7A5C00'
+WARN_BG      = '#FEF9E4'
+WARN_BORDER  = '#F7E08A'
+BAD_INK      = '#C62828'
+BAD_BG       = '#FDECEC'
+BAD_BORDER   = '#F3B7B7'
+
+
+# The one place any of these mails describes how it should look on a phone.
+#
+# Every layout below is a table with inline styles, because that is the only
+# thing Outlook's Word engine renders predictably. Inline styles cannot express
+# a breakpoint, though, so the mobile rules live here and are applied by class:
+# Apple Mail, iOS Mail and the Gmail apps all honour a <style> block, and the
+# clients that strip it fall back to the inline desktop layout, which is merely
+# narrow rather than broken.
+#
+# What actually changes on a small screen:
+#   * the 32px side gutters halve, which is ~13% of a 320px screen reclaimed;
+#   * label/value rows stop being a fixed 150px column plus whatever is left —
+#     at that width the value column is under 170px, so an email address or a
+#     schedule wrapped onto three lines. They stack instead, label above value;
+#   * the two-up summary panels stop being two 50% cells with a divider;
+#   * call-to-action links go full width, so the tap target is the row.
+#
+# Deliberately NOT %-formatted. CSS is full of literal percent signs, and every
+# one of them would have to be doubled — `width:100% !important` reads as a
+# conversion flag followed by '!' and raises at import time, which is a silly
+# way to take the whole app down. The one dynamic value is concatenated instead.
+MOBILE_CSS = """
+      body { margin:0 !important; padding:0 !important; width:100% !important; }
+      table { border-collapse:collapse; }
+      img { border:0; line-height:100%; outline:none; text-decoration:none; }
+      a { color:""" + BRAND + """; }
+      @media only screen and (max-width:600px) {
+        .sh-pad   { padding-left:18px !important; padding-right:18px !important; }
+        .sh-shell { width:100% !important; border-radius:0 !important; }
+        .sh-h1    { font-size:20px !important; line-height:1.3 !important; }
+        /* Label above value, each on its own line. */
+        .sh-kv td      { display:block !important; width:100% !important; }
+        .sh-kv td.sh-k { padding:10px 0 2px !important; }
+        .sh-kv td.sh-v { padding:0 0 4px !important; font-size:15px !important; }
+        /* Side-by-side summary cells stack, and the divider between them goes. */
+        .sh-split td { display:block !important; width:100% !important;
+                       border-left:0 !important; padding-left:0 !important;
+                       padding-top:14px !important; }
+        .sh-split td:first-child { padding-top:0 !important; }
+        .sh-btn a { display:block !important; text-align:center !important; }
+      }
+"""
+
+
+def _kv(rows, *, label_width='150px'):
+    """A label/value block that stacks on a phone.
+
+    `rows` is (label, value_html) pairs; the value is interpolated as HTML, so
+    callers pass it through esc()/esc_or_dash() first — same contract the
+    templates always had. A row whose value is None is dropped entirely, which
+    is how a section drops a line that does not apply to this registrant rather
+    than printing a dash against it.
+    """
+    out = []
+    for label, value in rows:
+        if value is None:
+            continue
+        out.append(
+            '<tr>'
+            '<td class="sh-k" style="padding:7px 12px 7px 0;color:%s;font-size:13px;'
+            'line-height:1.45;width:%s;vertical-align:top;">%s</td>'
+            '<td class="sh-v" style="padding:7px 0;color:%s;font-size:14px;'
+            'font-weight:600;line-height:1.45;vertical-align:top;'
+            'word-break:break-word;">%s</td>'
+            '</tr>' % (MUTED, label_width, label, INK, value)
+        )
+    if not out:
+        return ''
+    return ('<table class="sh-kv" role="presentation" cellpadding="0" cellspacing="0" '
+            'border="0" style="width:100%%;border-collapse:collapse;">%s</table>'
+            % ''.join(out))
+
+
+def _section(title, inner):
+    """A titled block, with the rule under the heading the site uses."""
+    return (
+        '<tr><td class="sh-pad" style="padding:0 32px 18px;">'
+        '<div style="margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid %s;'
+        'color:%s;font-size:12px;font-weight:700;letter-spacing:0.06em;'
+        'text-transform:uppercase;">%s</div>%s</td></tr>'
+        % (BORDER, BRAND, title, inner)
+    )
+
+
+def _panel(inner, *, bg, border, pad='16px 18px'):
+    """A tinted callout, full width inside the gutters."""
+    return (
+        '<tr><td class="sh-pad" style="padding:0 32px 18px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:100%%;border-collapse:collapse;background:%s;'
+        'border:1px solid %s;border-radius:10px;">'
+        '<tr><td style="padding:%s;">%s</td></tr></table></td></tr>'
+        % (bg, border, pad, inner)
+    )
+
+
+def _split(left_label, left_value, right_label, right_value):
+    """Two facts side by side on a laptop, stacked on a phone."""
+    cell = ('<div style="color:%s;font-size:11px;font-weight:700;'
+            'letter-spacing:0.07em;text-transform:uppercase;margin-bottom:4px;">%s</div>'
+            '<div style="color:%s;font-size:16px;font-weight:700;'
+            'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;'
+            'word-break:break-word;">%s</div>')
+    return (
+        '<table class="sh-split" role="presentation" cellpadding="0" cellspacing="0" '
+        'border="0" style="width:100%%;border-collapse:collapse;">'
+        '<tr>'
+        '<td style="width:50%%;vertical-align:top;">%s</td>'
+        '<td style="width:50%%;vertical-align:top;border-left:1px solid %s;'
+        'padding-left:18px;">%s</td>'
+        '</tr></table>'
+        % (cell % (BRAND, left_label, INK, left_value), BORDER_FIRM,
+           cell % (BRAND, right_label, INK, right_value))
+    )
+
+
+def _button(href, label):
+    """A call to action that is a full-width tap target on a phone."""
+    return (
+        '<table class="sh-btn" role="presentation" cellpadding="0" cellspacing="0" '
+        'border="0" style="border-collapse:collapse;"><tr><td '
+        'style="border-radius:9px;background:%s;">'
+        '<a href="%s" style="display:inline-block;padding:14px 24px;color:#FFFFFF;'
+        'font-size:15px;font-weight:700;text-decoration:none;border-radius:9px;">'
+        '%s</a></td></tr></table>' % (BRAND, href, label)
+    )
+
+
+def _shell(*, accent, preheader, heading, intro, rows_html):
+    """The wrapper every registration mail shares.
+
+    `preheader` is the line the inbox shows next to the subject before anything
+    is opened. Left to itself a client grabs the first text in the body, which
+    for these mails was a greeting — every one of them previewed as "Dear
+    <name>," and told the reader nothing. It is hidden in the mail itself.
+    """
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
+<title>%(heading)s</title>
+<style type="text/css">%(css)s</style>
+</head>
+<body style="margin:0;padding:0;background:%(page_bg)s;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">%(preheader)s</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"
+       style="width:100%%;border-collapse:collapse;background:%(page_bg)s;">
+  <tr>
+    <td align="center" style="padding:20px 10px;">
+      <table class="sh-shell" role="presentation" cellpadding="0" cellspacing="0" border="0"
+             style="width:100%%;max-width:620px;border-collapse:collapse;background:#FFFFFF;
+                    border-radius:14px;border-top:4px solid %(accent)s;overflow:hidden;
+                    font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <tr>
+          <td class="sh-pad" style="padding:26px 32px 6px;">
+            <h1 class="sh-h1" style="margin:0 0 8px;color:%(accent)s;font-size:22px;
+                                     font-weight:700;line-height:1.3;">%(heading)s</h1>
+            <div style="color:%(muted)s;font-size:14px;line-height:1.6;">%(intro)s</div>
+          </td>
+        </tr>
+        <tr><td style="height:18px;line-height:18px;font-size:0;">&nbsp;</td></tr>
+        %(rows)s
+        <tr>
+          <td class="sh-pad" style="padding:16px 32px 22px;background:%(panel_bg)s;
+                                    border-top:1px solid %(border)s;text-align:center;">
+            <div style="color:%(muted)s;font-size:12px;line-height:1.6;">
+              Saint Louis College &middot; Smart Parking and Vehicle Verification System
+            </div>
+            <div style="color:%(faint)s;font-size:11px;margin-top:4px;">
+              This is an automated message &mdash; please do not reply.
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>""" % {
+        'css': MOBILE_CSS, 'accent': accent, 'preheader': preheader,
+        'heading': heading, 'intro': intro, 'rows': rows_html,
+        'page_bg': PAGE_BG, 'panel_bg': PANEL_BG, 'border': BORDER,
+        'muted': MUTED, 'faint': FAINT,
+    }
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
     # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
@@ -263,37 +470,25 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     # Determine system-assigned registration ID
     system_id = esc_or_dash(registration.system_student_id or registration.system_employee_id)
 
-    # Build identity rows based on registrant type (no nested f-strings)
+    # Identity rows by registrant type, as (label, value) pairs for _kv().
     if registration.registrant_type == 'fetcher':
         # A fetcher has neither an employee ID nor a department, and the old
         # else-branch labelled their blank columns as both — an approval email
         # that read "Employee ID: —, Department: —" to every fetcher.
-        identity_rows = _fetcher_rows(registration, pad='8px')
+        identity_pairs = _fetcher_pairs(registration)
+    # TEMPORARY (DPO trial): the student/employee ID row is gone with the field
+    # — what is left is the one detail that still describes them.
+    elif registration.registrant_type == 'student':
+        identity_pairs = [('Program &amp; Year', esc_or_dash(registration.program_year))]
     else:
-        # TEMPORARY (DPO trial): the student/employee ID row is gone with the
-        # field — what is left is the one detail that still describes them.
-        if registration.registrant_type == 'student':
-            id_label  = 'Program &amp; Year'
-            id_value  = esc_or_dash(registration.program_year)
-        else:
-            id_label  = 'Department'
-            id_value  = esc_or_dash(department_label(registration))
+        identity_pairs = [('Department', esc_or_dash(department_label(registration)))]
 
-        identity_rows = (
-            f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">{id_label}</td>'
-            f'<td style="padding:8px 0;font-weight:600;">{id_value}</td></tr>'
-        )
-
-    # Campus days row (only for students) — built separately to avoid nested f-string
     if registration.registrant_type == 'student':
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
                                       if registration.campus_days else '')
     else:
         campus_days_str = 'Any campus day (Monday to Saturday)'
-    campus_days_row = (
-        f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
-        f'<td style="padding:8px 0;font-weight:600;">{campus_days_str}</td></tr>'
-    )
+    campus_pairs = [('Campus Days', campus_days_str)]
 
     # Portal account ID (use table layout — flex not supported in many email clients)
     portal_id_display   = esc_or_dash(user_code)
@@ -307,90 +502,61 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     registrant_type_val = esc(registrant_type_label(registration))
     temp_password_val   = esc(temp_password)
 
-    html_message = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
-            <div style="max-width: 620px; margin: 0 auto; background: #FFFFFF; border-radius: 12px; border-top: 4px solid #2A2B61; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden;">
-
-                <!-- Header -->
-                <div style="padding: 28px 32px 0;">
-                    <h2 style="color: #2A2B61; margin: 0 0 6px;">Vehicle Registration Approved &#10003;</h2>
-                    <p style="color: #5A5F72; margin: 0 0 16px; font-size: 14px;">Your registration has been reviewed and accepted by the administration.</p>
-                    <p style="margin: 0 0 4px;">Dear <strong>{full_name_val}</strong>,</p>
-                    <p style="color: #5A5F72; font-size: 14px; margin: 0 0 24px;">
-                        Your vehicle registration for plate number <strong style="color:#2A2B61;">{plate_val}</strong> has been approved.
-                        Below are your account details and vehicle access QR code.
-                    </p>
-                </div>
-
-                <!-- System IDs Banner (table-based for email client compatibility) -->
-                <div style="margin: 0 32px 24px; background: #EEF0FF; border-radius: 10px; padding: 16px 20px;">
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr>
-                            <td style="padding: 0; vertical-align: top; width: 50%;">
-                                <div style="font-size: 11px; color: #6366F1; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 4px;">Portal Account ID</div>
-                                <div style="font-family: monospace; font-size: 16px; font-weight: 700; color: #2A2B61; letter-spacing: 0.5px;">{portal_id_display}</div>
-                            </td>
-                            <td style="padding: 0; vertical-align: top; border-left: 1px solid #C7C9E8; padding-left: 20px; width: 50%;">
-                                <div style="font-size: 11px; color: #6366F1; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 4px;">System Registration ID</div>
-                                <div style="font-family: monospace; font-size: 16px; font-weight: 700; color: #2A2B61; letter-spacing: 0.5px;">{system_id}</div>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-
-                <!-- Personal Info -->
-                <div style="margin: 0 32px 20px;">
-                    <h4 style="color: #2A2B61; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; border-bottom: 1px solid #E2E6EE; padding-bottom: 8px;">Personal Information</h4>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">Full Name</td><td style="padding:8px 0;font-weight:600;">{full_name_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Email</td><td style="padding:8px 0;font-weight:600;">{email_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Type</td><td style="padding:8px 0;font-weight:600;text-transform:capitalize;">{registrant_type_val}</td></tr>
-                        {identity_rows}
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:8px 0;font-weight:600;">{license_val}</td></tr>
-                        {_authorized_driver_row(registration)}
-                        {campus_days_row}
-                    </table>
-                </div>
-
-                <!-- Vehicle Info -->
-                <div style="margin: 0 32px 20px;">
-                    <h4 style="color: #2A2B61; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; border-bottom: 1px solid #E2E6EE; padding-bottom: 8px;">Vehicle Information</h4>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:140px;">Plate Number</td><td style="padding:8px 0;font-weight:700;font-family:monospace;color:#2A2B61;">{plate_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Vehicle Type</td><td style="padding:8px 0;font-weight:600;text-transform:capitalize;">{vehicle_type_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Color</td><td style="padding:8px 0;font-weight:600;">{color_val}</td></tr>
-                        <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Conduction No.</td><td style="padding:8px 0;font-weight:600;">{conduction_val}</td></tr>
-                    </table>
-                </div>
-
-                <!-- QR Code -->
-                <div style="text-align: center; margin: 0 32px 24px; background: #F8FAFC; border-radius: 10px; padding: 24px;">
-                    <p style="margin: 0 0 12px; color: #5A5F72; font-size: 13px;">Present this QR code to security personnel upon entry:</p>
-                    <img src="{qr_src}" alt="Vehicle QR Code" style="border: 2px solid #E2E6EE; border-radius: 8px; padding: 8px; background: white; max-width: 200px;" />
-                    <p style="margin: 12px 0 0; color: #7C80A3; font-size: 12px;">Not showing? The same QR is attached to this email, and always available on your portal dashboard.</p>
-                </div>
-
-                <!-- Login Credentials -->
-                <div style="margin: 0 32px 24px; background: #F0F2F7; border-radius: 10px; padding: 20px; border-left: 4px solid #2A2B61;">
-                    <h4 style="color: #2A2B61; margin: 0 0 12px; font-size: 14px;">Portal Login Credentials</h4>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr><td style="padding:6px 0;color:#5A5F72;font-size:13px;width:80px;">Email</td><td style="padding:6px 0;font-weight:700;">{email_val}</td></tr>
-                        <tr><td style="padding:6px 0;color:#5A5F72;font-size:13px;">Password</td><td style="padding:6px 0;font-weight:700;font-family:monospace;font-size:15px;letter-spacing:1px;">{temp_password_val}</td></tr>
-                    </table>
-                    <p style="color: #DC2626; font-size: 12px; margin: 12px 0 0;"><strong>Important:</strong> You will be prompted to change this password on your first login.</p>
-                </div>
-
-                <!-- Footer -->
-                <div style="background: #F8FAFC; border-top: 1px solid #E2E6EE; padding: 16px 32px; text-align: center;">
-                    <p style="font-size: 12px; color: #7C80A3; margin: 0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
-                    <p style="font-size: 11px; color: #B0B4C7; margin: 4px 0 0;">This is an automated message. Please do not reply.</p>
-                </div>
-
-            </div>
-        </body>
-    </html>
-    """
+    html_message = _shell(
+        accent=OK_INK,
+        preheader=f'Approved \u2014 your gate QR and portal login for {plate_val}.',
+        heading='Vehicle Registration Approved',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your registration '
+               f'for plate number <strong style="color:{INK};">{plate_val}</strong> has been '
+               f'approved. Your portal login and gate QR code are below.'),
+        rows_html=(
+            # Credentials first. It is the one thing the owner opens this mail
+            # for, and it used to sit below three detail tables and the QR.
+            _panel(
+                f'<div style="color:{BRAND};font-size:12px;font-weight:700;'
+                f'letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px;">'
+                f'Portal login</div>'
+                + _kv([('Email', email_val),
+                       ('Password',
+                        f'<span style="font-family:ui-monospace,SFMono-Regular,Menlo,'
+                        f'Consolas,monospace;font-size:15px;letter-spacing:1px;">'
+                        f'{temp_password_val}</span>')], label_width='96px')
+                + f'<div style="margin-top:10px;color:{BAD_INK};font-size:12.5px;'
+                  f'line-height:1.6;"><strong>Important:</strong> you will be asked to change '
+                  f'this password the first time you sign in.</div>',
+                bg=TINT_BG, border=BORDER_FIRM)
+            # Then the QR — the thing actually held up at the gate.
+            + f'<tr><td class="sh-pad" style="padding:0 32px 18px;">'
+              f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+              f'style="width:100%;border-collapse:collapse;background:{PANEL_BG};'
+              f'border:1px solid {BORDER};border-radius:10px;">'
+              f'<tr><td align="center" style="padding:20px 18px;">'
+              f'<div style="color:{MUTED};font-size:13px;line-height:1.6;margin-bottom:12px;">'
+              f'Show this to security when you enter:</div>'
+              f'<img src="{qr_src}" alt="Vehicle gate QR code" width="190" '
+              f'style="width:190px;max-width:70%;height:auto;background:#FFFFFF;'
+              f'border:1px solid {BORDER};border-radius:8px;padding:8px;" />'
+              f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:10px;">'
+              f'Not showing? The same QR is attached to this email, and is always on your '
+              f'portal dashboard.</div></td></tr></table></td></tr>'
+            + _section('Your IDs', _split('Portal Account ID', portal_id_display,
+                                          'System Registration ID', system_id))
+            + _section('Registration', _kv(
+                [('Full Name',        full_name_val),
+                 ('Email',            email_val),
+                 ('Type',             registrant_type_val)]
+                + identity_pairs
+                + [("Driver&#39;s License", license_val)]
+                + _authorized_driver_pairs(registration)
+                + campus_pairs))
+            + _section('Vehicle', _kv([
+                ('Plate Number',   plate_val),
+                ('Vehicle Type',   vehicle_type_val),
+                ('Color',          color_val),
+                ('Conduction No.', conduction_val),
+            ]))
+        ),
+    )
 
     # EmailMultiAlternatives rather than send_mail(): send_mail cannot carry
     # attachments, and the approval mail ships the owner's registration
@@ -450,36 +616,24 @@ def send_pending_email(registration):
     """Sent immediately after a public registration form is submitted (status=pending)."""
     submitted_at = registration.created_at.strftime('%B %d, %Y at %I:%M %p') if registration.created_at else '—'
 
-    # Identity rows differ by registrant type
-    # TEMPORARY (DPO trial): no student/employee ID row — the field is not collected.
+    # Identity rows differ by registrant type, as (label, value) pairs for _kv().
+    # TEMPORARY (DPO trial): no student/employee ID row — it is not collected.
     if registration.registrant_type == 'student':
-        id_rows = (
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Program &amp; Year</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{esc_or_dash(registration.program_year)}</td></tr>'
-        )
+        id_pairs = [('Program &amp; Year', esc_or_dash(registration.program_year))]
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
                                       if registration.campus_days else '')
-        schedule_row = (
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{campus_days_str}</td></tr>'
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Schedule Group</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{esc_or_dash(registration.schedule)}</td></tr>'
-        )
+        schedule_pairs = [
+            ('Campus Days',    campus_days_str),
+            ('Schedule Group', esc_or_dash(registration.schedule)),
+        ]
     elif registration.registrant_type == 'employee':
-        dept_name = esc_or_dash(department_label(registration))
-        id_rows = (
-            f'<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Department</td>'
-            f'<td style="padding:7px 0;font-weight:600;">{dept_name}</td></tr>'
-        )
-        schedule_row = ''
+        id_pairs = [('Department', esc_or_dash(department_label(registration)))]
+        schedule_pairs = []
     else:  # fetcher
         # Classification and the students being collected are this application's
         # identity, the way a student ID or a department is for the other two.
-        id_rows = _fetcher_rows(registration)
-        schedule_row = (
-            '<tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Campus Days</td>'
-            '<td style="padding:7px 0;font-weight:600;">Any campus day (Monday to Saturday)</td></tr>'
-        )
+        id_pairs = _fetcher_pairs(registration)
+        schedule_pairs = [('Campus Days', 'Any campus day (Monday to Saturday)')]
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)
@@ -502,38 +656,31 @@ def send_pending_email(registration):
     fee = registration.pass_fee()
     if fee == 0:
         # Fee-exempt: no Accounting stop, no receipt, and no link to send.
-        payment_block = """
-                <div style="margin: 0 32px 24px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:10px; padding:18px 20px;">
-                    <h4 style="color:#065F46;margin:0 0 8px;font-size:14px;">No Payment Required</h4>
-                    <p style="color:#047857;font-size:13px;margin:0;line-height:1.7;">
-                        Your department is <strong>exempt</strong> from the Vehicle Pass fee, so there is
-                        nothing to settle at the Accounting Office. Simply proceed to the CDSO Office once
-                        your application is approved.
-                    </p>
-                </div>"""
+        payment_block = _panel(
+            f'<div style="color:{OK_INK};font-size:15px;font-weight:700;margin-bottom:6px;">'
+            f'No Payment Required</div>'
+            f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+            f'Your department is <strong>exempt</strong> from the Vehicle Pass fee, so there is '
+            f'nothing to settle at the Accounting Office. Proceed to the CDSO Office once your '
+            f'application is approved.</div>',
+            bg=OK_BG, border=OK_BORDER)
         payment_steps = "<li>No Vehicle Pass fee is due &#8212; your department is exempt.</li>"
         payment_text  = "No Vehicle Pass fee is due - your department is exempt.\n\n"
     else:
         payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
-        payment_block = f"""
-                <div style="margin: 0 32px 24px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; padding:18px 20px;">
-                    <h4 style="color:#1E40AF;margin:0 0 8px;font-size:14px;">Next Step &#8212; Pay &amp; Upload Your Receipt</h4>
-                    <p style="color:#1D4ED8;font-size:13px;margin:0 0 14px;line-height:1.7;">
-                        Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the
-                        <strong>Accounting Office</strong>, then file the Official Receipt number
-                        using the button below. Keep the receipt itself — the CDSO checks the paper
-                        copy when you collect your pass. Your application stays <strong>unpaid</strong>
-                        and is not queued for review until the number is received.
-                    </p>
-                    <a href="{payment_link}"
-                       style="display:inline-block;background:#1D4ED8;color:#FFFFFF;text-decoration:none;
-                              padding:11px 22px;border-radius:8px;font-size:13px;font-weight:700;">
-                        File Official Receipt Number
-                    </a>
-                    <p style="color:#60A5FA;font-size:11px;margin:12px 0 0;word-break:break-all;">
-                        Or paste this link into your browser: {payment_link}
-                    </p>
-                </div>"""
+        payment_block = _panel(
+            f'<div style="color:{BRAND};font-size:15px;font-weight:700;margin-bottom:6px;">'
+            f'Next step &mdash; pay, then file your receipt number</div>'
+            f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
+            f'Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the '
+            f'<strong>Accounting Office</strong>, then file the Official Receipt number using '
+            f'the button below. Keep the receipt itself &mdash; the CDSO checks the paper copy '
+            f'when you collect your pass. Your application stays <strong>unpaid</strong> and is '
+            f'not queued for review until the number is received.</div>'
+            + _button(payment_link, 'File Official Receipt Number')
+            + f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:12px;'
+              f'word-break:break-all;">Or paste this link into your browser: {payment_link}</div>',
+            bg=TINT_BG, border=BORDER_FIRM)
         payment_steps = (
             f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
             f"Office, then <strong>file your Official Receipt number</strong> using the link above.</li>"
@@ -546,102 +693,54 @@ def send_pending_email(registration):
             f"Your application is not queued for review until the number is received.\n\n"
         )
 
-    html_message = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
-            <div style="max-width: 620px; margin: 0 auto; background: #FFFFFF; border-radius: 12px; border-top: 4px solid #D97706; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden;">
-
-                <!-- Header -->
-                <div style="padding: 28px 32px 20px;">
-                    <h2 style="color: #D97706; margin: 0 0 6px;">Registration Received &#8212; Pending Review</h2>
-                    <p style="color: #5A5F72; margin: 0; font-size: 14px;">
-                        Your vehicle registration request has been submitted and is awaiting CDSO review.
-                    </p>
-                </div>
-
-                <!-- Status Banner -->
-                <div style="margin: 0 32px 24px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 16px 20px;">
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr>
-                            <td style="vertical-align:top; width:50%;">
-                                <div style="font-size:11px;color:#92400E;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;margin-bottom:4px;">Reference No.</div>
-                                <div style="font-family:monospace;font-size:16px;font-weight:700;color:#D97706;">{ref_number}</div>
-                            </td>
-                            <td style="vertical-align:top; border-left:1px solid #FDE68A; padding-left:20px; width:50%;">
-                                <div style="font-size:11px;color:#92400E;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;margin-bottom:4px;">Submitted On</div>
-                                <div style="font-size:13px;font-weight:600;color:#1A1D2E;">{submitted_at}</div>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-
-                <!-- Greeting -->
-                <div style="padding: 0 32px 20px;">
-                    <p style="margin:0 0 8px;">Dear <strong>{full_name_val}</strong>,</p>
-                    <p style="color:#5A5F72;font-size:14px;margin:0 0 8px;">
-                        Thank you for submitting your vehicle registration. The CDSO office will review your application
-                        and send you a follow-up email once a decision has been made. Please keep this email for your records.
-                    </p>
-                    <p style="color:#5A5F72;font-size:14px;margin:0;">
-                        Your <strong>registration acknowledgement</strong> is attached to this email as a PDF — keep it as
-                        proof that you applied. It is <strong>not</strong> a vehicle pass and does not grant entry; the pass
-                        follows only if your application is approved.
-                    </p>
-                </div>
-
-                <!-- Personal Information -->
-                <div style="margin: 0 32px 20px;">
-                    <h4 style="color:#2A2B61;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 10px;border-bottom:1px solid #E2E6EE;padding-bottom:8px;">
-                        Personal Information
-                    </h4>
-                    <table style="width:100%;border-collapse:collapse;">
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Full Name</td><td style="padding:7px 0;font-weight:600;">{full_name_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Email</td><td style="padding:7px 0;font-weight:600;">{email_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Registrant Type</td><td style="padding:7px 0;font-weight:600;">{esc(type_label)}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Driver&#39;s License</td><td style="padding:7px 0;font-weight:600;">{license_val}</td></tr>
-                        {_authorized_driver_row(registration, pad='7px')}
-                        {id_rows}
-                        {schedule_row}
-                    </table>
-                </div>
-
-                <!-- Vehicle Information -->
-                <div style="margin: 0 32px 20px;">
-                    <h4 style="color:#2A2B61;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 10px;border-bottom:1px solid #E2E6EE;padding-bottom:8px;">
-                        Vehicle Information
-                    </h4>
-                    <table style="width:100%;border-collapse:collapse;">
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Plate Number</td><td style="padding:7px 0;font-weight:700;font-family:monospace;font-size:15px;color:#2A2B61;">{plate_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Vehicle Type</td><td style="padding:7px 0;font-weight:600;text-transform:capitalize;">{vehicle_type_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Color</td><td style="padding:7px 0;font-weight:600;">{color_val}</td></tr>
-                        <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Conduction No.</td><td style="padding:7px 0;font-weight:600;">{conduction_val}</td></tr>
-                    </table>
-                </div>
-
-                <!-- Payment -->
-                {payment_block}
-
-                <!-- What Happens Next -->
-                <div style="margin: 0 32px 24px; background: #F0F2F7; border-radius: 10px; padding: 18px 20px;">
-                    <h4 style="color:#2A2B61;margin:0 0 12px;font-size:14px;">What Happens Next?</h4>
-                    <ol style="margin:0;padding-left:20px;color:#5A5F72;font-size:13px;line-height:1.9;">
-                        {payment_steps}
-                        <li>The CDSO office will review the information you submitted.</li>
-                        <li>You will receive an email once your registration is <strong>approved</strong> or <strong>declined</strong>.</li>
-                        <li>If approved, your portal login credentials and vehicle QR code will be sent to this email.</li>
-                    </ol>
-                </div>
-
-                <!-- Footer -->
-                <div style="background:#F8FAFC;border-top:1px solid #E2E6EE;padding:16px 32px;text-align:center;">
-                    <p style="font-size:12px;color:#7C80A3;margin:0;">Saint Louis College Smart Parking and Vehicle Verification System</p>
-                    <p style="font-size:11px;color:#B0B4C7;margin:4px 0 0;">This is an automated message. Please do not reply to this email.</p>
-                </div>
-
-            </div>
-        </body>
-    </html>
-    """
+    html_message = _shell(
+        accent=WARN_INK,
+        preheader=(f'{ref_number} received \u2014 '
+                   + ('nothing to pay; watch for the outcome.' if fee == 0
+                      else 'next, pay the fee and file your OR number.')),
+        heading='Registration Received',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your vehicle '
+               f'registration has been submitted and is awaiting CDSO review. The '
+               f'acknowledgement PDF attached to this email is your proof that you applied '
+               f'\u2014 it is <strong style="color:{INK};">not</strong> a vehicle pass and '
+               f'does not grant entry.'),
+        rows_html=(
+            # Reference and date first: they are what the applicant is asked for
+            # if they ever have to chase this up.
+            f'<tr><td class="sh-pad" style="padding:0 32px 18px;">'
+            f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            f'style="width:100%;border-collapse:collapse;background:{WARN_BG};'
+            f'border:1px solid {WARN_BORDER};border-radius:10px;">'
+            f'<tr><td style="padding:16px 18px;">'
+            + _split('Reference No.', ref_number, 'Submitted', esc(submitted_at))
+            + f'</td></tr></table></td></tr>'
+            # Then the single next action. It used to sit below both detail
+            # tables, which on a phone is several screens past the fold.
+            + payment_block
+            + _section('What happens next', (
+                f'<ol style="margin:0;padding-left:20px;color:{MUTED};font-size:14px;'
+                f'line-height:1.9;">{payment_steps}'
+                f'<li>The CDSO office will review the information you submitted.</li>'
+                f'<li>You will be emailed once your registration is '
+                f'<strong style="color:{INK};">approved</strong> or '
+                f'<strong style="color:{INK};">declined</strong>.</li>'
+                f'<li>If approved, that email carries your portal login and vehicle QR code.</li>'
+                f'</ol>'))
+            + _section('Your details', _kv(
+                [('Full Name',       full_name_val),
+                 ('Email',           email_val),
+                 ('Registrant Type', esc(type_label)),
+                 ("Driver&#39;s License", license_val)]
+                + _authorized_driver_pairs(registration)
+                + id_pairs + schedule_pairs))
+            + _section('Vehicle', _kv([
+                ('Plate Number',   plate_val),
+                ('Vehicle Type',   vehicle_type_val),
+                ('Color',          color_val),
+                ('Conduction No.', conduction_val),
+            ]))
+        ),
+    )
 
     type_display = type_label
     student_lines = _fetcher_student_lines(registration)
@@ -726,30 +825,23 @@ def send_receipt_received_email(registration):
         'along with your portal login and vehicle QR code.</p>'
     )
 
-    html_message = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
-            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #12915A; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                <h2 style="color: #12915A; margin-top: 0;">Official Receipt Received</h2>
-                <p>Dear {full_name},</p>
-                <p>We have received the Official Receipt for your vehicle pass. Your fee is now recorded as settled.</p>
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;width:150px;">Reference No.</td>
-                        <td style="padding:7px 0;font-weight:600;">{ref_number}</td></tr>
-                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Plate Number</td>
-                        <td style="padding:7px 0;font-weight:600;">{plate_val}</td></tr>
-                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">OR Number</td>
-                        <td style="padding:7px 0;font-weight:600;">{or_val}</td></tr>
-                    <tr><td style="padding:7px 0;color:#5A5F72;font-size:13px;">Amount Paid</td>
-                        <td style="padding:7px 0;font-weight:600;">{amount_val}</td></tr>
-                </table>
-                {next_step_html}
-                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
-            </div>
-        </body>
-    </html>
-    """
+    html_message = _shell(
+        accent=OK_INK,
+        preheader=f'OR {or_val} recorded \u2014 your vehicle pass fee is settled.',
+        heading='Official Receipt Received',
+        intro=(f'Dear <strong style="color:{INK};">{full_name}</strong>, we have recorded the '
+               f'Official Receipt for your vehicle pass. Your fee is now settled.'),
+        rows_html=(
+            _section('Payment', _kv([
+                ('Reference No.', ref_number),
+                ('Plate Number',  plate_val),
+                ('OR Number',     or_val),
+                ('Amount Paid',   amount_val),
+            ]))
+            + _panel(f'<div style="color:{OK_INK};font-size:14px;line-height:1.7;">'
+                     f'{next_step_html}</div>', bg=OK_BG, border=OK_BORDER)
+        ),
+    )
 
     msg = EmailMultiAlternatives(
         subject=f"SLC Vehicle Pass — Official Receipt Received ({ref_number})",
@@ -790,24 +882,27 @@ def send_rejection_email(registration, reason):
     full_name_val  = esc(registration.full_name)
     plate_val      = esc_or_dash(registration.plate_number)
 
-    html_message = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
-            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #DC2626; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                <h2 style="color: #DC2626; margin-top: 0;">Vehicle Registration Declined</h2>
-                <p>Dear {full_name_val},</p>
-                <p>We regret to inform you that your vehicle registration for plate number <strong>{plate_val}</strong> has been declined.</p>
-                <div style="background: #FEF2F2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                    <h4 style="margin: 0 0 10px 0; color: #991B1B;">Reason for Rejection:</h4>
-                    <p style="margin: 0; color: #7F1D1D;">{reason_html}</p>
-                </div>
-                <p>If you have any questions or would like to submit a new application, please contact the administration office.</p>
-                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
-            </div>
-        </body>
-    </html>
-    """
+    html_message = _shell(
+        accent=BAD_INK,
+        preheader=f'Your application for {plate_val} was not approved.',
+        heading='Vehicle Registration Declined',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your registration '
+               f'for plate number <strong style="color:{INK};">{plate_val}</strong> has been '
+               f'reviewed and could not be approved.'),
+        rows_html=(
+            _panel(
+                f'<div style="color:{BAD_INK};font-size:12px;font-weight:700;'
+                f'letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">'
+                f'Reason for rejection</div>'
+                f'<div style="color:{INK};font-size:14px;line-height:1.6;">{reason_html}</div>',
+                bg=BAD_BG, border=BAD_BORDER)
+            + _section('What you can do', (
+                f'<div style="color:{MUTED};font-size:14px;line-height:1.7;">'
+                f'Correct whatever is named above and submit a new application, or bring your '
+                f'documents to the <strong style="color:{INK};">CDSO Office</strong> if you '
+                f'believe this decision was made in error.</div>'))
+        ),
+    )
 
     send_mail(
         subject="SLC Vehicle Registration Status Update",
@@ -837,39 +932,42 @@ def send_account_archived_email(user, banned=False, next_window=None):
         window_text = "the next registration period, once it opens"
 
     if banned:
-        cta_html = (
-            f'<div style="background: #FEF2F2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; border-radius: 4px;">'
-            f'<p style="margin: 0; color: #7F1D1D;">Because your account reached the maximum number of traffic '
-            f'violations, you are not eligible to register a vehicle pass again. Please contact the '
-            f'administration office if you have any questions.</p></div>'
-        )
+        cta_panel = _panel(
+            f'<div style="color:{BAD_INK};font-size:12px;font-weight:700;letter-spacing:0.06em;'
+            f'text-transform:uppercase;margin-bottom:6px;">Not eligible to re-register</div>'
+            f'<div style="color:{INK};font-size:14px;line-height:1.7;">Because your account '
+            f'reached the maximum number of traffic violations, you are not eligible to register '
+            f'a vehicle pass again. Please contact the administration office if you have any '
+            f'questions.</div>',
+            bg=BAD_BG, border=BAD_BORDER)
         cta_text = ("Because your account reached the maximum number of violations, you are not "
                     "eligible to register a vehicle pass again. Please contact the administration office.")
     else:
-        cta_html = (
-            f'<div style="background: #FFF7ED; border-left: 4px solid #B4560F; padding: 15px; margin: 20px 0; border-radius: 4px;">'
-            f'<p style="margin: 0; color: #7C2D12;">You may register again during {window_text}. Your previous '
-            f'email, ID and plate number are free to reuse &mdash; they will not be reported as already taken.</p></div>'
-        )
+        cta_panel = _panel(
+            f'<div style="color:{WARN_INK};font-size:12px;font-weight:700;letter-spacing:0.06em;'
+            f'text-transform:uppercase;margin-bottom:6px;">Registering again</div>'
+            f'<div style="color:{INK};font-size:14px;line-height:1.7;">You may register again '
+            f'during {window_text}. Your previous email, ID and plate number are free to reuse '
+            f'&mdash; they will not be reported as already taken.</div>',
+            bg=WARN_BG, border=WARN_BORDER)
         cta_text = (f"You may register again during {window_text}. Your previous email, ID and plate "
                     f"number are free to reuse.")
 
-    html_message = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #1A1D2E; background-color: #F0F2F7; padding: 20px; margin: 0;">
-            <div style="max-width: 600px; margin: 0 auto; background: #FFFFFF; padding: 30px; border-radius: 12px; border-top: 4px solid #B4560F; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                <h2 style="color: #B4560F; margin-top: 0;">Your Vehicle Pass Account Has Expired</h2>
-                <p>Dear {esc(user.full_name)},</p>
-                <p>Your Saint Louis College vehicle owner account reached its expiration date on
-                   <strong>{expired_on}</strong> and has been archived. Your vehicle pass is no longer active.</p>
-                {cta_html}
-                <p>If you believe this is a mistake, please contact the administration office.</p>
-                <hr style="border: 0; border-top: 1px solid #E2E6EE; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #7C80A3; text-align: center;">Saint Louis College Smart Parking and Vehicle Verification System</p>
-            </div>
-        </body>
-    </html>
-    """
+    html_message = _shell(
+        accent=WARN_INK,
+        preheader=f'Your vehicle pass account expired on {expired_on}.',
+        heading='Your Vehicle Pass Account Has Expired',
+        intro=(f'Dear <strong style="color:{INK};">{esc(user.full_name)}</strong>, your Saint '
+               f'Louis College vehicle owner account reached its expiration date on '
+               f'<strong style="color:{INK};">{expired_on}</strong> and has been archived. '
+               f'Your vehicle pass is no longer active.'),
+        rows_html=(
+            cta_panel
+            + _section('If this looks wrong', (
+                f'<div style="color:{MUTED};font-size:14px;line-height:1.7;">Contact the '
+                f'administration office and they can check the record.</div>'))
+        ),
+    )
 
     send_mail(
         subject="SLC Vehicle Pass Account Expired",
