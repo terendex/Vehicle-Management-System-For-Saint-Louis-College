@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Copy, Check, ExternalLink, QrCode } from 'lucide-react'
 
 /**
@@ -27,17 +27,43 @@ import { Copy, Check, ExternalLink, QrCode } from 'lucide-react'
  * rather than a dead end.
  */
 export default function AuthenticatorSetup({ enrollment }) {
-  const [copied, setCopied] = useState(false)
+  // 'idle' | 'copied' | 'manual' — see copySecret for why a plain boolean is
+  // not enough.
+  const [copyState, setCopyState] = useState('idle')
+  const secretRef = useRef(null)
 
   if (!enrollment) return null
 
   const { qr_code: qrCode, otpauth_uri: otpauthUri, secret } = enrollment
 
-  const copySecret = () => {
-    navigator.clipboard?.writeText(secret).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2200)
-    })
+  const selectSecret = () => {
+    const node = secretRef.current
+    if (!node || !window.getSelection) return
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  /* `navigator.clipboard` does not exist on a non-secure origin, and the campus
+     half is served over plain http://<lan-ip>:8000 — so this is a path people
+     will actually take, not a hypothetical. The old form
+     (`navigator.clipboard?.writeText(...).then(...)`) short-circuited to
+     undefined there and left a button that looked normal and did nothing.
+
+     So: copy where we can, and where we cannot, select the key so the device's
+     own copy gesture works — and say which of the two happened either way. */
+  const copySecret = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(secret)
+      setCopyState('copied')
+    } catch {
+      selectSecret()
+      setCopyState('manual')
+    }
+    setTimeout(() => setCopyState('idle'), 2600)
   }
 
   // Base32 in groups of four. The key is only ever read off a screen and typed
@@ -70,16 +96,21 @@ export default function AuthenticatorSetup({ enrollment }) {
         <div className="tfa-enroll-key">
           <div className="tfa-enroll-label">Or type this key in by hand</div>
           <div className="tfa-secret-row">
-            <code className="tfa-secret">{grouped}</code>
+            <code className="tfa-secret" ref={secretRef}>{grouped}</code>
             <button
               type="button"
               className="tfa-btn tfa-btn-ghost tfa-secret-copy"
               onClick={copySecret}
             >
-              {copied ? <Check size={15} /> : <Copy size={15} />}
-              {copied ? 'Copied' : 'Copy'}
+              {copyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}
+              {copyState === 'copied' ? 'Copied' : 'Copy'}
             </button>
           </div>
+          {copyState === 'manual' && (
+            <p className="tfa-hint tfa-enroll-note" role="status">
+              Selected the key &mdash; use your device&rsquo;s own copy to take it.
+            </p>
+          )}
         </div>
       )}
 
