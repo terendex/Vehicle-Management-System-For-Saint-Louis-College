@@ -86,6 +86,26 @@ export default function TwoFactorChallenge({
     return () => window.removeEventListener('beforeunload', warn)
   }, [backupCodes])
 
+  /* ── Landing on each step ──
+     This card replaces the login form in place, and the browser keeps whatever
+     scroll position the page already had. Signing in leaves you near the bottom
+     of the form, so the verification step opens already scrolled past its own
+     heading — on a phone you arrive looking at the keypad and the buttons, with
+     no visible explanation of what is being asked for.
+
+     It matters again at every step, not just on open: setup is the tallest
+     screen in the flow, and the backup codes that follow it are the one thing
+     here that can never be shown twice. Landing below their warning is how
+     someone closes the tab without saving them.
+
+     `screen`, not `phase` — the rendered step is decided by backupCodes as well
+     as phase, and it is the step changing that should move the page. The
+     document is the scroller (.login-page is min-height:100dvh with no inner
+     overflow), so this is window-level, and instant for the same reason as the
+     registration confirmation: nobody has seen the destination yet. */
+  const screen = backupCodes ? 'backup' : isSetup ? 'setup' : 'verify'
+  useEffect(() => { window.scrollTo(0, 0) }, [screen])
+
   const submit = useCallback(async (submitted) => {
     if (busy) return
     const value = (submitted || code).trim()
