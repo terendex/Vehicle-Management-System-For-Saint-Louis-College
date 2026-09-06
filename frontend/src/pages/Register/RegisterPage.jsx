@@ -247,6 +247,19 @@ const FETCHER_STUDENT_LEVELS = [
   { id: 'sped',       label: 'Special Education' },
 ]
 
+/* Vehicle colours, A–Z. Kept in this order deliberately: the list is long
+   enough that nobody reads it through — they jump to where the colour ought to
+   be — and it used to be arranged roughly by how common each one is, which only
+   helps someone who already knows the order.
+
+   "Other" is not in here. It is the escape hatch that reveals the free-text
+   field rather than a colour, so it stays pinned to the end of the dropdown;
+   alphabetising it would bury it between Orange and Red. */
+const VEHICLE_COLORS = [
+  'Beige', 'Black', 'Blue', 'Brown', 'Gold', 'Gray', 'Green',
+  'Maroon', 'Orange', 'Red', 'Silver', 'White', 'Yellow',
+]
+
 
 /* Applying for a pass is a dead end otherwise — the only way back to the login
    page was the browser's back button. `onBack` is optional so the header can
@@ -1688,19 +1701,7 @@ export default function RegisterPage() {
                   required
                 >
                   <option value="">Select Color</option>
-                  <option value="White">White</option>
-                  <option value="Black">Black</option>
-                  <option value="Silver">Silver</option>
-                  <option value="Gray">Gray</option>
-                  <option value="Red">Red</option>
-                  <option value="Blue">Blue</option>
-                  <option value="Green">Green</option>
-                  <option value="Yellow">Yellow</option>
-                  <option value="Orange">Orange</option>
-                  <option value="Brown">Brown</option>
-                  <option value="Beige">Beige</option>
-                  <option value="Gold">Gold</option>
-                  <option value="Maroon">Maroon</option>
+                  {VEHICLE_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
                   <option value="Other">Other</option>
                 </select>
                 {formData.vehicle_color_choice === 'Other' && (
