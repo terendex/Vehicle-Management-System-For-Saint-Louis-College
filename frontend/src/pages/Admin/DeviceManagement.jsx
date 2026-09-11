@@ -224,8 +224,10 @@ function CameraModal({ mode, camera, cameras = [], nextName, onClose, onSaved })
                 onChange={(e) => { setChannel(e.target.value); setDetectError(''); setFallbackUrl('') }}
               />
               <p className="dm-gate-hint">
-                1 for a normal camera. Use 2, 3… for extra cameras on the same
-                device (an NVR or multi-lens unit).
+                1 for a normal camera — and for a dual-lens camera that shows
+                both views in one picture, which the app splits itself. Use 2,
+                3… only when one device serves each camera as its own stream
+                (an NVR).
                 {sameDevice.length > 0 && (
                   <> This IP already has {sameDevice.length} camera
                   {sameDevice.length > 1 ? 's' : ''}: {sameDevice.map(c => c.name).join(', ')}.</>

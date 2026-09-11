@@ -662,6 +662,22 @@ class AcceptsAnythingFirmwareTests(TestCase):
         self.assertFalse(r['ok'])
         self.assertEqual(r['suggestion'], self.REAL)
         self.assertIn('accepts any stream address', r['error'])
+        self.assertNotIn('dual-lens', r['error'])
+
+    def test_a_channel_past_one_points_a_dual_lens_unit_back_to_channel_1(self):
+        """The campus Yoosee is dual-lens yet has no channel 2 — both lenses
+        come stacked in one frame on channel 1. Registered as channel 2 it
+        fails, and the error has to say where the second lens really is."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw', channel=2)
+        self.assertFalse(r['ok'])
+        self.assertIn('dual-lens', r['error'])
+        self.assertIn('channel 1', r['error'])
 
     def test_a_well_behaved_camera_still_uses_its_status_codes(self):
         """The control probe must not change how an honest camera is handled."""

@@ -933,14 +933,24 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
                     return {'ok': True, 'rtsp_url': cand['url'],
                             'format': cand['format'], 'attempts': attempts}
             accepted = shortlist[:1]      # best guess for "Add Anyway"
+            error = ('This camera accepts any stream address you ask for, so '
+                     'its answers cannot identify the right one, and none of '
+                     'the likely URLs produced video. Close any app watching '
+                     'the camera and try again — most units serve only one '
+                     'stream at a time. Otherwise check the RTSP address in '
+                     'the camera app and register it anyway.')
+            if (channel or 1) > 1:
+                # The unit that motivated this branch is dual-lens and still has
+                # no channel 2: both lenses arrive stacked in one picture on
+                # channel 1, and its /onvif2 is only the lower-resolution copy
+                # of that same picture. Asked for channel 2 it can only fail —
+                # and the sweep's load is what reboots it mid-detection.
+                error += (f' A dual-lens camera that shows both views in one '
+                          f'picture has no channel {channel}: register it as '
+                          f'channel 1 and the app splits the two lenses itself.')
             return {
                 'ok': False,
-                'error': ('This camera accepts any stream address you ask for, so '
-                          'its answers cannot identify the right one, and none of '
-                          'the likely URLs produced video. Close any app watching '
-                          'the camera and try again — most units serve only one '
-                          'stream at a time. Otherwise check the RTSP address in '
-                          'the camera app and register it anyway.'),
+                'error': error,
                 'suggestion': (accepted[0]['url'] if accepted
                                else suggestion_for(ip, device_id, password, channel)),
                 'attempts': attempts,

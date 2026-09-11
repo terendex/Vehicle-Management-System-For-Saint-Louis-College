@@ -139,6 +139,10 @@ $App = [ordered]@{
     LogDirty    = $false         # a line arrived this tick; scroll and flush once
     AutoOpened  = $false         # OpenOnStart fires once per server start, not per restart loop
     ListenFailed = $false        # daphne could not bind the port - a different failure to a crash
+    CamProc     = $null          # a check-cameras.ps1 rerun while the server is up
+    CamOut      = ''             # where that run's output lands
+    CamQuiet    = $false         # a periodic refresh updates the pill without logging
+    CamRecheck  = $false         # a camera changed mid-run; check again once it ends
 }
 
 $LogDir = Join-Path $env:LOCALAPPDATA 'SLC-VMS\logs'
@@ -889,6 +893,10 @@ $statusPattern =
     '|(?<camnone>no cameras registered yet)' +
     '|(?<dbfail>could not read the camera list)' +
     '|(?<realtime>\[settings\] realtime:)' +
+    # daphne's access line for an admin adding, editing or removing a camera.
+    # The closing quote right after the optional id is what keeps ping/ and
+    # detect-rtsp/ out - those change nothing.
+    '|(?<camchange>"(?:POST|PUT|PATCH|DELETE) /api/vehicles/cameras/(?:\d+/)?" 20\d)' +
     # daphne reports a failed bind and then run-campus.ps1 still exits 0, so
     # without matching this the launcher reported "the server exited on its
     # own (code 0)" for what is really "the port was already taken".
@@ -913,7 +921,7 @@ $ansiPattern = '\x1B\[[0-9;]*[A-Za-z]' + '|\x1B\][^\x07]*(\x07|\x1B\\)'
 $AnsiRe = New-Object regex($ansiPattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled))
 
 function Read-ServerLine {
-    param([string]$Line)
+    param([string]$Line, [switch]$Quiet)
 
     $t = $AnsiRe.Replace($Line, '').TrimEnd()
     if ($t.Length -eq 0) { return }
@@ -974,6 +982,11 @@ function Read-ServerLine {
             elseif ($t.Contains('LOOPBACK'))     { Set-Pill 'Rt' 'loopback'  'warn'; $kind = 'warn' }
             else                                 { Set-Pill 'Rt' 'this half' 'warn' }
         }
+        elseif ($m.Groups['camchange'].Success) {
+            # Recheck rather than count: the pill says what is reachable, not
+            # merely what was saved.
+            Start-CameraCheck
+        }
     } else {
         $sev = $SeverityRe.Match($t)
         if ($sev.Success) {
@@ -983,7 +996,43 @@ function Read-ServerLine {
         }
     }
 
-    Write-Log $t $kind
+    if (-not $Quiet) { Write-Log $t $kind }
+}
+
+# The Cameras pill used to come only from run-campus.ps1's startup check, so a
+# camera registered afterwards left it on "none added" until a restart. The
+# same script reruns here, out of process: it is a Django start plus a ping per
+# camera, seconds the UI thread cannot spend. Its lines go through
+# Read-ServerLine, so there is still one parser for what they mean.
+function Start-CameraCheck {
+    param([switch]$Quiet)
+    if ($App.CamProc -and -not $App.CamProc.HasExited) { $App.CamRecheck = $true; return }
+    $App.CamRecheck = $false
+    $App.CamQuiet   = [bool]$Quiet
+    $App.CamOut     = Join-Path $env:TEMP 'slc-vms-camera-check.txt'
+    $script = Join-Path $PSScriptRoot 'check-cameras.ps1'
+    try {
+        # Start-Process joins these with bare spaces, so the paths carry their
+        # own quotes - the install folder has spaces in it.
+        $App.CamProc = Start-Process powershell.exe -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', "`"$script`"", '-Repo', "`"$($App.Repo)`"") `
+            -RedirectStandardOutput $App.CamOut -NoNewWindow -PassThru -ErrorAction Stop
+    } catch {
+        $App.CamProc = $null
+    }
+}
+
+function Complete-CameraCheck {
+    $App.CamProc = $null
+    $lines = @()
+    try { $lines = @(Get-Content -LiteralPath $App.CamOut -ErrorAction Stop) } catch { }
+    # A run that died before printing a verdict must not wipe a good reading.
+    if (@($lines | Where-Object { $StatusRe.IsMatch($_) }).Count -gt 0) {
+        $App.CamOk = 0; $App.CamBad = 0
+        foreach ($l in $lines) { Read-ServerLine $l -Quiet:$App.CamQuiet }
+    }
+    if ($App.CamRecheck) { Start-CameraCheck }
 }
 
 # ---------------------------------------------------------------------------
@@ -1640,7 +1689,12 @@ $timer.Add_Tick({
     if ($every -lt 1) { $every = 1 }
     if ($script:tick % ($every * 240) -eq 0) { Start-UpdateCheck }
 
-    # 5. keep the pulse on the state dot honest while starting
+    # 5. the Cameras pill: finish a recheck, and refresh it every five minutes
+    #    so a camera that drops off (or one added from the cloud half) shows up
+    if ($App.CamProc -and $App.CamProc.HasExited) { Complete-CameraCheck }
+    if ($App.State -eq 'Running' -and $script:tick % (5 * 240) -eq 0) { Start-CameraCheck -Quiet }
+
+    # 6. keep the pulse on the state dot honest while starting
     if ($App.State -eq 'Starting') {
         $ui.Dot.Opacity = 0.35 + 0.65 * [math]::Abs([math]::Sin($script:tick / 6.0))
     } elseif ($ui.Dot.Opacity -ne 1) {
