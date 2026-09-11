@@ -679,6 +679,66 @@ class AcceptsAnythingFirmwareTests(TestCase):
         self.assertIn('dual-lens', r['error'])
         self.assertIn('channel 1', r['error'])
 
+    ONVIF = 'rtsp://admin:pw@10.0.0.5/onvif1'
+
+    def test_the_stream_setup_accepts_gets_the_live_feeds_open_time(self):
+        """The Yoosee's main stream takes 6-8 s to a first frame when idle and
+        longer straight after the sweep, so an 8 s verify called its one real
+        stream "no video"."""
+        timeouts = {}
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_streams',
+                          side_effect=lambda u, *a, **k: u == self.ONVIF), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, timeout_s=None, **k:
+                              timeouts.update({u: timeout_s}) or True):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(timeouts,
+                         {self.ONVIF: rtsp_probe.STREAMING_VERIFY_TIMEOUT_SECONDS})
+
+    def test_the_yoosee_realm_asks_for_its_own_path_first(self):
+        """/onvif1 sits fifteenth in paths_for, and the SETUPs ahead of it were
+        the load that rebooted the camera mid-detection. Its login realm names
+        the firmware, so its path goes first and the search ends in one."""
+        def describe(url, *a, session=None, **k):
+            if session is not None:
+                session.challenge = 'Digest realm="HIipCamera",nonce="abc"'
+            return self._always_200(url)
+
+        tried = []
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=describe), \
+             patch.object(rtsp_probe, '_streams',
+                          side_effect=lambda u, *a, **k: tried.append(u) or u == self.ONVIF), \
+             patch.object(rtsp_probe, '_opens', return_value=True):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertTrue(r['ok'], msg=str(r.get('error')))
+        self.assertEqual(tried, [self.ONVIF])
+
+    def test_add_anyway_saves_the_stream_setup_accepted(self):
+        """When that decode still fails, "Add Anyway" must save the path the
+        camera agreed to serve — not the first guess on the list."""
+        with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
+             patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
+             patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
+             patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
+             patch.object(rtsp_probe, '_describe', side_effect=self._always_200), \
+             patch.object(rtsp_probe, '_streams',
+                          side_effect=lambda u, *a, **k: u == self.ONVIF), \
+             patch.object(rtsp_probe, '_opens', return_value=False):
+            r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
+        self.assertFalse(r['ok'])
+        self.assertEqual(r['suggestion'], self.ONVIF)
+        self.assertIn('/onvif1', r['error'])
+
     def test_a_well_behaved_camera_still_uses_its_status_codes(self):
         """The control probe must not change how an honest camera is handled."""
         match = 'rtsp://admin:pw@10.0.0.5/stream1'

@@ -25,8 +25,15 @@ class _FakeRtspServer:
     """
     def __init__(self, scheme='digest', user='admin', password='pw',
                  valid_paths=('/cam/realmonitor',), setup_paths=None,
-                 control='track1'):
+                 control='track1', challenge_only_describe=False):
         self.scheme, self.user, self.password = scheme, user, password
+        # The campus Yoosee: DESCRIBE is challenged with a 401, but anything
+        # else sent without credentials gets a bare 400 and no challenge. It
+        # also issues a new nonce with every 401, and answers a stale nonce or
+        # a wrong login with that same bare 400 instead of a 401.
+        self.challenge_only_describe = challenge_only_describe
+        self.nonce = NONCE
+        self._issued = 0
         self.valid_paths = valid_paths
         # Paths this server will actually SETUP. Defaults to whatever it
         # describes; set it narrower to model the firmware that answers 200 to
@@ -56,7 +63,7 @@ class _FakeRtspServer:
         md5 = lambda s: hashlib.md5(s.encode()).hexdigest()      # noqa: E731
         ha1 = md5(f'{self.user}:{REALM}:{self.password}')
         ha2 = md5(f'{method}:{target}')
-        return md5(f'{ha1}:{NONCE}:{ha2}')
+        return md5(f'{ha1}:{self.nonce}:{ha2}')
 
     def _reply(self, req):
         first = req.split('\r\n', 1)[0]
@@ -77,13 +84,22 @@ class _FakeRtspServer:
 
         if self.scheme != 'none':
             if not auth:
-                chal = (f'Digest realm="{REALM}", nonce="{NONCE}"'
+                if self.challenge_only_describe and method != 'DESCRIBE':
+                    if method == 'SETUP':
+                        self.setups.append(target)
+                    return 'RTSP/1.0 400 Bad Request\r\n\r\n'
+                if self.challenge_only_describe:
+                    self._issued += 1
+                    self.nonce = f'{NONCE}{self._issued}'
+                chal = (f'Digest realm="{REALM}", nonce="{self.nonce}"'
                         if self.scheme == 'digest' else f'Basic realm="{REALM}"')
                 return (f'RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n'
                         f'WWW-Authenticate: {chal}\r\n\r\n')
             if self.scheme == 'digest':
                 got = dict(__import__('re').findall(r'(\w+)="([^"]*)"', auth))
                 if got.get('response') != self._expected_digest(method, got.get('uri', target)):
+                    if self.challenge_only_describe:
+                        return 'RTSP/1.0 400 Bad Request\r\n\r\n'
                     return f'RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n\r\n'
             else:
                 import base64
@@ -131,7 +147,12 @@ class _FakeRtspServer:
                     data = conn.recv(4096)
                     if not data:
                         return
-                    conn.sendall(self._reply(data.decode('utf-8', 'replace')).encode())
+                    reply = self._reply(data.decode('utf-8', 'replace'))
+                    conn.sendall(reply.encode())
+                    # The Yoosee hangs up after its bare 400, so anything that
+                    # keeps talking on the same connection gets nothing back.
+                    if self.challenge_only_describe and reply.startswith('RTSP/1.0 400'):
+                        return
             except Exception:
                 return
 
@@ -259,6 +280,28 @@ class StreamsProbeTests(SimpleTestCase):
         self.addCleanup(srv.stop)
         self.assertTrue(rtsp_probe._streams(self._url(srv, '/onvif1')))
         self.assertTrue(srv.teardowns, 'SETUP succeeded but nothing was released')
+
+    def test_setup_carries_the_login_when_the_camera_will_not_challenge_it(self):
+        """The campus Yoosee challenges DESCRIBE, then answers a SETUP sent
+        without credentials with a bare 400. Waiting for a second 401 that
+        never came rejected its real stream with the right password."""
+        srv = _FakeRtspServer(valid_paths=('/onvif1',), challenge_only_describe=True)
+        self.addCleanup(srv.stop)
+        self.assertTrue(rtsp_probe._streams(self._url(srv, '/onvif1')))
+        self.assertTrue(srv.teardowns, 'the TEARDOWN has to carry the login too')
+
+    def test_a_failed_login_does_not_poison_the_next_on_one_connection(self):
+        """detect()'s control stage tries the device ID, then `admin`, on one
+        connection. The Yoosee refuses the nonce after the failed device-ID
+        login with a bare 400, so answering it again for `admin` got 400 and
+        the right login was written off."""
+        srv = _FakeRtspServer(valid_paths=('/',), challenge_only_describe=True)
+        self.addCleanup(srv.stop)
+        session = rtsp_probe._RtspSession('127.0.0.1', srv.port, 2)
+        self.addCleanup(session.close)
+        url = f'rtsp://{{}}127.0.0.1:{srv.port}/slc-probe-no-such-path'
+        self.assertEqual(rtsp_probe._describe(url.format('6885002562:pw@'), session=session), 400)
+        self.assertEqual(rtsp_probe._describe(url.format('admin:pw@'), session=session), 200)
 
     def test_a_refused_login_is_not_mistaken_for_a_stream(self):
         srv = _FakeRtspServer(valid_paths=('/onvif1',), password='right')

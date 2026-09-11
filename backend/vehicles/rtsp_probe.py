@@ -69,6 +69,19 @@ SLOT_RELEASE_SECONDS = 0.6
 # this answers 200 to anything, and its status codes cannot pick a stream.
 BOGUS_PATH = '/slc-probe-no-such-path'
 
+# Firmware that names itself in its login realm, and the stream it really
+# serves. Only reorders the search — nothing is skipped — so a wrong entry costs
+# one extra SETUP. The campus Yoosee (realm "HIipCamera", HiSilicon firmware)
+# streams only on /onvif1, fifteenth in paths_for; the guesses ahead of it cost
+# ~30 connections in a few seconds, which is the load that reboots it
+# mid-detection. Channel 1 only: its /onvif2 is a sub-stream, not a camera.
+_FIRST_PATH_BY_REALM = {'HIipCamera': '/onvif1'}
+
+
+def _realm_of(challenge: str) -> str:
+    m = re.search(r'realm="([^"]*)"', challenge or '')
+    return m.group(1) if m else ''
+
 # How many URLs to open for real when the status codes turn out to be
 # meaningless.
 #
@@ -88,6 +101,14 @@ BLIND_DECODE_LIMIT = 24
 # the live stream worker waits 10 s to open, so a 4 s probe could reject a URL
 # that works perfectly well in the actual feed.
 VERIFY_TIMEOUT_SECONDS = 8
+
+# A candidate the camera has already agreed to SETUP is the answer unless it
+# shows no picture, so its one decode gets the allowance the live feed gives an
+# open (ffmpeg_capture.OPEN_TIMEOUT_SECONDS). The campus Yoosee's 1920x2160
+# HEVC main stream took 6.3-7.9 s to a first frame when idle, and longer right
+# after the sweep's rejected SETUPs — past the 8 s above, so its one real
+# stream was reported as "streams but no video".
+STREAMING_VERIFY_TIMEOUT_SECONDS = 25
 
 # Consecutive candidates that found nothing listening on the RTSP port at all.
 #
@@ -437,6 +458,7 @@ class _RtspSession:
         self.host, self.port, self.timeout = host, port, timeout
         self.sock = None
         self.cseq = 0
+        self.challenge = ''     # the last WWW-Authenticate, answered up front
 
     def _connect(self):
         if self.sock is None:
@@ -474,16 +496,31 @@ class _RtspSession:
 
         Returns (status, headers, body). Headers come back because SETUP's
         reply carries the Session id that TEARDOWN needs.
+
+        SETUP and TEARDOWN carry the login their DESCRIBE just earned, up
+        front, as ffmpeg does. Waiting for a fresh 401 is not enough there: the
+        campus Yoosee challenges DESCRIBE but answers an unauthenticated SETUP
+        with a bare 400 and no challenge at all — so its real stream, `/onvif1`,
+        was refused at SETUP and detection failed with the right password.
+
+        DESCRIBE still asks afresh every time. The control stage tries several
+        logins on one connection, and the same camera answers a nonce reused
+        after a failed login with a bare 400 and then drops the connection — so
+        answering the device ID's challenge again for `admin` wrote off the
+        right login along with every request after it.
         """
         for attempt in (1, 2):
             try:
-                head, body = self._send(target, method=method, extra=extra)
+                auth = ''
+                if method != 'DESCRIBE' and self.challenge and (user or pw):
+                    auth = _auth_header(method, target, user, pw, self.challenge)
+                head, body = self._send(target, auth, method, extra)
                 code = _status_of(head)
                 if code == 401 and (user or pw):
                     m = re.search(r'WWW-Authenticate:\s*(.+)', head, re.I)
                     if m:
-                        auth = _auth_header(method, target, user, pw,
-                                            m.group(1).strip())
+                        self.challenge = m.group(1).strip()
+                        auth = _auth_header(method, target, user, pw, self.challenge)
                         head, body = self._send(target, auth, method, extra)
                         code = _status_of(head)
                 return code, head, body
@@ -606,6 +643,11 @@ def _streams(url: str, timeout: float = DESCRIBE_TIMEOUT_SECONDS) -> bool:
         # slot it is about to need.
         m = re.search(r'Session:\s*([^;\r\n]+)', head, re.I)
         if m:
+            # request()'s reconnect is load-bearing here. The Yoosee hangs up
+            # on the first TEARDOWN *without* ending the session, which then
+            # holds its only stream slot for the 60 s timeout — the decode
+            # that follows got no output at all and the camera fell over.
+            # The TEARDOWN resent on a fresh connection is what releases it.
             session.request('TEARDOWN', target, user, pw,
                             (f'Session: {m.group(1).strip()}',))
         return True
@@ -887,10 +929,18 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
             log.info('[rtsp-probe] %s accepts any path — sorting by SETUP', ip)
             shortlist = [c for c in cands
                          if any(c['url'].startswith(f'rtsp://{p}{ip}')
-                                for p in good_prefixes)][:BLIND_DECODE_LIMIT]
+                                for p in good_prefixes)]
+            # The control stage's login challenge already says which firmware
+            # this is; put its own path first. A stable sort, so the rest keep
+            # their order.
+            first = _FIRST_PATH_BY_REALM.get(_realm_of(session.challenge))
+            if first and (channel or 1) == 1:
+                shortlist.sort(key=lambda c: urlsplit(c['url']).path != first)
+            shortlist = shortlist[:BLIND_DECODE_LIMIT]
             session.close()
             host, port = ip.split(':')[0], _port_of(ip)
             reset_streak = 0
+            streamable = None       # first candidate SETUP accepted
             for cand in shortlist:
                 if time.monotonic() >= deadline:
                     break
@@ -924,21 +974,30 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
 
                 reset_streak = 0
 
+                streamable = streamable or cand
                 time.sleep(SLOT_RELEASE_SECONDS)
-                ok = _opens(cand['url'], timeout_s=VERIFY_TIMEOUT_SECONDS)
+                ok = _opens(cand['url'], timeout_s=STREAMING_VERIFY_TIMEOUT_SECONDS)
                 attempts.append(f"{_redact(cand['url'])} -> "
                                 f"{'decoded' if ok else 'streams but no video'}")
                 if ok:
                     log.info('[rtsp-probe] %s matched %s by decode', ip, cand['format'])
                     return {'ok': True, 'rtsp_url': cand['url'],
                             'format': cand['format'], 'attempts': attempts}
-            accepted = shortlist[:1]      # best guess for "Add Anyway"
+            # Best guess for "Add Anyway": the path the camera agreed to serve.
+            # The first shortlist entry is only the first guess — on the Yoosee
+            # that saved /cam/realmonitor, which it refuses, over /onvif1.
+            accepted = [streamable] if streamable else shortlist[:1]
             error = ('This camera accepts any stream address you ask for, so '
                      'its answers cannot identify the right one, and none of '
                      'the likely URLs produced video. Close any app watching '
                      'the camera and try again — most units serve only one '
                      'stream at a time. Otherwise check the RTSP address in '
                      'the camera app and register it anyway.')
+            if streamable:
+                served = urlsplit(streamable['url'])
+                served = served.path + (f'?{served.query}' if served.query else '')
+                error += (f' It did agree to stream {served}, so registering it '
+                          f'anyway saves that address.')
             if (channel or 1) > 1:
                 # The unit that motivated this branch is dual-lens and still has
                 # no channel 2: both lenses arrive stacked in one picture on
