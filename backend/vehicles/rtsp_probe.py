@@ -70,8 +70,8 @@ SLOT_RELEASE_SECONDS = 0.6
 BOGUS_PATH = '/slc-probe-no-such-path'
 
 # Firmware that names itself in its login realm, and the stream it really
-# serves. Only reorders the search — nothing is skipped — so a wrong entry costs
-# one extra SETUP. The campus Yoosee (realm "HIipCamera", HiSilicon firmware)
+# serves. That path is decoded first, before any SETUP; nothing else is
+# skipped, so a wrong entry costs one decode. The campus Yoosee (realm "HIipCamera", HiSilicon firmware)
 # streams only on /onvif1, fifteenth in paths_for; the guesses ahead of it cost
 # ~30 connections in a few seconds, which is the load that reboots it
 # mid-detection. Channel 1 only: its /onvif2 is a sub-stream, not a camera.
@@ -934,7 +934,9 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
             # this is; put its own path first. A stable sort, so the rest keep
             # their order.
             first = _FIRST_PATH_BY_REALM.get(_realm_of(session.challenge))
-            if first and (channel or 1) == 1:
+            if (channel or 1) != 1:
+                first = None
+            if first:
                 shortlist.sort(key=lambda c: urlsplit(c['url']).path != first)
             shortlist = shortlist[:BLIND_DECODE_LIMIT]
             session.close()
@@ -945,6 +947,22 @@ def detect(ip: str, device_id: str, password: str = '', channel: int = 1) -> dic
                 if time.monotonic() >= deadline:
                     break
                 time.sleep(PROBE_PACING_SECONDS)
+                if first and urlsplit(cand['url']).path == first:
+                    # The firmware's own path skips the SETUP gate and goes
+                    # straight to the decode. The gate exists to avoid decoding
+                    # guesses, and this is not one — while its SETUP leaves a
+                    # session the Yoosee does not reliably release (it hangs up
+                    # on TEARDOWN and keeps the session for 60 s), and the
+                    # decode behind it then got no output and the camera
+                    # rebooted. Decoding directly worked every time it was tried.
+                    ok = _opens(cand['url'], timeout_s=STREAMING_VERIFY_TIMEOUT_SECONDS)
+                    attempts.append(f"{_redact(cand['url'])} -> "
+                                    f"{'decoded' if ok else 'no video'} (firmware path)")
+                    if ok:
+                        log.info('[rtsp-probe] %s matched its firmware path', ip)
+                        return {'ok': True, 'rtsp_url': cand['url'],
+                                'format': cand['format'], 'attempts': attempts}
+                    continue
                 if not _streams(cand['url']):
                     # Separate "refused that path" from "stopped listening".
                     # Only the second means the device has gone away, and it is

@@ -710,18 +710,22 @@ class AcceptsAnythingFirmwareTests(TestCase):
                 session.challenge = 'Digest realm="HIipCamera",nonce="abc"'
             return self._always_200(url)
 
-        tried = []
+        set_up, opened = [], []
         with patch.object(rtsp_probe, 'is_reachable', return_value=True), \
              patch.object(rtsp_probe, 'onvif_stream_uri', return_value=None), \
              patch.object(rtsp_probe, 'PROBE_PACING_SECONDS', 0), \
              patch.object(rtsp_probe, 'SLOT_RELEASE_SECONDS', 0), \
              patch.object(rtsp_probe, '_describe', side_effect=describe), \
              patch.object(rtsp_probe, '_streams',
-                          side_effect=lambda u, *a, **k: tried.append(u) or u == self.ONVIF), \
-             patch.object(rtsp_probe, '_opens', return_value=True):
+                          side_effect=lambda u, *a, **k: set_up.append(u) or True), \
+             patch.object(rtsp_probe, '_opens',
+                          side_effect=lambda u, *a, **k: opened.append(u) or u == self.ONVIF):
             r = rtsp_probe.detect('10.0.0.5', '6885002562', 'pw')
         self.assertTrue(r['ok'], msg=str(r.get('error')))
-        self.assertEqual(tried, [self.ONVIF])
+        self.assertEqual(opened, [self.ONVIF])
+        # Its SETUP leaves a session the Yoosee does not reliably release, and
+        # the decode after it then gets nothing — so the known path skips it.
+        self.assertEqual(set_up, [], 'the firmware path went through the SETUP gate')
 
     def test_add_anyway_saves_the_stream_setup_accepted(self):
         """When that decode still fails, "Add Anyway" must save the path the
