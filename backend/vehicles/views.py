@@ -7,7 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 import cv2
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Value
 from django.db.models.functions import Lower, Replace, Upper
 from django.http import StreamingHttpResponse, HttpResponse
@@ -890,7 +890,9 @@ from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import VehicleRegistration
+from .models import RegistrationChangeRequest, VehicleRegistration
+from .registration_edits import (READ_ONLY_REASONS, apply_changes, clean_changes,
+                                 current_values, describe, editable_for)
 from .serializers import VehicleRegistrationSerializer
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
@@ -898,6 +900,8 @@ from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
 from accounts.models import User
 from .email_utils import (send_acceptance_email, send_rejection_email,
                           send_pending_email, send_receipt_received_email,
+                          send_registration_updated_email,
+                          send_change_request_decision_email,
                           send_in_background)
 
 
@@ -2403,6 +2407,491 @@ class RegistrationPaymentView(APIView):
              "payment_status": registration.payment_status},
             status=status.HTTP_200_OK,
         )
+
+
+# ──────────────────────────────────────────────
+# Correcting a registration's details
+# ──────────────────────────────────────────────
+#
+# Two paths, split on whether CDSO has already approved the registration. The
+# whitelist and every validation rule are shared — see
+# vehicles/registration_edits.py, which explains why — so the only thing that
+# differs is when the change lands:
+#
+#   PENDING   the applicant edits the row directly. Nobody has reviewed it, so
+#             a detail they mistyped is still theirs to fix. Reached with the
+#             token from their acknowledgement email, the same handle the
+#             receipt step already uses.
+#
+#   ACCEPTED  the owner files a RegistrationChangeRequest and CDSO approves it.
+#             The row issued a pass, a gate QR, a Vehicle and an account by this
+#             point, and a guard matches a car against it — so it is not the
+#             owner's to rewrite unilaterally.
+
+
+def _accepted_registration_for(user):
+    """The accepted registration behind a vehicle-owner account, or None.
+
+    Matched on the FK *or* the email, and newest-reviewed first — the same query
+    `accounts.views.MyRegistrationView` runs, because it has to resolve to the
+    same row the owner is looking at on their dashboard. (The email arm is what
+    covers rows filed before the account existed: the FK is only set at
+    approval.)
+    """
+    return (VehicleRegistration.objects
+            .filter(Q(user=user) | Q(email=user.email),
+                    status=VehicleRegistration.Status.ACCEPTED)
+            .order_by('-reviewed_at')
+            .first())
+
+
+def _mirror_registration_change(registration, changed_fields):
+    """Carry an approved change out to the records built from the registration.
+
+    The registration row is the application; the pass the change is really about
+    lives in other places, and leaving any of them behind is how an owner ends
+    up with a corrected dashboard and a gate that still refuses them:
+
+      * `Vehicle` — what the plate reader and the guard's lookup resolve.
+      * `User.full_name` — what the portal and every notice address them as.
+      * nothing for the QR: it is `VEHICLE:{plate}|ID:{id}`, rebuilt live from
+        the registration wherever it is displayed. The copy attached to the
+        original approval email is the one exception, and the decision email
+        says to use the portal's instead.
+
+    A plate move adopts the new plate's Vehicle row rather than renaming the old
+    one in place. Renaming would trip `uniq_vehicle_plate_number` against an
+    unowned row for that plate (a visitor pass leaves one behind), and deleting
+    that row to make space would take its visitor passes with it — they
+    `CASCADE`. So the new row is adopted the way an approval adopts one, and the
+    old row is released rather than deleted: it keeps whatever history hangs off
+    it, and stops admitting the car.
+    """
+    touched = set(changed_fields)
+
+    if 'full_name' in touched and registration.user_id:
+        user = registration.user
+        user.full_name = registration.full_name
+        user.save(update_fields=['full_name'])
+
+    vehicle_fields = {'plate_number', 'conduction_number', 'vehicle_type', 'vehicle_color'}
+    if not (touched & vehicle_fields):
+        return
+
+    old_vehicle = registration.vehicle
+    identity_moved = bool(touched & {'plate_number', 'conduction_number'})
+
+    if not identity_moved and old_vehicle is not None:
+        # Same car, different description — no row to adopt.
+        old_vehicle.vehicle_type = _vehicle_type_for(registration.vehicle_type)
+        old_vehicle.color = registration.vehicle_color
+        old_vehicle.save(update_fields=['vehicle_type', 'color'])
+        return
+
+    new_vehicle = _upsert_vehicle_for_registration(registration, registration.user)
+    if old_vehicle is not None and old_vehicle.pk != new_vehicle.pk:
+        old_vehicle.user = None
+        old_vehicle.is_authorized = False
+        old_vehicle.save(update_fields=['user', 'is_authorized'])
+    registration.vehicle = new_vehicle
+    registration.save(update_fields=['vehicle'])
+
+
+class RegistrationSelfEditView(APIView):
+    """The applicant's own correction step, while the application is pending.
+
+    Same authorisation as the receipt step — the unguessable `payment_token`
+    from their acknowledgement email, and only ever a PENDING row (see
+    `_payment_registration`, which is where "already reviewed" stops being
+    editable). Once CDSO has decided, a correction is a change request against
+    the accepted registration instead, and that one needs approval.
+
+    Payment does not close editing: paying the fee is not the review, and the
+    fee does not depend on any field on this whitelist. The one thing an edit
+    re-sends is the acknowledgement PDF, which is rebuilt from the row — the
+    copy the applicant is holding would otherwise still show the typo.
+    """
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    EXPIRED_MESSAGE = (
+        "This link is no longer valid. It may have expired, or your application "
+        "may already have been reviewed — the CDSO Office can still correct your "
+        "details for you."
+    )
+
+    def get(self, request):
+        registration = _payment_registration(request.query_params.get('token'))
+        if registration is None:
+            return Response({"error": self.EXPIRED_MESSAGE},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            "registrant_type": registration.registrant_type,
+            "student_level":   registration.student_level,
+            "reference":       "REG-%s" % str(registration.pk).zfill(6),
+            "editable":        [{"field": f.name, "label": f.label}
+                                for f in editable_for(registration)],
+            "values":          current_values(registration),
+            # Shown read-only beside the form: they are what the applicant uses
+            # to recognise their own application, and being unable to edit the
+            # email is easier to accept when you can see which one it is.
+            "locked": {
+                "email":           registration.email,
+                "registrant_type": registration.get_registrant_type_display(),
+            },
+        })
+
+    def post(self, request):
+        registration = _payment_registration(request.data.get('token'))
+        if registration is None:
+            return Response({"error": self.EXPIRED_MESSAGE},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        raw = {k: v for k, v in request.data.items() if k != 'token'}
+        changes, errors = clean_changes(registration, raw)
+        if errors:
+            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+        if not changes:
+            return Response({"message": "Nothing was changed.", "changed": []},
+                            status=status.HTTP_200_OK)
+
+        summary = describe(registration, changes)
+        with transaction.atomic():
+            apply_changes(registration, changes)
+            registration.save()
+
+        # Not audited against a user: the applicant has no account yet, and an
+        # AuditLog row needs an actor to mean anything. The notification below
+        # is what tells CDSO the row moved under them, which is what a reviewer
+        # with the application already open actually needs to know.
+        _notify_registration_edited(registration, summary)
+
+        # Backgrounded, like every other mail on this path: a dead SMTP host
+        # must not fail a correction that is already saved.
+        send_in_background(send_registration_updated_email, registration, summary)
+
+        return Response({
+            "message": "Your details have been updated. A new acknowledgement has "
+                       "been emailed to you.",
+            "changed": summary,
+            "values":  current_values(registration),
+        }, status=status.HTTP_200_OK)
+
+
+class OwnerChangeRequestView(APIView):
+    """The owner's side of an approval-gated correction.
+
+    GET returns their own request history, newest first, so the dashboard can
+    say "waiting on CDSO" rather than appearing to have forgotten the edit.
+    POST files a new one.
+
+    One open request at a time, enforced here with a readable 409 and in the
+    database by `uniq_pending_change_request_per_registration`. Stacking them
+    would mean approving in any order leaves the row holding whichever was
+    decided last rather than what the reviewer read.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _guard(self, request):
+        if request.user.role != 'vehicle_owner':
+            return None, Response(
+                {"error": "Only vehicle owners can change their registration details."},
+                status=status.HTTP_403_FORBIDDEN)
+        registration = _accepted_registration_for(request.user)
+        if registration is None:
+            return None, Response(
+                {"error": "No approved registration found for this account."},
+                status=status.HTTP_404_NOT_FOUND)
+        return registration, None
+
+    def get(self, request):
+        registration, error = self._guard(request)
+        if error:
+            return error
+        requests = (RegistrationChangeRequest.objects
+                    .filter(registration=registration)
+                    .select_related('reviewed_by')[:20])
+        return Response({
+            "editable": [{"field": f.name, "label": f.label}
+                         for f in editable_for(registration)],
+            "values":   current_values(registration),
+            "locked":   dict(READ_ONLY_REASONS),
+            "requests": [_serialize_change_request(r) for r in requests],
+        })
+
+    def post(self, request):
+        registration, error = self._guard(request)
+        if error:
+            return error
+
+        if RegistrationChangeRequest.objects.filter(
+            registration=registration,
+            status=RegistrationChangeRequest.Status.PENDING,
+        ).exists():
+            return Response(
+                {"error": "You already have a change waiting for CDSO approval. "
+                          "Cancel it first if you need to change something else."},
+                status=status.HTTP_409_CONFLICT)
+
+        before = current_values(registration)
+        changes, errors = clean_changes(registration, dict(request.data))
+        if errors:
+            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+        if not changes:
+            return Response(
+                {"error": "Nothing was changed, so there is nothing to submit."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            change_request = RegistrationChangeRequest.objects.create(
+                registration=registration,
+                requested_by=request.user,
+                changes=changes,
+                # Snapshot for the audit trail, and what a *decided* request is
+                # rendered from — once a change is applied the row holds the new
+                # value on both sides. See the model docstring.
+                previous={k: before.get(k, '') for k in changes},
+            )
+        except IntegrityError:
+            # uniq_pending_change_request_per_registration. The .exists() check
+            # above catches this in every ordinary case; this is the double
+            # submit that got through it, and it deserves the same readable
+            # answer rather than a 500.
+            return Response(
+                {"error": "You already have a change waiting for CDSO approval. "
+                          "Cancel it first if you need to change something else."},
+                status=status.HTTP_409_CONFLICT)
+
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              "Registration change requested by owner | Plate: %s | Fields: %s | "
+              "Awaiting CDSO approval"
+              % (registration.plate_number or registration.conduction_number,
+                 ', '.join(sorted(changes))),
+              target_user=request.user)
+        _notify_change_requested(registration, change_request)
+
+        return Response(_serialize_change_request(change_request),
+                        status=status.HTTP_201_CREATED)
+
+
+class OwnerChangeRequestCancelView(APIView):
+    """The owner withdraws their own pending request.
+
+    Marked cancelled rather than deleted: "they asked and then thought better of
+    it" is part of the account's history, and it is also what frees the partial
+    unique constraint so they can file a corrected request straight away.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        if request.user.role != 'vehicle_owner':
+            return Response({"error": "Only vehicle owners can cancel their own request."},
+                            status=status.HTTP_403_FORBIDDEN)
+        change_request = (RegistrationChangeRequest.objects
+                          .filter(pk=pk, requested_by=request.user)
+                          .first())
+        if change_request is None:
+            return Response({"error": "Change request not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if change_request.status != RegistrationChangeRequest.Status.PENDING:
+            return Response(
+                {"error": "This request has already been reviewed and cannot be cancelled."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        change_request.status = RegistrationChangeRequest.Status.CANCELLED
+        change_request.reviewed_at = timezone.now()
+        change_request.save(update_fields=['status', 'reviewed_at'])
+
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              "Registration change request #%s cancelled by owner" % change_request.pk,
+              target_user=request.user)
+        return Response(_serialize_change_request(change_request))
+
+
+class ChangeRequestListView(APIView):
+    """The CDSO review queue. `?status=` filters; pending is the default and is
+    deliberately oldest-first — the queue is worked through, not browsed."""
+    permission_classes = [IsAdminOrCdso]
+
+    def get(self, request):
+        wanted = (request.query_params.get('status') or 'pending').strip().lower()
+        qs = (RegistrationChangeRequest.objects
+              .select_related('registration', 'requested_by', 'reviewed_by'))
+        if wanted != 'all':
+            valid = {c for c, _ in RegistrationChangeRequest.Status.choices}
+            if wanted not in valid:
+                return Response({"error": "Unknown status filter."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(status=wanted)
+        if wanted == 'pending':
+            qs = qs.order_by('created_at')
+        return Response([_serialize_change_request(r, for_review=True)
+                         for r in qs[:200]])
+
+
+class ChangeRequestDecisionView(APIView):
+    """CDSO approves or rejects one pending change request.
+
+    Approval re-validates before it applies. The request may have been sitting
+    in the queue for days, and `clean_changes` is the only thing that knows
+    whether the plate it asks for is still free — so a request that was valid
+    when filed can be refused here, with the reason the owner needs rather than
+    an IntegrityError.
+    """
+    permission_classes = [IsAdminOrCdso]
+
+    def post(self, request, pk, decision):
+        change_request = (RegistrationChangeRequest.objects
+                          .select_related('registration')
+                          .filter(pk=pk)
+                          .first())
+        if change_request is None:
+            return Response({"error": "Change request not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if change_request.status != RegistrationChangeRequest.Status.PENDING:
+            return Response(
+                {"error": "This request has already been %s."
+                          % change_request.get_status_display().lower()},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        registration = change_request.registration
+        note = (request.data.get('note') or '').strip()
+
+        if decision == 'reject':
+            if not note:
+                return Response({"error": "A reason is required when declining a change."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            change_request.status = RegistrationChangeRequest.Status.REJECTED
+            change_request.decision_note = note
+            change_request.reviewed_by = request.user
+            change_request.reviewed_at = timezone.now()
+            change_request.save(update_fields=[
+                'status', 'decision_note', 'reviewed_by', 'reviewed_at'])
+
+            audit(request, AuditLog.Action.RECORD_UPDATED,
+                  "Registration change request #%s declined | Applicant: %s | "
+                  "Reason: %s | By: %s"
+                  % (change_request.pk, registration.full_name, note,
+                     request.user.full_name),
+                  target_user=registration.user)
+            send_in_background(send_change_request_decision_email,
+                               registration, change_request, [])
+            return Response(_serialize_change_request(change_request, for_review=True))
+
+        # ── Approve ──
+        # Re-validated against the row as it stands now, not as it stood when
+        # the request was filed.
+        changes, errors = clean_changes(registration, change_request.changes)
+        if errors:
+            return Response(
+                {"error": "This change can no longer be applied — the details it asks "
+                          "for are not available any more. Decline it and ask the owner "
+                          "to file a corrected one.",
+                 "errors": errors},
+                status=status.HTTP_409_CONFLICT)
+        if not changes:
+            # Someone (CDSO at the counter, an earlier approval) already made
+            # the same edit. The request is satisfied, so close it rather than
+            # leaving it open against a row it no longer changes.
+            change_request.status = RegistrationChangeRequest.Status.APPROVED
+            change_request.decision_note = (
+                note or 'Already applied — the registration matched the request.')
+            change_request.reviewed_by = request.user
+            change_request.reviewed_at = timezone.now()
+            change_request.save(update_fields=[
+                'status', 'decision_note', 'reviewed_by', 'reviewed_at'])
+            return Response(_serialize_change_request(change_request, for_review=True))
+
+        summary = describe(registration, changes)
+        with transaction.atomic():
+            touched = apply_changes(registration, changes)
+            registration.save()
+            _mirror_registration_change(registration, touched)
+            change_request.status = RegistrationChangeRequest.Status.APPROVED
+            change_request.decision_note = note
+            change_request.reviewed_by = request.user
+            change_request.reviewed_at = timezone.now()
+            change_request.save(update_fields=[
+                'status', 'decision_note', 'reviewed_by', 'reviewed_at'])
+
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              "Registration change request #%s approved | Applicant: %s | %s | By: %s"
+              % (change_request.pk, registration.full_name,
+                 ' | '.join("%s: %s -> %s" % (row['label'], row['old'] or '(blank)',
+                                              row['new'])
+                            for row in summary),
+                 request.user.full_name),
+              target_user=registration.user)
+        send_in_background(send_change_request_decision_email,
+                           registration, change_request, summary)
+
+        return Response(_serialize_change_request(change_request, for_review=True))
+
+
+def _serialize_change_request(change_request, for_review=False):
+    """One request as the owner portal and the CDSO queue both read it.
+
+    A request still waiting has its diff rebuilt from the live registration, so
+    a reviewer is always shown the change against what approving it would
+    overwrite — not against a snapshot that may be days stale.
+
+    A decided one is read from that snapshot instead. Approving applies the
+    change, so the row then holds the new value on both sides and the live diff
+    would render "RED -> RED" — which tells the owner nothing about what was
+    done to their registration.
+    """
+    registration = change_request.registration
+    decided = change_request.status != RegistrationChangeRequest.Status.PENDING
+    data = {
+        "id":            change_request.pk,
+        "status":        change_request.status,
+        "status_label":  change_request.get_status_display(),
+        "changes":       describe(registration, change_request.changes or {},
+                                 previous=change_request.previous if decided else None),
+        "decision_note": change_request.decision_note,
+        "created_at":    change_request.created_at,
+        "reviewed_at":   change_request.reviewed_at,
+        "reviewed_by":   change_request.reviewed_by.full_name if change_request.reviewed_by else '',
+    }
+    if for_review:
+        data.update({
+            "registration_id": registration.pk,
+            "full_name":       registration.full_name,
+            "email":           registration.email,
+            "registrant_type": registration.registrant_type,
+            "plate_number":    registration.plate_number or registration.conduction_number,
+            "requested_by":    (change_request.requested_by.full_name
+                                if change_request.requested_by else registration.full_name),
+        })
+    return data
+
+
+def _notify_change_requested(registration, change_request):
+    """Admin-bell entry for a filed request — the queue is otherwise silent."""
+    from accounts.notifications import notify as bell
+    fields = ', '.join(sorted(row['label'] for row in
+                              describe(registration, change_request.changes or {})))
+    plate = registration.plate_number or registration.conduction_number
+    bell('registration', 'change_requested',
+         "Detail change requested — %s" % plate,
+         "%s asked to change: %s. Waiting for CDSO approval."
+         % (registration.full_name, fields),
+         severity='info', plate_number=plate, link='/admin/vehicles')
+
+
+def _notify_registration_edited(registration, summary):
+    """Admin-bell entry for a pending applicant's own correction.
+
+    Worth a notification even though no approval is needed: a reviewer may have
+    the application open, and the row they are reading has just moved.
+    """
+    from accounts.notifications import notify as bell
+    fields = ', '.join(sorted(row['label'] for row in summary))
+    plate = registration.plate_number or registration.conduction_number
+    bell('registration', 'registration_edited',
+         "Applicant corrected their details — %s" % plate,
+         "%s updated: %s before review." % (registration.full_name, fields),
+         severity='info', plate_number=plate, link='/admin/vehicles')
 
 
 # ──────────────────────────────────────────────

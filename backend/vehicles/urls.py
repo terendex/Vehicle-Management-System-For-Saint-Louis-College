@@ -18,6 +18,9 @@ urlpatterns = [
     path('register/availability/',   views.RegistrationAvailabilityView.as_view(),    name='registration-availability'),
     path('register/documents/',      views.UploadRegistrationDocumentsView.as_view(), name='upload-registration-documents'),
     path('register/payment/',        views.RegistrationPaymentView.as_view(),        name='registration-payment'),
+    # Correcting a still-pending application. Same token as the payment step —
+    # only a PENDING row is reachable, so CDSO's decision closes it.
+    path('register/details/',        views.RegistrationSelfEditView.as_view(),       name='registration-self-edit'),
     # Legacy path - the already-built frontend bundle still posts here.
     path('register/license-image/',  views.UploadRegistrationDocumentsView.as_view(), name='upload-license-image'),
 
@@ -44,6 +47,15 @@ urlpatterns = [
     path('registrations/<int:pk>/pdf/',    views.RegistrationPdfView.as_view(),          name='registration-pdf'),
     path('registrations/<int:pk>/accept/', views.AcceptRegistrationView.as_view(),       name='accept-registration'),
     path('registrations/<int:pk>/reject/', views.RejectRegistrationView.as_view(),       name='reject-registration'),
+
+    # ── Approval-gated detail changes on an ACCEPTED registration ──
+    # The owner files one; CDSO decides. `my/` is scoped to the caller's own
+    # registration, so it needs no pk; the reviewer's routes take the request's.
+    path('registrations/my/changes/',            views.OwnerChangeRequestView.as_view(),       name='my-change-requests'),
+    path('registrations/my/changes/<int:pk>/cancel/', views.OwnerChangeRequestCancelView.as_view(), name='my-change-request-cancel'),
+    path('registrations/changes/',               views.ChangeRequestListView.as_view(),        name='change-request-list'),
+    path('registrations/changes/<int:pk>/approve/', views.ChangeRequestDecisionView.as_view(), {'decision': 'approve'}, name='change-request-approve'),
+    path('registrations/changes/<int:pk>/reject/',  views.ChangeRequestDecisionView.as_view(), {'decision': 'reject'},  name='change-request-reject'),
 
     # System-wide settings (admin / CDSO)
     path('system-settings/', views.SystemSettingsView.as_view(), name='system-settings'),

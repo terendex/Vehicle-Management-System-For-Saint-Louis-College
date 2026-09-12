@@ -1,0 +1,85 @@
+/* Only what the correction page adds on top of PaymentPage.css — the shell,
+   header, card, notes and buttons all come from there, because from the
+   applicant's side this is the same errand: a link in an email, one short
+   form, a confirmation. */
+
+.rdpage-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 18px;
+}
+
+.rdpage-block {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #F7FAFC;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+}
+
+.rdpage-block-heading {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #03396C;
+}
+
+/* Saying plainly what cannot be changed here, and who can change it. Without
+   it the fields simply aren't on the page, which reads as an oversight and
+   sends the applicant to the office to ask. */
+.rdpage-locked {
+  padding: 14px 16px;
+  background: #F7FAFC;
+  border: 1px solid #E7EEF4;
+  border-radius: 10px;
+}
+
+.rdpage-locked ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rdpage-locked li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4A6B85;
+}
+
+.rdpage-locked strong { color: #0B2340; }
+
+.rdpage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* The submit button leads; the undo sits beside it and takes only the room it
+   needs. Both go full-width on a phone rather than squeezing onto one line. */
+.rdpage-actions .paypage-btn-submit {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+.rdpage-actions .paypage-btn-ghost {
+  flex: 0 1 auto;
+  margin: 0;
+}
+
+@media (max-width: 460px) {
+  .rdpage-actions { flex-direction: column-reverse; align-items: stretch; }
+  .rdpage-actions .paypage-btn-ghost,
+  .rdpage-actions .paypage-btn-submit { width: 100%; }
+}
+
+.rd-diff-empty {
+  margin: 0;
+  font-size: 13px;
+  color: #6B8CA6;
+}

@@ -43,6 +43,52 @@ export const registrationApi = {
     return data
   },
 
+  // ── Correcting a still-pending application ──
+  // Same token as the payment step, and the same rule behind it: only a PENDING
+  // registration is reachable, so CDSO's decision closes this page.
+  getEditableDetails: async (token) => {
+    const { data } = await api.get('/vehicles/register/details/', { params: { token } })
+    return data
+  },
+  submitDetailChanges: async (token, changes) => {
+    const { data } = await api.post('/vehicles/register/details/', { token, ...changes })
+    return data
+  },
+
+  // ── Approval-gated detail changes on an approved registration ──
+  // The owner files one and waits; CDSO decides. Nothing on the registration
+  // moves until it is approved, which is why the owner's page shows the request
+  // rather than the new value.
+  getMyChangeRequests: async () => {
+    const { data } = await api.get('/vehicles/registrations/my/changes/')
+    return data
+  },
+  requestDetailChange: async (changes) => {
+    const { data } = await api.post('/vehicles/registrations/my/changes/', changes)
+    return data
+  },
+  cancelMyChangeRequest: async (id) => {
+    const { data } = await api.post(`/vehicles/registrations/my/changes/${id}/cancel/`)
+    return data
+  },
+  // Admin/CDSO — the review queue. status: 'pending' (default) | 'approved' |
+  // 'rejected' | 'cancelled' | 'all'.
+  getChangeRequests: async (status = 'pending') => {
+    const { data } = await api.get('/vehicles/registrations/changes/', { params: { status } })
+    return data
+  },
+  approveChangeRequest: async (id, note) => {
+    const { data } = await api.post(`/vehicles/registrations/changes/${id}/approve/`,
+      note ? { note } : {})
+    return data
+  },
+  // note is required by the backend — an owner told "no" with no reason has
+  // nothing to correct and will file the same request again.
+  rejectChangeRequest: async (id, note) => {
+    const { data } = await api.post(`/vehicles/registrations/changes/${id}/reject/`, { note })
+    return data
+  },
+
   // Live duplicate check for the registration form's plate/conduction/email/license
   // fields. conduction_number must be forwarded like the rest: the form passes it
   // and reads result.conduction_number back, but it used to be dropped here, so a

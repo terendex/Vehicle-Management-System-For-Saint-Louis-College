@@ -1935,3 +1935,153 @@
 .od-parking-stat.reserved .od-parking-stat-label {
   color: #8A6B00;
 }
+
+/* ── Approval-gated detail changes ──
+   Sits at the foot of the Personal Information card, which is where the owner
+   is looking when they notice a mistake in one of the rows above it. Shaped
+   like .od-plate-swap-cta above — the two are the same kind of offer ("this
+   detail is wrong, here is how to fix it") and should not look like two
+   unrelated features. In the house blue rather than that one's amber, because
+   nothing here is a one-shot action the owner can spend by mistake. */
+
+.od-change-cta {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed #7FA4C4;
+  border-radius: 10px;
+  background: #F3F8FC;
+}
+
+.od-change-cta p {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #2E4C63;
+}
+
+.od-change-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: #03396C;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.od-change-btn:hover { background: #0A4E8F; }
+
+/* Waiting on CDSO. Amber, and stating the negative outright: the rows directly
+   above this block still show the OLD values, and an owner who reads the
+   request as already applied will show a guard a pass that says something
+   else. */
+.od-change-pending {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #F7E08A;
+  border-radius: 10px;
+  background: #FEF9E4;
+}
+
+.od-change-pending-head,
+.od-change-decided-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7A5C00;
+}
+
+.od-change-pending-head svg,
+.od-change-decided-head svg { flex-shrink: 0; }
+
+.od-change-pending-note,
+.od-change-decided-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6B5A24;
+}
+
+.od-change-withdraw {
+  margin-top: 10px;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.od-change-decided {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #D3E1EC;
+  background: #F7FAFC;
+}
+
+.od-change-decided--approved {
+  border-color: #A8DCC6;
+  background: #E7F5EF;
+}
+
+.od-change-decided--approved .od-change-decided-head { color: #0F7A5A; }
+.od-change-decided--approved .od-change-decided-note  { color: #17624B; }
+
+.od-change-decided--rejected {
+  border-color: #F3B7B7;
+  background: #FDECEC;
+}
+
+.od-change-decided--rejected .od-change-decided-head { color: #C62828; }
+.od-change-decided--rejected .od-change-decided-note  { color: #8F2C2C; }
+
+/* ── The request form, inside .od-modal-wide ── */
+
+.od-change-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 16px;
+  text-align: left;   /* the confirm-style modal centres its text; a form must not */
+}
+
+.od-change-preview {
+  padding: 12px 14px;
+  border: 1px solid #BDD4E5;
+  border-radius: 10px;
+  background: #EAF2F8;
+}
+
+.od-change-preview-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #03396C;
+}
+
+.od-change-locked {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4A6B85;
+}
+
+.od-change-locked strong { color: #0B2340; }
+
+/* The empty state ChangeDiff falls back to, which the dashboard reaches only
+   if a request somehow carries no fields. */
+.od-change-pending .rd-diff-empty,
+.od-change-decided .rd-diff-empty,
+.od-change-preview .rd-diff-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: #6B8CA6;
+}

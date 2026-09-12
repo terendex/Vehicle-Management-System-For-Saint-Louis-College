@@ -37,6 +37,7 @@ set via `db_table` on each model's `Meta` (see `backend/*/models.py`):
 | AccessLog / GuardShift | `tbl_access_log` · `tbl_guard_shift` |
 | MLTrainingSample / PlateRecognitionRecord | `tbl_ml_training_sample` · `tbl_plate_recognition_record` |
 | Vehicle / VehicleRegistration | `tbl_vehicle` · `tbl_vehicle_registration` |
+| RegistrationChangeRequest | `tbl_registration_change_request` |
 | ReferenceItem / RuleConstraint | `tbl_reference_item` · `tbl_rule_constraint` |
 | ParkingZone / ParkingSpace / ParkingNotice | `tbl_parking_zone` · `tbl_parking_space` · `tbl_parking_notice` |
 | RegistrationPeriod / Event | `tbl_registration_period` · `tbl_event` |
@@ -61,6 +62,7 @@ bare `id` and not a shortened/ambiguous stub. Set with `db_column` on each PK:
 | `tbl_violation` | `violation_id` |
 | `tbl_vehicle` | `vehicle_id` |
 | `tbl_vehicle_registration` | `vehicle_registration_id` |
+| `tbl_registration_change_request` | `registration_change_request_id` |
 | `tbl_access_log` | `access_log_id` |
 | `tbl_guard_shift` | `guard_shift_id` |
 | `tbl_visitor_pass` | `visitor_pass_id` |

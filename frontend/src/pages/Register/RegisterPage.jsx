@@ -6,6 +6,7 @@ import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+import { formatDriversLicense } from '../../utils/licenseFormat'
 import BrandLogos from '../../components/BrandLogos'
 import {
   IllustratedStep,
@@ -104,15 +105,6 @@ function todayISO() {
   const n = new Date()
   const p = x => String(x).padStart(2, '0')
   return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`
-}
-
-// Auto-inserts dashes for the LTO format: X00-00-000000.
-// Strips any existing dashes first so the cursor position doesn't confuse things.
-function formatDriversLicense(raw) {
-  const clean = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 11)
-  if (clean.length <= 3) return clean
-  if (clean.length <= 5) return `${clean.slice(0, 3)}-${clean.slice(3)}`
-  return `${clean.slice(0, 3)}-${clean.slice(3, 5)}-${clean.slice(5)}`
 }
 
 /* Employee departments. `free` marks the one exempt from the vehicle pass fee

@@ -41,6 +41,7 @@ const SecurityQRLogin         = lazy(() => import('./pages/Security/SecurityQRLo
 const OwnerDashboard          = lazy(() => import('./pages/VehicleOwner/OwnerDashboard'))
 const RegisterPage            = lazy(() => import('./pages/Register/RegisterPage'))
 const PaymentPage             = lazy(() => import('./pages/Payment/PaymentPage'))
+const RegDetailsPage          = lazy(() => import('./pages/Registration/DetailsPage'))
 const ForgotPasswordPage      = lazy(() => import('./pages/ForgotPassword/ForgotPasswordPage'))
 const ResetPasswordPage       = lazy(() => import('./pages/ResetPassword/ResetPasswordPage'))
 const PolicyPage              = lazy(() => import('./pages/Policy/PolicyPage'))
@@ -134,6 +135,9 @@ export default function App() {
         {/* Applicant's own proof-of-payment step, reached from the pending email.
             Public: the payment token in the query string is the only key. */}
         <Route path="/registration/payment" element={<PaymentPage />} />
+        {/* Applicant's own correction step, on the same token. Only a pending
+            application is reachable, so CDSO's decision closes this page. */}
+        <Route path="/registration/details" element={<RegDetailsPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/policy" element={<PolicyPage />} />

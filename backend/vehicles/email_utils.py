@@ -664,6 +664,9 @@ def send_pending_email(registration):
     # PUBLIC_SITE_URL, not FRONTEND_URL — the campus half's FRONTEND_URL is a LAN
     # address that resolves nowhere from an applicant's phone.
     base_url = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    # Same token as the receipt step. It is the applicant's only handle on their
+    # own application - they have no account until it is approved.
+    edit_link = f"{base_url}/registration/details?token={registration.payment_token}"
     fee = registration.pass_fee()
     if fee == 0:
         # Fee-exempt: no Accounting stop, no receipt, and no link to send.
@@ -748,6 +751,15 @@ def send_pending_email(registration):
                  ("Driver&#39;s License", license_val)]
                 + _authorized_driver_pairs(registration)
                 + id_pairs + schedule_pairs))
+            # Directly under the details, because that is where a typo is
+            # noticed. Editing closes the moment CDSO decides, which is why the
+            # copy says "still awaiting review" rather than "any time".
+            + _panel(
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                f'Spotted a mistake above? You can correct your own details for as long '
+                f'as this application is still awaiting review.</div>'
+                + _button(edit_link, 'Edit My Details'),
+                bg=PANEL_BG, border=BORDER)
             + _section('Vehicle', _kv([
                 ('Plate Number',   plate_val),
                 ('Vehicle Type',   vehicle_type_val),
@@ -778,6 +790,9 @@ def send_pending_email(registration):
             f"{payment_text}"
             f"Your registration acknowledgement is attached as a PDF \u2014 keep it as "
             f"proof that you applied. It is not a vehicle pass.\n\n"
+            f"SPOTTED A MISTAKE?\n"
+            f"You can correct your own details for as long as this application is\n"
+            f"still awaiting review:\n{edit_link}\n\n"
             f"You will be notified by email once a decision has been made.\n\n"
             f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),
@@ -922,6 +937,224 @@ def send_rejection_email(registration, reason):
     send_mail(
         subject="SLC Vehicle Registration Status Update",
         message=f"Your vehicle registration has been declined.\n\nReason: {rejection_reason}",
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[registration.email],
+        html_message=html_message,
+        fail_silently=False,
+    )
+
+
+def _change_rows(summary):
+    """A change set as a from/to block, for both mails below.
+
+    The old value is struck through rather than merely labelled: on a phone the
+    two lines sit under one another, and "Plate Number / ABC 1234 / ABC 1243" is
+    unreadable without something saying which one is now true.
+    """
+    if not summary:
+        return ''
+    rows = []
+    for row in summary:
+        old = esc(row.get('old') or '') or '&mdash;'
+        new = esc(row.get('new') or '') or '&mdash;'
+        rows.append((
+            esc(row.get('label') or row.get('field') or ''),
+            f'<span style="color:{FAINT};text-decoration:line-through;">{old}</span>'
+            f'<span style="color:{FAINT};"> &rarr; </span>'
+            f'<span style="color:{INK};">{new}</span>',
+        ))
+    return _kv(rows)
+
+
+def _change_text(summary):
+    """The plain-text half of the same block."""
+    return '\n'.join(
+        "  %s: %s -> %s" % (row.get('label') or row.get('field'),
+                            row.get('old') or '(blank)',
+                            row.get('new') or '(blank)')
+        for row in (summary or [])
+    )
+
+
+def send_registration_updated_email(registration, summary):
+    """Sent when an applicant corrects their own still-pending application.
+
+    Carries a fresh acknowledgement PDF, which is the real point of the mail:
+    the PDF is rebuilt from the row, so the copy the applicant is holding still
+    shows whatever they just fixed. The payment link is repeated for the same
+    reason the pending mail carries it — an unpaid application is still waiting
+    on that step, and this mail has now displaced the one that had the link.
+    """
+    full_name_val = esc(registration.full_name)
+    ref_number    = f"REG-{str(registration.pk).zfill(6)}"
+    plate_val     = esc_or_dash(registration.plate_number
+                                or registration.conduction_number)
+
+    base_url = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    edit_link = f"{base_url}/registration/details?token={registration.payment_token}"
+
+    from .models import VehicleRegistration
+    unpaid = registration.payment_status == VehicleRegistration.PaymentStatus.UNPAID
+    fee = registration.pass_fee()
+    if unpaid and fee:
+        payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
+        next_step = _panel(
+            f'<div style="color:{BRAND};font-size:15px;font-weight:700;margin-bottom:6px;">'
+            f'Still to do &mdash; file your receipt number</div>'
+            f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
+            f'Your application is not queued for CDSO review until the Official Receipt '
+            f'number is on file.</div>'
+            + _button(payment_link, 'File Official Receipt Number'),
+            bg=TINT_BG, border=BORDER_FIRM)
+        next_text = ("STILL TO DO\nFile your Official Receipt number here:\n%s\n\n"
+                     % payment_link)
+    else:
+        next_step = ''
+        next_text = ''
+
+    html_message = _shell(
+        accent=BRAND,
+        preheader=f'{ref_number} updated — your corrected details are on file.',
+        heading='Your Details Were Updated',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, the changes you '
+               f'made to application <strong style="color:{INK};">{ref_number}</strong> have '
+               f'been saved. It is still awaiting CDSO review. The acknowledgement attached '
+               f'to this email replaces the previous one.'),
+        rows_html=(
+            _section('What changed', _change_rows(summary))
+            + next_step
+            + _panel(
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                f'Spotted something else? You can keep correcting your details until the '
+                f'CDSO reviews your application.</div>'
+                + _button(edit_link, 'Edit My Details'),
+                bg=PANEL_BG, border=BORDER)
+            + _section('Your application', _kv([
+                ('Reference No.',  ref_number),
+                ('Plate / Conduction', plate_val),
+                ('Email',          esc(registration.email)),
+            ]))
+        ),
+    )
+
+    msg = EmailMultiAlternatives(
+        subject="SLC Vehicle Registration — Your Details Were Updated",
+        body=(f"Dear {registration.full_name},\n\n"
+              f"The changes you made to application {ref_number} have been saved.\n"
+              f"It is still awaiting CDSO review.\n\n"
+              f"WHAT CHANGED\n{_change_text(summary)}\n\n"
+              f"{next_text}"
+              f"You can keep correcting your details until the CDSO reviews your "
+              f"application:\n{edit_link}\n"),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[registration.email],
+    )
+    msg.attach_alternative(html_message, "text/html")
+    # Same treatment the pending mail gives it: a PDF that fails to build must
+    # not cost the applicant the confirmation that their correction was saved.
+    try:
+        msg.attach(*_registration_pdf_attachment(registration, pending=True))
+    except Exception:
+        log.exception(
+            "Could not attach the updated acknowledgement PDF for %s (registration %s) "
+            "— sending the update email without it.",
+            registration.email, registration.pk,
+        )
+    msg.send(fail_silently=False)
+
+
+def send_change_request_decision_email(registration, change_request, summary):
+    """Tells an owner what CDSO decided about the change they asked for.
+
+    `summary` is the applied change set on approval and empty on a decline, so
+    an approved mail says what is now true and a declined one says only what was
+    asked for and why — there is no "new value" to report for a change that did
+    not happen.
+    """
+    from .registration_edits import describe
+
+    approved = change_request.status == 'approved'
+    full_name_val = esc(registration.full_name)
+    plate_val = esc_or_dash(registration.plate_number or registration.conduction_number)
+    note_html = esc(change_request.decision_note or '')
+
+    requested = _change_rows(describe(registration, change_request.changes or {})
+                             if not approved else summary)
+
+    if approved:
+        # A plate change makes the QR image in the original approval email
+        # wrong, and that is the copy people save. The portal's is generated
+        # from the record every time it is shown, so it cannot go stale.
+        qr_note = ''
+        if any(row.get('field') in ('plate_number', 'conduction_number')
+               for row in (summary or [])):
+            qr_note = _panel(
+                f'<div style="color:{WARN_INK};font-size:12px;font-weight:700;'
+                f'letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">'
+                f'Use your portal QR from now on</div>'
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                f'Your vehicle identifier changed, so the QR code attached to your original '
+                f'approval email no longer matches your record. Open your portal dashboard '
+                f'and show the code there instead &mdash; it is always current.</div>',
+                bg=WARN_BG, border=WARN_BORDER)
+        html_message = _shell(
+            accent=OK_INK,
+            preheader='Approved — your registration details have been updated.',
+            heading='Detail Change Approved',
+            intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, the CDSO '
+                   f'Office approved the change you asked for. Your registration now reads '
+                   f'as below.'),
+            rows_html=(
+                _section('What changed', requested)
+                + qr_note
+                + (_panel(
+                    f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                    f'<strong>Note from CDSO:</strong> {note_html}</div>',
+                    bg=PANEL_BG, border=BORDER) if note_html else '')
+            ),
+        )
+        subject = "SLC Vehicle Registration — Detail Change Approved"
+        body = (f"Dear {registration.full_name},\n\n"
+                f"The CDSO Office approved the change you asked for.\n\n"
+                f"WHAT CHANGED\n{_change_text(summary)}\n\n"
+                + (f"Note from CDSO: {change_request.decision_note}\n\n"
+                   if change_request.decision_note else ''))
+    else:
+        html_message = _shell(
+            accent=BAD_INK,
+            preheader='Declined — your registration details are unchanged.',
+            heading='Detail Change Declined',
+            intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, the CDSO '
+                   f'Office could not approve the change you asked for, so your '
+                   f'registration for <strong style="color:{INK};">{plate_val}</strong> is '
+                   f'unchanged.'),
+            rows_html=(
+                _panel(
+                    f'<div style="color:{BAD_INK};font-size:12px;font-weight:700;'
+                    f'letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">'
+                    f'Reason</div>'
+                    f'<div style="color:{INK};font-size:14px;line-height:1.6;">'
+                    f'{note_html}</div>',
+                    bg=BAD_BG, border=BAD_BORDER)
+                + _section('What you asked for', requested)
+                + _section('What you can do', (
+                    f'<div style="color:{MUTED};font-size:14px;line-height:1.7;">'
+                    f'You can file a corrected request from your portal dashboard, or bring '
+                    f'the details to the <strong style="color:{INK};">CDSO Office</strong> if '
+                    f'you believe this was decided in error.</div>'))
+            ),
+        )
+        subject = "SLC Vehicle Registration — Detail Change Declined"
+        body = (f"Dear {registration.full_name},\n\n"
+                f"The CDSO Office could not approve the change you asked for, so your "
+                f"registration is unchanged.\n\n"
+                f"Reason: {change_request.decision_note}\n\n"
+                f"WHAT YOU ASKED FOR\n"
+                f"{_change_text(describe(registration, change_request.changes or {}))}\n")
+
+    send_mail(
+        subject=subject,
+        message=body,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[registration.email],
         html_message=html_message,

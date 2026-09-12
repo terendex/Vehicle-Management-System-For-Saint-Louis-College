@@ -270,6 +270,23 @@ const useAuthStore = create((set, get) => {
       }
     },
 
+    /** Keep the cached display name in step with the registration record.
+     *
+     *  The name in `user` comes from the JWT claims at login, so an owner whose
+     *  name change CDSO has just approved would keep being greeted by the old
+     *  one until their next sign-in — while the record right below the greeting
+     *  shows the new one. Patched locally, the way clearMustChangePassword
+     *  below does, rather than forcing a token refresh: the claim is only ever
+     *  used for display. */
+    syncDisplayName: (fullName) => {
+      set((state) => {
+        if (!state.user || !fullName || state.user.full_name === fullName) return state
+        const updatedUser = { ...state.user, full_name: fullName }
+        localStorage.setItem('user', JSON.stringify(updatedUser))
+        return { user: updatedUser }
+      })
+    },
+
     /** Called after a successful password change to clear the must_change_password flag in local state. */
     clearMustChangePassword: () => {
       set((state) => {

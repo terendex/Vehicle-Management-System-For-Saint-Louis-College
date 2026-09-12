@@ -4,7 +4,8 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2, CalendarDays
+  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2, CalendarDays,
+  Pencil, Clock3, Hourglass
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
@@ -14,6 +15,12 @@ import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { violationsApi } from '../../api/violations'
 import { registrationApi } from '../../api/registration'
+import DetailFields from '../../components/RegistrationDetails/DetailFields'
+import {
+  changedValues, detailFormProblems,
+} from '../../components/RegistrationDetails/detailRules'
+import ChangeDiff from '../../components/RegistrationDetails/ChangeDiff'
+import '../../components/RegistrationDetails/detailFields.css'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
@@ -54,7 +61,7 @@ const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle']
 const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().includes(m.toLowerCase()))
 
 export default function OwnerDashboard() {
-  const { user, logout, clearMustChangePassword } = useAuthStore()
+  const { user, logout, clearMustChangePassword, syncDisplayName } = useAuthStore()
   const [securityModal, setSecurityModal] = useState(false)
   const ensureStepUp = useTwofaStore((s) => s.ensureStepUp)
 
@@ -157,16 +164,133 @@ export default function OwnerDashboard() {
     }
   }
 
+  /* ── Approval-gated detail changes ──
+     An approved registration is not the owner's to rewrite: it issued their
+     pass, their gate QR, a Vehicle row a guard resolves against, and this
+     account. So an edit here is a *request* — CDSO approves it and only then
+     does anything move. (An application still awaiting review is different:
+     the applicant edits it directly from the link in their email.)
+
+     `changeInfo` is the server's answer to "what may this owner edit, and what
+     have they asked for already" — the whitelist filtered for their registrant
+     type, plus their request history. Driving the form off it rather than
+     hard-coding fields is what keeps this modal and the public correction page
+     showing the same thing. */
+  const [changeInfo, setChangeInfo]       = useState(null)
+  const [changeModal, setChangeModal]     = useState(false)
+  const [changeValues, setChangeValues]   = useState({})
+  const [changeErrors, setChangeErrors]   = useState({})
+  const [changeSubmitting, setChangeSubmitting] = useState(false)
+  const [changeFiled, setChangeFiled]     = useState(null)   // the just-filed request
+
+  // The one request that is still waiting. At most one can exist — the server
+  // refuses a second, because approving stacked requests in any order would
+  // leave the row holding whichever was decided last rather than what the
+  // reviewer read.
+  const pendingChange = changeInfo?.requests?.find(r => r.status === 'pending') || null
+
+  // The most recent decision, so a declined request does not simply vanish.
+  // `requests` is newest-first from the server, and a withdrawn one is the
+  // owner's own doing — they do not need telling about it.
+  const lastDecidedChange = changeInfo?.requests
+    ?.find(r => r.status === 'approved' || r.status === 'rejected') || null
+
+  // Only what actually differs from what is on file, so the reviewer reads the
+  // change rather than every field the owner happened to open.
+  const changeDiff = changedValues(changeValues, changeInfo?.values || {})
+  const hasChangeEdits = Object.keys(changeDiff).length > 0
+
+  const fetchChangeInfo = async () => {
+    try {
+      setChangeInfo(await registrationApi.getMyChangeRequests())
+    } catch {
+      // Non-critical: the dashboard's own data is already on screen, and the
+      // button simply stays hidden rather than the page failing.
+    }
+  }
+
+  const openChangeModal = () => {
+    setChangeValues(changeInfo?.values || {})
+    setChangeErrors({})
+    setChangeModal(true)
+  }
+
+  const handleChangeField = (field, value) => {
+    setChangeValues(prev => ({ ...prev, [field]: value }))
+    // A message about the previous value is worse than none — it describes text
+    // that is no longer on screen.
+    setChangeErrors(prev => (prev[field] ? { ...prev, [field]: null } : prev))
+  }
+
+  const submitChangeRequest = async (event) => {
+    event.preventDefault()
+    if (!hasChangeEdits) return
+
+    const problems = detailFormProblems(
+      changeValues, changeInfo?.values || {}, changeInfo?.editable || [])
+    if (await notify.validation(problems, { title: 'Check your details' })) return
+
+    setChangeSubmitting(true)
+    try {
+      const filed = await registrationApi.requestDetailChange(changeDiff)
+      setChangeModal(false)
+      setChangeFiled(filed)
+      await fetchChangeInfo()
+    } catch (err) {
+      const fieldErrors = err.response?.data?.errors
+      if (fieldErrors) {
+        setChangeErrors(fieldErrors)
+        await notify.error(
+          'Some of your details could not be submitted — see the notes on each field.',
+          { title: 'Change not submitted' })
+      } else {
+        await notify.error(err.response?.data?.error
+          || 'Could not submit your change. Please try again.',
+          { title: 'Change not submitted' })
+      }
+    } finally {
+      setChangeSubmitting(false)
+    }
+  }
+
+  const cancelChangeRequest = async (id) => {
+    // Asked first: withdrawing is reversible (they can file a corrected request
+    // immediately) but it does take the request out of the CDSO queue, and the
+    // button sits right under the diff someone may only be reading.
+    if (!(await notify.confirm({
+      title: 'Withdraw this request?',
+      message: 'Your request will be taken out of the CDSO queue.',
+      description: 'Your registration details stay as they are now. You can file a '
+                 + 'corrected request straight afterwards.',
+      confirmLabel: 'Withdraw it',
+      danger: true,
+    }))) return
+    try {
+      await registrationApi.cancelMyChangeRequest(id)
+      await fetchChangeInfo()
+      await notify.success('Your pending change was withdrawn.',
+        { title: 'Change withdrawn' })
+    } catch (err) {
+      await notify.error(err.response?.data?.error
+        || 'Could not withdraw your change. Please try again.',
+        { title: 'Change not withdrawn' })
+    }
+  }
+
   useEffect(() => {
     fetchReg()
     fetchViolations()
     fetchNotices()
+    fetchChangeInfo()
   }, [])
 
   // Live-refresh when the owner's registration, violations or notices change
   useLiveUpdates(
-    () => { fetchReg(); fetchViolations(); fetchNotices() },
-    ['vehicleregistration', 'violation', 'parkingnotice', 'vehicle'],
+    () => { fetchReg(); fetchViolations(); fetchNotices(); fetchChangeInfo() },
+    ['vehicleregistration', 'violation', 'parkingnotice', 'vehicle',
+     // A CDSO decision on a change request has to land here without a reload:
+     // the owner is often watching this page waiting for exactly that.
+     'registrationchangerequest'],
   )
 
   const fetchNotices = async () => {
@@ -187,6 +311,9 @@ export default function OwnerDashboard() {
     try {
       const data = await usersApi.getMyRegistration()
       setReg(data)
+      // An approved name change moves the record but not the login claim the
+      // greeting reads, so the two would disagree on the same screen.
+      syncDisplayName(data?.full_name)
       // Determine parking category from vehicle type
       const cat = isMotorcycle(data?.vehicle_type) ? 'motorcycle' : 'car'
       setParkingCategory(cat)
@@ -315,6 +442,101 @@ export default function OwnerDashboard() {
               <button className="od-btn-ghost" onClick={() => setSwapOpen(false)} disabled={swapSubmitting}>Cancel</button>
               <button className="od-btn-primary" onClick={handlePlateSwap} disabled={swapSubmitting}>
                 {swapSubmitting ? 'Saving…' : 'Confirm & Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail-change request form. Wide, because it holds a field grid
+          rather than the one input the confirm-style dialogs were sized for. */}
+      {changeModal && (
+        <div className="od-modal-overlay" onClick={() => !changeSubmitting && setChangeModal(false)}>
+          <div className="od-modal od-modal-wide" onClick={e => e.stopPropagation()}>
+            <div className="od-modal-icon"><Pencil size={26} /></div>
+            <h2 className="od-modal-title">Request a Detail Change</h2>
+            <p className="od-modal-subtitle">
+              Your registration already issued your vehicle pass and gate QR, so a change
+              needs <strong>CDSO approval</strong> before it takes effect. Edit what is wrong
+              below and submit it for review — nothing changes until they approve it.
+            </p>
+
+            <form noValidate onSubmit={submitChangeRequest} className="od-change-form">
+              <DetailFields
+                editable={changeInfo?.editable || []}
+                values={changeValues}
+                onChange={handleChangeField}
+                errors={changeErrors}
+                disabled={changeSubmitting}
+                idPrefix="odc"
+              />
+
+              {hasChangeEdits && (
+                <div className="od-change-preview">
+                  <p className="od-change-preview-heading">
+                    What you are asking CDSO to change
+                  </p>
+                  <ChangeDiff changes={changeInfo.editable
+                    .filter(f => f.field in changeDiff)
+                    .map(f => ({
+                      field: f.field,
+                      label: f.label,
+                      old:   changeInfo.values?.[f.field] || '',
+                      new:   changeDiff[f.field],
+                    }))} />
+                </div>
+              )}
+
+              <p className="od-change-locked">
+                Your <strong>email address</strong>, <strong>registrant type</strong> and
+                <strong> campus schedule</strong> cannot be changed here — the CDSO Office
+                assigns those. Ask them directly.
+              </p>
+
+              <div className="od-modal-actions">
+                <button
+                  type="button"
+                  className="od-btn-ghost"
+                  onClick={() => setChangeModal(false)}
+                  disabled={changeSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="od-btn-primary"
+                  disabled={changeSubmitting || !hasChangeEdits}
+                >
+                  {changeSubmitting ? 'Submitting…'
+                    : hasChangeEdits ? 'Submit for CDSO approval'
+                    : 'Change something first'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Filed confirmation. Its own modal rather than a toast: "this is not
+          applied yet" is the single most important thing to land, and a
+          message that disappears on its own is the wrong way to say it. */}
+      {changeFiled && (
+        <div className="od-modal-overlay" onClick={() => setChangeFiled(null)}>
+          <div className="od-modal" onClick={e => e.stopPropagation()}>
+            <div className="od-pw-success">
+              <div className="od-pw-success-icon"><Hourglass size={36} /></div>
+              <h3>Sent for CDSO Approval</h3>
+              <p>
+                Your request is with the CDSO Office. <strong>Nothing has changed yet</strong> —
+                your pass and QR code still show your current details, and we will email you
+                as soon as a decision is made.
+              </p>
+              <button
+                className="od-btn-primary"
+                style={{ marginTop: 14 }}
+                onClick={() => setChangeFiled(null)}
+              >
+                Got it
               </button>
             </div>
           </div>
@@ -535,6 +757,76 @@ export default function OwnerDashboard() {
                       </div>
                     )}
                   </div>
+
+                  {/* Correcting these details.
+
+                      Put at the foot of the Personal Information card rather
+                      than in the page header: this is where the owner is
+                      looking when they notice the mistake, and a button up by
+                      "Change Password" would not be read as being about any of
+                      the rows above it.
+
+                      The pending state replaces the button entirely. Offering
+                      "request a change" while one is already queued invites a
+                      second request the server will refuse with a 409, and
+                      "what happened to the last one" is the actual question at
+                      that moment. */}
+                  {changeInfo && (
+                    pendingChange ? (
+                      <div className="od-change-pending">
+                        <div className="od-change-pending-head">
+                          <Clock3 size={15} />
+                          <span>Waiting for CDSO approval</span>
+                        </div>
+                        <ChangeDiff changes={pendingChange.changes} />
+                        <p className="od-change-pending-note">
+                          Your details above are unchanged until the CDSO approves this. You
+                          will be emailed either way.
+                        </p>
+                        <button
+                          type="button"
+                          className="od-btn-ghost od-change-withdraw"
+                          onClick={() => cancelChangeRequest(pendingChange.id)}
+                        >
+                          Withdraw this request
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="od-change-cta">
+                        <p>
+                          Something wrong above? You can ask the CDSO Office to correct it.
+                          Changes take effect once they approve them.
+                        </p>
+                        <button
+                          type="button"
+                          className="od-change-btn"
+                          onClick={openChangeModal}
+                        >
+                          <Pencil size={14} /> Request a detail change
+                        </button>
+                      </div>
+                    )
+                  )}
+
+                  {/* The last decision, so an owner who was declined is not
+                      left wondering whether the request simply vanished. Only
+                      shown while there is nothing pending — a fresh request is
+                      the more relevant thing to look at. */}
+                  {!pendingChange && lastDecidedChange && (
+                    <div className={`od-change-decided od-change-decided--${lastDecidedChange.status}`}>
+                      <div className="od-change-decided-head">
+                        {lastDecidedChange.status === 'approved'
+                          ? <><Check size={14} /> <span>Your last change was approved</span></>
+                          : <><AlertCircle size={14} /> <span>Your last change was declined</span></>}
+                      </div>
+                      <ChangeDiff changes={lastDecidedChange.changes} />
+                      {lastDecidedChange.decision_note && (
+                        <p className="od-change-decided-note">
+                          <strong>CDSO:</strong> {lastDecidedChange.decision_note}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="od-card">

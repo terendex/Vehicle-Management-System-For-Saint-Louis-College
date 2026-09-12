@@ -81,6 +81,30 @@ export const HELP_TOPICS = [
     ],
   },
 
+  {
+    id: 'owner-correct-details',
+    title: 'Correcting Your Details',
+    category: 'Vehicle Owner',
+    roles: ['vehicle_owner'],
+    body: [
+      { type: 'p', text: 'How a mistake in your details is fixed depends on whether the CDSO has already approved your application.' },
+      { type: 'p', text: 'While your application is still pending, you can correct it yourself. Use the “Edit My Details” button in the acknowledgement email you were sent when you applied.' },
+      { type: 'steps', items: [
+        'Open the acknowledgement email and press “Edit My Details”.',
+        'Change what is wrong and save. The correction applies straight away.',
+        'A replacement acknowledgement PDF is emailed to you — keep that one instead of the first.',
+      ] },
+      { type: 'p', text: 'Once your registration is approved, changes need CDSO approval first, because your pass, gate QR code and portal account were all issued from it.' },
+      { type: 'steps', items: [
+        'On your dashboard, under Personal Information, press “Request a detail change”.',
+        'Edit what is wrong and submit it for approval. Nothing changes yet — your pass and QR code still show your current details.',
+        'The CDSO approves or declines it, and you are emailed the outcome either way. A declined request tells you the reason.',
+        'You can withdraw a request you have not had a decision on, then file a corrected one.',
+      ] },
+      { type: 'note', text: 'Your email address, registrant type and campus schedule cannot be changed from either screen — your email is your login, and the CDSO assigns campus days. Ask the CDSO Office for those. If your plate number changes, use the QR code on your dashboard rather than the one in your approval email, because that one still shows the old plate.' },
+    ],
+  },
+
   // ── Security ────────────────────────────────────────────────────────────
   {
     id: 'security-gate-login',
@@ -199,6 +223,23 @@ export const HELP_TOPICS = [
         'Accept to authorize campus entry, or deny with a reason.',
       ] },
       { type: 'note', text: 'For walk-in applicants you can register directly — these are accepted immediately without a pending step.' },
+    ],
+  },
+  {
+    id: 'cdso-change-requests',
+    title: 'Approving Detail Changes',
+    category: 'CDSO',
+    roles: ['admin'],
+    body: [
+      { type: 'p', text: 'An approved registration already issued a vehicle pass, a gate QR code and a portal account, so an owner cannot edit it themselves. They file a request and it waits in Detail Change Requests, at the top of the Vehicle Registration screen.' },
+      { type: 'steps', items: [
+        'Open Vehicle Registration. Waiting requests are counted beside the Detail Change Requests heading.',
+        'Each card shows who asked, and every field as “what it says now → what they want”.',
+        'Approve & apply writes the change to the registration, the vehicle record and their account together, and emails them.',
+        'Decline needs a reason, which is emailed to them verbatim — tell them what to do instead.',
+      ] },
+      { type: 'note', text: 'A request can be refused on approval if the detail it asks for is no longer available — a plate someone else has registered since it was filed, for example. The message names the field. Decline it and ask the owner to file a corrected request.' },
+      { type: 'p', text: 'Applications that are still pending are not in this queue. Nobody has reviewed them yet, so the applicant corrects those directly from the link in their acknowledgement email; you get a notification when they do.' },
     ],
   },
   {

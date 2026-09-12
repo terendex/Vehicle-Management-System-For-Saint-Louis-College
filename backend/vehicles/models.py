@@ -488,6 +488,92 @@ class FetcherStudentAssessment(models.Model):
         return f"Assessment for {self.student_name()} (registration {self.registration_id})"
 
 
+class RegistrationChangeRequest(models.Model):
+    """An owner's proposed correction to their own accepted registration,
+    waiting on CDSO.
+
+    An application still PENDING needs none of this — CDSO has not looked at it,
+    so the applicant edits the row directly (see `RegistrationSelfEditView`).
+    Once it is ACCEPTED the row is no longer just a form: it issued a vehicle
+    pass, a gate QR, a `Vehicle` and a portal account, and the guard at the gate
+    matches a car against it. So the owner's edit is filed here and the row is
+    only touched when a reviewer approves it.
+
+    `changes` holds the cleaned values, already through
+    `registration_edits.clean_changes`, so approval is an apply rather than a
+    re-parse — but it is re-validated at approval time anyway, because a plate
+    that was free when the request was filed may have been taken since.
+
+    `previous` is the snapshot from when the request was filed. It is NOT what
+    the reviewer is shown (that is read live off the row, so the diff always
+    describes what approving would actually overwrite) — it is there so the
+    audit trail still says what the owner believed they were changing, even
+    after the row has moved on.
+    """
+
+    class Status(models.TextChoices):
+        PENDING   = 'pending',   'Pending CDSO Review'
+        APPROVED  = 'approved',  'Approved'
+        REJECTED  = 'rejected',  'Rejected'
+        # The owner withdrew it themselves before anyone decided. Kept as a row
+        # rather than deleted: "they asked and then thought better of it" is
+        # part of the account's history.
+        CANCELLED = 'cancelled', 'Cancelled by Owner'
+
+    id = models.BigAutoField(primary_key=True, db_column='registration_change_request_id')
+    registration = models.ForeignKey(
+        VehicleRegistration, on_delete=models.CASCADE,
+        related_name='change_requests',
+    )
+    # SET_NULL, like every other actor reference here: deleting an account must
+    # not take the review history with it (see delete_user_with_owned_records).
+    requested_by = models.ForeignKey(
+        'accounts.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='registration_change_requests',
+    )
+    changes  = models.JSONField(default=dict)
+    previous = models.JSONField(default=dict, blank=True)
+    status   = models.CharField(
+        max_length=20, choices=Status.choices,
+        default=Status.PENDING, db_index=True,
+    )
+    reviewed_by = models.ForeignKey(
+        'accounts.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='reviewed_change_requests',
+    )
+    reviewed_at   = models.DateTimeField(null=True, blank=True)
+    # Required when rejecting — an owner told "no" with no reason has nothing to
+    # correct and will simply file the same request again.
+    decision_note = models.TextField(blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tbl_registration_change_request'
+        ordering = ['-created_at']
+        constraints = [
+            # One open request per registration. Without this an owner could
+            # stack three requests that each edit the plate, and approving them
+            # in any order would leave the row holding whichever was approved
+            # last rather than what anyone reviewed. Partial, so the decided
+            # rows accumulate freely as history.
+            models.UniqueConstraint(
+                fields=['registration'],
+                condition=models.Q(status='pending'),
+                name='uniq_pending_change_request_per_registration',
+            ),
+        ]
+        indexes = [
+            # The CDSO queue: open requests, oldest first is what the screen
+            # asks for, and the badge count reads the same index.
+            models.Index(fields=['status', '-created_at'],
+                         name='changereq_status_time'),
+        ]
+
+    def __str__(self):
+        fields = ', '.join(sorted(self.changes or {}))
+        return f"Change request {self.pk} ({self.status}): {fields or 'nothing'}"
+
+
 class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'

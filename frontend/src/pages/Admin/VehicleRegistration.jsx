@@ -6,6 +6,8 @@ import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, SlidersHorizontal, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
+import ChangeDiff from '../../components/RegistrationDetails/ChangeDiff'
+import '../../components/RegistrationDetails/detailFields.css'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
 import './VehicleRegistration.css'
@@ -146,6 +148,88 @@ export default function VehicleRegistration() {
   const [accountModal, setAccountModal] = useState(null)
   const [blockPrompt, setBlockPrompt] = useState(null)  // registration-block 409 payload
 
+  /* ── Detail-change requests ──
+     An approved registration issued a pass, a gate QR, a Vehicle row and an
+     account, so an owner cannot rewrite it themselves — they file a request and
+     it waits here. Approving applies it and carries it out to the Vehicle and
+     the account; declining needs a reason, because an owner told "no" with no
+     reason has nothing to correct and will simply ask again.
+
+     (An application still pending is not in this queue at all: nobody has
+     reviewed it, so the applicant corrects it directly from the link in their
+     acknowledgement email. A correction of that kind shows up as a
+     notification, not as work.) */
+  const [changeRequests, setChangeRequests]   = useState([])
+  const [changeFilter, setChangeFilter]       = useState('pending')
+  const [changeLoading, setChangeLoading]     = useState(true)
+  const [changeDeciding, setChangeDeciding]   = useState(null)   // id being decided
+  const [declineTarget, setDeclineTarget]     = useState(null)   // request being declined
+  const [declineReason, setDeclineReason]     = useState('')
+
+  const fetchChangeRequests = async (statusOverride) => {
+    setChangeLoading(true)
+    try {
+      setChangeRequests(await registrationApi.getChangeRequests(statusOverride ?? changeFilter))
+    } catch (error) {
+      console.error('Failed to fetch change requests:', error)
+    } finally {
+      setChangeLoading(false)
+    }
+  }
+
+  const approveChange = async (request) => {
+    // Asked first, the way the accept flow asks. Approving writes straight
+    // through to a live pass — the registration, the Vehicle row a guard
+    // resolves against, and the owner's account — from a single click in a
+    // list, so the fields being changed are restated before it happens.
+    if (!(await notify.confirm({
+      title: 'Approve this change?',
+      message: `${request.full_name}'s registration will be updated immediately.`,
+      description: 'Their vehicle record and portal account are updated with it, and they '
+                 + 'are emailed the outcome.',
+      details: (request.changes || []).map(
+        row => `${row.label}: ${row.old || '(blank)'} → ${row.new}`),
+      confirmLabel: 'Approve & apply',
+    }))) return
+    setChangeDeciding(request.id)
+    try {
+      await registrationApi.approveChangeRequest(request.id)
+      await fetchChangeRequests()
+      refreshAll()
+      showResult('Change approved and applied to the registration.', 'success')
+    } catch (error) {
+      // 409 is the interesting one: the request was valid when it was filed but
+      // the detail it asks for has been taken since, so it has to be declined
+      // rather than forced through. The server says which field.
+      const data = error.response?.data
+      const detail = data?.errors
+        ? Object.values(data.errors).join(' ')
+        : ''
+      showResult([data?.error || 'Failed to approve the change.', detail]
+        .filter(Boolean).join(' '), 'error')
+    } finally {
+      setChangeDeciding(null)
+    }
+  }
+
+  const declineChange = async (event) => {
+    event.preventDefault()
+    if (!declineTarget) return
+    if (await notify.validation(fieldProblems(event.currentTarget))) return
+    setChangeDeciding(declineTarget.id)
+    try {
+      await registrationApi.rejectChangeRequest(declineTarget.id, declineReason.trim())
+      setDeclineTarget(null)
+      setDeclineReason('')
+      await fetchChangeRequests()
+      showResult('Change declined. The owner has been emailed the reason.', 'success')
+    } catch (error) {
+      showResult(error.response?.data?.error || 'Failed to decline the change.', 'error')
+    } finally {
+      setChangeDeciding(null)
+    }
+  }
+
   useEffect(() => {
     fetchRegistrations()
   }, [statusFilter])
@@ -178,7 +262,15 @@ export default function VehicleRegistration() {
 
   // Live-refresh when a registration is created/approved/rejected anywhere
   const refreshAll = () => { fetchRegistrations(); fetchSummary() }
-  useLiveUpdates(refreshAll, ['vehicleregistration', 'vehicle'])
+  useLiveUpdates(
+    () => { refreshAll(); fetchChangeRequests() },
+    ['vehicleregistration', 'vehicle',
+     // An owner filing a request has to appear in the queue without a reload —
+     // this screen is where a reviewer sits waiting for work.
+     'registrationchangerequest'],
+  )
+
+  useEffect(() => { fetchChangeRequests() }, [])
 
   const qrPrintRef = useRef(null)
 
@@ -514,6 +606,123 @@ export default function VehicleRegistration() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* SECTION: Detail change requests.
+
+            Above Applications rather than below: a waiting request blocks an
+            owner whose pass is already issued and whose details are currently
+            wrong, which is more urgent than a new application that is not
+            waiting on anything yet. It collapses to a single line when the
+            queue is empty, the way the Refine panel does, so an idle queue
+            costs one row rather than a full band. */}
+        <div className="section-container">
+          <div className="vr-cr-head">
+            <div>
+              <h2 className="section-title" style={{ marginBottom: 4 }}>
+                Detail Change Requests
+                {changeFilter === 'pending' && changeRequests.length > 0 && (
+                  <span className="vr-cr-badge">{changeRequests.length}</span>
+                )}
+              </h2>
+              <p className="page-subtitle" style={{ margin: 0 }}>
+                Approved owners asking to correct their own details. Nothing changes on
+                their registration until you approve it.
+              </p>
+            </div>
+            <select
+              className="filter-select"
+              value={changeFilter}
+              onChange={(e) => { setChangeFilter(e.target.value); fetchChangeRequests(e.target.value) }}
+            >
+              <option value="pending">Waiting for review</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Declined</option>
+              <option value="cancelled">Withdrawn by owner</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+
+          {changeLoading ? (
+            <p className="vr-cr-empty">Loading change requests…</p>
+          ) : changeRequests.length === 0 ? (
+            <p className="vr-cr-empty">
+              {changeFilter === 'pending'
+                ? 'No change requests waiting for review.'
+                : 'Nothing here.'}
+            </p>
+          ) : (
+            <div className="vr-cr-list">
+              {changeRequests.map(request => (
+                <div className="vr-cr-card" key={request.id}>
+                  <div className="vr-cr-card-head">
+                    <div className="vr-cr-who">
+                      <span className="vr-cr-name">{request.full_name}</span>
+                      <span className="vr-cr-meta">
+                        <span className="vr-cr-plate">{request.plate_number || '—'}</span>
+                        {' · '}{request.registrant_type}
+                        {' · '}{request.email}
+                      </span>
+                      {/* Who filed it is not always the registrant: a name
+                          change is exactly the case where the two differ. */}
+                      {request.requested_by && request.requested_by !== request.full_name && (
+                        <span className="vr-cr-meta">Filed by {request.requested_by}</span>
+                      )}
+                    </div>
+                    <div className="vr-cr-when">
+                      <span className={`vr-cr-status vr-cr-status--${request.status}`}>
+                        {request.status_label}
+                      </span>
+                      <span className="vr-cr-date">
+                        {request.created_at
+                          ? format(new Date(request.created_at), 'MMM d, yyyy · h:mm a')
+                          : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <ChangeDiff changes={request.changes} />
+
+                  {request.decision_note && (
+                    <p className="vr-cr-note">
+                      <strong>
+                        {request.status === 'rejected' ? 'Reason given:' : 'Note:'}
+                      </strong>{' '}
+                      {request.decision_note}
+                    </p>
+                  )}
+                  {request.reviewed_by && (
+                    <p className="vr-cr-note vr-cr-note--muted">
+                      Decided by {request.reviewed_by}
+                      {request.reviewed_at
+                        ? ` on ${format(new Date(request.reviewed_at), 'MMM d, yyyy')}`
+                        : ''}
+                    </p>
+                  )}
+
+                  {request.status === 'pending' && (
+                    <div className="vr-cr-actions">
+                      <button
+                        className="btn-outline"
+                        onClick={() => { setDeclineTarget(request); setDeclineReason('') }}
+                        disabled={changeDeciding === request.id}
+                      >
+                        <X size={14} /> Decline
+                      </button>
+                      <button
+                        className="btn-primary"
+                        onClick={() => approveChange(request)}
+                        disabled={changeDeciding === request.id}
+                      >
+                        <Check size={14} />
+                        {changeDeciding === request.id ? 'Applying…' : 'Approve & apply'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* SECTION: Registrations */}
@@ -1079,6 +1288,47 @@ export default function VehicleRegistration() {
                 <button type="button" className="btn-outline" onClick={() => setIsRejectModalOpen(false)} disabled={submitting}>Cancel</button>
                 <button type="submit" className="btn-danger" disabled={submitting}>
                   {submitting ? 'Processing...' : 'Confirm Rejection'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Decline a detail change.
+          A reason is mandatory — the server refuses without one, and an owner
+          told "no" with nothing to correct will simply file the same request
+          again. It is emailed to them verbatim. */}
+      {declineTarget && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2 className="modal-title danger">Decline Detail Change</h2>
+              <button className="modal-close-btn" onClick={() => setDeclineTarget(null)}><X size={20} /></button>
+            </div>
+            <form onSubmit={declineChange} noValidate>
+              <p className="confirm-message" style={{ textAlign: 'left', marginBottom: 14 }}>
+                Declining <strong>{declineTarget.full_name}</strong>'s request. Their
+                registration stays exactly as it is, and this reason is emailed to them.
+              </p>
+              <div className="vr-cr-card vr-cr-card--inline">
+                <ChangeDiff changes={declineTarget.changes} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason <span className="required">*</span></label>
+                <textarea
+                  className="form-textarea"
+                  rows={4}
+                  value={declineReason}
+                  onChange={(e) => setDeclineReason(e.target.value)}
+                  placeholder="Tell them what to do instead — e.g. bring your OR/CR to the CDSO Office."
+                  required
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn-outline" onClick={() => setDeclineTarget(null)} disabled={changeDeciding === declineTarget.id}>Cancel</button>
+                <button type="submit" className="btn-danger" disabled={changeDeciding === declineTarget.id}>
+                  {changeDeciding === declineTarget.id ? 'Processing...' : 'Confirm Decline'}
                 </button>
               </div>
             </form>
