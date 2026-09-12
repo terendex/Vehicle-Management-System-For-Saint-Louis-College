@@ -188,11 +188,21 @@
 .oc-cam-viewport {
   position: relative;
   background: #0B2340;
-  min-height: 300px;
-  /* Fixed rather than max-height: the canvas is centred inside this box and
-     scaled to fit it, so the panel keeps one height whatever shape the feed
-     is — a 16:9 lens, a 1:1 stacked dual-lens frame, or nothing at all. */
-  height: 420px;
+  /* Shaped to the picture rather than to a number. A fixed 420px height in a
+     column this wide made a 2.8:1 box for a 16:9 feed, so the canvas scaled to
+     the height and left a black bar down either side — the feed read as small
+     and mis-set in a panel much wider than it.
+
+     16:9 is what every camera here delivers, so the box now matches it and the
+     picture fills edge to edge. A stacked dual-lens frame is squarer and still
+     letterboxes, which is unavoidable and much rarer.
+
+     The cap keeps it sane on a tall monitor: without it a 1600px-wide column
+     would ask for 900px of height and push the gate panels beside it off the
+     bottom of the screen. min-height keeps it usable on a narrow one. */
+  aspect-ratio: 16 / 9;
+  min-height: 260px;
+  max-height: min(62vh, 620px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -272,7 +282,11 @@
    the fit-to-box canvas rules are already in the base styles, so the picture
    simply scales up to whatever the display allows. */
 .oc-cam-viewport:fullscreen {
+  /* aspect-ratio has to be dropped here, not just overridden by width/height:
+     with it still in force the box fights 100vw/100vh and leaves a margin. */
+  aspect-ratio: auto;
   min-height: 0;
+  max-height: none;
   height: 100vh;
   width: 100vw;
   background: #000;
@@ -285,6 +299,14 @@
 .oc-cam-viewport:fullscreen .oc-cam-name-tag { padding: 6px 12px; top: 16px; left: 16px; }
 .oc-cam-viewport:fullscreen .oc-cam-lens-switch { bottom: 16px; }
 .oc-cam-viewport:fullscreen .oc-cam-fs { top: 16px; right: 16px; }
+
+/* The "view only" aside is an explanation, not a control, and on a narrow
+   screen it wrapped to three lines and squeezed the panel's own title into a
+   column. Dropped below the width where it stops fitting — the panel has no
+   controls that could be mistaken for detection anyway. */
+@media (max-width: 860px) {
+  .oc-cam-note { display: none; }
+}
 
 @media (max-width: 720px) {
   /* Own row on a narrow panel: auto-margin plus a full width would otherwise
@@ -633,12 +655,6 @@
 .oc-gt-n.exited.nonzero         { color: #1072B3; }
 
 /* ── Bottom row ── */
-.oc-bottom-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: start;
-}
 .oc-card {
   background: #fff;
   border: 1px solid #F4F8FB;
@@ -728,7 +744,6 @@
 @media (max-width: 768px) {
   .oc-stats-row    { grid-template-columns: repeat(2, 1fr); }
   .oc-gates-col    { flex-direction: column; }
-  .oc-bottom-row   { grid-template-columns: 1fr; }
 }
 
 /* ── List pagination (matches violations table) ─────────────────────────────── */
@@ -849,3 +864,20 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Tab panels ──
+   Each holds the sections of one tab, stacked with the same 20px rhythm the
+   page had before it was split. Panels stay mounted and are hidden instead of
+   unmounted — the Live tab owns an open camera stream, and tearing it down to
+   glance at the guard table would cost a reconnect each way. */
+.oc-tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.oc-tabpanel[hidden] { display: none; }
+
+/* Nothing sits between the strip and the panel, so the strip's own bottom
+   margin is the only spacing needed. */
+.oc-page > .pt-tabs { margin-bottom: 0; }

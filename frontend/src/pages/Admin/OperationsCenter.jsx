@@ -15,6 +15,7 @@ import { useGates } from '../../hooks/useGates'
 import { useFullscreen } from '../../hooks/useFullscreen'
 import TableLoader from '../../components/TableLoader'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
+import PageTabs from '../../components/Tabs/PageTabs'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,7 +146,15 @@ function GatePanel({ label, shift, logs }) {
 }
 
 // ─── Guard Table ──────────────────────────────────────────────────────────────
-function GuardTable({ guards, gateLabel }) {
+/* `onDuty` is the set of guard ids holding an open shift.
+
+   The row's own `is_active` is a different fact — the guards endpoint sets it
+   from `last_seen`, i.e. whether they have scanned anything today — so using
+   it for the Status column labelled a guard who had just clocked in but not
+   yet scanned a car as "Off Duty", while the stat card above said two were on
+   duty and the gate panels named them. Three places, two answers. Duty is the
+   shift; activity is the numbers in the same row. */
+function GuardTable({ guards, gateLabel, onDuty, dutyGate }) {
   return (
     <div className="oc-guard-table-wrap">
       <table className="oc-guard-table">
@@ -165,8 +174,9 @@ function GuardTable({ guards, gateLabel }) {
         <tbody>
           {guards.map(g => {
             const { stats } = g
+            const isOnDuty = onDuty.has(g.id)
             return (
-              <tr key={g.id} className={g.is_active ? 'active' : ''}>
+              <tr key={g.id} className={isOnDuty ? 'active' : ''}>
                 <td>
                   <div className="oc-gt-guard">
                     <div className="oc-guard-avatar sm">{g.full_name.charAt(0).toUpperCase()}</div>
@@ -174,11 +184,13 @@ function GuardTable({ guards, gateLabel }) {
                   </div>
                 </td>
                 <td className="oc-gt-code">{g.user_code || '—'}</td>
-                <td className="oc-gt-gate">{gateLabel(g.gate_assignment) || '—'}</td>
+                <td className="oc-gt-gate">
+                  {gateLabel(dutyGate[g.id] || g.gate_assignment) || '—'}
+                </td>
                 <td>
-                  <span className={`oc-duty-pill ${g.is_active ? 'active' : 'idle'}`}>
+                  <span className={`oc-duty-pill ${isOnDuty ? 'active' : 'idle'}`}>
                     <span className="oc-duty-dot" />
-                    {g.is_active ? 'On Duty' : 'Off Duty'}
+                    {isOnDuty ? 'On Duty' : 'Off Duty'}
                   </span>
                 </td>
                 <td className="oc-gt-n total">{stats.total}</td>
@@ -450,6 +462,25 @@ function CameraMonitor() {
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
+/* The three jobs this screen carries.
+
+   It used to show all of them at once: a live camera feed with its lens and
+   gate controls, a guard-duty table, an active-visitor grid, two paged lists
+   at the bottom, and the confiscated-accounts card under those. Six sections,
+   most of a screen tall each, on a page whose first purpose is watching a
+   video — so the feed was squeezed into a letterboxed strip and everything
+   else was below the fold.
+
+   Split the way System Settings splits its groups, and along the line the work
+   divides: watching the gates live, checking who is on duty, and reading back
+   what happened. The stat strip stays above the tabs because it answers "is
+   anything wrong right now", which is the question on every tab. */
+const TABS = [
+  { id: 'live',    label: 'Live Monitor', icon: MonitorDot },
+  { id: 'guards',  label: 'Guards',       icon: Shield },
+  { id: 'records', label: 'Gate Records', icon: ArrowRightLeft },
+]
+
 export default function OperationsCenter() {
   const { gates, gateIds, gateLabel } = useGates()
   const [currentShifts, setCurrentShifts] = useState({})
@@ -460,6 +491,7 @@ export default function OperationsCenter() {
   const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState(null)
+  const [tab,           setTab]           = useState('live')
   const [shiftPage,     setShiftPage]     = useState(1)
   const [flagPage,      setFlagPage]      = useState(1)
 
@@ -519,6 +551,21 @@ export default function OperationsCenter() {
   }, [load])
 
   const activeGuards   = Object.values(currentShifts).filter(Boolean).length
+  /* Who is actually clocked in — the one source the stat card, the gate panels
+     and the guard table all read, so the three cannot disagree.
+
+     Also which gate each of them is at: the table's Gate column used to read
+     `gate_assignment` off the guard record, which is only written when they
+     sign in through a gate terminal, so a guard clocked in by any other route
+     showed a dash next to an "On Duty" badge. The open shift knows the gate. */
+  const onDutyIds = new Set(
+    Object.values(currentShifts).filter(Boolean).map(sh => sh.guard_id).filter(Boolean)
+  )
+  const dutyGateById = Object.fromEntries(
+    Object.values(currentShifts)
+      .filter(sh => sh && sh.guard_id)
+      .map(sh => [sh.guard_id, sh.gate])
+  )
   const totalEntries   = Object.values(logsByGate).reduce((n, l) => n + (l?.length ?? 0), 0)
 
   // Newest first (LIFO) + client-side pagination, same as the violations table
@@ -585,21 +632,40 @@ export default function OperationsCenter() {
           </div>
         </div>
 
-        {/* ── Main grid: camera + gate panels ── */}
-        <div className="oc-main-grid">
-          <CameraMonitor />
+        <PageTabs
+          id="oc"
+          ariaLabel="Operations sections"
+          tabs={TABS.map(t => (
+            t.id === 'records' ? { ...t, count: crossFlags.length } : t
+          ))}
+          active={tab}
+          onChange={setTab}
+        />
 
-          <div className="oc-gates-col">
-            {gates.map(g => (
-              <GatePanel
-                key={g.gate_id}
-                label={gateLabel(g.gate_id)}
-                shift={currentShifts[g.gate_id] ?? null}
-                logs={logsByGate[g.gate_id] ?? []}
-              />
-            ))}
+        {/* ── Live Monitor ──
+            Kept mounted rather than unmounted on a tab switch: the camera holds
+            an open stream, and tearing it down to look at the guard table would
+            cost a reconnect every time. `hidden` keeps it running out of
+            sight. */}
+        <div className="oc-tabpanel" hidden={tab !== 'live'}>
+          <div className="oc-main-grid">
+            <CameraMonitor />
+
+            <div className="oc-gates-col">
+              {gates.map(g => (
+                <GatePanel
+                  key={g.gate_id}
+                  label={gateLabel(g.gate_id)}
+                  shift={currentShifts[g.gate_id] ?? null}
+                  logs={logsByGate[g.gate_id] ?? []}
+                />
+              ))}
+            </div>
           </div>
         </div>
+
+        {/* ── Guards ── */}
+        <div className="oc-tabpanel" hidden={tab !== 'guards'}>
 
         {/* ── Guard activity ── */}
         {/* While loading the section stays visible with a spinner; it used to
@@ -613,18 +679,75 @@ export default function OperationsCenter() {
             </div>
             <TableLoader label="Loading guard activity…" />
           </div>
-        ) : guards.some(g => g.is_active) && (
+        ) : (
           <div className="oc-section">
             <div className="oc-section-head">
               <Shield size={15} />
               <span>Guard Activity</span>
-              <span className="oc-duty-count">
-                {guards.filter(g => g.is_active).length} on duty
-              </span>
+              <span className="oc-duty-count">{activeGuards} on duty</span>
             </div>
-            <GuardTable guards={guards.filter(g => g.is_active)} gateLabel={gateLabel} />
+            {/* Every guard, not only the ones who have scanned today. The row
+                carries its own status and its own counts, so filtering to the
+                busy ones left the tab empty at the start of a shift and made
+                the Status column decorative. */}
+            {guards.length === 0 ? (
+              <div className="oc-card">
+                <p className="oc-empty">No security guards on record.</p>
+              </div>
+            ) : (
+              <GuardTable
+                guards={guards}
+                gateLabel={gateLabel}
+                onDuty={onDutyIds}
+                dutyGate={dutyGateById}
+              />
+            )}
           </div>
         )}
+
+        {/* Shift history belongs with who is on duty, not at the foot of the
+            page under two unrelated lists. */}
+        <div className="oc-section">
+          <div className="oc-section-head">
+            <Clock size={15} />
+            <span>Recent Shift History</span>
+          </div>
+          <div className="oc-card">
+            {shiftHistory.length === 0 ? (
+              <p className="oc-empty">No shift records found.</p>
+            ) : (
+              <>
+                <div className="oc-shift-list">
+                  {pagedShifts.map((s, i) => (
+                    <div key={s.id ?? i} className="oc-shift-item">
+                      <UserCheck size={13} className="oc-shift-icon" />
+                      <div className="oc-shift-info">
+                        <div className="oc-shift-name">
+                          {s.guard_name}
+                          {s.is_active && <span className="oc-shift-active">On Duty</span>}
+                        </div>
+                        <div className="oc-shift-meta">
+                          <span className="oc-shift-gate">{gateLabel(s.gate)}</span>
+                          <span>In: {fmt(s.clocked_in_at)}</span>
+                          {s.clocked_out_at
+                            ? <span>Out: {fmt(s.clocked_out_at)}</span>
+                            : <span className="oc-shift-still">Still active</span>
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Pager page={shiftPageSafe} totalPages={shiftTotalPages} total={sortedShifts.length} onPage={setShiftPage} />
+              </>
+            )}
+          </div>
+        </div>
+
+        </div>
+
+        {/* ── Gate Records ── */}
+        <div className="oc-tabpanel" hidden={tab !== 'records'}>
 
         {/* ── Active Visitors (vehicles currently inside on a visitor pass) ── */}
         <div className="oc-section">
@@ -676,15 +799,14 @@ export default function OperationsCenter() {
           </div>
         </div>
 
-        {/* ── Bottom row: discrepancies + shift history ── */}
-        <div className="oc-bottom-row">
-          {/* Cross-gate flags */}
+        {/* Cross-gate flags */}
+        <div className="oc-section">
+          <div className="oc-section-head">
+            <ArrowRightLeft size={15} />
+            <span>Cross-Gate Discrepancies</span>
+            {crossFlags.length > 0 && <span className="oc-flag-count">{crossFlags.length}</span>}
+          </div>
           <div className="oc-card">
-            <div className="oc-card-head">
-              <ArrowRightLeft size={14} />
-              <span>Cross-Gate Discrepancies</span>
-              {crossFlags.length > 0 && <span className="oc-flag-count">{crossFlags.length}</span>}
-            </div>
             {crossFlags.length === 0 ? (
               <div className="oc-clear">
                 <CheckCircle size={18} />
@@ -710,48 +832,14 @@ export default function OperationsCenter() {
               </>
             )}
           </div>
-
-          {/* Shift history */}
-          <div className="oc-card">
-            <div className="oc-card-head">
-              <Clock size={14} />
-              <span>Recent Shift History</span>
-            </div>
-            {shiftHistory.length === 0 ? (
-              <p className="oc-empty">No shift records found.</p>
-            ) : (
-              <>
-                <div className="oc-shift-list">
-                  {pagedShifts.map((s, i) => (
-                    <div key={s.id ?? i} className="oc-shift-item">
-                      <UserCheck size={13} className="oc-shift-icon" />
-                      <div className="oc-shift-info">
-                        <div className="oc-shift-name">
-                          {s.guard_name}
-                          {s.is_active && <span className="oc-shift-active">On Duty</span>}
-                        </div>
-                        <div className="oc-shift-meta">
-                          <span className="oc-shift-gate">{gateLabel(s.gate)}</span>
-                          <span>In: {fmt(s.clocked_in_at)}</span>
-                          {s.clocked_out_at
-                            ? <span>Out: {fmt(s.clocked_out_at)}</span>
-                            : <span className="oc-shift-still">Still active</span>
-                          }
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <Pager page={shiftPageSafe} totalPages={shiftTotalPages} total={sortedShifts.length} onPage={setShiftPage} />
-              </>
-            )}
-          </div>
         </div>
 
         {/* Accounts serving a violation penalty — barred from entering and
             from parking until the term runs out or the CDSO lifts it. */}
         <div className="oc-confiscated">
           <ConfiscatedAccounts />
+        </div>
+
         </div>
 
       </div>

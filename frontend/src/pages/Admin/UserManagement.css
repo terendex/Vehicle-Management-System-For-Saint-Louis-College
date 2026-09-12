@@ -1626,3 +1626,19 @@
     flex: 1 1 100%;
   }
 }
+
+/* ── Page-section panel ──
+   The change-request tab's own surround. The accounts tab already has
+   .um-table-container to sit in; this gives the other tab the same white card
+   on the same 1px #D3E1EC border, so switching tabs does not change the shape
+   of the page. */
+.um-panel {
+  background: #fff;
+  border: 1px solid #D3E1EC;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+@media (max-width: 640px) {
+  .um-panel { padding: 16px 14px; }
+}

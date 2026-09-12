@@ -1,28 +1,55 @@
-/* ── Parking Space Management ── */
-.psm-section-divider {
-  height: 1px;
-  background: #D3E1EC;
-  margin: 28px 0;
+/* ── Parking Space Management ──
+   The tabbed shell around the parking and events sections.
+
+   One gutter, and it is the layout's. `.admin-content` already pads every
+   admin page by 2rem (1.25rem, then 1rem as the screen narrows), so anything
+   that adds its own padding on top sits further in than its neighbours.
+   `.pm-page` does exactly that, which is why the parking section used to start
+   32px right of the events section below it — two halves of one page on two
+   different left edges. The header and tab strip therefore add nothing, and
+   the parking section's own padding is cancelled while it is embedded here. */
+
+.psm-page {
+  display: flex;
+  flex-direction: column;
 }
 
-/* Confiscated-accounts card sits in the page gutter like the sections either
-   side of it, rather than edge to edge. */
+.psm-header {
+  margin-bottom: 18px;
+}
+
+.psm-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #03396C;
+  letter-spacing: -0.3px;
+}
+
+.psm-subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #4A6B85;
+  max-width: 80ch;
+}
+
+/* Scoped to this shell so standalone use of the parking page keeps its own
+   gutter. */
+.psm-page .pm-page {
+  padding: 0;
+}
+
 .psm-confiscated {
-  padding: 0 2rem;   /* matches .parking-page's own gutter */
+  margin-top: 20px;
 }
 
-@media (max-width: 768px) {
-  .psm-confiscated { padding: 0 20px; }
-}
+/* A hidden panel must take no space at all. `hidden` is already display:none
+   from the global reset, but the flex parent would otherwise still apply its
+   gap around the empty box. */
+.psm-panel[hidden] { display: none; }
 
-/* The gutter tracks .pm-page's own steps above this card, so the three
-   stacked sections keep one left edge all the way down to a phone. */
 @media (max-width: 640px) {
-  .psm-confiscated { padding: 0 1rem; }
-  .psm-section-divider { margin: 20px 0; }
-}
-
-@media (max-width: 400px) {
-  .psm-confiscated { padding: 0 0.75rem; }
-  .psm-section-divider { margin: 16px 0; }
+  .psm-title { font-size: 21px; }
+  .psm-header { margin-bottom: 14px; }
 }

@@ -1,0 +1,94 @@
+/* Page-level category tabs.
+
+   Values are taken from System Settings' own tab strip rather than chosen
+   again, so a screen that adopts this is indistinguishable from the one the
+   pattern came from. */
+
+.pt-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+  margin-bottom: 16px;
+}
+
+.pt-tabs::-webkit-scrollbar { display: none; }
+
+.pt-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid #D3E1EC;
+  border-radius: 9px;
+  padding: 9px 15px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #4A6B85;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.pt-tab:hover:not(.pt-tab--active) {
+  background: #F4F8FB;
+  border-color: #BDD4E5;
+  color: #0B2340;
+}
+
+.pt-tab:focus-visible {
+  outline: 2px solid #03396C;
+  outline-offset: 2px;
+}
+
+.pt-tab--active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* A count of things waiting in that section. Amber rather than the brand blue:
+   it is the one thing on the strip that means "somebody needs to act", and on
+   the active (dark blue) tab a blue badge would disappear into it. */
+.pt-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #B4560F;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.pt-tab--active .pt-tab-count { background: #FFC46B; color: #4A3000; }
+
+.pt-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #D9822B;
+  flex: 0 0 auto;
+}
+
+.pt-tab--active .pt-tab-dot { background: #FFC46B; }
+
+/* On a phone the labels collapse to icons, except on the tab you are on — the
+   same trade System Settings makes, so the strip never wraps to two rows.
+   Counts survive the collapse: a hidden badge is a missed job. */
+@media (max-width: 620px) {
+  .pt-tab { padding: 8px 12px; font-size: 0.78rem; }
+  .pt-tab .pt-tab-label { display: none; }
+  .pt-tab--active .pt-tab-label { display: inline; }
+}
+
+/* Nothing to collapse to when a tab has no icon, so keep the label. */
+.pt-tab:not(:has(svg)) .pt-tab-label { display: inline; }

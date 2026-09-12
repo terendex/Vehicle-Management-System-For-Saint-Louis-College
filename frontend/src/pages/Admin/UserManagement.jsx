@@ -4,6 +4,9 @@ import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import { jsPDF } from 'jspdf'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
+import PageTabs from '../../components/Tabs/PageTabs'
+import ChangeRequestQueue from '../../components/RegistrationDetails/ChangeRequestQueue'
+import { usePendingChangeCount } from '../../components/RegistrationDetails/usePendingChangeCount'
 import { twofaApi } from '../../api/twofa'
 import useTwofaStore from '../../stores/twofaStore'
 import useAuthStore from '../../stores/authStore'
@@ -13,7 +16,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Smartphone,
+  Shield, Info, Lock, Smartphone, ClipboardList,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
@@ -23,7 +26,23 @@ const EMPTY_GUARD = { full_name: '', email: '', agency: DEFAULT_AGENCY }
 const EMPTY_ADMIN = { full_name: '', email: '' }
 
 /* ─── Main Component ───────────────────────────────────────────── */
+const PAGE_TABS = [
+  { id: 'accounts', label: 'User Accounts',          icon: Users },
+  { id: 'changes',  label: 'Detail Change Requests', icon: ClipboardList },
+]
+
 export default function UserManagement() {
+  /* Which half of the screen is showing.
+
+     The change-request queue lives here rather than on Vehicle Registration
+     because it is a queue about *people* — an owner asking for their own
+     details to be corrected — and because the registration screen was already
+     carrying a stats strip, a filter panel, a table and six modals. Splitting
+     the two into tabs is the same move System Settings made for the same
+     reason: a screen holding two unrelated jobs shows neither of them well. */
+  const [pageTab, setPageTab] = useState('accounts')
+  const pendingChanges = usePendingChangeCount()
+
   const { logout } = useAuthStore()
   const { gateLabel: gateLabelFor, gateFullLabel } = useGates()
 
@@ -472,11 +491,32 @@ export default function UserManagement() {
           <p>Manage system user accounts and access.</p>
         </div>
         <div className="um-header-actions">
-          <button className="um-add-btn" onClick={openAdd}>
-            <UserPlus size={16} /> Add User
-          </button>
+          {/* Only offered on the tab it belongs to — "Add User" means nothing
+              while you are reading a queue of change requests. */}
+          {pageTab === 'accounts' && (
+            <button className="um-add-btn" onClick={openAdd}>
+              <UserPlus size={16} /> Add User
+            </button>
+          )}
         </div>
       </div>
+
+      <PageTabs
+        id="um"
+        ariaLabel="User management sections"
+        tabs={PAGE_TABS.map(t => (
+          t.id === 'changes' ? { ...t, count: pendingChanges } : t
+        ))}
+        active={pageTab}
+        onChange={setPageTab}
+      />
+
+      {pageTab === 'changes' ? (
+        <div className="um-panel">
+          <ChangeRequestQueue />
+        </div>
+      ) : (
+      <>
 
       {/* Stats */}
       <div className="um-stats-bar">
@@ -649,6 +689,9 @@ export default function UserManagement() {
           </div>
         )}
       </div>
+
+      </>
+      )}
 
       {/* ── MODALS ── */}
 
