@@ -789,6 +789,19 @@ class VehicleLogReportAPITests(TestCase):
         request.query_params = request.GET
         return _vehicle_log_report_data(request)
 
+    @staticmethod
+    def _col(row, header):
+        """One cell, by its column HEADING rather than its index.
+
+        These assertions used to carry raw positions (`row[9]` for duration).
+        Inserting a column in the middle of the report silently re-pointed
+        every one of them at its neighbour, which is how four of these tests
+        started failing for a reason that had nothing to do with what they
+        test. Naming the column means a new one cannot do that again.
+        """
+        from scanning.views import VEHICLE_LOG_REPORT_HEADERS
+        return row[VEHICLE_LOG_REPORT_HEADERS.index(header)]
+
     def test_rows_carry_the_visit_with_its_duration(self):
         entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle,
                           minutes_past_midnight=8 * 60)
@@ -797,23 +810,24 @@ class VehicleLogReportAPITests(TestCase):
 
         rows, _ = self._rows()
         self.assertEqual(len(rows), 1)          # one visit, one row
-        self.assertEqual(rows[0][2], 'ABC 1234')
-        self.assertEqual(rows[0][3], 'Test Owner')
-        self.assertEqual(rows[0][9], '2h')      # duration column
+        self.assertEqual(self._col(rows[0], 'Plate'), 'ABC 1234')
+        self.assertEqual(self._col(rows[0], 'Owner'), 'Test Owner')
+        self.assertEqual(self._col(rows[0], 'Category'), 'Employee')
+        self.assertEqual(self._col(rows[0], 'Duration'), '2h')
 
     def test_a_vehicle_with_no_exit_is_marked_still_inside(self):
         self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
         rows, _ = self._rows()
-        self.assertEqual(rows[0][8], '')                  # no exit time
-        self.assertIn('Still inside', rows[0][10])        # remarks
+        self.assertEqual(self._col(rows[0], 'Exit Time'), '')
+        self.assertIn('Still inside', self._col(rows[0], 'Remarks'))
 
     def test_override_and_denied_reason_reach_the_remarks_column(self):
         self._log('XYZ 9999', AccessLog.Status.DENIED,
                   denied_reason='Vehicle not registered',
                   is_override=True, override_reason='Cleared by CDSO')
         rows, _ = self._rows()
-        self.assertIn('Cleared by CDSO', rows[0][10])
-        self.assertIn('Vehicle not registered', rows[0][10])
+        self.assertIn('Cleared by CDSO', self._col(rows[0], 'Remarks'))
+        self.assertIn('Vehicle not registered', self._col(rows[0], 'Remarks'))
 
     def test_status_filter_is_applied_after_the_visit_merge(self):
         """Filtering to Authorized must not resurrect the exit row that was
@@ -825,11 +839,11 @@ class VehicleLogReportAPITests(TestCase):
         self._log('XYZ 9999', AccessLog.Status.DENIED)
 
         rows, _ = self._rows(status='authorized')
-        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
-        self.assertEqual(rows[0][9], '1h')     # still paired to its exit
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['ABC 1234'])
+        self.assertEqual(self._col(rows[0], 'Duration'), '1h')  # still paired to its exit
 
         rows, _ = self._rows(status='denied')
-        self.assertEqual([r[2] for r in rows], ['XYZ 9999'])
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['XYZ 9999'])
 
     def test_denied_group_covers_wrong_day_too(self):
         self._log('AAA 1111', AccessLog.Status.DENIED)
@@ -837,7 +851,7 @@ class VehicleLogReportAPITests(TestCase):
         self._log('CCC 3333', AccessLog.Status.AUTHORIZED)
 
         rows, _ = self._rows(status='denied')
-        self.assertEqual({r[2] for r in rows}, {'AAA 1111', 'BBB 2222'})
+        self.assertEqual({self._col(r, 'Plate') for r in rows}, {'AAA 1111', 'BBB 2222'})
 
     def test_screen_filters_narrow_the_report_the_same_way(self):
         self._log('ABC 1234', AccessLog.Status.AUTHORIZED, gate_id='gate1', vehicle=self.vehicle)
@@ -847,10 +861,10 @@ class VehicleLogReportAPITests(TestCase):
 
         rows, _ = self._rows(gate_id='gate1', date_from=self.today.isoformat(),
                              date_to=self.today.isoformat())
-        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['ABC 1234'])
 
         rows, _ = self._rows(search='Test Owner')
-        self.assertEqual([r[2] for r in rows], ['ABC 1234'])
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['ABC 1234'])
 
     def test_the_subtitle_spells_out_the_active_filters(self):
         """The reader of a filtered report has to be able to see it was filtered."""
@@ -866,3 +880,45 @@ class VehicleLogReportAPITests(TestCase):
     def test_unfiltered_reports_say_so(self):
         _, desc = self._rows()
         self.assertEqual(desc, [])
+
+    def test_every_row_is_the_width_of_the_header(self):
+        # The PDF column widths are positional and must total the printable
+        # page, so a row that does not match the header is a broken report
+        # rather than a wrong number.
+        from scanning.views import VEHICLE_LOG_REPORT_HEADERS
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        rows, _ = self._rows()
+        for row in rows:
+            self.assertEqual(len(row), len(VEHICLE_LOG_REPORT_HEADERS))
+
+    def test_a_plateless_vehicle_is_reported_by_its_reference_and_driver(self):
+        # It has neither a plate nor an owner account, so the two columns that
+        # identify every other row are empty for it. The reference and the
+        # driver's name are what it has.
+        log = self._log('', AccessLog.Status.AUTHORIZED,
+                        is_unrecognized=True, driver_name='JUAN DELA CRUZ',
+                        vehicle_color='Red', vehicle_type='car',
+                        entrant_category='visitor')
+        rows, _ = self._rows()
+        row = next(r for r in rows if self._col(r, 'Owner') == 'JUAN DELA CRUZ')
+        self.assertEqual(self._col(row, 'Plate'), f'NP-{log.id}')
+        self.assertEqual(self._col(row, 'Category'), 'Visitor')
+        self.assertIn('No plate', self._col(row, 'Remarks'))
+
+    def test_the_category_column_names_the_entrant(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        rows, _ = self._rows()
+        # The owner is an employee, so the report says so — 'Status' alone
+        # could never answer "how many employees came through".
+        self.assertEqual(self._col(rows[0], 'Category'), 'Employee')
+
+    def test_the_category_filter_narrows_the_report(self):
+        self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
+        self._log('XYZ 9999', AccessLog.Status.AUTHORIZED)   # unregistered
+
+        rows, desc = self._rows(category='employee')
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['ABC 1234'])
+        self.assertIn('Category: Employee', '; '.join(desc))
+
+        rows, _ = self._rows(category='unknown')
+        self.assertEqual([self._col(r, 'Plate') for r in rows], ['XYZ 9999'])
