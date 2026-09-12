@@ -208,24 +208,34 @@
 
 /* Sidebar brand (admin + security shells).
 
-   Smaller and tighter than the header pair: the rail is 260px wide and the
-   brand bar also carries the system name, the notification bell and the
-   mobile close button. Two seals at header size would push the name out. */
+   Much smaller and tighter than the header pair. The rail is a fixed 260px and
+   the brand bar also carries the system name, the notification bell and (on a
+   phone) the close button, so the seals get the smallest share. At 28px the
+   pair pushed "SLC SECURITY" onto a second line, which then collided with the
+   bar's bottom border. 24px leaves the name a comfortable single line at both
+   the admin and the security widths — see the measured budget in
+   scripts/check-brand-lockups.mjs. */
 .brand-logos--sidebar {
-  gap: 4px;
+  gap: 3px;
 }
 
 .brand-logos--sidebar .brand-logos-img {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-width: 1.5px;
 }
 
-/* Two seals need more room than one did. Below this the text column is what
-   gives, never the marks — the lockup is the thing that must stay readable. */
-@media (max-width: 400px) {
+/* Two seals need more room than one did, and on a phone that room comes out
+   of the text column beside them — which wraps rather than truncating, by
+   design (see .header-subtitle). Shrinking the marks here keeps that wrap to
+   one extra line instead of four. */
+@media (max-width: 430px) {
   .brand-logos--header .brand-logos-img {
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-logos--header {
+    gap: 4px;
   }
 }

@@ -41,10 +41,12 @@
   }
 }
 
-/* Reduce brand area height to reclaim vertical space */
+/* Reduce brand area height to reclaim vertical space. A minimum, not a fixed
+   height: this carries the gate label under the name, and as a hard 54px the
+   label was drawn straight over the bar's bottom border. */
 .security-layout .sidebar-brand {
-  height: 54px;
-  padding: 0 1rem;
+  min-height: 54px;
+  padding: 0.35rem 1rem;
 }
 
 .security-layout .sidebar-nav {

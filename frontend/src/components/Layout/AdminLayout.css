@@ -42,15 +42,27 @@
 }
 
 .sidebar-brand {
-  height: 64px;
+  /* Grows if it ever has to. It was a fixed 64px/54px, so the moment the
+     content needed one more line it spilled straight through the bottom
+     border and the gold hairline — the strikethrough that appeared across
+     the gate label. A minimum keeps the bar its designed size; it is no
+     longer a ceiling that clips. */
+  min-height: 64px;
   display: flex;
   align-items: center;
-  padding: 0 1.5rem;
+  padding: 0.35rem 1.5rem;
   /* Two seals take the room one used to, so the gap tightens rather than the
      system name being pushed off the rail. */
-  gap: 9px;
+  gap: 8px;
   position: relative;
   border-bottom: 2.5px solid var(--navy);
+}
+
+/* The text column is the flex item that gives way, not the seals. Its default
+   `min-width: auto` is min-content — the widest word — which is what let
+   "SLC SECURITY" break after "SLC". */
+.sidebar-brand > div {
+  min-width: 0;
 }
 
 /* Gold hairline under the brand bar — the one bit of gold always on screen */
@@ -69,14 +81,18 @@
    and CDSO pair, shared with every page header. */
 
 .brand-text {
-  font-size: 14px;
+  display: block;
+  font-size: 13px;
   font-weight: 800;
   color: #03396C;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
   text-transform: uppercase;
-  line-height: 1.1;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  line-height: 1.15;
+  /* One line, always. This is a fixed-width rail with a name of known length,
+     so the honest fix for a tight fit is to size the seals and the type to
+     fit — not to let the system's own name break in half. It is never
+     truncated either: no ellipsis, and the budget above guarantees the room. */
+  white-space: nowrap;
 }
 
 .sidebar-nav {

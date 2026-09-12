@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "check:lockups": "node scripts/check-brand-lockups.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
