@@ -218,8 +218,16 @@ def _get_plate_yolo():
         try:
             from .reader import _get_ocr
             log.info("[DETECT] Pre-loading PaddleOCR…")
-            _get_ocr()
-            log.info("[DETECT] PaddleOCR pre-loaded.")
+            # _get_ocr() reports its own failure and returns None rather than
+            # raising, so an unconditional "pre-loaded" here printed two
+            # milliseconds after "[OCR] PaddleOCR load failed" and read as
+            # success. A gate that detects plates it can never read looks like a
+            # detector fault from the outside; name the half that actually died.
+            if _get_ocr() is None:
+                log.error("[DETECT] PaddleOCR did NOT load — plates will be detected "
+                          "but never read. Install paddlepaddle into this virtualenv.")
+            else:
+                log.info("[DETECT] PaddleOCR pre-loaded.")
         except Exception as _ocr_exc:
             log.warning("[DETECT] PaddleOCR pre-load skipped: %s", _ocr_exc)
 

@@ -181,6 +181,23 @@ if ($needPip) {
         Say 'requirements.txt changed since the last run - updating dependencies...' 'Yellow'
     }
     & $python -m pip install --upgrade pip --quiet
+
+    # PaddlePaddle, the framework PaddleOCR runs on.
+    #
+    # It is deliberately not in requirements.txt because the pin differs per
+    # platform, so each builder installs it itself - backend\Dockerfile and
+    # railpack.json both do, and this script did not. Every campus install
+    # therefore had paddleocr present and `paddle` missing, and PaddleOCR died
+    # on "No module named 'paddle'" at startup: the gate detected plates it
+    # could never read. Same version the other two builders pin.
+    & $python -m pip install paddlepaddle==3.0.0
+    if ($LASTEXITCODE -ne 0) {
+        # Not fatal. Detection, QR and manual plate entry all still work without
+        # OCR, and a terminal that serves is better than one that refuses to
+        # start - but this is the line that explains a gate reading no plates.
+        Say 'paddlepaddle install failed - OCR is disabled: plates will be detected but not read.' 'Yellow'
+    }
+
     & $python -m pip install -r $reqFile
 
     # pip's exit code, checked. Without this the script announced "Dependencies

@@ -33,8 +33,12 @@ Django==4.2.30
 django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
-# paddlepaddle (CPU) is installed by the builder before this file; paddle 3.x is
-# required for numpy 2 compatibility.
+# paddlepaddle (CPU) is NOT pinned here - the pin differs per platform, so each
+# builder installs it before this file: backend/Dockerfile, railpack.json and
+# scripts/run-campus.ps1 all pin paddlepaddle==3.0.0. Keep those three in step;
+# a builder that skips it gets a working paddleocr import and no `paddle`, which
+# surfaces at startup as OCR disabled rather than as a failed install.
+# Paddle 3.x is required for numpy 2 compatibility.
 paddleocr==2.10.0
 albumentations==1.4.24
 filelock==3.19.1
