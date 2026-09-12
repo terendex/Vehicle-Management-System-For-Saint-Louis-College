@@ -185,11 +185,30 @@ def _get_plate_yolo():
             log.info("[DETECT] Plate-detector on CPU (%d threads): %s",
                      torch.get_num_threads(), PLATE_WEIGHTS_PATH)
 
+        # Warm-up is an optimisation, not a load step: it compiles the JIT graph
+        # and lets cudnn benchmark, so skipping it costs latency on the first
+        # real frame and nothing else. It used to sit in the outer try, which
+        # meant a warm-up that threw sent a fully-loaded model to the `except`
+        # below — which sets _plate_model = None, and _plate_load_attempted is
+        # already True, so nothing ever retries and the gate runs blind until
+        # someone restarts the server.
+        #
+        # Seen on the campus install as `'Conv' object has no attribute 'bn'`:
+        # ultralytics fusing the model a second time while the StreamWorkers are
+        # opening their captures against the same GPU. The model itself was fine
+        # — it logged "Plate-detector on GPU (CUDA)" and its fused summary either
+        # side of the error.
         _broadcast_status("warming_up", "Warming up plate detector…")
         log.info("[DETECT] Warming up plate detector (compiling JIT graph)…")
-        dummy = np.zeros((480, 640, 3), np.uint8)
-        _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640, conf=_CONF_PLATE, verbose=False)
-        log.info("[DETECT] Plate-detector warm-up complete.")
+        try:
+            dummy = np.zeros((480, 640, 3), np.uint8)
+            _plate_model.predict(_preprocess_adaptive(dummy), imgsz=640,
+                                 conf=_CONF_PLATE, verbose=False)
+            log.info("[DETECT] Plate-detector warm-up complete.")
+        except Exception as warm_exc:
+            log.warning("[DETECT] Plate-detector warm-up failed (%s) — keeping the "
+                        "model; the first real frame pays the compile instead.",
+                        warm_exc)
 
         # No vehicle-detector pre-load here.  This loader runs for the gate, and
         # the gate is plate-only; parking loads the vehicle weights lazily on its
@@ -289,7 +308,15 @@ def _get_vehicle_yolo():
 # boxes: a plate missed on one frame is re-read on the next (the tracker votes
 # across frames before locking a read), while a false box opens a track and
 # runs OCR on a car's bodywork.
-_CONF_PLATE   = 0.40
+#
+# Raised 0.40 -> 0.50 on top of the _MAX_ASPECT_PLATE gate below. The sweep in
+# that gate's comment is the cost sheet: 0.50 keeps 97% of the plate boxes 0.40
+# kept and drops 12 of the 31 false boxes on its own. With the shape gate already
+# removing 30 of those 31, this is the belt to its braces — it buys most of its
+# value against false boxes the shape gate cannot see (a signboard or bumper
+# sticker that happens to be plate-shaped), which is the failure that shows up on
+# a full gate frame rather than the vehicle crops the sweep was measured on.
+_CONF_PLATE   = 0.50
 # Only detect_vehicles() reads this, and its one caller (parking occupancy)
 # overrides it — see OCCUPANCY_CONF in vehicles/parking_camera.py for why a
 # dense overview needs a stricter floor than this default.
