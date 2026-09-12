@@ -26,6 +26,11 @@ urlpatterns = [
     path('test-rtsp/',              views.TestRtspView.as_view(),          name='test-rtsp'),
     # Dual-gate system
     path('manual-entry/',           views.ManualEntryView.as_view(),       name='manual-entry'),
+    # Look a vehicle up by owner name, plate, or conduction number.
+    path('owner-lookup/',           views.OwnerLookupView.as_view(),       name='owner-lookup'),
+    # Plateless vehicles the guard records by hand (entry + its exit).
+    path('unrecognized/',           views.UnrecognizedEntryView.as_view(), name='unrecognized-entry'),
+    path('unrecognized/<int:pk>/exit/', views.UnrecognizedExitView.as_view(), name='unrecognized-exit'),
     path('qr-login/',               QRLoginView.as_view(),                 name='qr-login'),
     path('current-shifts/',         views.CurrentShiftsView.as_view(),     name='current-shifts'),
     path('shifts/',                 views.GuardShiftListView.as_view(),    name='guard-shifts'),

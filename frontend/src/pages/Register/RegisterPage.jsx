@@ -7,6 +7,7 @@ import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import { compressImage } from '../../utils/imageCompress'
+import BrandLogos from '../../components/BrandLogos'
 import {
   IllustratedStep,
   PayAtAccountingArt, NoFeeArt, UploadOrArt, ApprovalMailArt, CdsoOfficeArt,
@@ -196,7 +197,6 @@ const REGISTRATION_TYPES = [
   },
 ]
 import ComboBox from '../../components/ComboBox'
-import slcLogo from '../../assets/slclogo.jpg'
 import './RegisterPage.css'
 
 const ALL_CAMPUS_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -269,7 +269,7 @@ function SlcHeader({ onBack }) {
     <header className="register-header">
       <div className="header-content">
         <div className="header-logo-group">
-          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <BrandLogos size="header" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

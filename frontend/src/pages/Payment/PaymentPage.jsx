@@ -9,8 +9,8 @@ import { compressImage } from '../../utils/imageCompress'
 import {
   IllustratedStep, PayAtAccountingArt, OrNumberArt, ReceiptPhotoArt, CdsoReviewArt,
 } from '../../components/Illustrations/RegArt'
-import slcLogo from '../../assets/slclogo.jpg'
 import './PaymentPage.css'
+import BrandLogos from '../../components/BrandLogos'
 
 const RECEIPT_MAX_MB    = 5
 const RECEIPT_MAX_BYTES = RECEIPT_MAX_MB * 1024 * 1024
@@ -33,7 +33,7 @@ function SlcHeader() {
     <header className="paypage-header">
       <div className="header-content">
         <div className="header-logo-group">
-          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <BrandLogos size="header" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

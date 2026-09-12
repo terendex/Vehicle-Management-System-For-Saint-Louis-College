@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Shield, FileText, ChevronRight } from 'lucide-react'
-import slcLogo from '../../assets/slclogo.jpg'
 import { registrationApi } from '../../api/registration'
 import './PolicyPage.css'
+import BrandLogos from '../../components/BrandLogos'
 
 const TABS = [
   { id: 'privacy', label: 'Privacy Policy', icon: Shield },
@@ -44,7 +44,7 @@ export default function PolicyPage() {
             made this bar read differently from every other page. */}
         <div className="policy-header-inner header-content">
           <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <BrandLogos size="header" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

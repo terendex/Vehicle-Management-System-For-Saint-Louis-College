@@ -200,6 +200,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
     category_capacity   = serializers.SerializerMethodField()
     category_occupied   = serializers.SerializerMethodField()
     category_available  = serializers.SerializerMethodField()
+    category_reserved   = serializers.SerializerMethodField()
+    category_event      = serializers.SerializerMethodField()
     category_is_full    = serializers.SerializerMethodField()
     category_fill_pct   = serializers.SerializerMethodField()
     occupancy_source    = serializers.SerializerMethodField()
@@ -212,6 +214,7 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
                   'reference_image_url', 'capacity_override', 'space_count',
                   'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
                   'category_capacity', 'category_occupied', 'category_available',
+                  'category_reserved', 'category_event',
                   'category_is_full', 'category_fill_pct', 'occupancy_source',
                   'occupancy_method', 'detection_enabled',
                   'baseline_image_url', 'baseline_captured_at',
@@ -225,9 +228,10 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 
         Prefers the map the view built for the whole page (`category_state` in
         context), matching the `build_block_counts` convention used above: a
-        list of N zones then costs the same two queries as a single one. Falls
-        back to computing it once and caching on the serializer instance, so
-        even a caller that forgets the context cannot turn this into N+1.
+        list of N zones then costs the same flat handful of queries as a single
+        one. Falls back to computing it once and caching on the serializer
+        instance, so even a caller that forgets the context cannot turn this
+        into N+1.
         """
         state = self.context.get('category_state')
         if state is None:
@@ -249,6 +253,19 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
 
     def get_category_available(self, obj):
         return self._category(obj).get('available', 0)
+
+    def get_category_reserved(self, obj):
+        """Bays an event under way has declared it will fill.
+
+        Already subtracted from `category_available`. Reported separately so a
+        screen can say WHY the free count dropped — an unexplained fall of five
+        reads as a miscount, and the guard starts distrusting the number.
+        """
+        return self._category(obj).get('reserved', 0)
+
+    def get_category_event(self, obj):
+        """The event doing the reserving, or None — so the screen can name it."""
+        return self._state().get('event')
 
     def get_category_is_full(self, obj):
         return self._category(obj).get('is_full', False)

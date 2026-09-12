@@ -2564,6 +2564,10 @@ class ParkingAvailabilityView(APIView):
             summary[cat] = {
                 'total':     cat_state.get('capacity', 0),
                 'occupied':  cat_state.get('occupied', 0),
+                # Bays an event under way has declared it will fill. Reported
+                # separately from 'occupied' so the screen can say WHY the free
+                # count dropped instead of looking like a miscount.
+                'reserved':  cat_state.get('reserved', 0),
                 'available': cat_state.get('available', 0),
                 'is_full':   cat_state.get('is_full', False),
                 'source':    'gate_ledger',
@@ -2597,6 +2601,9 @@ class ParkingAvailabilityView(APIView):
             "spaces":  spaces,
             "summary": summary,
             "zones":   zones,
+            # The event holding bays back right now, so the screen can name it
+            # rather than leaving the smaller free count unexplained.
+            "event":   state.get('event'),
             # Missed exit scans today — surfaced so a gate that stopped scanning
             # exits is visible rather than quietly inflating the count.
             "stale_excluded": state.get('stale_excluded', 0),
@@ -2863,20 +2870,78 @@ class SystemSettingsView(APIView):
 # Events (Admin/CDSO manage campus events + organizer plates)
 # ──────────────────────────────────────────────
 
+def _serialize_event(ev):
+    """One shape for an event, shared by the list and detail views.
+
+    They had a byte-identical `_serialize` each; adding the time and parking
+    fields to one and not the other is exactly the drift that copy invited.
+    """
+    return {
+        'id':               ev.id,
+        'name':             ev.name,
+        'date':             ev.date.isoformat(),
+        'start_time':       ev.start_time.strftime('%H:%M') if ev.start_time else None,
+        'end_time':         ev.end_time.strftime('%H:%M') if ev.end_time else None,
+        'time_display':     ev.time_display,
+        'parking_share':    ev.parking_share,
+        'parking_share_label': ev.get_parking_share_display(),
+        'parking_share_fraction': ev.share_fraction,
+        'is_under_way':     ev.is_under_way(),
+        'is_active':        ev.is_active,
+        'archived':         ev.archived,
+        'organizer_plates': ev.organizer_plates,
+        'created_at':       ev.created_at.isoformat(),
+        'created_by_name':  ev.created_by.full_name if ev.created_by else None,
+    }
+
+
+def _parse_event_time(raw):
+    """'' / None -> None (no time set); 'HH:MM' -> a time. Raises ValueError."""
+    if raw in (None, ''):
+        return None
+    from datetime import datetime as _dt
+    text = str(raw).strip()
+    for fmt in ('%H:%M', '%H:%M:%S'):
+        try:
+            return _dt.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    raise ValueError('Invalid time format. Use HH:MM (24-hour).')
+
+
+def _apply_event_times(ev, data, errors):
+    """Read start_time / end_time / parking_share off `data` onto `ev`.
+
+    Only keys actually present are touched, so a PATCH that sends just the name
+    cannot blank an event's times.
+    """
+    for field in ('start_time', 'end_time'):
+        if field in data:
+            try:
+                setattr(ev, field, _parse_event_time(data[field]))
+            except ValueError as exc:
+                errors[field] = str(exc)
+
+    if 'parking_share' in data:
+        share = (data['parking_share'] or Event.ParkingShare.NONE)
+        if share not in Event.ParkingShare.values:
+            errors['parking_share'] = 'Choose how much of parking the event fills.'
+        else:
+            ev.parking_share = share
+
+    # An event that ends before it starts is a typo every time, and it would
+    # make is_under_way() false for every minute of the day.
+    if (not errors and ev.start_time and ev.end_time
+            and ev.end_time <= ev.start_time):
+        errors['end_time'] = 'The end time must be after the start time.'
+    return errors
+
+
 class EventListCreateView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def _serialize(self, ev):
-        return {
-            'id':               ev.id,
-            'name':             ev.name,
-            'date':             ev.date.isoformat(),
-            'is_active':        ev.is_active,
-            'archived':         ev.archived,
-            'organizer_plates': ev.organizer_plates,
-            'created_at':       ev.created_at.isoformat(),
-            'created_by_name':  ev.created_by.full_name if ev.created_by else None,
-        }
+        return _serialize_event(ev)
 
     def get(self, request):
         events = Event.objects.select_related('created_by').all()
@@ -2899,11 +2964,17 @@ class EventListCreateView(APIView):
             return Response({'date': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
 
         plates = [p.strip().upper() for p in (organizer_plates or []) if p.strip()]
-        ev = Event.objects.create(
+        ev = Event(
             name=name, date=date_obj, organizer_plates=plates, created_by=request.user,
         )
+        errors = _apply_event_times(ev, request.data, {})
+        if errors:
+            return Response(errors, status=400)
+        ev.save()
         audit(request, AuditLog.Action.RECORD_CREATED,
-              f"Event added | {ev.name} on {ev.date} | Organizer plates: {len(plates)} | By: {request.user.full_name}")
+              f"Event added | {ev.name} on {ev.date} ({ev.time_display}) | "
+              f"Parking: {ev.get_parking_share_display()} | "
+              f"Organizer plates: {len(plates)} | By: {request.user.full_name}")
         return Response(self._serialize(ev), status=201)
 
 
@@ -2911,16 +2982,7 @@ class EventDetailView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def _serialize(self, ev):
-        return {
-            'id':               ev.id,
-            'name':             ev.name,
-            'date':             ev.date.isoformat(),
-            'is_active':        ev.is_active,
-            'archived':         ev.archived,
-            'organizer_plates': ev.organizer_plates,
-            'created_at':       ev.created_at.isoformat(),
-            'created_by_name':  ev.created_by.full_name if ev.created_by else None,
-        }
+        return _serialize_event(ev)
 
     def patch(self, request, pk):
         try:
@@ -2953,9 +3015,14 @@ class EventDetailView(APIView):
             plates = [p.strip().upper() for p in (request.data['organizer_plates'] or []) if p.strip()]
             ev.organizer_plates = plates
 
+        errors = _apply_event_times(ev, request.data, {})
+        if errors:
+            return Response(errors, status=400)
+
         ev.save()
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Event updated | {ev.name} on {ev.date} | By: {request.user.full_name}")
+              f"Event updated | {ev.name} on {ev.date} ({ev.time_display}) | "
+              f"Parking: {ev.get_parking_share_display()} | By: {request.user.full_name}")
         return Response(self._serialize(ev))
 
     def delete(self, request, pk):

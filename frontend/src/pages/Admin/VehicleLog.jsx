@@ -7,7 +7,7 @@ import { notify } from '../../components/Feedback/notify'
 import {
   Search, Car, Filter, RefreshCw, ChevronLeft, ChevronRight,
   X, Calendar, DoorOpen, CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  Download, FileText,
+  Download, FileText, Users,
 } from 'lucide-react'
 import './VehicleLog.css'
 
@@ -41,9 +41,17 @@ const STATUS_FILTERS = [
 ]
 
 const CLASSIFICATION_LABELS = {
-  student: 'Student', employee: 'Employee', fetcher: 'Fetcher',
+  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher',
   visitor: 'Visitor', supplier: 'Supplier', unknown: 'Unregistered',
 }
+
+// Narrow the log to one kind of entrant — "how many students came through in
+// September" is the question this answers, and no combination of the status
+// and date filters could answer it before.
+const CATEGORY_FILTERS = [
+  { value: '', label: 'All Categories' },
+  ...Object.entries(CLASSIFICATION_LABELS).map(([value, label]) => ({ value, label })),
+]
 
 const DATE_PERIODS = [
   { value: 'all',   label: 'All' },
@@ -113,6 +121,7 @@ export default function VehicleLog() {
   const [search, setSearch]         = useState('')
   const [gateFilter, setGate]       = useState('')
   const [statusFilter, setStatus]   = useState('')
+  const [categoryFilter, setCategory] = useState('')
   const [dateFrom, setDateFrom]     = useState(today)
   const [dateTo, setDateTo]         = useState(today)
   const [datePeriod, setDatePeriod] = useState('day')
@@ -123,10 +132,11 @@ export default function VehicleLog() {
     setLoading(true)
     try {
       const params = { limit: FETCH_LIMIT }
-      if (gateFilter)    params.gate_id   = gateFilter
-      if (dateFrom)      params.date_from = dateFrom
-      if (dateTo)        params.date_to   = dateTo
-      if (currentSearch) params.search    = currentSearch
+      if (gateFilter)     params.gate_id   = gateFilter
+      if (categoryFilter) params.category  = categoryFilter
+      if (dateFrom)       params.date_from = dateFrom
+      if (dateTo)         params.date_to   = dateTo
+      if (currentSearch)  params.search    = currentSearch
 
       const res = await getAccessLogs(params)
       setLogs(res.data?.results ?? res.data ?? [])
@@ -135,7 +145,7 @@ export default function VehicleLog() {
     } finally {
       setLoading(false)
     }
-  }, [gateFilter, dateFrom, dateTo])
+  }, [gateFilter, categoryFilter, dateFrom, dateTo])
 
   // Debounce search: wait 400ms after the user stops typing. Filter changes
   // rebuild fetchLogs, which re-runs this effect, so one timer covers both.
@@ -181,7 +191,8 @@ export default function VehicleLog() {
   const pageSafe   = Math.min(page, totalPages)
   const pageRows   = filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE)
 
-  const hasFilters = search || gateFilter || statusFilter || datePeriod !== 'all' || dateFrom || dateTo
+  const hasFilters = search || gateFilter || statusFilter || categoryFilter
+    || datePeriod !== 'all' || dateFrom || dateTo
 
   // ── Reports ───────────────────────────────────────────────────────────────
   // The server re-runs the same filters and merges entry/exit the same way, so
@@ -191,11 +202,12 @@ export default function VehicleLog() {
 
   const buildExportParams = () => {
     const params = {}
-    if (gateFilter)   params.gate_id   = gateFilter
-    if (dateFrom)     params.date_from = dateFrom
-    if (dateTo)       params.date_to   = dateTo
-    if (search)       params.search    = search
-    if (statusFilter) params.status    = statusFilter
+    if (gateFilter)     params.gate_id   = gateFilter
+    if (categoryFilter) params.category  = categoryFilter
+    if (dateFrom)       params.date_from = dateFrom
+    if (dateTo)         params.date_to   = dateTo
+    if (search)         params.search    = search
+    if (statusFilter)   params.status    = statusFilter
     return params
   }
 
@@ -223,7 +235,7 @@ export default function VehicleLog() {
   const exportPdf   = () => runExport(exportVehicleLogPdf,   'pdf',  setExportingPdf)
 
   const clearFilters = () => {
-    setSearch(''); setGate(''); setStatus('')
+    setSearch(''); setGate(''); setStatus(''); setCategory('')
     setDatePeriod('all'); setDateFrom(''); setDateTo(''); setPage(1)
   }
 
@@ -351,6 +363,20 @@ export default function VehicleLog() {
               </select>
             </div>
 
+            <div className="vl-filter-item">
+              <Users size={13} />
+              <select
+                className="vl-form-select"
+                value={categoryFilter}
+                onChange={(e) => { setCategory(e.target.value); setPage(1) }}
+                aria-label="Entrant category"
+              >
+                {CATEGORY_FILTERS.map(f => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+
             {hasFilters && (
               <button className="vl-clear-btn" onClick={clearFilters}>Clear filters</button>
             )}
@@ -393,13 +419,24 @@ export default function VehicleLog() {
                     return (
                       <tr key={log.id ?? i}>
                         <td className="vl-timestamp">{fmtDateTime(log.scanned_at)}</td>
-                        <td className="vl-plate">{log.plate_number || '—'}</td>
+                        {/* A hand-recorded plateless vehicle has no plate to
+                            print, so it is listed under the reference the guard
+                            was given for it. */}
+                        <td className="vl-plate">
+                          {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
+                        </td>
                         <td>
-                          <span className="vl-owner">{log.vehicle_owner_name || 'Unregistered'}</span>
+                          <span className="vl-owner">
+                            {log.vehicle_owner_name || log.driver_name || 'Unregistered'}
+                          </span>
                           {log.classification && (
                             <span className="vl-classification">
                               {CLASSIFICATION_LABELS[log.classification] || log.classification}
-                              {log.vehicle_type_info ? ` · ${log.vehicle_type_info}` : ''}
+                              {log.vehicle_type_info
+                                ? ` · ${log.vehicle_type_info}`
+                                : log.is_unrecognized
+                                  ? ` · no plate · ${[log.vehicle_color, log.vehicle_type, log.vehicle_model].filter(Boolean).join(' ')}`
+                                  : ''}
                             </span>
                           )}
                         </td>

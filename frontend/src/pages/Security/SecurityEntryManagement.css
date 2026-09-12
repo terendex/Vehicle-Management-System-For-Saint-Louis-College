@@ -247,3 +247,129 @@
 .em-confiscated {
   margin-top: 1.5rem;
 }
+
+/* ─── Owner name-search results ───────────────────────────────── */
+/* Rows are buttons: the whole row is the target, because a guard picking one
+   is doing it in a hurry with a car waiting at the barrier. */
+.em-lookup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.em-lookup-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 9px;
+  background: #fff;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+
+.em-lookup-row:hover,
+.em-lookup-row:focus-visible {
+  border-color: #2E8CCB;
+  background: #F5FAFE;
+  outline: none;
+}
+
+.em-lookup-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.em-lookup-plate {
+  font-family: 'Courier New', monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #03396C;
+}
+
+.em-lookup-sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #5C7B92;
+}
+
+/* ─── Unrecognized vehicles inside ────────────────────────────── */
+.em-unrec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #FAF8F2;
+  border: 1px solid #EADFC2;
+}
+
+.em-unrec-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.em-unrec-ref {
+  font-family: 'Courier New', monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #7A5C00;
+}
+
+.em-unrec-sub {
+  font-size: 11.5px;
+  color: #5C7B92;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.em-unrec-time {
+  font-size: 10.5px;
+  color: #8296A8;
+  margin-top: 1px;
+}
+
+.em-unrec-exit {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  font-size: 11.5px;
+}
+
+/* ─── Two fields on one line (unrecognized vehicle form) ──────── */
+/* Type and colour belong together and are both short; on a phone they stack
+   rather than squeezing to half a word each. */
+.em-field-row {
+  display: flex;
+  gap: 10px;
+}
+
+.em-field-row > .em-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .em-field-row { flex-direction: column; gap: 0; }
+}
+
+/* Explanatory line at the top of a form modal. */
+.em-modal-hint {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #F2F7FB;
+  border: 1px solid #DCE8F2;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #3E5B72;
+}

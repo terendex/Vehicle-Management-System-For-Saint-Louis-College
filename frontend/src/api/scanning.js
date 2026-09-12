@@ -81,3 +81,16 @@ export const updateGate = (id, payload) => api.patch(`/scan/gates/${id}/`, paylo
 
 // Shift history (admin) — optional params: gate, guard, date
 export const getShifts = (params) => api.get('/scan/shifts/', { params })
+
+// Find a vehicle by owner NAME, plate, or conduction number. The guard picks a
+// result and the normal plate check runs on it — searching never skips a rule.
+export const lookupOwner = (q) => api.get('/scan/owner-lookup/', { params: { q } })
+
+// Plateless vehicles the guard records by hand
+export const getUnrecognizedInside = (gate_id) =>
+  api.get('/scan/unrecognized/', { params: gate_id ? { gate_id } : {} })
+
+export const recordUnrecognizedEntry = (data) => api.post('/scan/unrecognized/', data)
+
+export const recordUnrecognizedExit = (id, gate_id) =>
+  api.post(`/scan/unrecognized/${id}/exit/`, { gate_id })

@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
-  Camera, VideoOff, Maximize2, Minimize2,
+  Camera, VideoOff, Maximize2, Minimize2, CalendarDays,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -281,6 +281,11 @@ export default function SecurityParkingView() {
   const isFull       = selZone?.category_is_full   ?? false
   const sumFr        = selZone?.category_available ?? Math.max(0, totalCap - occ)
   const catLabel     = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
+  // Bays an event under way has spoken for. Already taken out of `sumFr`, so
+  // without naming it here the free count simply drops and the guard is left
+  // to decide whether the number is wrong.
+  const reserved     = selZone?.category_reserved ?? 0
+  const capEvent     = selZone?.category_event ?? null
 
   // ── Which camera is this zone watched by? ───────────────────────
   //
@@ -372,6 +377,21 @@ export default function SecurityParkingView() {
             across two bays is exactly their job. */}
         <DoubleParkingAlerts zoneId={selId} canAttribute />
 
+        {/* An event is holding part of the lot. Above the counters, because it
+            explains them — the guard is the one who has to tell a driver why
+            the lot is closing early. */}
+        {selZone && capEvent && reserved > 0 && (
+          <div className="pm-event-banner">
+            <CalendarDays size={15} />
+            <span>
+              <strong>{capEvent.name}</strong>
+              {capEvent.time_display !== 'All day' ? ` (${capEvent.time_display})` : ' today'}
+              {' — '}{reserved} {catLabel.toLowerCase()} space{reserved === 1 ? '' : 's'} held
+              for the event ({capEvent.share_label.replace(/^About /, '').replace(' of parking', ' of the lot')}).
+            </span>
+          </div>
+        )}
+
         {/* Occupancy at a glance — same stat cards as the admin page. These
             were a run of tiny text inside the toolbar. */}
         {selZone && (
@@ -390,6 +410,15 @@ export default function SecurityParkingView() {
                 <p className="pm-stat-lbl">Occupied</p>
               </div>
             </div>
+            {reserved > 0 && (
+              <div className="pm-stat-card">
+                <div className="pm-stat-icon amber"><CalendarDays size={18} /></div>
+                <div>
+                  <p className="pm-stat-val">{reserved}</p>
+                  <p className="pm-stat-lbl">Held for Event</p>
+                </div>
+              </div>
+            )}
             <div className="pm-stat-card">
               <div className="pm-stat-icon blue"><ParkingCircle size={18} /></div>
               <div>

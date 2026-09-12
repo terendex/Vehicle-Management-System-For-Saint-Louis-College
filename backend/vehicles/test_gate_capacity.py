@@ -226,13 +226,16 @@ class CapacityQueryBudgetTests(TestCase):
         with self.assertNumQueries(1):
             inside_counts()
 
-    def test_state_is_two_queries_regardless_of_zone_count(self):
+    def test_state_is_a_flat_query_count_regardless_of_zone_count(self):
         for i in range(5):
             zone = ParkingZone.objects.create(name=f'Z{i}', vehicle_category='car')
             for j in range(4):
                 ParkingSpace.objects.create(zone=zone, space_number=f'{i}-{j}',
                                             x1=0.1, y1=0.1, x2=0.2, y2=0.2)
-        with self.assertNumQueries(2):   # capacity aggregate + ledger count
+        # Capacity aggregate + ledger count + the active-event lookup. Three,
+        # not two, since events can reserve part of the car park — but still
+        # three for five zones, twenty bays, or five hundred.
+        with self.assertNumQueries(3):
             category_state()
 
 
@@ -267,11 +270,11 @@ class ParkingApiTests(APITestCase):
     def test_zone_list_does_not_scale_queries_with_zone_count(self):
         for i in range(4):
             ParkingZone.objects.create(name=f'Extra {i}', vehicle_category='car')
-        # Four flat: ledger count, capacity aggregate, the zone page, and the
-        # space prefetch. It does not grow per zone — the old serializer ran
-        # three .count()/.filter() queries per zone on top of these, so five
-        # zones cost nineteen.
-        with self.assertNumQueries(4):
+        # Five flat: ledger count, capacity aggregate, the active-event lookup,
+        # the zone page, and the space prefetch. It does not grow per zone — the
+        # old serializer ran three .count()/.filter() queries per zone on top of
+        # these, so five zones cost nineteen.
+        with self.assertNumQueries(5):
             self.client.get(ZONES)
 
     def test_availability_summary_comes_from_the_ledger(self):
@@ -301,10 +304,10 @@ class ParkingApiTests(APITestCase):
             zone = ParkingZone.objects.create(name=f'More {i}', vehicle_category='car')
             ParkingSpace.objects.create(zone=zone, space_number=f'M{i}',
                                         x1=0.1, y1=0.1, x2=0.2, y2=0.2)
-        # Three flat: the spaces page, the ledger count, the capacity
-        # aggregate. The zone-name lookup used to sit inside the aggregation
-        # loop, costing one extra SELECT per zone on top.
-        with self.assertNumQueries(3):
+        # Four flat: the spaces page, the ledger count, the capacity
+        # aggregate, the active-event lookup. The zone-name lookup used to sit
+        # inside the aggregation loop, costing one extra SELECT per zone on top.
+        with self.assertNumQueries(4):
             self.client.get(f'{AVAIL}?category=car')
 
     def test_status_code_and_shape_for_unfiltered_request(self):

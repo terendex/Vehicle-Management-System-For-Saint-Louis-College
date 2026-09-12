@@ -761,9 +761,42 @@ class RegistrationPeriod(models.Model):
 
 class Event(models.Model):
     """A campus event. Organizer plates are noted temporarily; activating closes parts of parking."""
+
+    class ParkingShare(models.TextChoices):
+        """How much of campus parking the event is expected to take up.
+
+        Stored as the fraction's label rather than a raw percentage because
+        that is how the CDSO actually plans an event — "half the parking is
+        gone" — and a free-number field invites 37%, which nobody can act on.
+        `share_fraction` turns it back into a number for the capacity maths.
+        """
+        NONE    = 'none',    'None — parking unaffected'
+        QUARTER = 'quarter', 'About 1/4 of parking'
+        THIRD   = 'third',   'About 1/3 of parking'
+        HALF    = 'half',    'About 1/2 of parking'
+        TWO_THIRDS = 'two_thirds', 'About 2/3 of parking'
+        THREE_QUARTERS = 'three_quarters', 'About 3/4 of parking'
+        FULL    = 'full',    'All of parking'
+
+    # Fraction of declared capacity each share reserves. Kept beside the
+    # choices so adding a share forces a decision about its size rather than
+    # silently reserving nothing.
+    SHARE_FRACTIONS = {
+        'none': 0.0, 'quarter': 0.25, 'third': 1 / 3, 'half': 0.5,
+        'two_thirds': 2 / 3, 'three_quarters': 0.75, 'full': 1.0,
+    }
+
     id               = models.BigAutoField(primary_key=True, db_column='event_id')
     name             = models.CharField(max_length=200)
     date             = models.DateField()
+    # Both optional: an all-day event has no meaningful start, and a guard
+    # reading "00:00–00:00" would think the event had already ended.
+    start_time       = models.TimeField(null=True, blank=True)
+    end_time         = models.TimeField(null=True, blank=True)
+    parking_share    = models.CharField(
+        max_length=20, choices=ParkingShare.choices, default=ParkingShare.NONE,
+        help_text="How much of campus parking this event is expected to fill.",
+    )
     is_active        = models.BooleanField(default=False)
     archived         = models.BooleanField(default=False)
     organizer_plates = models.JSONField(default=list, blank=True)
@@ -779,6 +812,43 @@ class Event(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def share_fraction(self) -> float:
+        """`parking_share` as a 0.0–1.0 multiplier of declared capacity."""
+        return self.SHARE_FRACTIONS.get(self.parking_share, 0.0)
+
+    @property
+    def time_display(self) -> str:
+        """"9:00 AM - 3:00 PM", "From 9:00 AM", or "All day" — what a guard
+        needs to read off a card without doing arithmetic."""
+        fmt = lambda t: t.strftime('%I:%M %p').lstrip('0')
+        if self.start_time and self.end_time:
+            return f'{fmt(self.start_time)} - {fmt(self.end_time)}'
+        if self.start_time:
+            return f'From {fmt(self.start_time)}'
+        if self.end_time:
+            return f'Until {fmt(self.end_time)}'
+        return 'All day'
+
+    def is_under_way(self, now=None) -> bool:
+        """True while the clock is inside the event's window today.
+
+        An event with no times set is under way for the whole of its day — the
+        absence of a window means "all day", not "never".
+        """
+        from django.utils import timezone as _tz
+        if not self.is_active or self.archived:
+            return False
+        now = now or _tz.localtime()
+        if now.date() != self.date:
+            return False
+        current = now.time()
+        if self.start_time and current < self.start_time:
+            return False
+        if self.end_time and current > self.end_time:
+            return False
+        return True
 
 
 class ParkingNotice(models.Model):

@@ -1040,3 +1040,82 @@
     flex: 1 1 100%;
   }
 }
+
+/* ─── Event time + parking share ──────────────────────────────── */
+/* Two short fields side by side in the New Event form; they stack on a phone
+   rather than squeezing to half a clock each. */
+.ev-field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.ev-field-row > .ev-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .ev-field-row { flex-direction: column; gap: 0; }
+}
+
+/* The parking line on an event card. Its own row under the date/time line —
+   it is the fact that changes what the gate does, so it does not get buried
+   at the end of a run of dot-separated metadata. */
+.ev-card-parking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #FBF3E0;
+  border: 1px solid #EEDDB4;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #7A5C00;
+}
+
+/* "Held now" vs "Held during the event" — the difference between a gate that
+   is already turning cars away and one that is not. */
+.ev-parking-state {
+  font-weight: 500;
+  color: #96805A;
+}
+
+.ev-parking-state--live {
+  color: #A13A0E;
+  font-weight: 700;
+}
+
+/* Inline time + share editor inside an expanded card. */
+.ev-sched-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.ev-sched-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 120px;
+}
+
+.ev-sched-field--wide {
+  flex: 1 1 200px;
+}
+
+.ev-sched-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4A6B85;
+  letter-spacing: 0.2px;
+}
+
+@media (max-width: 520px) {
+  .ev-sched-field,
+  .ev-sched-field--wide { flex: 1 1 100%; min-width: 0; }
+}

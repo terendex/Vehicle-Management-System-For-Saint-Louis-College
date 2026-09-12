@@ -15,10 +15,15 @@ is what the cameras actually measure.
 
 Cost
 ----
-`category_state()` is two round trips for an entire page — one aggregate for
-declared capacity across all zones, one for the ledger count — no matter how
-many zones, bays or vehicles exist. Callers pass the result through serializer
-context so a list of N zones does not repeat either query N times.
+`category_state()` is three round trips for an entire page — one aggregate for
+declared capacity across all zones, one for the ledger count, and one for the
+events that might be holding bays back — no matter how many zones, bays or
+vehicles exist. Callers pass the result through serializer context so a list of
+N zones does not repeat any of them N times.
+
+Flat is the property that matters here, not the constant: the per-zone
+serializer this replaced ran three queries *per zone*, so five zones cost
+nineteen. Anything added here must stay outside the zone loop.
 """
 from __future__ import annotations
 
@@ -58,12 +63,50 @@ def category_capacity() -> dict:
     return totals
 
 
-def category_state(inside=None, capacity=None) -> dict:
+def event_reservation() -> dict | None:
+    """Parking an event under way right now is expected to take up.
+
+    Returns ``{'name', 'share', 'share_label', 'fraction', 'time_display'}`` for
+    the event with the largest declared share, or None when nothing is running.
+
+    Only events that are *under way* reserve anything. An event that is active
+    today but starts at 6pm must not make the car park read as half gone at
+    nine in the morning — the whole point of recording a time was so the
+    reservation follows the clock rather than the calendar.
+    """
+    from .models import Event
+
+    best = None
+    for ev in Event.objects.filter(is_active=True, archived=False):
+        if not ev.is_under_way():
+            continue
+        if ev.share_fraction <= 0:
+            continue
+        if best is None or ev.share_fraction > best.share_fraction:
+            best = ev
+    if best is None:
+        return None
+    return {
+        'name':         best.name,
+        'share':        best.parking_share,
+        'share_label':  best.get_parking_share_display(),
+        'fraction':     best.share_fraction,
+        'time_display': best.time_display,
+    }
+
+
+def category_state(inside=None, capacity=None, event=None) -> dict:
     """Capacity, occupancy and fullness per category.
 
     Returns ``{'car': {...}, 'motorcycle': {...}, 'stale_excluded': int}`` where
-    each category holds ``capacity``, ``occupied``, ``available``, ``is_full``
-    and ``fill_pct``.
+    each category holds ``capacity``, ``occupied``, ``reserved``, ``available``,
+    ``is_full`` and ``fill_pct``.
+
+    ``reserved`` is the share an event under way has declared it will fill. It
+    is held back from ``available`` rather than added to ``occupied``: those
+    bays are spoken for but no car has driven into them yet, and a screen that
+    reported them as occupied would be claiming to have counted vehicles that
+    are not there.
 
     Both halves are injectable so a caller that already fetched them (a list
     endpoint building serializer context) pays for them once.
@@ -81,6 +124,13 @@ def category_state(inside=None, capacity=None) -> dict:
             inside = empty_counts()
     if capacity is None:
         capacity = category_capacity()
+    if event is None:
+        try:
+            event = event_reservation()
+        except Exception:
+            log.exception("[capacity] event reservation unreadable; reserving nothing")
+            event = None
+    fraction = (event or {}).get('fraction', 0.0)
 
     # Vehicles on campus with no registration record still take up room. They
     # are charged to one category rather than dropped — see
@@ -93,16 +143,21 @@ def category_state(inside=None, capacity=None) -> dict:
         occupied = inside.get(category, 0)
         if category == UNCATEGORIZED_COUNTS_AS:
             occupied += unknown
+        # Rounded down, so a declared half of an odd capacity leaves the spare
+        # bay usable rather than quietly withheld.
+        reserved = min(cap, int(cap * fraction)) if cap > 0 else 0
         state[category] = {
             'capacity':  cap,
             'occupied':  occupied,
+            'reserved':  reserved,
             # Never negative: an override lowered below the live count (or an
             # uncategorised admit) must read as full, not as minus three free.
-            'available': max(0, cap - occupied),
-            'is_full':   cap > 0 and occupied >= cap,
-            'fill_pct':  min(100, round(occupied / cap * 100)) if cap > 0 else 0,
+            'available': max(0, cap - occupied - reserved),
+            'is_full':   cap > 0 and occupied + reserved >= cap,
+            'fill_pct':  min(100, round((occupied + reserved) / cap * 100)) if cap > 0 else 0,
         }
 
+    state['event']          = event
     state['unknown']        = inside.get(UNCATEGORIZED, 0)
     state['total_inside']   = inside.get('total', 0)
     state['stale_excluded'] = inside.get('stale_excluded', 0)

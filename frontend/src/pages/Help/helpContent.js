@@ -107,8 +107,42 @@ export const HELP_TOPICS = [
         'Authorized vehicles are recognised automatically from their plate.',
         'Unregistered or denied plates are flagged so you can act on them.',
         'Visitor passes can be issued for guests, and their exit recorded.',
+        'Every scan is labelled with who is entering — Student, Employee, Drop & Go / Fetcher, Supplier, Visitor, or Unregistered — as a coloured tag beside the plate.',
       ] },
       { type: 'note', text: 'If the same plate is read twice within the deduplication window (set by the CDSO), the second scan is ignored to avoid duplicate log rows.' },
+    ],
+  },
+  {
+    id: 'security-lookup-by-name',
+    title: 'Looking a Vehicle Up by Name',
+    category: 'Security',
+    roles: ['security'],
+    body: [
+      { type: 'p', text: 'The lookup box on Entry Management takes three things: the owner\'s name, a plate number, or a conduction number. You do not have to switch modes — it works out which you typed.' },
+      { type: 'steps', items: [
+        'Type what you have. Anything with numbers in it is treated as a plate or conduction number; anything without is treated as a name.',
+        'The button changes to "Search by Name" when the box holds a name, so you can see which way it is about to go before you press it.',
+        'A name search lists every matching vehicle with its owner, colour and type. Pick the one at the barrier.',
+        'Picking a result runs the normal entry check on that vehicle — exactly as if you had typed its plate.',
+      ] },
+      { type: 'note', text: 'Searching by name never grants entry on its own. The usual rules — schedule day, allowed hours, confiscation, visitor pass — are still applied to whichever vehicle you pick.' },
+    ],
+  },
+  {
+    id: 'security-unrecognized',
+    title: 'Vehicles With No Plate',
+    category: 'Security',
+    roles: ['security'],
+    body: [
+      { type: 'p', text: 'Some vehicles arrive with no plate and no conduction sticker — a newly delivered unit, a damaged or missing plate. Use the "No Plate?" button beside the lookup box so the vehicle is still on the record.' },
+      { type: 'steps', items: [
+        'Press "No Plate?" on the Entry Management screen.',
+        'Fill in what you can see: the driver\'s name, who is entering (student, employee, drop & go / fetcher, visitor, or unregistered), the vehicle type and its colour. Make and model, and a note, are optional.',
+        'The system gives the vehicle a reference like NP-214. That reference stands in for the plate everywhere — in Recent Scans, in the Vehicle Log, and in reports.',
+        'The vehicle now counts as inside campus, the same as any scanned entry.',
+        'When it leaves, find it in the "Unrecognized Vehicles Inside" panel on the right and press "Log Exit".',
+      ] },
+      { type: 'note', text: 'There is no plate to re-scan, so that panel is the only way the exit gets recorded. A vehicle left unclosed stays in the inside-count all day.' },
     ],
   },
   {
@@ -122,6 +156,22 @@ export const HELP_TOPICS = [
   },
 
   // ── CDSO (admin) ────────────────────────────────────────────────────────
+  {
+    id: 'cdso-events',
+    title: 'Events & Parking',
+    category: 'CDSO',
+    roles: ['admin'],
+    body: [
+      { type: 'p', text: 'An event is recorded with its date, the hours it runs, and how much of campus parking it is expected to fill. Events live under Parking Space Management.' },
+      { type: 'list', items: [
+        'Time — give a start and end time, or leave both blank for an all-day event.',
+        'Parking taken up — a fraction rather than a number: about 1/4, 1/3, 1/2, 2/3, 3/4, or all of parking.',
+        'Organizer plates — noted so organizers are identified at the gate.',
+      ] },
+      { type: 'p', text: 'The declared share is held back from the free-space count while the event is actually running, so the gate stops admitting before the bays the event needs are taken. Outside those hours nothing is held back — an evening event does not make the car park read as half gone in the morning.' },
+      { type: 'note', text: 'Held spaces are reported separately from occupied ones. Nobody has parked in them yet, so counting them as occupied would claim vehicles that are not there. Owners see the event named on their parking view, so the smaller free count is explained rather than looking like a miscount.' },
+    ],
+  },
   {
     id: 'cdso-dashboard',
     title: 'Dashboard & Analytics',

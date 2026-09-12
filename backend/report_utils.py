@@ -1,9 +1,10 @@
 """Shared branded report builders (Excel + PDF) for the admin/CDSO reports.
 
 Every report carries a text reconstruction of the Saint Louis College
-letterhead — seal, "Saint Louis College", "of San Fernando, La Union", the
-"Beacon of Wisdom" tagline, and the accreditation line — followed by the
-brand-coloured table and a footer with generation stamp + page numbers.
+letterhead — the college seal and the CDSO emblem flanking "Saint Louis
+College", then "of San Fernando, La Union", the "Beacon of Wisdom" tagline and
+the accreditation line — followed by the brand-coloured table and a footer with
+generation stamp + page numbers.
 """
 import os
 from django.conf import settings
@@ -13,6 +14,10 @@ from django.utils import timezone as tz
 REPORT_BRAND_HEX = '2A2B61'
 REPORT_NAVY_HEX  = '1B2A63'
 REPORT_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'slclogo.jpg')
+# The CDSO emblem sits opposite the college seal on every report, the same
+# pair the screens show. Either seal being absent from the folder is survivable
+# (the letterhead just loses that mark) — a report that fails to build is not.
+REPORT_CDSO_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'cdsologo.jpg')
 
 # Letterhead text (reconstruction of the official SLC letterhead).
 LH_INSTITUTION = 'Saint Louis College'
@@ -171,10 +176,18 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
     inst_size = 22
     inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
     logo_w = 16 * mm
-    if os.path.exists(REPORT_LOGO_PATH):
+    # College seal to the left of the name, CDSO emblem to the right, so the
+    # name stays centred on the page between them. Each is drawn only if its
+    # file is there, and a failed draw is swallowed: a letterhead missing a
+    # seal still prints, a crashed report does not.
+    for path, logo_x in (
+        (REPORT_LOGO_PATH,      cx - inst_w / 2 - 6 * mm - logo_w),
+        (REPORT_CDSO_LOGO_PATH, cx + inst_w / 2 + 6 * mm),
+    ):
+        if not os.path.exists(path):
+            continue
         try:
-            logo_x = cx - inst_w / 2 - 6 * mm - logo_w
-            canvas.drawImage(REPORT_LOGO_PATH, logo_x, h - 25 * mm,
+            canvas.drawImage(path, logo_x, h - 25 * mm,
                              width=logo_w, height=logo_w,
                              preserveAspectRatio=True, mask='auto')
         except Exception:

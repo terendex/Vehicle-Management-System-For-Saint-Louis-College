@@ -4,9 +4,9 @@ import { Mail, ArrowLeft, CheckCircle } from 'lucide-react'
 import { authApi } from '../../api/auth'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
-import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
 import './ForgotPasswordPage.css'
+import BrandLogos from '../../components/BrandLogos'
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
@@ -45,7 +45,7 @@ export default function ForgotPasswordPage() {
       <header className="login-header">
         <div className="header-content">
           <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <BrandLogos size="header" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

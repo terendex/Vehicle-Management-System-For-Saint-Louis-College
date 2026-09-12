@@ -5,8 +5,8 @@ import useAuthStore from '../../stores/authStore'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import TwoFactorChallenge from '../../components/TwoFactor/TwoFactorChallenge'
-import slcLogo from '../../assets/slclogo.jpg'
 import './LoginPage.css'
+import BrandLogos from '../../components/BrandLogos'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -102,7 +102,7 @@ export default function LoginPage() {
       <header className="login-header" id="login-header">
         <div className="header-content">
           <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <BrandLogos size="header" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

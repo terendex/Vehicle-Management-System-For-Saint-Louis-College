@@ -7,8 +7,8 @@ import jsQR from 'jsqr'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
 import { useGates } from '../../hooks/useGates'
-import slcLogo from '../../assets/slclogo.jpg'
 import './SecurityQRLogin.css'
+import BrandLogos from '../../components/BrandLogos'
 
 export default function SecurityQRLogin() {
   const navigate                                 = useNavigate()
@@ -202,7 +202,7 @@ export default function SecurityQRLogin() {
       {/* Header — same as login page */}
       <header className="sqr-header">
         <div className="header-logo-group">
-          <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+          <BrandLogos size="header" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

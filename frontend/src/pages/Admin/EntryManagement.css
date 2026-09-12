@@ -742,20 +742,9 @@
   min-width: 16px;
   text-align: center;
 }
-/* Row classification tag */
-.em-class-tag {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.cls-student  { background: #E3EEFB; color: #1c4e8a; }
-.cls-employee { background: #FCE7DC; color: #a24518; }
-.cls-fetcher  { background: #D9F2E9; color: #0a6b4d; }
-.cls-supplier { background: #FBEFCF; color: #8a6300; }
-.cls-visitor  { background: #E6E2F5; color: #3d2f83; }
-.cls-unknown  { background: #ECEEF0; color: #5b6570; }
+/* Row classification tag (.em-class-tag / .cls-*) lives in
+   styles/entrant-category.css — the same chip is used by the Operations
+   Center, the Vehicle Log and the guards' screen, so it is global. */
 
 /* ── Modal ───────────────────────────────────────────────────── */
 .em-overlay {

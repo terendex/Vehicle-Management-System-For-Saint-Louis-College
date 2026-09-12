@@ -127,6 +127,44 @@ def get_organizer_event(plate_number: str):
     return None
 
 
+def classify_entrant(vehicle, plate_number: str = '') -> str:
+    """Which kind of person is coming in: student, employee, fetcher, visitor,
+    supplier, or unknown.
+
+    Answered from the owner account first, because that is the only source that
+    is actually authoritative about who someone is. A plate with no account
+    falls back to the supplier roster, then to whether a visitor pass was
+    issued for it today — a walk-in with a pass IS a visitor, and reading that
+    row as "unregistered" is what made the visitor count on the entries screen
+    always zero.
+
+    Returns one of `AccessLog.Category` values; never raises.
+    """
+    from .models import AccessLog, VisitorPass
+    from vehicles.models import SupplierPlate
+
+    owner = getattr(vehicle, 'user', None) if vehicle else None
+    if owner is not None and owner.owner_type:
+        # owner_type and AccessLog.Category share their vocabulary
+        # (student/employee/fetcher/visitor) — anything else is a role we have
+        # no category for, which is exactly what 'unknown' means.
+        if owner.owner_type in AccessLog.Category.values:
+            return owner.owner_type
+
+    plate = (plate_number or getattr(vehicle, 'plate_number', '') or '').strip().upper()
+    if plate and SupplierPlate.objects.filter(
+        plate_number=plate, supplier__is_active=True,
+    ).exists():
+        return AccessLog.Category.SUPPLIER
+
+    if vehicle is not None and VisitorPass.objects.filter(
+        vehicle=vehicle, valid_date=timezone.localdate(),
+    ).exists():
+        return AccessLog.Category.VISITOR
+
+    return AccessLog.Category.UNKNOWN
+
+
 def is_open_campus() -> bool:
     """True while Open Campus Mode is enabled in system settings."""
     return SystemSettings.get().open_campus_mode

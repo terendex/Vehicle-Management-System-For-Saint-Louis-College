@@ -99,10 +99,40 @@ class AccessLog(models.Model):
         UNREADABLE   = 'unreadable',    'Unreadable'
         EXITED       = 'exited',        'Exited'
 
+    class Category(models.TextChoices):
+        """Who is coming in, as opposed to what decision was made about them.
+
+        A second axis from `status` on purpose: a student can be authorized or
+        denied, and a report that asks "how many students entered today" cannot
+        be answered from status alone. Stored on the row rather than derived at
+        read time because an owner's type can change later (a student graduates
+        into an employee) and last term's log must keep saying "student".
+        """
+        STUDENT  = 'student',  'Student'
+        EMPLOYEE = 'employee', 'Employee'
+        FETCHER  = 'fetcher',  'Fetcher / Drop & Go'
+        VISITOR  = 'visitor',  'Visitor'
+        SUPPLIER = 'supplier', 'Supplier'
+        UNKNOWN  = 'unknown',  'Unregistered'
+
     id             = models.BigAutoField(primary_key=True, db_column='access_log_id')
     vehicle        = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
     plate_number   = models.CharField(max_length=20, blank=True)
     vehicle_type   = models.CharField(max_length=20, blank=True)
+    # Blank means "never classified" (rows written before this field existed);
+    # the serializer falls back to deriving it so old rows still read sensibly.
+    entrant_category = models.CharField(
+        max_length=20, choices=Category.choices, blank=True, default='',
+    )
+    # ── Unrecognized vehicle (no plate the system could use) ──────────
+    # A vehicle with no plate and no conduction sticker still drives onto
+    # campus, and before this it left no record at all. The guard records it by
+    # hand; these fields are the description that stands in for a plate.
+    is_unrecognized = models.BooleanField(default=False)
+    driver_name     = models.CharField(max_length=255, blank=True)
+    vehicle_color   = models.CharField(max_length=50, blank=True)
+    vehicle_model   = models.CharField(max_length=100, blank=True)
+    entry_note      = models.CharField(max_length=255, blank=True)
     digital_id_used = models.CharField(max_length=50, blank=True)
     status         = models.CharField(max_length=20, choices=Status.choices)
     gate_id         = models.CharField(max_length=50, default='main')
@@ -149,6 +179,9 @@ class AccessLog(models.Model):
             # Gate filtering on the entries/operations screens.
             models.Index(fields=['gate_id', '-scanned_at'],
                          name='accesslog_gate_time'),
+            # Entry Management's per-category breakdown and its filter chips.
+            models.Index(fields=['entrant_category', '-scanned_at'],
+                         name='accesslog_category_time'),
         ]
 
     def save(self, *args, **kwargs):
@@ -157,6 +190,19 @@ class AccessLog(models.Model):
         # the gate at that moment.
         if self._state.adding and self.on_duty_guard_id is None and self.gate_id:
             self.on_duty_guard = active_guard_for_gate(self.gate_id)
+        # Classify here rather than at each of the dozen create() call sites, so
+        # a new scan path cannot forget to and quietly write uncategorised rows.
+        # A caller that already knows the category (an unrecognized vehicle the
+        # guard typed in by hand) sets it and this leaves it alone.
+        if self._state.adding and not self.entrant_category:
+            from .entry_logic import classify_entrant
+            try:
+                self.entrant_category = classify_entrant(self.vehicle, self.plate_number)
+            except Exception:
+                # A scan must still be recorded when classification fails; a
+                # blank category reads as "unclassified", a lost log reads as
+                # a car that was never at the gate.
+                self.entrant_category = ''
         super().save(*args, **kwargs)
 
 

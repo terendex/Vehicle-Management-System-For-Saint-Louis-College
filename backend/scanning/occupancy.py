@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Count, Q
+from django.db.models import CharField, Count, Q, Value
+from django.db.models.functions import Cast, Coalesce, NullIf
 from django.utils import timezone
 
 from time_utils import day_range
@@ -90,6 +91,21 @@ def empty_counts() -> dict:
     return counts
 
 
+# What makes one occupant distinct from another.
+#
+# Plate first: two unpaired entry rows for the same car are one vehicle taking
+# one slot, which is the whole reason this is a DISTINCT count.
+#
+# A hand-recorded plateless vehicle has no plate — the column is empty — so it
+# falls back to its own row id. Counting those by plate would collapse every
+# plateless vehicle on campus into a single occupant, and a gate that admitted
+# six of them would report one.
+OCCUPANT_KEY = Coalesce(
+    NullIf('plate_number', Value('')),
+    Cast('pk', CharField()),
+)
+
+
 def inside_counts(now=None) -> dict:
     """Vehicles currently on campus, grouped by parking category.
 
@@ -99,8 +115,10 @@ def inside_counts(now=None) -> dict:
          'total': int, 'stale_excluded': int}
 
     An entry counts when it is today's, authorized, and no exit row points back
-    at it. Plates are counted DISTINCT, so a vehicle that somehow accumulated
-    two unpaired entry rows still occupies one slot rather than two.
+    at it. Occupants are counted DISTINCT by plate, so a vehicle that somehow
+    accumulated two unpaired entry rows still occupies one slot rather than two.
+    A vehicle recorded by hand has no plate to be distinct on, so it counts by
+    its own row instead — see OCCUPANT_KEY.
 
     `stale_excluded` is the reconciliation number: entries dropped by
     STALE_ENTRY_HOURS, i.e. how many exit scans a gate missed today. It is
@@ -139,9 +157,9 @@ def inside_counts(now=None) -> dict:
         .exclude(pk__in=paired)
         .values('vehicle__vehicle_type')
         .annotate(
-            live=Count('plate_number', distinct=True,
+            live=Count(OCCUPANT_KEY, distinct=True,
                        filter=Q(scanned_at__gte=stale_cutoff)),
-            stale=Count('plate_number', distinct=True,
+            stale=Count(OCCUPANT_KEY, distinct=True,
                         filter=Q(scanned_at__lt=stale_cutoff)),
         )
     )

@@ -23,13 +23,13 @@ import {
   ShieldCheck,
   KeyRound,
 } from 'lucide-react'
-import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import useTwofaStore from '../../stores/twofaStore'
 import SecurityPanel from '../TwoFactor/SecurityPanel'
 import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
+import BrandLogos from '../BrandLogos'
 
 function buildNavGroups(isAdmin) {
   const groups = []
@@ -166,7 +166,7 @@ export default function AdminLayout({ children, fillHeight = false }) {
       {/* Sidebar */}
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
-          <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
+          <BrandLogos size="sidebar" />
           <span className="brand-text">SLC CDSO</span>
           <NotificationBell />
           <button

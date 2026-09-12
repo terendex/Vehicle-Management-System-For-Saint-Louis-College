@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, Home } from 'lucide-react'
-import slcLogo from '../assets/slclogo.jpg'
 import './NotFoundPage.css'
+import BrandLogos from '../components/BrandLogos'
 
 export default function NotFoundPage() {
   const navigate = useNavigate()
@@ -11,7 +11,7 @@ export default function NotFoundPage() {
       <header className="not-found-header" id="not-found-header">
         <div className="header-content">
           <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <BrandLogos size="header" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

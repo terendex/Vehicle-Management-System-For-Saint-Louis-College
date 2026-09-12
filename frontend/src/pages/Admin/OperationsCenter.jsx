@@ -33,6 +33,16 @@ const STATUS_META = {
 }
 function getMeta(s) { return STATUS_META[s] ?? STATUS_META.unknown }
 
+// WHO came through, as opposed to what was decided about them. The same
+// vocabulary and chip colours the guards' screen and the vehicle log use — the
+// .cls-* rules come from Admin/EntryManagement.css, which this page's
+// stylesheet imports.
+const CLASSIFICATION_LABELS = {
+  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher',
+  supplier: 'Supplier', visitor: 'Visitor', unknown: 'Unregistered',
+}
+const classLabel = (c) => CLASSIFICATION_LABELS[c] ?? CLASSIFICATION_LABELS.unknown
+
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) } catch { return '' }
 }
@@ -106,14 +116,23 @@ function GatePanel({ label, shift, logs }) {
               <div key={log.id ?? i} className="oc-log-item">
                 <span className={`oc-log-dot ${cls}`} />
                 <div className="oc-log-main">
-                  <span className="oc-log-plate">{log.plate_number || '—'}</span>
-                  {(log.vehicle_owner_name || log.scanned_by_name) && (
+                  <span className="oc-log-plate">
+                    {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
+                  </span>
+                  {(log.vehicle_owner_name || log.driver_name || log.scanned_by_name) && (
                     <span className="oc-log-meta">
-                      {log.vehicle_owner_name}
+                      {/* A hand-recorded plateless vehicle has no owner
+                          account; the driver's name is all it has. */}
+                      {log.vehicle_owner_name || log.driver_name}
                       {log.scanned_by_name && ` · ${log.scanned_by_name}`}
                     </span>
                   )}
                 </div>
+                {log.classification && (
+                  <span className={`em-class-tag cls-${log.classification}`}>
+                    {classLabel(log.classification)}
+                  </span>
+                )}
                 <span className={`oc-log-badge ${cls}`}>{label}</span>
                 <span className="oc-log-time">{timeAgo(log.scanned_at)}</span>
               </div>

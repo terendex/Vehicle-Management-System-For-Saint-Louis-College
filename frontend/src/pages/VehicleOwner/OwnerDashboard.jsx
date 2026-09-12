@@ -4,7 +4,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2
+  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2, CalendarDays
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import SecurityPanel from '../../components/TwoFactor/SecurityPanel'
@@ -282,6 +282,11 @@ export default function OwnerDashboard() {
 
   /* ── Parking grid helpers ── */
   const parkingSummary = parking?.summary?.[parkingCategory] || null
+  // The event holding bays back right now, if any. Named on the page rather
+  // than left implicit: without it the free count simply drops and reads as a
+  // miscount, and the driver sets off for a space that was never going to be
+  // there.
+  const parkingEvent   = parking?.event || null
   const parkingSpaces  = (parking?.spaces || []).filter(s => s.vehicle_category === parkingCategory)
   const parkingZones   = (parking?.zones || []).filter(z => z.category === parkingCategory)
 
@@ -831,6 +836,23 @@ export default function OwnerDashboard() {
                 </div>
               ) : (
                 <>
+                  {/* An event under way has spoken for part of the car park.
+                      Above the counters, because it explains them. */}
+                  {parkingEvent && (
+                    <div className="od-parking-event">
+                      <CalendarDays size={14} />
+                      <span>
+                        <strong>{parkingEvent.name}</strong> is on
+                        {parkingEvent.time_display !== 'All day'
+                          ? ` (${parkingEvent.time_display})`
+                          : ' today'}
+                        {' — '}
+                        {parkingEvent.share_label.replace(/^About /, 'about ').toLowerCase()
+                          .replace('of parking', 'of the car park')} is set aside for it.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Summary counters */}
                   {parkingSummary ? (
                     <div className="od-parking-summary">
@@ -838,6 +860,12 @@ export default function OwnerDashboard() {
                         <span className="od-parking-stat-num">{parkingSummary.available}</span>
                         <span className="od-parking-stat-label">Available</span>
                       </div>
+                      {parkingSummary.reserved > 0 && (
+                        <div className="od-parking-stat reserved">
+                          <span className="od-parking-stat-num">{parkingSummary.reserved}</span>
+                          <span className="od-parking-stat-label">Held for event</span>
+                        </div>
+                      )}
                       <div className="od-parking-stat occupied">
                         <span className="od-parking-stat-num">{parkingSummary.occupied}</span>
                         <span className="od-parking-stat-label">Occupied</span>

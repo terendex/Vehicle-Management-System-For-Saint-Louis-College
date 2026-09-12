@@ -4,12 +4,12 @@ import { Eye, EyeOff, KeyRound, CheckCircle, AlertCircle, ArrowLeft, ShieldCheck
 import { authApi } from '../../api/auth'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
-import slcLogo from '../../assets/slclogo.jpg'
 import '../Login/LoginPage.css'
 // For .tfa-warn on the post-reset notice, so the warning matches the one the
 // two-factor screens use rather than being restyled here.
 import '../../components/TwoFactor/twofactor.css'
 import './ResetPasswordPage.css'
+import BrandLogos from '../../components/BrandLogos'
 
 function strengthCheck(pw) {
   return {
@@ -141,7 +141,7 @@ export default function ResetPasswordPage() {
       <header className="login-header">
         <div className="header-content">
           <div className="header-logo-group">
-            <img src={slcLogo} alt="Saint Louis College Logo" className="header-logo" />
+            <BrandLogos size="header" />
             <div className="header-text">
               <span className="header-title">SAINT LOUIS COLLEGE</span>
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

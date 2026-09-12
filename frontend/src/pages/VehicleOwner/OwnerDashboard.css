@@ -1902,3 +1902,36 @@
   max-width: 520px;
   text-align: left;
 }
+
+/* ─── Event parking reservation ───────────────────────────────── */
+/* Sits above the three counters because it explains them: without it the free
+   count simply drops during an event and reads as a miscount. */
+.od-parking-event {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #FBF3E0;
+  border: 1px solid #EEDDB4;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7A5C00;
+}
+
+.od-parking-event svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Fourth counter, shown only while an event is holding bays back. Amber: these
+   spaces are neither free nor occupied — nobody has parked in them yet. */
+.od-parking-stat.reserved {
+  background: #FBF3E0;
+}
+
+.od-parking-stat.reserved .od-parking-stat-num,
+.od-parking-stat.reserved .od-parking-stat-label {
+  color: #8A6B00;
+}

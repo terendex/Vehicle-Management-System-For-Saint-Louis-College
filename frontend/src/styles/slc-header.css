@@ -154,3 +154,78 @@
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
+
+/* ============================================================
+   BRAND LOGOS — the SLC seal + the CDSO emblem, as one pair.
+
+   Rendered by components/BrandLogos.jsx; the markup is
+
+     <span class="brand-logos brand-logos--{header|sidebar}">
+       <img class="brand-logos-img">              ← SLC seal
+       <img class="brand-logos-img --cdso">       ← CDSO emblem
+
+   Both marks are circular artwork on a white square, so they are
+   `contain`-fitted inside their ring rather than `cover`-cropped:
+   cover clipped the tips of the CDSO arrows.
+
+   The gap is deliberately tight — these read as one lockup that
+   happens to have two seals, not as two separate logos that drifted
+   together. The pair shrinks with the viewport but never wraps;
+   `.header-text` beside it is what gives way on a narrow phone.
+   ============================================================ */
+
+.brand-logos {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(4px, 1.2vw, 7px);
+  flex-shrink: 0;
+}
+
+.brand-logos-img {
+  border-radius: 50%;
+  object-fit: contain;
+  /* The artwork is drawn on white; without this the ring fills with
+     whatever the bar behind it happens to be. */
+  background: #fff;
+  border: 2px solid #03396C;
+  box-shadow: 0 2px 8px rgba(3, 57, 108, 0.12);
+  flex-shrink: 0;
+}
+
+/* The CDSO emblem is green; the navy ring that suits the SLC seal reads as a
+   mismatched frame on it, so it gets the neutral one the pair shares. */
+.brand-logos-img--cdso {
+  border-color: #BDD4E5;
+  padding: 1px;
+}
+
+/* Page-header lockup — same metrics the single .header-logo had, so a header
+   that swapped one img for the pair keeps its bar height. */
+.brand-logos--header .brand-logos-img {
+  width: clamp(34px, 9vw, 42px);
+  height: clamp(34px, 9vw, 42px);
+}
+
+/* Sidebar brand (admin + security shells).
+
+   Smaller and tighter than the header pair: the rail is 260px wide and the
+   brand bar also carries the system name, the notification bell and the
+   mobile close button. Two seals at header size would push the name out. */
+.brand-logos--sidebar {
+  gap: 4px;
+}
+
+.brand-logos--sidebar .brand-logos-img {
+  width: 28px;
+  height: 28px;
+  border-width: 1.5px;
+}
+
+/* Two seals need more room than one did. Below this the text column is what
+   gives, never the marks — the lockup is the thing that must stay readable. */
+@media (max-width: 400px) {
+  .brand-logos--header .brand-logos-img {
+    width: 32px;
+    height: 32px;
+  }
+}

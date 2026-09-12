@@ -13,7 +13,7 @@ from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
 from accounts.views import IsAdminRole
 from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
-from .entry_logic import check_entry, get_organizer_event, is_open_campus
+from .entry_logic import check_entry, classify_entrant, get_organizer_event, is_open_campus
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
@@ -140,6 +140,39 @@ def _already_inside(plate_number: str) -> bool:
     if not last_entry:
         return False
     return not AccessLog.objects.filter(paired_entry=last_entry).exists()
+
+
+def _plates_inside(plates) -> set:
+    """Which of `plates` are on campus right now — ONE query for the whole set.
+
+    `_inside_state()` answers this for a single plate in two round trips, which
+    is the right shape on the scan hot path (it also has to distinguish a
+    duplicate re-scan from a genuine exit). Decorating a twelve-result name
+    search with it would be twenty-four round trips to draw twelve badges.
+
+    "Inside" here means the same thing the occupancy ledger means: an
+    authorized entry today that no exit row points back at.
+    """
+    plates = [p for p in plates if p]
+    if not plates:
+        return set()
+
+    day_start, day_end = day_range(timezone.localdate())
+    paired = (
+        AccessLog.objects
+        .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,
+                scanned_at__gte=day_start, scanned_at__lt=day_end)
+        .values('paired_entry_id')
+    )
+    return set(
+        AccessLog.objects
+        .filter(plate_number__in=plates,
+                status=AccessLog.Status.AUTHORIZED,
+                scanned_at__gte=day_start, scanned_at__lt=day_end,
+                scanned_at__lte=timezone.now())
+        .exclude(pk__in=paired)
+        .values_list('plate_number', flat=True)
+    )
 
 
 def _pair_entry_exit(exit_log) -> None:
@@ -1084,10 +1117,26 @@ def _filter_access_logs(request):
         qs = qs.filter(
             Q(plate_number__icontains=search)
             | Q(vehicle__user__full_name__icontains=search)
+            # A hand-recorded plateless vehicle has neither a plate nor an owner
+            # account, so without these it could not be found by any search term
+            # at all — only by scrolling to the right minute of the day.
+            | Q(driver_name__icontains=search)
+            | Q(vehicle_color__icontains=search)
+            | Q(vehicle_model__icontains=search)
             | Q(on_duty_guard__full_name__icontains=search)
             | Q(scanned_by__full_name__icontains=search)
         )
         filters_desc.append(f"Search: '{search}'")
+
+    # Who came through, as opposed to what was decided about them. Applied in
+    # SQL rather than after the merge (as `status` has to be): a category is a
+    # property of the entry row, and an exit row carries the same one, so
+    # narrowing here cannot strip the exit half of a visit.
+    category = (request.query_params.get('category') or '').strip()
+    if category in AccessLog.Category.values:
+        qs = qs.filter(entrant_category=category)
+        filters_desc.append(
+            'Category: ' + dict(AccessLog.Category.choices)[category])
 
     status_key = (request.query_params.get('status') or '').strip()
     if status_key in ACCESS_LOG_STATUS_GROUPS:
@@ -1153,7 +1202,10 @@ class AccessLogListView(APIView):
 
 
 VEHICLE_LOG_REPORT_HEADERS = [
-    '#', 'Date & Time', 'Plate', 'Owner', 'Type', 'Gate',
+    # 'Category' is who came through, which 'Status' (what was decided about
+    # them) cannot answer: a report asked for "how many students entered in
+    # September" could not be produced from the old columns at all.
+    '#', 'Date & Time', 'Plate', 'Owner', 'Category', 'Type', 'Gate',
     'Status', 'Guard on Duty', 'Exit Time', 'Duration', 'Remarks',
 ]
 
@@ -1168,6 +1220,7 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
     from .models import Gate
 
     status_labels = dict(AccessLog.Status.choices)
+    category_labels = dict(AccessLog.Category.choices)
     gate_labels = dict(Gate.objects.values_list('gate_id', 'label'))
 
     def duration_text(minutes):
@@ -1182,9 +1235,19 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
     for i, log in enumerate(logs, start=1):
         exit_log = exit_by_entry_id.get(log.id)
         minutes = _visit_duration_minutes(log, exit_log) if exit_log else None
-        owner = getattr(getattr(log.vehicle, 'user', None), 'full_name', '') or 'Unregistered'
+        # A hand-recorded plateless vehicle has no owner account — the driver's
+        # name the guard wrote down is the only name it has, and printing
+        # 'Unregistered' over the top of it loses the one identifier there is.
+        owner = (getattr(getattr(log.vehicle, 'user', None), 'full_name', '')
+                 or log.driver_name or 'Unregistered')
 
         remarks = []
+        if log.is_unrecognized:
+            described = ' '.join(
+                x for x in (log.vehicle_color, log.vehicle_model) if x)
+            remarks.append(f'No plate — {described}' if described else 'No plate')
+            if log.entry_note:
+                remarks.append(log.entry_note)
         if log.is_override:
             remarks.append(f'Override: {log.override_reason}' if log.override_reason else 'Override')
         if log.denied_reason:
@@ -1195,8 +1258,11 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
         rows.append([
             i,
             tz.localtime(log.scanned_at).strftime('%b %d, %Y %I:%M:%S %p'),
-            log.plate_number or '',
+            # Plateless vehicles are listed under the reference the guard was
+            # given for them, which is what the log and the screens show too.
+            log.plate_number or (f'NP-{log.id}' if log.is_unrecognized else ''),
             owner,
+            category_labels.get(log.entrant_category, ''),
             (log.vehicle_type or '').title(),
             gate_labels.get(log.gate_id, log.gate_id or ''),
             status_labels.get(log.status, log.status),
@@ -1236,7 +1302,7 @@ class VehicleLogExportView(APIView):
             subtitle=subtitle,
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 22, 14, 26, 12, 22, 14, 22, 12, 10, 40],
+            col_widths=[5, 22, 14, 26, 16, 12, 22, 14, 22, 12, 10, 40],
         )
 
 
@@ -1256,10 +1322,11 @@ class VehicleLogPdfExportView(APIView):
             generated_by=getattr(request.user, 'full_name', ''),
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            # 267mm of printable width on landscape A4. Date & Time gets enough
-            # to stay on one line (the audit report learned that the hard way);
-            # Remarks takes the slack, being the only free-text column.
-            col_widths_mm=[8, 31, 21, 34, 15, 24, 21, 31, 16, 14, 52],
+            # 267mm of printable width on landscape A4, and it must still total
+            # 267 now that Category has been added. Date & Time gets enough to
+            # stay on one line (the audit report learned that the hard way);
+            # Remarks gives up most of the room, being the only free-text column.
+            col_widths_mm=[8, 31, 21, 32, 18, 15, 24, 21, 28, 16, 14, 39],
         )
 
 
@@ -1929,6 +1996,232 @@ class ManualEntryView(APIView):
             'already_inside':  False,
             'organizer_event': get_organizer_event(plate_number),
             'gate_id':         gate_id,
+        })
+
+
+class OwnerLookupView(APIView):
+    """Find a vehicle by its owner's NAME, or by plate / conduction number.
+
+    A guard at the barrier does not always have a readable plate to work from —
+    a mud-covered plate, a driver who gives their name, a conduction sticker in
+    the windscreen. One search box has to take all three, so the query is tried
+    as an identifier and as a name and the union comes back.
+
+    This only *finds* the vehicle. The entry/exit decision still goes through
+    the normal plate check, so no rule can be skipped by searching by name.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    MAX_RESULTS = 12
+
+    def get(self, request):
+        query = (request.query_params.get('q') or '').strip()
+        if len(query) < 2:
+            return Response(
+                {'error': 'Type at least 2 characters — a name, plate, or conduction number.'},
+                status=400,
+            )
+
+        identifier = query.upper().replace(' ', '')
+        matches = (
+            Vehicle.objects
+            .select_related('user')
+            .filter(
+                Q(plate_number__icontains=identifier)
+                | Q(conduction_number__icontains=identifier)
+                | Q(user__full_name__icontains=query)
+                # The registration carries the name for vehicles whose owner
+                # account has since been renamed or archived; a guard searching
+                # the name on the pass must still find the car.
+                | Q(registrations__full_name__icontains=query)
+            )
+            .distinct()
+            .order_by('plate_number', 'conduction_number')[:self.MAX_RESULTS + 1]
+        )
+        matches = list(matches)
+        truncated = len(matches) > self.MAX_RESULTS
+        matches = matches[:self.MAX_RESULTS]
+
+        inside = _plates_inside([v.identifier for v in matches])
+
+        results = []
+        for v in matches:
+            owner = v.user
+            plate = v.identifier
+            results.append({
+                'vehicle_id':        v.pk,
+                'identifier':        plate,
+                'plate_number':      v.plate_number,
+                'conduction_number': v.conduction_number,
+                'vehicle_type':      v.vehicle_type,
+                'model':             v.model,
+                'color':             v.color,
+                'is_authorized':     v.is_authorized,
+                'owner_name':        owner.full_name if owner else '',
+                'owner_type':        owner.owner_type if owner else '',
+                'classification':    classify_entrant(v, plate),
+                'is_inside':         plate in inside,
+            })
+
+        return Response({
+            'query':     query,
+            'count':     len(results),
+            'truncated': truncated,
+            'results':   results,
+        })
+
+
+class UnrecognizedEntryView(APIView):
+    """Vehicles with no usable plate, recorded by hand.
+
+    A car with no plate and no conduction sticker still drives onto campus.
+    Before this it produced an 'unreadable' row with an empty plate and nothing
+    else — no description, no driver, no way to record the exit — so those
+    vehicles were effectively invisible in the log and in the inside-count.
+
+    The guard fills in what they can see (who is driving, what the vehicle
+    looks like, which kind of entrant it is) and the row behaves like any other
+    entry: it counts as inside, it appears in the log, and it is closed with an
+    exit. There is no plate to key on, so the exit is recorded against the row
+    itself rather than by typing an identifier the vehicle does not have.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    # What the guard can classify a walk-up as. 'supplier' is deliberately
+    # absent: a supplier is identified by a plate on the supplier roster, and
+    # there is no plate here to check one against.
+    ALLOWED_CATEGORIES = {
+        AccessLog.Category.STUDENT,
+        AccessLog.Category.EMPLOYEE,
+        AccessLog.Category.FETCHER,
+        AccessLog.Category.VISITOR,
+        AccessLog.Category.UNKNOWN,
+    }
+
+    def _serialize(self, log, exit_log=None):
+        data = AccessLogSerializer(log).data
+        data['reference'] = 'NP-%d' % log.pk
+        if exit_log is not None:
+            delta = exit_log.scanned_at - log.scanned_at
+            data['exited_at']        = exit_log.scanned_at
+            data['duration_minutes'] = int(delta.total_seconds() / 60)
+        return data
+
+    def get(self, request):
+        """Unrecognized vehicles still inside — the panel the guard closes from."""
+        gate_id = (request.query_params.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None))
+        start, end = day_range(timezone.localdate())
+        logs = AccessLog.objects.filter(
+            is_unrecognized=True,
+            status=AccessLog.Status.AUTHORIZED,
+            scanned_at__gte=start, scanned_at__lt=end,
+        ).exclude(
+            # Bounded to today like the rows it filters: unbounded, this
+            # subquery scans every exit ever recorded to answer a question
+            # about this shift.
+            pk__in=AccessLog.objects.filter(
+                paired_entry__isnull=False,
+                scanned_at__gte=start, scanned_at__lt=end,
+            ).values_list('paired_entry_id', flat=True)
+        )
+        if gate_id:
+            logs = logs.filter(gate_id=gate_id)
+        return Response([self._serialize(l) for l in logs.order_by('-scanned_at')])
+
+    def post(self, request):
+        driver_name = (request.data.get('driver_name') or '').strip()
+        category    = (request.data.get('entrant_category') or '').strip()
+        vtype       = (request.data.get('vehicle_type') or '').strip().lower()
+        color       = (request.data.get('vehicle_color') or '').strip()
+        model       = (request.data.get('vehicle_model') or '').strip()
+        note        = (request.data.get('entry_note') or '').strip()
+
+        problems = {}
+        if not driver_name:
+            problems['driver_name'] = "Enter the driver's name — it is the only identifier this vehicle has."
+        if category not in self.ALLOWED_CATEGORIES:
+            problems['entrant_category'] = 'Choose who is entering: student, employee, fetcher, visitor, or unregistered.'
+        if vtype not in Vehicle.Type.values:
+            problems['vehicle_type'] = 'Choose the vehicle type.'
+        if not color:
+            problems['vehicle_color'] = 'Enter the vehicle colour — without a plate it is how this vehicle is told apart.'
+        if problems:
+            return Response(problems, status=400)
+
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
+        log = AccessLog.objects.create(
+            plate_number     = '',
+            vehicle_type     = vtype,
+            status           = AccessLog.Status.AUTHORIZED,
+            entrant_category = category,
+            is_unrecognized  = True,
+            driver_name      = driver_name,
+            vehicle_color    = color,
+            vehicle_model    = model,
+            entry_note       = note,
+            gate_id          = gate_id,
+            scanned_by       = request.user,
+        )
+        described = ('%s %s %s' % (color, vtype, model)).strip()
+        _audit(
+            request, AuditLog.Action.RECORD_CREATED,
+            'Unrecognized vehicle admitted | Ref: NP-%d | Driver: %s | %s | '
+            'Category: %s | Gate: %s | Guard: %s' % (
+                log.pk, driver_name, described,
+                dict(AccessLog.Category.choices).get(category, category),
+                _gate_label(gate_id), request.user.full_name,
+            ),
+        )
+        return Response(self._serialize(log), status=201)
+
+
+class UnrecognizedExitView(APIView):
+    """Record the exit of a hand-recorded, plateless vehicle."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        entry = AccessLog.objects.filter(pk=pk, is_unrecognized=True).first()
+        if not entry:
+            return Response({'error': 'No unrecognized entry with that reference.'}, status=404)
+        if entry.status != AccessLog.Status.AUTHORIZED:
+            return Response({'error': 'That record is not an entry.'}, status=400)
+        if AccessLog.objects.filter(paired_entry=entry).exists():
+            return Response({'error': 'This vehicle has already been logged out.'}, status=409)
+
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or entry.gate_id or 'main')
+        exit_log = AccessLog.objects.create(
+            plate_number     = '',
+            vehicle_type     = entry.vehicle_type,
+            status           = AccessLog.Status.EXITED,
+            entrant_category = entry.entrant_category,
+            is_unrecognized  = True,
+            driver_name      = entry.driver_name,
+            vehicle_color    = entry.vehicle_color,
+            vehicle_model    = entry.vehicle_model,
+            gate_id          = gate_id,
+            scanned_by       = request.user,
+            paired_entry     = entry,
+        )
+        duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
+        _audit(
+            request, AuditLog.Action.RECORD_UPDATED,
+            'Unrecognized vehicle exited | Ref: NP-%d | Driver: %s | Duration: %d min | '
+            'Gate: %s | Guard: %s' % (
+                entry.pk, entry.driver_name, duration,
+                _gate_label(gate_id), request.user.full_name,
+            ),
+        )
+        return Response({
+            'reference':        'NP-%d' % entry.pk,
+            'status':           'exited',
+            'driver_name':      entry.driver_name,
+            'duration_minutes': duration,
+            'scanned_at':       exit_log.scanned_at,
         })
 
 

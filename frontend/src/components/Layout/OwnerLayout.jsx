@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { Shield, LogOut, HelpCircle } from 'lucide-react'
-import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import './OwnerLayout.css'
+import BrandLogos from '../BrandLogos'
 
 export default function OwnerLayout({ children }) {
   const { user, logout } = useAuthStore()
@@ -17,7 +17,7 @@ export default function OwnerLayout({ children }) {
     <div className="owner-layout">
       <header className="owner-header">
         <div className="header-logo-group">
-          <img src={slcLogo} alt="SLC Logo" className="header-logo" />
+          <BrandLogos size="header" />
           <div className="header-text">
             <span className="header-title">SAINT LOUIS COLLEGE</span>
             <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>

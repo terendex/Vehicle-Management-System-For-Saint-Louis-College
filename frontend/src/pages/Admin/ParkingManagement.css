@@ -1687,3 +1687,30 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+
+/* Amber stat tile — bays an event has spoken for. Neither free nor occupied:
+   nobody has parked in them yet, so they get their own colour rather than
+   being folded into either count. */
+.pm-stat-icon.amber  { background: #FBF3E0; color: #8A6B00; }
+
+/* The event holding those bays, named above the counters it explains. An
+   unexplained drop of five free spaces reads as a miscount, and a guard who
+   distrusts the number stops using it. */
+.pm-event-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 10px 13px;
+  border-radius: 10px;
+  background: #FBF3E0;
+  border: 1px solid #EEDDB4;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7A5C00;
+}
+
+.pm-event-banner svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}

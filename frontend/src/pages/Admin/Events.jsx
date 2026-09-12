@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
-  ParkingCircle, Tag, Check, Archive, CalendarClock,
+  ParkingCircle, Tag, Check, Archive, CalendarClock, Clock,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -12,6 +12,21 @@ import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEv
 import { zoneApi } from '../../api/parking'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import './Events.css'
+
+// How much of campus parking an event is expected to take up. Fractions rather
+// than a free percentage box, because that is how the CDSO actually plans an
+// event — "half the parking is gone" — and a number field invites 37%, which
+// nobody can act on. Mirrors Event.ParkingShare on the server.
+const PARKING_SHARES = [
+  { value: 'none',           label: 'None — parking unaffected', short: null      },
+  { value: 'quarter',        label: 'About 1/4 of parking',      short: '1/4 full' },
+  { value: 'third',          label: 'About 1/3 of parking',      short: '1/3 full' },
+  { value: 'half',           label: 'About 1/2 of parking',      short: '1/2 full' },
+  { value: 'two_thirds',     label: 'About 2/3 of parking',      short: '2/3 full' },
+  { value: 'three_quarters', label: 'About 3/4 of parking',      short: '3/4 full' },
+  { value: 'full',           label: 'All of parking',            short: 'All full' },
+]
+const shareShort = (v) => PARKING_SHARES.find(s => s.value === v)?.short ?? null
 
 // ── Toggle card for event mode switches ──────────────────────────────
 function ModeToggle({ label, description, enabled, loading, onToggle }) {
@@ -39,7 +54,9 @@ function ModeToggle({ label, description, enabled, loading, onToggle }) {
 
 // ── Add Event modal ──────────────────────────────────────────────────
 function AddEventModal({ onClose, onCreated }) {
-  const [form, setForm]       = useState({ name: '', date: '' })
+  const [form, setForm]       = useState({
+    name: '', date: '', start_time: '', end_time: '', parking_share: 'none',
+  })
   const [plateInput, setPlateInput] = useState('')
   const [plateError, setPlateError] = useState('')
   const [plates, setPlates]   = useState([])
@@ -115,6 +132,50 @@ function AddEventModal({ onClose, onCreated }) {
               required
             />
           </div>
+          {/* Times are optional — an all-day event genuinely has none, and a
+              blank pair reads as "All day" rather than as midnight-to-midnight.
+              They matter because the parking reservation below follows the
+              clock: an evening event must not make the car park read as half
+              gone at nine in the morning. */}
+          <div className="ev-field-row">
+            <div className="ev-field">
+              <label className="ev-label">Start Time <span className="ev-label-optional">(optional)</span></label>
+              <input
+                className="ev-text-input"
+                type="time"
+                value={form.start_time}
+                onChange={e => setForm(p => ({ ...p, start_time: e.target.value }))}
+              />
+            </div>
+            <div className="ev-field">
+              <label className="ev-label">End Time <span className="ev-label-optional">(optional)</span></label>
+              <input
+                className="ev-text-input"
+                type="time"
+                value={form.end_time}
+                onChange={e => setForm(p => ({ ...p, end_time: e.target.value }))}
+              />
+            </div>
+          </div>
+          <span className="ev-field-hint">Leave both blank for an all-day event.</span>
+
+          <div className="ev-field">
+            <label className="ev-label">Parking Taken Up</label>
+            <select
+              className="ev-text-input"
+              value={form.parking_share}
+              onChange={e => setForm(p => ({ ...p, parking_share: e.target.value }))}
+            >
+              {PARKING_SHARES.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <span className="ev-field-hint">
+              Held back from the free-space count while the event is running, so the
+              gate stops admitting before the bays the event needs are taken.
+            </span>
+          </div>
+
           <div className="ev-field">
             <label className="ev-label">Organizer Plates <span className="ev-label-optional">(optional)</span></label>
             <div className="ev-plate-input-row">
@@ -172,6 +233,16 @@ function EventCard({ event, onUpdated, onDeleted }) {
   const [rescheduling, setRescheduling] = useState(false)
   const [newDate, setNewDate]           = useState(event.date)
   const [reschedSaving, setReschedSaving] = useState(false)
+  const [sched, setSched]               = useState({
+    start_time:    event.start_time || '',
+    end_time:      event.end_time || '',
+    parking_share: event.parking_share || 'none',
+  })
+  const [schedSaving, setSchedSaving]   = useState(false)
+  const schedDirty =
+    sched.start_time !== (event.start_time || '') ||
+    sched.end_time !== (event.end_time || '') ||
+    sched.parking_share !== (event.parking_share || 'none')
   const plateRef = useRef(null)
 
   const localPlates = event.organizer_plates ?? []
@@ -186,6 +257,24 @@ function EventCard({ event, onUpdated, onDeleted }) {
       toast.error('Failed to update event.')
     } finally {
       setToggling(false)
+    }
+  }
+
+  const handleSaveSchedule = async () => {
+    setSchedSaving(true)
+    try {
+      const { data } = await patchEvent(event.id, sched)
+      onUpdated(data)
+      toast.success('Event time and parking updated.')
+    } catch (err) {
+      const body = err.response?.data
+      toast.error(
+        body && typeof body === 'object'
+          ? Object.values(body).flat().join(' ')
+          : 'Failed to update the event.',
+      )
+    } finally {
+      setSchedSaving(false)
     }
   }
 
@@ -278,9 +367,24 @@ function EventCard({ event, onUpdated, onDeleted }) {
             <CalendarDays size={13} />
             {fmtDate(event.date)}
             <span className="ev-dot" />
+            <Clock size={12} />
+            {event.time_display || 'All day'}
+            <span className="ev-dot" />
             <Tag size={12} />
             {localPlates.length} organizer plate{localPlates.length !== 1 ? 's' : ''}
           </div>
+          {shareShort(event.parking_share) && (
+            <div className="ev-card-parking">
+              <ParkingCircle size={12} />
+              Parking ~{shareShort(event.parking_share)}
+              {/* "Reserved now" vs "will be reserved" is the difference between
+                  a gate that is already turning cars away and one that is not,
+                  so the card says which it is rather than leaving it implied. */}
+              <span className={`ev-parking-state${event.is_under_way ? ' ev-parking-state--live' : ''}`}>
+                {event.is_under_way ? 'Held now' : 'Held during the event'}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="ev-card-actions">
@@ -368,7 +472,54 @@ function EventCard({ event, onUpdated, onDeleted }) {
 
       {expanded && (
         <div className="ev-plates-section">
-          <div className="ev-plates-label">Organizer Plates</div>
+          <div className="ev-plates-label">Time &amp; Parking</div>
+
+          <div className="ev-sched-row">
+            <label className="ev-sched-field">
+              <span className="ev-sched-label">Start</span>
+              <input
+                type="time"
+                className="ev-text-input"
+                value={sched.start_time}
+                onChange={e => setSched(p => ({ ...p, start_time: e.target.value }))}
+              />
+            </label>
+            <label className="ev-sched-field">
+              <span className="ev-sched-label">End</span>
+              <input
+                type="time"
+                className="ev-text-input"
+                value={sched.end_time}
+                onChange={e => setSched(p => ({ ...p, end_time: e.target.value }))}
+              />
+            </label>
+            <label className="ev-sched-field ev-sched-field--wide">
+              <span className="ev-sched-label">Parking taken up</span>
+              <select
+                className="ev-text-input"
+                value={sched.parking_share}
+                onChange={e => setSched(p => ({ ...p, parking_share: e.target.value }))}
+              >
+                {PARKING_SHARES.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              className={`ev-save-capacity-btn${schedDirty ? ' ev-save-capacity-btn--dirty' : ''}`}
+              onClick={handleSaveSchedule}
+              disabled={!schedDirty || schedSaving}
+            >
+              {schedSaving ? <Loader2 size={13} className="ev-spinner" /> : <Check size={13} />}
+              Save
+            </button>
+          </div>
+          <span className="ev-field-hint">
+            Leave the times blank for an all-day event. Parking is only held back
+            while the event is actually running.
+          </span>
+
+          <div className="ev-plates-label" style={{ marginTop: 18 }}>Organizer Plates</div>
 
           <div className="ev-plate-input-row">
             <input

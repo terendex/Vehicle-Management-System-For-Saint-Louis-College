@@ -1,0 +1,37 @@
+/* ============================================================
+   ENTRANT CATEGORY CHIPS — student / employee / fetcher /
+   supplier / visitor / unregistered.
+
+   WHO came through the gate, as opposed to what was decided
+   about them (that is the status badge, which is per-screen).
+
+   These rules are global on purpose. The same chip now appears
+   on the guards' Entry Management screen, the admin Operations
+   Center, the Vehicle Log and the owner-lookup dialog; they
+   lived in Admin/EntryManagement.css, so the Operations Center
+   rendered the markup with no styling behind it at all.
+
+   Markup:  <span class="em-class-tag cls-student">Student</span>
+
+   The `cls-` names match AccessLog.Category on the server
+   one-for-one, so a class can be built straight from the value
+   the API returns.
+   ============================================================ */
+
+.em-class-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.cls-student  { background: #E3EEFB; color: #1c4e8a; }
+.cls-employee { background: #FCE7DC; color: #a24518; }
+.cls-fetcher  { background: #D9F2E9; color: #0a6b4d; }
+.cls-supplier { background: #FBEFCF; color: #8a6300; }
+.cls-visitor  { background: #E6E2F5; color: #3d2f83; }
+.cls-unknown  { background: #ECEEF0; color: #5b6570; }

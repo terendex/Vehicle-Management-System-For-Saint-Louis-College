@@ -19,7 +19,6 @@ import {
 import notify from '../Feedback/notify'
 import { fieldProblems } from '../Feedback/formProblems'
 import jsQR from 'jsqr'
-import slcLogo from '../../assets/slclogo.jpg'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
 import { authApi } from '../../api/auth'
@@ -27,6 +26,7 @@ import { useGates } from '../../hooks/useGates'
 import ChangePasswordModal from '../Auth/ChangePasswordModal'
 import './AdminLayout.css'
 import './SecurityLayout.css'
+import BrandLogos from '../BrandLogos'
 
 function useCurrentShift(gate) {
   const [shift, setShift] = useState(null)
@@ -364,7 +364,7 @@ export default function SecurityLayout({ children, fillHeight = false }) {
       {/* Sidebar */}
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
-          <img src={slcLogo} alt="SLC Logo" className="brand-logo" />
+          <BrandLogos size="sidebar" />
           <div>
             <span className="brand-text">SLC Security</span>
             {gate && (

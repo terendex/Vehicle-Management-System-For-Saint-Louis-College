@@ -46,7 +46,9 @@
   display: flex;
   align-items: center;
   padding: 0 1.5rem;
-  gap: 12px;
+  /* Two seals take the room one used to, so the gap tightens rather than the
+     system name being pushed off the rail. */
+  gap: 9px;
   position: relative;
   border-bottom: 2.5px solid var(--navy);
 }
@@ -63,20 +65,18 @@
   clip-path: inset(0 62% 0 0);
 }
 
-.brand-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1.5px solid #03396C;
-}
+/* The seals themselves are .brand-logos in styles/slc-header.css — the SLC
+   and CDSO pair, shared with every page header. */
 
 .brand-text {
   font-size: 14px;
   font-weight: 800;
   color: #03396C;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   text-transform: uppercase;
   line-height: 1.1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sidebar-nav {

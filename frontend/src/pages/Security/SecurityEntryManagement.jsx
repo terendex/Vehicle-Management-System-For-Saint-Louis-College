@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
-  DoorOpen, Ban, ScanLine, Maximize2, Minimize2,
+  DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -11,6 +11,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { QRCodeSVG } from 'qrcode.react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import QrScanModal from '../../components/QrScanModal'
+import slcLogo from '../../assets/slclogo.jpg'
+import cdsoLogo from '../../assets/cdsologo.jpg'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import { useFullscreen } from '../../hooks/useFullscreen'
 import {
@@ -18,6 +20,7 @@ import {
   createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
   confirmVisitorSlipPrinted, visitorQrExit,
+  lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -43,6 +46,55 @@ const STATUS_META = {
   visitor_pass_required: { label: 'Scan Visitor Slip QR', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
+
+// WHO is coming in, as opposed to what was decided about them — the second
+// thing a guard has to know at the barrier and the one the log could not
+// answer before. Same vocabulary and the same chip colours as the admin Entry
+// Management screen; those .cls-* rules arrive through this page's stylesheet,
+// which imports that one.
+const CLASSIFICATION_META = {
+  student:  { label: 'Student',              cls: 'cls-student'  },
+  employee: { label: 'Employee',             cls: 'cls-employee' },
+  fetcher:  { label: 'Drop & Go / Fetcher',  cls: 'cls-fetcher'  },
+  supplier: { label: 'Supplier',             cls: 'cls-supplier' },
+  visitor:  { label: 'Visitor',              cls: 'cls-visitor'  },
+  unknown:  { label: 'Unregistered',         cls: 'cls-unknown'  },
+}
+function getClassMeta(c) { return CLASSIFICATION_META[c] ?? CLASSIFICATION_META.unknown }
+
+// What a guard may file a walk-up under. 'supplier' is absent on purpose: a
+// supplier is identified by a plate on the supplier roster, and a vehicle with
+// no plate has nothing to check against it.
+const MANUAL_CATEGORIES = ['student', 'employee', 'fetcher', 'visitor', 'unknown']
+
+// Mirrors Vehicle.Type on the server. Kept as labels rather than raw values so
+// the guard picks "E-Bike", not "ebike".
+const VEHICLE_TYPES = [
+  { value: 'car',        label: 'Car' },
+  { value: 'motorcycle', label: 'Motorcycle' },
+  { value: 'ebike',      label: 'E-Bike' },
+  { value: 'truck',      label: 'Truck' },
+  { value: 'van',        label: 'Van' },
+  { value: 'bus',        label: 'Bus' },
+]
+
+// A Philippine plate and a conduction sticker both always carry digits; a
+// person's name never does. That single rule is what sends what the guard
+// typed down the plate-check path or the name-search path, and it is simple
+// enough to state in the hint under the field.
+const looksLikeIdentifier = (raw) => /\d/.test(raw || '')
+
+// The category for a scan result, for the dialog that reports it. The log rows
+// carry a real `classification` from the server; a fresh scan response carries
+// the owner instead, so it is read off that.
+function resultClassification(result) {
+  if (result.classification) return result.classification
+  const ownerType = result.vehicle?.user?.owner_type
+  if (ownerType && CLASSIFICATION_META[ownerType]) return ownerType
+  if (result.is_supplier) return 'supplier'
+  if (result.status === 'unknown' || result.status === 'unreadable') return 'unknown'
+  return 'visitor'
+}
 
 
 function timeAgo(ts) {
@@ -96,8 +148,17 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   .plate { font-size: 20px; font-weight: bold; text-align: center; letter-spacing: 3px; margin: 8px 0; border: 2px solid #000; padding: 4px; }
   .footer { text-align: center; font-size: 9px; color: #64839C; margin-top: 10px; }
   .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
+  /* Both seals head the slip, as they head every screen. Sized for an 80mm
+     thermal roll, where anything larger prints as a black smudge. */
+  .seals { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 2px 0 4px; }
+  .seals img { width: 34px; height: 34px; object-fit: contain; }
 </style></head><body>
+<div class="seals">
+  <img src="${slcLogo}" alt="Saint Louis College"/>
+  <img src="${cdsoLogo}" alt="CDSO"/>
+</div>
 <h2>SAINT LOUIS COLLEGE</h2>
+<div class="sub">Campus Development and Sustainability Office</div>
 <div class="sub">Smart Parking and Vehicle Verification System</div>
 <div class="sub">--- VISITOR SLIP ---</div>
 <div class="plate">${plate}</div>
@@ -327,6 +388,181 @@ function DenyEntryModal({ plate, onClose, onDenied }) {
  * components/Feedback/notify.js). So the lookup is a dialog now: it stays until
  * it is acknowledged, and the next one in the queue takes its place.
  */
+// ─── Owner Lookup Modal ────────────────────────────────────────────────────────
+// Shown when the guard searched by NAME and more than nothing came back. The
+// guard picks the vehicle they are looking at; picking runs the ordinary plate
+// check on it, so searching by name never skips an entry rule.
+function OwnerLookupModal({ data, onPick, onClose }) {
+  const results = data?.results ?? []
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><Users size={17} /> Vehicles matching “{data?.query}”</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="em-modal-body">
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
+            Pick the vehicle at the barrier. The usual entry check runs on it —
+            choosing from this list does not grant entry by itself.
+          </p>
+          <div className="em-lookup-list">
+            {results.map(m => {
+              const cm = getClassMeta(m.classification)
+              return (
+                <button
+                  type="button"
+                  key={m.vehicle_id}
+                  className="em-lookup-row"
+                  onClick={() => onPick(m)}
+                >
+                  <div className="em-lookup-main">
+                    <span className="em-lookup-plate">{m.identifier || 'No plate on file'}</span>
+                    <span className={`em-class-tag ${cm.cls}`}>{cm.label}</span>
+                    {m.is_inside && (
+                      <span className="em-class-tag cls-unknown">
+                        <LogOut size={9} style={{ verticalAlign: -1 }} /> Inside — next check logs the exit
+                      </span>
+                    )}
+                  </div>
+                  <div className="em-lookup-sub">
+                    {m.owner_name || 'No owner on file'}
+                    {(m.color || m.vehicle_type || m.model) && (
+                      <> · {[m.color, m.vehicle_type, m.model].filter(Boolean).join(' ')}</>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          {data?.truncated && (
+            <p style={{ margin: '10px 0 0', fontSize: 11, color: '#8A6B00' }}>
+              Showing the first {results.length}. Type more of the name to narrow it down.
+            </p>
+          )}
+        </div>
+        <div className="em-modal-foot">
+          <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ─── Unrecognized Vehicle Modal ────────────────────────────────────────────────
+// A vehicle with no plate and no conduction sticker still drives onto campus.
+// Before this it left a bare "unreadable" row with nothing on it — no
+// description, no driver, no way to log the exit. The guard writes down what
+// they can see and the entry behaves like any other from then on.
+function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
+  const [form, setForm] = useState({
+    driver_name: '', entrant_category: '', vehicle_type: '',
+    vehicle_color: '', vehicle_model: '', entry_note: '',
+  })
+  const [loading, setLoading] = useState(false)
+  const set = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }))
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (await notify.validation(fieldProblems(e.currentTarget))) return
+    setLoading(true)
+    try {
+      const { data } = await recordUnrecognizedEntry({ ...form, gate_id: gateId })
+      await notify.success(
+        `Recorded as ${data.reference} — ${form.vehicle_color} ${form.vehicle_type} driven by ${form.driver_name}. ` +
+        'It is now counted as inside; log the exit from the Unrecognized Vehicles panel when it leaves.',
+        { title: 'Vehicle recorded' },
+      )
+      onRecorded(data)
+      onClose()
+    } catch (err) {
+      const body = err?.response?.data
+      const msg = body && typeof body === 'object'
+        ? Object.values(body).flat().join(' ')
+        : 'Failed to record the vehicle.'
+      toast.error(msg)
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><FileQuestion size={17} /> Record Unrecognized Vehicle</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="em-modal-body">
+            <p className="em-modal-hint">
+              For vehicles with no plate and no conduction number. Fill in what you
+              can see — this description stands in for the plate on the log.
+            </p>
+
+            <div className="em-field">
+              <label className="em-label">Driver's Name</label>
+              <input className="em-input" value={form.driver_name} onChange={set('driver_name')}
+                     placeholder="e.g. Juan Dela Cruz" required />
+            </div>
+
+            <div className="em-field">
+              <label className="em-label">Who is entering?</label>
+              <select className="em-select" value={form.entrant_category}
+                      onChange={set('entrant_category')} required>
+                <option value="">Select…</option>
+                {MANUAL_CATEGORIES.map(c => (
+                  <option key={c} value={c}>{CLASSIFICATION_META[c].label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="em-field-row">
+              <div className="em-field">
+                <label className="em-label">Vehicle Type</label>
+                <select className="em-select" value={form.vehicle_type}
+                        onChange={set('vehicle_type')} required>
+                  <option value="">Select…</option>
+                  {VEHICLE_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="em-field">
+                <label className="em-label">Colour</label>
+                <input className="em-input" value={form.vehicle_color} onChange={set('vehicle_color')}
+                       placeholder="e.g. Red" required />
+              </div>
+            </div>
+
+            <div className="em-field">
+              <label className="em-label">
+                Make / Model <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span>
+              </label>
+              <input className="em-input" value={form.vehicle_model} onChange={set('vehicle_model')}
+                     placeholder="e.g. Toyota Vios" />
+            </div>
+
+            <div className="em-field">
+              <label className="em-label">
+                Note <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span>
+              </label>
+              <textarea className="em-textarea" value={form.entry_note} onChange={set('entry_note')}
+                        placeholder="e.g. Newly delivered unit, plate not yet issued" />
+            </div>
+          </div>
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
+              {loading ? <><div className="em-spinner" /> Recording…</> : <>Record Entry</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+
 function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, guardName, onDismiss, queued = 0 }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
@@ -384,6 +620,12 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, guard
             <div className="em-result-text">
               <p className="em-result-status">{label}</p>
               <p className="em-result-plate">{result.plate_number || '—'}</p>
+              {/* Who this is. On the banner rather than down in the rows
+                  because it is what decides how the guard handles the car,
+                  and the rows below are hidden entirely for a visitor. */}
+              <span className={`em-class-tag ${getClassMeta(resultClassification(result)).cls}`}>
+                {getClassMeta(resultClassification(result)).label}
+              </span>
             </div>
           </div>
           <div className="em-result-body">
@@ -567,6 +809,12 @@ export default function SecurityEntryManagement() {
 
   const isLive = rtspCameras.some(c => c.streamConnected)
 
+  // Name-search matches awaiting a pick, and the plateless vehicles recorded
+  // by hand that are still inside.
+  const [ownerMatches, setOwnerMatches] = useState(null)
+  const [showUnrecognized, setShowUnrecognized] = useState(false)
+  const [unrecognized, setUnrecognized] = useState([])
+
   const scanCooldown = useRef(new Map()) // plate → { status, timeoutId }
   const processedRids = useRef(new Set()) // result _rid values already handled
 
@@ -599,6 +847,9 @@ export default function SecurityEntryManagement() {
           id: Date.now() + Math.random(),
           plate_number: r.plate_number,
           status: r.status,
+          // So the row carries its category from the moment it appears; the
+          // refresh below replaces it with the server's own a beat later.
+          classification: resultClassification(r),
           scanned_at: new Date().toISOString(),
           scanned_by_name: user?.full_name,
           gate_id: user?.gate_assignment,
@@ -609,6 +860,15 @@ export default function SecurityEntryManagement() {
 
   const gateId = user?.gate_assignment
   const gateFilter = gateId ? { gate_id: gateId } : {}
+
+  // Which way the lookup box will send what has been typed. Derived rather than
+  // decided on submit so the field, its button and its hint all change as the
+  // guard types — they can see it is about to search a name before pressing
+  // anything, instead of finding out from the result.
+  const isNameQuery = (() => {
+    const typed = plateInput.trim()
+    return typed !== '' && !/^SLC/i.test(typed) && !looksLikeIdentifier(typed)
+  })()
 
   useEffect(() => {
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
@@ -665,16 +925,20 @@ export default function SecurityEntryManagement() {
       })
     }).catch(() => {})
 
-  const refreshAll = () => { refreshLogs(); refreshPasses() }
+  const refreshUnrecognized = () =>
+    getUnrecognizedInside(gateId).then(r => setUnrecognized(r.data ?? [])).catch(() => {})
+
+  const refreshAll = () => { refreshLogs(); refreshPasses(); refreshUnrecognized() }
 
   // Instant refresh on new gate scans / visitor-pass changes
   useLiveUpdates(refreshAll)
 
   useEffect(() => {
     refreshPasses()
+    refreshUnrecognized()
     const t = setInterval(refreshPasses, 30000)
     return () => clearInterval(t)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExtendPass = (p) => {
     extendVisitorPass(p.id, 30)
@@ -751,6 +1015,7 @@ export default function SecurityEntryManagement() {
       if (res.data.status !== 'already_inside') {
         setLogs(prev => [{
           id: Date.now(), plate_number: plate, status: res.data.status,
+          classification: resultClassification(res.data),
           scanned_at: new Date().toISOString(), scanned_by_name: user?.full_name,
           gate_id: user?.gate_assignment,
         }, ...prev].slice(0, 20))
@@ -763,6 +1028,55 @@ export default function SecurityEntryManagement() {
       toast.error(err?.response?.data?.error || 'Lookup failed.')
       return null
     } finally { setLoading(false) }
+  }
+
+  // Search by the owner's NAME. Returns candidates for the guard to pick from
+  // rather than acting on the first hit: two people share a surname more often
+  // than not, and admitting the wrong car is not a recoverable mistake.
+  const runNameLookup = async (query) => {
+    setLoading(true)
+    try {
+      const { data } = await lookupOwner(query)
+      if (!data.results?.length) {
+        await notify.error(
+          `No vehicle is registered under a name matching “${query}”. Check the spelling, ` +
+          'or use “No Plate?” if the vehicle has no plate at all.',
+          { title: 'No match found' },
+        )
+        return
+      }
+      setOwnerMatches(data)
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Lookup failed.')
+    } finally { setLoading(false) }
+  }
+
+  // A picked match runs the ordinary plate check, so every rule still applies.
+  const handlePickOwner = async (match) => {
+    setOwnerMatches(null)
+    if (!match.identifier) {
+      await notify.error(
+        'That vehicle has no plate or conduction number on file, so there is nothing ' +
+        'to check it by. Record it with “No Plate?” instead.',
+        { title: 'Nothing to check' },
+      )
+      return
+    }
+    setPlateInput(match.identifier)
+    await runPlateCheck(match.identifier)
+  }
+
+  const handleUnrecognizedExit = async (row) => {
+    try {
+      const { data } = await recordUnrecognizedExit(row.id, gateId)
+      await notify.success(
+        `${data.reference} — ${data.driver_name} logged out after ${data.duration_minutes} min inside.`,
+        { title: 'Exit recorded' },
+      )
+      refreshAll()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record the exit.')
+    }
   }
 
   // Registered vehicle QR pass payload is "VEHICLE:{plate}|ID:{regId}".
@@ -801,9 +1115,13 @@ export default function SecurityEntryManagement() {
 
   const handleCheckEntry = async (e) => {
     e?.preventDefault()
-    const raw = plateInput.trim().toUpperCase()
+    const typed = plateInput.trim()
+    const raw = typed.toUpperCase()
     if (!raw) {
-      await notify.error('Enter a plate or conduction number to check.', { title: 'Nothing to check' })
+      await notify.error(
+        "Enter the owner's name, a plate, or a conduction number to look up.",
+        { title: 'Nothing to check' },
+      )
       return
     }
 
@@ -818,8 +1136,14 @@ export default function SecurityEntryManagement() {
     }
 
     // Accept a pasted vehicle QR pass string; otherwise treat the input as a plate.
-    const plate = plateFromVehicleQr(raw) || raw
-    const res = await runPlateCheck(plate)
+    const qrPlate = plateFromVehicleQr(raw)
+    if (!qrPlate && !looksLikeIdentifier(typed)) {
+      // No digits anywhere — this is a person's name, not a plate.
+      await runNameLookup(typed)
+      return
+    }
+
+    const res = await runPlateCheck(qrPlate || raw)
     if (res?.status === 'exited') setPlateInput('')
   }
 
@@ -988,22 +1312,30 @@ export default function SecurityEntryManagement() {
                 the owner's QR pass. It must never be the thing that gets cut
                 off, hence .em-plate-bar (see the fill-height rules). */}
             <div className="em-plate-bar" style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
-              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Plate / Conduction No.</span>
+              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Owner Name / Plate / Conduction No.</span>
               <form onSubmit={handleCheckEntry} noValidate style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                 <input
                   className="em-plate-input"
                   value={plateInput}
                   onChange={e => {
                     const raw = e.target.value
-                    // Visitor slip QRs (SLC-VISITOR:{id}) must not be plate-formatted
-                    setPlateInput(/^SLC/i.test(raw.trim()) ? raw.toUpperCase() : formatPlateNumber(raw))
+                    // Visitor slip QRs (SLC-VISITOR:{id}) must not be plate-formatted,
+                    // and neither must a name — plate formatting upper-cases and
+                    // injects a space, which turned "dela cruz" into "DEL ACRUZ".
+                    if (/^SLC/i.test(raw.trim())) setPlateInput(raw.toUpperCase())
+                    else if (looksLikeIdentifier(raw)) setPlateInput(formatPlateNumber(raw))
+                    else setPlateInput(raw)
                   }}
-                  placeholder="E.G. AAA 0000 OR CS12345A678"
+                  placeholder="Name, e.g. Juan Dela Cruz — or AAA 0000 / CS12345A678"
                   style={{
                     flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #D3E1EC',
-                    borderRadius: 9, fontSize: 14, fontWeight: 700, letterSpacing: 2,
-                    textTransform: 'uppercase', outline: 'none', fontFamily: 'monospace',
+                    borderRadius: 9, fontSize: 14, fontWeight: 700, outline: 'none',
                     boxSizing: 'border-box',
+                    // Plate styling (monospace, tracked out, upper-cased) is for
+                    // plates. A name in it reads as a serial number.
+                    ...(isNameQuery
+                      ? { letterSpacing: 0.2, fontFamily: 'inherit' }
+                      : { letterSpacing: 2, fontFamily: 'monospace', textTransform: 'uppercase' }),
                   }}
                   autoComplete="off"
                 />
@@ -1013,7 +1345,11 @@ export default function SecurityEntryManagement() {
                   style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
                   disabled={loading}
                 >
-                  {loading ? <><div className="em-spinner" /> Checking…</> : <><Search size={15} /> Check Plate — Entry / Exit</>}
+                  {loading
+                    ? <><div className="em-spinner" /> Checking…</>
+                    : isNameQuery
+                      ? <><Users size={15} /> Search by Name</>
+                      : <><Search size={15} /> Check Plate — Entry / Exit</>}
                 </button>
                 <button
                   type="button"
@@ -1024,9 +1360,23 @@ export default function SecurityEntryManagement() {
                 >
                   <ScanLine size={15} /> Scan QR
                 </button>
+                {/* The way in for a vehicle the plate path cannot serve at all.
+                    Beside the plate field rather than buried in a menu — the
+                    guard needs it while the car is still at the barrier. */}
+                <button
+                  type="button"
+                  className="em-btn em-btn-secondary"
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 12px' }}
+                  onClick={() => setShowUnrecognized(true)}
+                  title="Record a vehicle that has no plate and no conduction number"
+                >
+                  <FileQuestion size={15} /> No Plate?
+                </button>
               </form>
               <p style={{ margin: '6px 0 0', fontSize: 11, color: '#64839C', textAlign: 'center' }}>
-                Entry and exit are detected automatically — vehicles inside campus are logged out on re-check.
+                {isNameQuery
+                  ? 'Searching by name — pick the vehicle from the results, then the usual entry check runs on it.'
+                  : 'Entry and exit are detected automatically — vehicles inside campus are logged out on re-check. Type a name instead to look an owner up.'}
               </p>
             </div>
           </div>
@@ -1053,6 +1403,23 @@ export default function SecurityEntryManagement() {
                   </button>
                 </div>
               </div>
+              {/* Who came through, at a glance. Counts only — this panel is
+                  the last 20 scans, so a filter here would hide rows without
+                  being able to say how many it hid. */}
+              {logs.length > 0 && (
+                <div className="em-class-filters">
+                  {MANUAL_CATEGORIES.concat('supplier').map(key => {
+                    const n = logs.filter(l => (l.classification || 'unknown') === key).length
+                    if (!n) return null
+                    const cm = getClassMeta(key)
+                    return (
+                      <span key={key} className={`em-class-tag ${cm.cls}`}>
+                        {cm.label} <strong>{n}</strong>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
               {logs.length === 0 ? (
                 <div className="em-audit-empty">
                   <ClipboardList size={22} style={{ color: '#BDD4E5' }} />
@@ -1070,8 +1437,18 @@ export default function SecurityEntryManagement() {
                         </div>
                         <div className="em-audit-info">
                           <div className="em-audit-top">
-                            <span className="em-audit-plate">{log.plate_number || '—'}</span>
+                            <span className="em-audit-plate">
+                              {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
+                            </span>
                             <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                            {/* Which kind of entrant this was. The whole point
+                                of the breakdown above is that a guard can read
+                                it off a row without opening anything. */}
+                            {log.classification && (
+                              <span className={`em-class-tag ${getClassMeta(log.classification).cls}`}>
+                                {getClassMeta(log.classification).label}
+                              </span>
+                            )}
                             {/* One visit is one row: AccessLogListView folds an
                                 exit into the entry it pairs with. Without this
                                 the row keeps reading "Approved for Entry" hours
@@ -1087,9 +1464,18 @@ export default function SecurityEntryManagement() {
                               </span>
                             )}
                           </div>
-                          {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
+                          {(log.vehicle_owner_name || log.driver_name || log.scanned_by_name || log.on_duty_guard_name) && (
                             <div className="em-audit-sub">
                               {log.vehicle_owner_name && <span>{log.vehicle_owner_name}</span>}
+                              {/* A plateless vehicle has no owner account; the
+                                  driver and the description are all it has. */}
+                              {!log.vehicle_owner_name && log.driver_name && (
+                                <span>
+                                  {log.driver_name}
+                                  {(log.vehicle_color || log.vehicle_model) &&
+                                    ` · ${[log.vehicle_color, log.vehicle_type, log.vehicle_model].filter(Boolean).join(' ')}`}
+                                </span>
+                              )}
                               {log.on_duty_guard_name && <span>· On duty: {log.on_duty_guard_name}</span>}
                               {log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && (
                                 <span>· {log.scanned_by_name}</span>
@@ -1104,6 +1490,47 @@ export default function SecurityEntryManagement() {
                 </div>
               )}
             </div>
+
+            {/* Plateless vehicles recorded by hand. There is no plate to
+                re-check, so this panel is the only way their exit gets
+                logged — without it they would sit in the inside-count for
+                ever. Shown only when there are any. */}
+            {unrecognized.length > 0 && (
+              <div className="em-card">
+                <div className="em-card-head">
+                  <span className="em-card-label"><FileQuestion size={14} /> Unrecognized Vehicles Inside</span>
+                  <span className="em-logs-count">{unrecognized.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {unrecognized.map(row => {
+                    const cm = getClassMeta(row.classification)
+                    return (
+                      <div key={row.id} className="em-unrec-row">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="em-unrec-top">
+                            <span className="em-unrec-ref">{row.reference}</span>
+                            <span className={`em-class-tag ${cm.cls}`}>{cm.label}</span>
+                          </div>
+                          <div className="em-unrec-sub">
+                            {row.driver_name}
+                            {' · '}
+                            {[row.vehicle_color, row.vehicle_type, row.vehicle_model].filter(Boolean).join(' ')}
+                          </div>
+                          <div className="em-unrec-time">Entered {timeAgo(row.scanned_at)}</div>
+                        </div>
+                        <button
+                          className="em-btn em-btn-secondary em-unrec-exit"
+                          onClick={() => handleUnrecognizedExit(row)}
+                          title="Record this vehicle's exit"
+                        >
+                          <LogOut size={13} /> Log Exit
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Active visitors — time remaining / overstay */}
             <div className="em-card">
@@ -1182,6 +1609,22 @@ export default function SecurityEntryManagement() {
             guardName={user?.full_name}
             onDismiss={() => removeFromQueue(scanQueue[0].id)}
             queued={scanQueue.length - 1}
+          />
+        )}
+
+        {ownerMatches && (
+          <OwnerLookupModal
+            data={ownerMatches}
+            onPick={handlePickOwner}
+            onClose={() => setOwnerMatches(null)}
+          />
+        )}
+
+        {showUnrecognized && (
+          <UnrecognizedVehicleModal
+            gateId={gateId}
+            onClose={() => setShowUnrecognized(false)}
+            onRecorded={() => refreshAll()}
           />
         )}
 
