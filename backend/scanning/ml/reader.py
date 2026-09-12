@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import cv2
 import numpy as np
@@ -163,9 +164,37 @@ _ocr_load_failures = 0
 _OCR_MAX_RETRIES = 3
 _ocr_disabled_logged = False  # log the "disabled" message only once
 
-# PaddleOCR's ocr() is not thread-safe under concurrent calls on the
-# same instance.  Serialise all ocr() calls across camera streams.
+# PaddleOCR's ocr() is not thread-safe under concurrent calls on the same
+# instance. Serialise all ocr() calls across camera streams.
 _OCR_LOCK = threading.Lock()
+
+# ...and serialising is not enough: the predictor must also always be *the same
+# thread*, not merely one at a time.
+#
+# paddlepaddle 3.0.0's CPU build keeps per-thread state for its oneDNN
+# primitives. Build the predictor on one thread and call it from another and the
+# call dies with "could not execute a primitive" — which is what every gate read
+# was doing, because consumers.py dispatches OCR through
+# loop.run_in_executor(None, ...) and the default executor hands each track to
+# whichever pool thread is free. _OCR_LOCK made the calls one-at-a-time, but
+# one-at-a-time from three different threads still fails: measured over ten real
+# gate frames, five reads succeeded and five raised.
+#
+# So OCR gets one thread of its own, and the predictor is both built and called
+# on it. Callers block on the result exactly as they blocked on the lock before,
+# and since OCR was already fully serialised this costs no throughput.
+_OCR_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle-ocr")
+
+
+def _on_ocr_thread() -> bool:
+    return threading.current_thread().name.startswith("paddle-ocr")
+
+
+def _ocr_infer(ocr, img):
+    """Run ocr.ocr() on the one thread that owns the predictor."""
+    if _on_ocr_thread():
+        return ocr.ocr(img, cls=True)
+    return _OCR_EXECUTOR.submit(ocr.ocr, img, cls=True).result()
 
 # Confidence above which we skip the expensive L/M/R tiled passes
 _OCR_EARLY_EXIT_CONF = 0.60
@@ -190,6 +219,10 @@ def _get_ocr():
     global _ocr_reader, _ocr_load_failures, _ocr_disabled_logged
     if _ocr_reader is not None:
         return _ocr_reader
+    # Construction has to happen on the thread that will run inference — see
+    # _OCR_EXECUTOR above. Startup pre-loads this from the main thread.
+    if not _on_ocr_thread():
+        return _OCR_EXECUTOR.submit(_get_ocr).result()
     if _ocr_load_failures >= _OCR_MAX_RETRIES:
         if not _ocr_disabled_logged:
             _ocr_disabled_logged = True
@@ -504,7 +537,7 @@ def _ocr_crop(crop: np.ndarray, aspect_ratio: float = 1.0) -> tuple[str, float] 
         # PaddleOCR requires a 3-channel BGR image
         img_input = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if len(img.shape) == 2 else img
         with _OCR_LOCK:
-            raw_result = ocr.ocr(img_input, cls=True)
+            raw_result = _ocr_infer(ocr, img_input)
         page = raw_result[0] if raw_result else None
         if not page:
             log.info("[OCR-CROP] %s: PaddleOCR found 0 text regions", label)
@@ -614,7 +647,7 @@ def _run_raw_ocr_fallback(crop: np.ndarray) -> tuple[str | None, float]:
     try:
         ocr = _get_ocr()
         with _OCR_LOCK:
-            raw_result = ocr.ocr(up_bgr, cls=True)
+            raw_result = _ocr_infer(ocr, up_bgr)
         page = raw_result[0] if raw_result else None
         log.info("[OCR-CROP][RAW-FB] raw regions: %d", len(page) if page else 0)
         if not page:
