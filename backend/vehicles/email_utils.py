@@ -169,14 +169,16 @@ def registrant_type_label(registration):
 
 def _fetcher_student_lines(registration):
     """One readable line per student a fetcher collects, e.g.
-    'DELA CRUZ, JUAN - ID 23100174 - Grade 7'. Empty list if there are none."""
+    'DELA CRUZ, JUAN - Grade 7'. Empty list if there are none.
+
+    DPO: the student's ID number is not collected any more and
+    is left out even where an older row still carries one.
+    """
     lines = []
     for i, student in enumerate(registration.fetcher_students or [], start=1):
         if not isinstance(student, dict):
             continue
         bits = [student.get('full_name') or f'Student #{i}']
-        if student.get('student_id'):
-            bits.append(f"ID {student['student_id']}")
         if student.get('program_year'):
             bits.append(student['program_year'])
         lines.append(' - '.join(bits))
@@ -210,8 +212,8 @@ def _authorized_driver_pairs(registration):
     val = esc(registration.driver_name)
     if rel:
         val += f' ({esc(rel)})'
-    if registration.driver_contact:
-        val += f' &middot; {esc(registration.driver_contact)}'
+    # DPO: the driver's contact number is not collected, so there is nothing
+    # to append to the name and relationship.
     return [('Authorized Driver', val)]
 
 
@@ -231,22 +233,16 @@ def _fee_settled(registration):
 def _registration_pdf_attachment(registration, pending=False):
     """The (filename, bytes, mimetype) triple for the registration PDF.
 
-    Built with the applicant's uploaded documents included, so the copy in the
-    owner's inbox is the same document the CDSO files from Vehicle Registration
-    Management — one builder, one layout, nothing to drift apart.
-
     `pending` builds the acknowledgement copy — same record, stated as an
-    application under review rather than an approved pass. The uploads are left
-    out of that one: at the moment it is built they have only just been sent,
-    and mailing them straight back doubles the size of the first email an
-    applicant receives for nothing they do not already have.
+    application under review rather than an approved pass.
+
+    DPO: no uploads are collected, so neither copy carries the
+    documents section that used to print them into the approved copy.
     """
     from registration_pdf import (registration_confirmation_pdf,
                                   registration_pdf_filename)
     return (registration_pdf_filename(registration, pending=pending),
-            registration_confirmation_pdf(registration,
-                                          include_documents=not pending,
-                                          pending=pending),
+            registration_confirmation_pdf(registration, pending=pending),
             'application/pdf')
 
 
@@ -482,13 +478,14 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         # that read "Employee ID: —, Department: —" to every fetcher.
         identity_pairs = _fetcher_pairs(registration)
     elif registration.registrant_type == 'student':
+        # DPO: the Student ID row went with the field — program & year is the
+        # one detail left that still describes them.
         identity_pairs = [
-            ('Student ID',       esc_or_dash(registration.student_id)),
             ('Program &amp; Year', esc_or_dash(registration.program_year)),
         ]
     else:
+        # DPO: likewise for the Employee ID row.
         identity_pairs = [
-            ('Employee ID', esc_or_dash(registration.employee_id)),
             ('Department',  esc_or_dash(department_label(registration))),
         ]
 
@@ -501,8 +498,6 @@ def send_acceptance_email(registration, temp_password, user_code=None):
 
     # Portal account ID (use table layout — flex not supported in many email clients)
     portal_id_display   = esc_or_dash(user_code)
-    contact_val         = esc_or_dash(registration.contact_number)
-    address_val         = esc_or_dash(registration.address)
     license_val         = esc_or_dash(registration.drivers_license)
     color_val           = esc_or_dash(registration.vehicle_color)
     conduction_val      = esc_or_dash(registration.conduction_number)
@@ -557,9 +552,8 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                  ('Email',            email_val),
                  ('Type',             registrant_type_val)]
                 + identity_pairs
-                + [('Contact',          contact_val),
-                   ('Address',          address_val),
-                   ("Driver&#39;s License", license_val)]
+                # DPO: contact number and home address are not collected.
+                + [("Driver&#39;s License", license_val)]
                 + _authorized_driver_pairs(registration)
                 + campus_pairs))
             + _section('Vehicle', _kv([
@@ -630,9 +624,9 @@ def send_pending_email(registration):
     submitted_at = registration.created_at.strftime('%B %d, %Y at %I:%M %p') if registration.created_at else '—'
 
     # Identity rows differ by registrant type, as (label, value) pairs for _kv().
+    # DPO: no student/employee ID row — the field is not collected.
     if registration.registrant_type == 'student':
         id_pairs = [
-            ('Student ID',         esc_or_dash(registration.student_id)),
             ('Program &amp; Year', esc_or_dash(registration.program_year)),
         ]
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
@@ -643,7 +637,6 @@ def send_pending_email(registration):
         ]
     elif registration.registrant_type == 'employee':
         id_pairs = [
-            ('Employee ID', esc_or_dash(registration.employee_id)),
             ('Department',  esc_or_dash(department_label(registration))),
         ]
         schedule_pairs = []
@@ -655,8 +648,6 @@ def send_pending_email(registration):
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)
-    contact_val      = esc_or_dash(registration.contact_number)
-    address_val      = esc_or_dash(registration.address)
     license_val      = esc_or_dash(registration.drivers_license)
     plate_val        = esc_or_dash(registration.plate_number)
     vehicle_type_val = esc(registration.vehicle_type)
@@ -688,27 +679,32 @@ def send_pending_email(registration):
         payment_text  = "No Vehicle Pass fee is due - your department is exempt.\n\n"
     else:
         payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
+        # DPO: the receipt photo is not collected — only the OR number is
+        # filed, and CDSO checks the paper copy at the counter.
         payment_block = _panel(
             f'<div style="color:{BRAND};font-size:15px;font-weight:700;margin-bottom:6px;">'
-            f'Next step &mdash; pay, then upload your receipt</div>'
+            f'Next step &mdash; pay, then file your receipt number</div>'
             f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
             f'Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the '
-            f'<strong>Accounting Office</strong>, then upload a photo of your Official Receipt '
-            f'using the button below. Your application stays <strong>unpaid</strong> and is not '
-            f'queued for review until the receipt is received.</div>'
-            + _button(payment_link, 'Upload Official Receipt')
+            f'<strong>Accounting Office</strong>, then file the Official Receipt number '
+            f'using the button below. Keep the receipt itself &mdash; the CDSO checks the '
+            f'paper copy when you collect your pass. Your application stays '
+            f'<strong>unpaid</strong> and is not queued for review until the number is '
+            f'received.</div>'
+            + _button(payment_link, 'File Official Receipt Number')
             + f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:12px;'
               f'word-break:break-all;">Or paste this link into your browser: {payment_link}</div>',
             bg=TINT_BG, border=BORDER_FIRM)
         payment_steps = (
             f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
-            f"Office, then <strong>upload your Official Receipt</strong> using the link above.</li>"
+            f"Office, then <strong>file your Official Receipt number</strong> using the link above.</li>"
         )
         payment_text = (
-            f"NEXT STEP - PAY AND UPLOAD YOUR RECEIPT\n"
-            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then upload\n"
-            f"a photo of your Official Receipt here:\n{payment_link}\n\n"
-            f"Your application is not queued for review until the receipt is received.\n\n"
+            f"NEXT STEP - PAY AND FILE YOUR RECEIPT NUMBER\n"
+            f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then file\n"
+            f"the Official Receipt number here:\n{payment_link}\n\n"
+            f"Keep the receipt itself - the CDSO checks the paper copy at the counter.\n"
+            f"Your application is not queued for review until the number is received.\n\n"
         )
 
     html_message = _shell(
@@ -738,7 +734,7 @@ def send_pending_email(registration):
             + _section('What happens next', (
                 f'<ol style="margin:0;padding-left:20px;color:{MUTED};font-size:14px;'
                 f'line-height:1.9;">{payment_steps}'
-                f'<li>The CDSO office will review your submitted documents and information.</li>'
+                f'<li>The CDSO office will review the information you submitted.</li>'
                 f'<li>You will be emailed once your registration is '
                 f'<strong style="color:{INK};">approved</strong> or '
                 f'<strong style="color:{INK};">declined</strong>.</li>'
@@ -748,8 +744,7 @@ def send_pending_email(registration):
                 [('Full Name',       full_name_val),
                  ('Email',           email_val),
                  ('Registrant Type', esc(type_label)),
-                 ('Contact No.',     contact_val),
-                 ('Address',         address_val),
+                 # DPO: contact number and home address are not collected.
                  ("Driver&#39;s License", license_val)]
                 + _authorized_driver_pairs(registration)
                 + id_pairs + schedule_pairs))
