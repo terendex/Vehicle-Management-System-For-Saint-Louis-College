@@ -780,8 +780,8 @@ export default function OwnerDashboard() {
                         </div>
                         <ChangeDiff changes={pendingChange.changes} />
                         <p className="od-change-pending-note">
-                          Your details above are unchanged until the CDSO approves this. You
-                          will be emailed either way.
+                          Nothing on your registration changes until the CDSO approves this
+                          &mdash; you will be emailed either way.
                         </p>
                         <button
                           type="button"
@@ -794,8 +794,8 @@ export default function OwnerDashboard() {
                     ) : (
                       <div className="od-change-cta">
                         <p>
-                          Something wrong above? You can ask the CDSO Office to correct it.
-                          Changes take effect once they approve them.
+                          Spotted a mistake in your details or your vehicle? You can ask the
+                          CDSO Office to correct it. Changes take effect once they approve them.
                         </p>
                         <button
                           type="button"
