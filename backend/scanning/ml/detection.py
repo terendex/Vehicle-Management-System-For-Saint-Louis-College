@@ -295,6 +295,41 @@ _CONF_PLATE   = 0.40
 # dense overview needs a stricter floor than this default.
 _CONF_VEHICLE = 0.15   # raised from 0.10
 
+# Maximum width/height a plate box may have before it is discarded.
+#
+# Confidence cannot remove the false box this is aimed at. Swept over 520 live
+# gate frames from media/ml_samples, collecting every plate box down to a 0.05
+# floor and labelling each one by eye, the false boxes are all the same object —
+# the red diamond-plate bumper strip on a tricycle — and it scores as high as
+# 0.85, straddling the whole range real plates occupy:
+#
+#     conf    false boxes   plate boxes kept
+#     0.40        31            435  (100%)
+#     0.50        19            421  ( 97%)
+#     0.60        16            405  ( 93%)
+#     0.70        14            382  ( 88%)
+#     0.80         7            349  ( 80%)
+#
+# Buying a third fewer false boxes costs a fifth of the real plate reads, which
+# is why raising _CONF_PLATE past 0.40 was the wrong knob. Shape separates them
+# cleanly instead: every labelled false box measured 3.0-6.7 wide-to-tall, every
+# real plate 0.9-2.0. At this cap 30 of the 31 false boxes at conf 0.40 go, and
+# real plate boxes go *up* (145 -> 158 over the 170 frames the tricycle is in):
+# a false box counts as a find, so it was suppressing the rotation fallback
+# below on frames where the actual plate sat at an angle.
+#
+# The cost is paid against the 2385 ground-truth boxes in dataset/: a cap of 4.0
+# would reject 1.3% of them, 3.5 rejects 2.5%, 3.0 rejects 3.8%. 3.5 sits a
+# comfortable margin above a PH car plate seen square on (440x160 = 2.75) —
+# perspective only ever makes a plate box *narrower* — so what a cap this side
+# of 3.0 rejects is mostly labels cropped tight through the plate's border.
+#
+# That per-box percentage is not a per-vehicle miss rate: a track votes across
+# up to _OCR_MAX_ATTEMPTS reads before it locks, so a frame where the box comes
+# out unusually wide is re-read on the next one. A false box has no such second
+# chance — it opens a track and runs OCR on bodywork.
+_MAX_ASPECT_PLATE = 3.5
+
 
 def _apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
     inv = 1.0 / gamma
@@ -422,9 +457,11 @@ def _parse_boxes(results, img: np.ndarray, img_w: int, img_h: int,
 
             if score < min_conf or box_w < 30 or box_h < 12:
                 continue
-            if not is_plate:
-                if aspect_ratio < 0.3 or aspect_ratio > 6.0:
+            if is_plate:
+                if aspect_ratio > _MAX_ASPECT_PLATE:
                     continue
+            elif aspect_ratio < 0.3 or aspect_ratio > 6.0:
+                continue
 
             vehicle_type = None
             if is_plate:
