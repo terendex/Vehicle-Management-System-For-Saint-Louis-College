@@ -12,7 +12,8 @@ from vehicles.models import Vehicle, SupplierPlate
 from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
 from accounts.views import IsAdminRole
-from .models import AccessLog, VisitorPass, Office, MLTrainingSample, GuardShift
+from .models import (AccessLog, VisitorPass, Office, MLTrainingSample,
+                     GuardShift, open_shift_for)
 from .entry_logic import check_entry, classify_entrant, get_organizer_event, is_open_campus
 from .ml.reader import read_plate
 from .ml.collector import record_scan
@@ -2256,16 +2257,10 @@ class QRLoginView(APIView):
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate
 
-        now = tz.now()
-
-        # End previous active shift at this gate (whoever was logged in before)
-        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
-            clocked_out_at=now,
-            clocked_out_by=guard,
-        )
-
-        # Start new shift — records exact gate and clock-in time
-        GuardShift.objects.create(guard=guard, gate=gate)
+        # Records the exact gate and clock-in time, and closes both the guard
+        # being relieved here and this guard's own stale session at another
+        # gate — see scanning.models.open_shift_for.
+        _shift, displaced = open_shift_for(guard, gate)
 
         # Issue JWT
         refresh  = RefreshToken.for_user(guard)
@@ -2296,6 +2291,9 @@ class QRLoginView(APIView):
                 'gate_assignment': gate,
                 'must_change_password': guard.must_change_password,
             },
+            # Gates this sign-in signed the same guard out of — see
+            # scanning.models.open_shift_for.
+            'signed_out_of': displaced,
         })
 
 
@@ -2312,6 +2310,10 @@ class CurrentShiftsView(APIView):
         result = {}
         for shift in active:
             result[shift.gate] = {
+                # The id as well as the name: the Operations Center guard table
+                # has to say which of its rows is the guard standing at this
+                # gate, and matching on a display name is not an identity.
+                'guard_id':      shift.guard_id,
                 'guard_name':    shift.guard.full_name,
                 'guard_code':    shift.guard.user_code,
                 'gate':          shift.gate,

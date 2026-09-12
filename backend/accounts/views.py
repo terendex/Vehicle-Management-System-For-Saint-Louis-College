@@ -1404,7 +1404,7 @@ class QRLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        from scanning.models import Gate
+        from scanning.models import Gate, open_shift_for
         valid_gates = Gate.active_ids()
         gate = gate_param if gate_param in valid_gates else guard.gate_assignment
         if not gate or gate not in valid_gates:
@@ -1422,15 +1422,9 @@ class QRLoginView(APIView):
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate
 
-        now = timezone.now()
-
-        # Clock out whoever is currently active at this gate (the previous guard)
-        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
-            clocked_out_at=now,
-            clocked_out_by=guard,
-        )
-
-        shift   = GuardShift.objects.create(guard=guard, gate=gate)
+        # Closes both the guard being relieved here AND this guard's own stale
+        # session at another gate — see scanning.models.open_shift_for.
+        shift, displaced = open_shift_for(guard, gate)
         refresh = RefreshToken.for_user(guard)
 
         return Response({
@@ -1446,6 +1440,10 @@ class QRLoginView(APIView):
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,
+            # Gates this sign-in signed the same guard out of. Empty in the
+            # ordinary case; non-empty means a session they had left open
+            # elsewhere has just been closed, and the terminal says so.
+            'signed_out_of': displaced,
         })
 
 
@@ -1482,7 +1480,7 @@ class GuardCredentialLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        from scanning.models import Gate
+        from scanning.models import Gate, open_shift_for
         valid_gates = Gate.active_ids()
         gate = gate_param if gate_param in valid_gates else guard.gate_assignment
         if not gate or gate not in valid_gates:
@@ -1500,15 +1498,9 @@ class GuardCredentialLoginView(APIView):
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate
 
-        now = timezone.now()
-
-        # Clock out whoever is currently active at this gate (the previous guard)
-        GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
-            clocked_out_at=now,
-            clocked_out_by=guard,
-        )
-
-        shift   = GuardShift.objects.create(guard=guard, gate=gate)
+        # Closes both the guard being relieved here AND this guard's own stale
+        # session at another gate — see scanning.models.open_shift_for.
+        shift, displaced = open_shift_for(guard, gate)
         refresh = RefreshToken.for_user(guard)
 
         AuditLog.objects.create(
@@ -1531,6 +1523,10 @@ class GuardCredentialLoginView(APIView):
                 'must_change_password': guard.must_change_password,
             },
             'shift': GuardShiftSerializer(shift).data,
+            # Gates this sign-in signed the same guard out of. Empty in the
+            # ordinary case; non-empty means a session they had left open
+            # elsewhere has just been closed, and the terminal says so.
+            'signed_out_of': displaced,
         })
 
 

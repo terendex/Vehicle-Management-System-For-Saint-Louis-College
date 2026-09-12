@@ -250,6 +250,65 @@ def active_guard_for_gate(gate: str):
     return shift.guard if shift else None
 
 
+def open_shift_for(guard, gate, *, now=None):
+    """Start `guard`'s shift at `gate`, closing whatever that displaces.
+
+    Returns `(shift, displaced_gates)` — the new shift, and the gates this
+    guard was signed out of to open it.
+
+    Two kinds of open shift get closed, and the second is the one the three
+    login paths all used to miss:
+
+      * whoever else was still clocked in AT THIS GATE. That is the guard being
+        relieved, and closing their shift is what "handing over" means.
+
+      * this guard's OWN open shift at ANY OTHER GATE. A guard is one person
+        and can only stand at one gate, so an open shift elsewhere is a session
+        they walked away from without signing out. Leaving it open put the same
+        name on duty at two gates at once — the Operations Center showed it
+        faithfully, one of them running for weeks — and, worse, every scan the
+        abandoned gate attributed by `gate_assignment` was credited to someone
+        who was not there.
+
+    `clocked_out_by` is the guard themselves for their own stale session: they
+    are the one whose sign-in ended it, and naming a different guard there
+    would read as though somebody else had signed them out.
+    """
+    now = now or timezone.now()
+
+    relieved = list(
+        GuardShift.objects
+        .filter(gate=gate, clocked_out_at__isnull=True)
+        .exclude(guard=guard)
+        .values_list('gate', flat=True)
+    )
+    GuardShift.objects.filter(gate=gate, clocked_out_at__isnull=True).update(
+        clocked_out_at=now, clocked_out_by=guard,
+    )
+
+    # The same guard, still open somewhere else.
+    displaced = list(
+        GuardShift.objects
+        .filter(guard=guard, clocked_out_at__isnull=True)
+        .exclude(gate=gate)
+        .values_list('gate', flat=True)
+    )
+    if displaced:
+        GuardShift.objects.filter(
+            guard=guard, clocked_out_at__isnull=True,
+        ).exclude(gate=gate).update(clocked_out_at=now, clocked_out_by=guard)
+
+    shift = GuardShift.objects.create(guard=guard, gate=gate)
+    # De-duplicated but order-stable, so a guard abandoned at two gates reads
+    # in the order the gates are named rather than at random.
+    seen, ordered = set(), []
+    for g in displaced:
+        if g not in seen:
+            seen.add(g)
+            ordered.append(g)
+    return shift, ordered
+
+
 class MLTrainingSample(models.Model):
     SOURCE_CHOICES = [
         ('scan',         'Live Scan'),
