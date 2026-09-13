@@ -54,6 +54,9 @@ class VisitorPass(models.Model):
     id         = models.BigAutoField(primary_key=True, db_column='visitor_pass_id')
     vehicle    = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='visitor_passes')
     plate_number = models.CharField(max_length=20, blank=True)      # denormalised for quick display
+    # Printed on the slip, and what a guard can type at the exit instead of
+    # scanning the slip QR. Blank on passes issued before the field existed.
+    visitor_name = models.CharField(max_length=150, blank=True, default='')
     office     = models.ForeignKey(
         Office, on_delete=models.SET_NULL, null=True, blank=True,   # office being visited (optional)
     )

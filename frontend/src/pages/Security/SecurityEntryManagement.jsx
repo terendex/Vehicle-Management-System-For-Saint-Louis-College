@@ -4,7 +4,7 @@ import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
-  VideoOff, RefreshCw,
+  VideoOff, RefreshCw, Printer, Ticket,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -20,7 +20,7 @@ import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
-  confirmVisitorSlipPrinted, printVisitorSlipOnServer, visitorQrExit,
+  confirmVisitorSlipPrinted, lookupSlip, printSlipOnServer, confirmSlipReprinted, exitSlip,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
@@ -46,7 +46,7 @@ const STATUS_META = {
   exited:     { label: 'Exited',                 Icon: LogOut,        cls: 'exited',     logCls: 'exited'     },
   duplicate:      { label: 'Duplicate Scan', Icon: Clock,       cls: 'exited',    logCls: 'exited'    },
   already_inside: { label: 'Previously Scanned', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
-  visitor_pass_required: { label: 'Scan Visitor Slip QR', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
+  visitor_pass_required: { label: 'Visitor Inside on Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -134,17 +134,23 @@ function passTimeInfo(p) {
   return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
 }
 
-function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, expiresAt, duration, qrPayload }) {
+const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+// Browser print of a gate slip — the fallback for a server with no thermal
+// printer (the cloud site). `slip` is the server's slip description
+// (backend scanning/slips.py), the same one the thermal printer renders, so
+// the two prints cannot disagree.
+function printSlipInBrowser(slip, { reprint = false } = {}) {
   const w = window.open('', '_blank', 'width=320,height=520')
-  if (!w) return
-  // QR scanned at the gate to record the visitor's exit (payload: SLC-VISITOR:{id})
-  const qrSvg = qrPayload
-    ? renderToStaticMarkup(<QRCodeSVG value={qrPayload} size={130} level="M" />)
-    : ''
-  // Short form — the year-and-seconds version overflows a 48mm line.
-  const fmt = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+  if (!w) return false
+  // Scanned at the gate to pull the slip back up (SLC-VISITOR:{id} / SLC-NOPLATE:{id})
+  const qrSvg = renderToStaticMarkup(<QRCodeSVG value={slip.code} size={130} level="M" />)
+  const sections = slip.sections.map(rows => rows.map(([label, value]) =>
+    `<div class="row"><span class="label">${escapeHtml(label)}:</span><span>${escapeHtml(value)}</span></div>`,
+  ).join('\n')).join('\n<hr/>\n')
   w.document.write(`<!DOCTYPE html><html><head>
-<meta charset="utf-8"/><title>Visitor Slip</title>
+<meta charset="utf-8"/><title>${escapeHtml(slip.title)}</title>
 <style>
   /* JP-58H thermal printer. Its POS58 driver's paper is 48mm wide (the
      printable width of the 58mm roll), and its shortest built-in length is
@@ -184,28 +190,46 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
 <h2>SAINT LOUIS COLLEGE</h2>
 <div class="sub">Campus Development and Sustainability Office</div>
 <div class="sub">Smart Parking and Vehicle Verification System</div>
-<div class="sub title">--- VISITOR SLIP ---</div>
-<div class="plate">${plate}</div>
+<div class="sub title">--- ${escapeHtml(slip.title)} ---</div>
+${reprint ? '<div class="sub title">** REPRINT **</div>' : ''}
+<div class="plate">${escapeHtml(slip.headline)}</div>
 <hr/>
-<div class="row"><span class="label">Office:</span><span>${officeName || 'N/A'}</span></div>
-<div class="row"><span class="label">Purpose:</span><span>${purpose || 'N/A'}</span></div>
-<div class="row"><span class="label">Duration:</span><span>${duration} min</span></div>
+${sections}
 <hr/>
-<div class="row"><span class="label">Issued:</span><span>${fmt(issuedAt)}</span></div>
-<div class="row"><span class="label">Expires:</span><span>${fmt(expiresAt)}</span></div>
-<div class="row"><span class="label">Guard:</span><span>${guardName || 'N/A'}</span></div>
-<hr/>
-${qrSvg ? `<div class="qr">${qrSvg}</div>
-<div class="warn">SCAN THIS QR AT THE GATE TO EXIT</div>` : ''}
+<div class="qr">${qrSvg}</div>
+<div class="warn">SCAN THIS QR AT THE GATE TO EXIT</div>
 <div class="warn">RETURN THIS SLIP UPON EXIT</div>
 <div class="footer">Unauthorized possession is subject to penalty.</div>
 </body></html>`)
   w.document.close(); w.focus()
   setTimeout(() => { w.print(); w.close() }, 400)
+  return true
+}
+
+// Print a slip: straight to the campus server's thermal printer (no dialog),
+// or — only when this server has no printer (503, the cloud site) — through
+// the browser dialog. Throws with a guard-readable reason when a printer
+// exists but nothing came out.
+async function printSlip(slip, { reprint = false } = {}) {
+  try {
+    await printSlipOnServer(slip.code, reprint)
+    return 'printer'
+  } catch (err) {
+    if (err?.response?.status !== 503) {
+      throw new Error(
+        err?.response?.data?.error || 'The slip did not print — the printer could not be reached.',
+        { cause: err },
+      )
+    }
+  }
+  printSlipInBrowser(slip, { reprint })
+  if (reprint) confirmSlipReprinted(slip.code).catch(() => {})
+  return 'dialog'
 }
 
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
-function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
+function VisitorPassModal({ plate, offices, onClose, onCreated }) {
+  const [visitorName, setVisitorName] = useState('')
   const [officeId, setOfficeId] = useState('')
   const [purpose, setPurpose]   = useState('')
   const [duration, setDuration] = useState('15')  // typeable string; default 15 min
@@ -214,17 +238,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
   // of paper…). The pass already exists, so the modal switches to retrying the
   // print rather than letting a second submit create a duplicate.
   const [unprinted, setUnprinted] = useState(null)  // { pass, reason }
+  const [printing, setPrinting]   = useState(false)
 
   const durationNum = Math.max(1, Math.min(480, parseInt(duration, 10) || 15))
-
-  const doPrint = (pass) => {
-    const officeName = offices.find(o => String(o.id) === String(officeId))?.name
-    printVisitorSlip({
-      plate, purpose, officeName, guardName,
-      issuedAt: pass.entered_at, expiresAt: pass.expires_at, duration: durationNum,
-      qrPayload: pass.qr_payload || `SLC-VISITOR:${pass.id}`,
-    })
-  }
 
   // Auto-log the visitor's entry as soon as the slip is printed — no separate
   // manual confirmation step.
@@ -239,22 +255,13 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
     onClose()
   }
 
-  // The campus server prints straight to the gate's thermal printer, so there
-  // is no print dialog. Only a server with no printer (503 — the cloud site)
-  // falls back to the browser's dialog.
+  // No print dialog on campus — see printSlip.
   const printPass = async (pass) => {
     try {
-      await printVisitorSlipOnServer(pass.id)
+      await printSlip(pass.slip)
     } catch (err) {
-      if (err?.response?.status === 503) {
-        doPrint(pass)
-      } else {
-        setUnprinted({
-          pass,
-          reason: err?.response?.data?.error || 'The slip did not print — the printer could not be reached.',
-        })
-        return
-      }
+      setUnprinted({ pass, reason: err.message })
+      return
     }
     setUnprinted(null)
     await finish(pass)
@@ -268,17 +275,21 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
       return
     }
     const problems = [...fieldProblems(e.currentTarget)]
+    if (!visitorName.trim()) problems.push("Enter the visitor's name.")
     if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
     if (await notify.validation(problems, { title: 'Pass not issued' })) return
     setLoading(true)
     try {
       const res = await createVisitorPass({
-        plate_number: plate, office: officeId || null, purpose, allowed_duration: durationNum,
+        plate_number: plate, visitor_name: visitorName.trim(), office: officeId || null,
+        purpose, allowed_duration: durationNum,
       })
+      // The printer takes a few seconds; say so instead of a stuck "Creating…".
+      setPrinting(true)
       await printPass(res.data)
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
-    } finally { setLoading(false) }
+    } finally { setLoading(false); setPrinting(false) }
   }
 
   if (unprinted) {
@@ -301,7 +312,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
             </div>
             <div className="em-modal-foot">
               <button type="button" className="em-btn em-btn-secondary"
-                onClick={() => { doPrint(unprinted.pass); finish(unprinted.pass) }}>
+                onClick={() => { printSlipInBrowser(unprinted.pass.slip); finish(unprinted.pass) }}>
                 Use Print Dialog
               </button>
               <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
@@ -326,6 +337,14 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
             <div className="em-field">
               <label className="em-label">License Plate</label>
               <input className="em-input" value={plate} readOnly />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Visitor's Name</label>
+              {/* Printed on the slip, and typed at the exit when the slip QR is
+                  not scanned. Upper-cased like every other stored name. */}
+              <input className="em-input" value={visitorName} required autoFocus
+                placeholder="e.g. JUAN DELA CRUZ" maxLength={150}
+                onChange={(e) => setVisitorName(e.target.value.toUpperCase())} />
             </div>
             <div className="em-field">
               <label className="em-label">Destination Office <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
@@ -353,7 +372,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
           <div className="em-modal-foot">
             <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
-              {loading ? <><div className="em-spinner" /> Creating…</> : 'Create & Print Slip'}
+              {loading ? <><div className="em-spinner" /> {printing ? 'Printing slip…' : 'Creating…'}</> : 'Create & Print Slip'}
             </button>
           </div>
         </form>
@@ -558,13 +577,25 @@ function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
     setLoading(true)
     try {
       const { data } = await recordUnrecognizedEntry({ ...form, gate_id: gateId })
-      await notify.success(
-        `Recorded as ${data.reference} — ${form.vehicle_color} ${form.vehicle_type} driven by ${form.driver_name}. ` +
-        'It is now counted as inside; log the exit from the Unrecognized Vehicles panel when it leaves.',
-        { title: 'Vehicle recorded' },
-      )
+      // The entry is recorded either way; the slip is what the driver hands
+      // back (or the guard scans) on the way out.
+      let printProblem = ''
+      try { await printSlip(data.slip) } catch (err) { printProblem = err.message }
       onRecorded(data)
       onClose()
+      if (printProblem) {
+        await notify.error(
+          `Recorded as ${data.reference}, but ${printProblem.replace(/^The slip/, 'the entry slip')} ` +
+          'Fix the printer, then use Slip → Reprint on it in the Unrecognized Vehicles panel.',
+          { title: 'Entry slip not printed' },
+        )
+      } else {
+        await notify.success(
+          `Recorded as ${data.reference} — ${form.vehicle_color} ${form.vehicle_type} driven by ${form.driver_name}. ` +
+          'Its entry slip is printing. Scan the slip, or type the driver\'s name, when it leaves.',
+          { title: 'Vehicle recorded' },
+        )
+      }
     } catch (err) {
       const body = err?.response?.data
       const msg = body && typeof body === 'object'
@@ -652,7 +683,128 @@ function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
 }
 
 
-function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, guardName, onDismiss, queued = 0 }) {
+// ─── SlipStatusModal ───────────────────────────────────────────────────────────
+// A visitor or no-plate slip pulled back up — by its QR, a typed plate, a
+// picked name, or the side panels. It only SHOWS where the vehicle stands
+// (still inside, time left, overstay, already out). Recording the exit and
+// reprinting a torn slip are separate buttons, so looking a slip up never
+// changes its status by accident.
+function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
+  const [slip, setSlip] = useState(initialSlip)
+  const [busy, setBusy] = useState('')   // 'exit' | 'reprint' | ''
+  // Read once when the slip opens — the dialog is a glance, not a live clock.
+  const [openedAt] = useState(() => Date.now())
+
+  // Same Escape handling as ResultModal: capture phase, one press closes only this.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      onClose?.()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  const inside   = slip.state === 'inside'
+  const isNoPlate = slip.kind === 'noplate'
+  const minsLeft = inside && slip.expires_at
+    ? Math.round((new Date(slip.expires_at).getTime() - openedAt) / 60000)
+    : null
+  const overdue  = minsLeft !== null && minsLeft < 0
+  const when = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+
+  const cls = !inside ? 'exited' : overdue ? 'denied' : 'authorized'
+  const statusLabel = inside
+    ? (isNoPlate ? 'No-Plate Vehicle — Still Inside' : 'Visitor — Still Inside')
+    : slip.state === 'exited' ? 'Already Exited' : `Pass ${slip.state}`
+  const timeLine = inside
+    ? [`Inside for ${slip.minutes_inside} min`,
+       minsLeft === null ? null : overdue ? `OVERSTAY by ${-minsLeft} min` : `${minsLeft} min left`]
+        .filter(Boolean).join(' · ')
+    : `Exited ${when(slip.exited_at)} after ${slip.minutes_inside} min` +
+      (slip.overstay_minutes ? ` · overstayed ${slip.overstay_minutes} min` : '')
+
+  const recordExit = async () => {
+    setBusy('exit')
+    try {
+      const { data } = await exitSlip(slip.code, gateId)
+      setSlip(data.slip)
+      onChanged?.()
+      toast.success(
+        `${data.slip.reference} — exit recorded after ${data.duration_minutes} min` +
+        (data.overstay_minutes ? `, overstayed ${data.overstay_minutes} min.` : '.'),
+      )
+    } catch (err) {
+      if (err?.response?.data?.slip) setSlip(err.response.data.slip)
+      toast.error(err?.response?.data?.error || 'Failed to record the exit.')
+    } finally { setBusy('') }
+  }
+
+  const reprint = async () => {
+    setBusy('reprint')
+    try {
+      const how = await printSlip(slip, { reprint: true })
+      if (how === 'printer') toast.success(`${slip.reference} — slip reprinted.`)
+    } catch (err) {
+      toast.error(err.message, { title: 'Slip not reprinted' })
+    } finally { setBusy('') }
+  }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose?.()}>
+      <div className={`em-card em-result em-result-dialog ${cls}`} role="dialog" aria-modal="true"
+        aria-label={`${statusLabel} — ${slip.headline}`}>
+        <div className={`em-result-banner ${cls}`} style={{ position: 'relative' }}>
+          <button type="button" className="em-modal-close" style={{ position: 'absolute', top: 8, right: 8 }}
+            onClick={() => onClose?.()} title="Close" aria-label="Close">
+            <X size={15} />
+          </button>
+          <div className="em-result-icon">
+            {inside ? (overdue ? <AlertTriangle size={20} /> : <Clock size={20} />) : <LogOut size={20} />}
+          </div>
+          <div className="em-result-text">
+            <p className="em-result-status">{statusLabel}</p>
+            <p className="em-result-plate">{slip.headline}</p>
+            <span className={`em-class-tag ${isNoPlate ? 'cls-unknown' : 'cls-visitor'}`}>
+              {isNoPlate ? 'No Plate' : 'Visitor'} · {slip.reference}
+            </span>
+          </div>
+        </div>
+        <div className="em-result-body">
+          <p className="em-result-msg">{timeLine}</p>
+          <div className="em-result-rows">
+            {slip.sections.flat().map(([label, value]) => (
+              <div className="em-result-row" key={label}>
+                <span className="em-result-row-label">{label}</span>
+                <span className="em-result-row-value">{value}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
+            {inside && (
+              <button className="em-btn" disabled={!!busy} onClick={recordExit}
+                style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}>
+                {busy === 'exit' ? <><div className="em-spinner" /> Recording…</> : <><LogOut size={14} /> Record Exit</>}
+              </button>
+            )}
+            <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
+              disabled={!!busy} onClick={reprint}>
+              {busy === 'reprint' ? <><div className="em-spinner" /> Printing…</> : <><Printer size={14} /> Reprint Slip</>}
+            </button>
+            <button className="em-btn em-btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 2 }}
+              onClick={() => onClose?.()} autoFocus>
+              <CheckCircle size={14} /> {inside ? 'Still Inside — Close' : 'Close'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDismiss, queued = 0 }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
   const [showDeny,     setShowDeny]     = useState(false)
@@ -826,14 +978,19 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, guard
         </div>
       </div>
 
+      {/* Issuing a pass or overriding settles this scan, so the result goes
+          with it — as Deny already does. Left open, "Create Visitor Pass" sat
+          under the success message and a second press issued a duplicate pass
+          and logged the visitor in twice. */}
       {showVisitor && (
         <VisitorPassModal plate={result.plate_number} offices={offices}
-          onClose={() => setShowVisitor(false)} onCreated={onPassCreated} guardName={guardName} />
+          onClose={() => setShowVisitor(false)}
+          onCreated={() => { onPassCreated?.(); onDismiss?.() }} />
       )}
       {showOverride && (
         <OverrideModal plate={result.plate_number}
           onClose={() => setShowOverride(false)}
-          onOverridden={() => onOverride?.()} />
+          onOverridden={() => { onOverride?.(); onDismiss?.() }} />
       )}
       {showDeny && (
         <DenyEntryModal plate={result.plate_number}
@@ -1041,40 +1198,21 @@ export default function SecurityEntryManagement() {
       .catch(err => toast.error(err?.response?.data?.error || 'Failed to extend pass.'))
   }
 
-  // Record a visitor exit from a slip QR (payload SLC-VISITOR:{id}) — shared by
-  // the lookup box (USB scanner-gun / typed) and the camera scanner. Drives the
-  // same on-screen "Exited" feedback as a plate-based exit (result card, green
-  // banner, and a Recent Scans entry).
-  const recordVisitorExit = async (qrData) => {
+  // Pull a slip back up from its QR payload (SLC-VISITOR:{id} / SLC-NOPLATE:{id})
+  // — shared by the lookup box (USB scanner-gun / typed), the camera scanner,
+  // a picked name and the side panels. It only opens the slip; the guard
+  // records the exit or reprints from there.
+  const openSlip = async (code) => {
     try {
-      const res = await visitorQrExit(qrData)
-      const d = res.data
-      const dur = d.duration_minutes
-
-      // Raises the same "Exited" dialog a plate exit does
-      addToQueue({
-        plate_number: d.plate_number,
-        status: 'exited',
-        message: dur != null
-          ? `Visitor exited — inside for ${dur} min${d.overstay_minutes > 0 ? `, overstayed ${d.overstay_minutes} min` : ''}.`
-          : 'Visitor exited.',
-      })
-      setLogs(prev => [{
-        id: Date.now() + Math.random(),
-        plate_number: d.plate_number,
-        status: 'exited',
-        scanned_at: new Date().toISOString(),
-        scanned_by_name: user?.full_name,
-        gate_id: user?.gate_assignment,
-      }, ...prev].slice(0, 20))
-
-      refreshAll()
+      const { data } = await lookupSlip(code)
+      addToQueue({ slip: data, plate_number: data.headline, status: 'slip' })
       return true
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Failed to record visitor exit.')
+      toast.error(err?.response?.data?.error || 'Could not find that slip.')
       return false
     }
   }
+  const isSlipCode = (s) => /^SLC-(VISITOR|NOPLATE):/i.test((s || '').trim())
 
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
@@ -1102,8 +1240,10 @@ export default function SecurityEntryManagement() {
       addToQueue(res.data)
       // The check action doubles as the exit action once a vehicle is inside
       if (res.data.status === 'exited') refreshAll()
-      // Previously-scanned re-checks are informational — card only, kept out of recent scans
-      if (res.data.status !== 'already_inside') {
+      // Previously-scanned re-checks are informational — card only, kept out of
+      // recent scans. So is a visitor's plate pulling up their slip: nothing
+      // was logged, the guard decides from the slip.
+      if (res.data.status !== 'already_inside' && !res.data.slip) {
         setLogs(prev => [{
           id: Date.now(), plate_number: plate, status: res.data.status,
           classification: resultClassification(res.data),
@@ -1130,7 +1270,7 @@ export default function SecurityEntryManagement() {
       const { data } = await lookupOwner(query)
       if (!data.results?.length) {
         await notify.error(
-          `No vehicle is registered under a name matching “${query}”. Check the spelling, ` +
+          `No vehicle, visitor or no-plate driver matches “${query}”. Check the spelling, ` +
           'or use “No Plate?” if the vehicle has no plate at all.',
           { title: 'No match found' },
         )
@@ -1143,8 +1283,13 @@ export default function SecurityEntryManagement() {
   }
 
   // A picked match runs the ordinary plate check, so every rule still applies.
+  // A visitor or no-plate driver inside on a slip opens that slip instead.
   const handlePickOwner = async (match) => {
     setOwnerMatches(null)
+    if (match.slip_code) {
+      await openSlip(match.slip_code)
+      return
+    }
     if (!match.identifier) {
       await notify.error(
         'That vehicle has no plate or conduction number on file, so there is nothing ' +
@@ -1179,14 +1324,14 @@ export default function SecurityEntryManagement() {
   }
 
   // Camera scanner read a QR. Route by payload type:
-  //  • SLC-VISITOR:{id}       → visitor slip exit
-  //  • VEHICLE:{plate}|ID:{n} → registered vehicle entry / exit (rules applied)
+  //  • SLC-VISITOR:{id} / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
+  //  • VEHICLE:{plate}|ID:{n}              → registered vehicle entry / exit (rules applied)
   const handleQrDetected = async (data) => {
     const upper = (data || '').trim().toUpperCase()
 
-    if (upper.startsWith('SLC-VISITOR:')) {
+    if (isSlipCode(upper)) {
       setExitScanBusy(true)
-      const ok = await recordVisitorExit(upper)
+      const ok = await openSlip(upper)
       setExitScanBusy(false)
       if (ok) setShowExitScanner(false)
       return
@@ -1216,11 +1361,12 @@ export default function SecurityEntryManagement() {
       return
     }
 
-    // Visitor slip QR scanned into the lookup box (USB scanner or typed):
-    // records the visitor's exit — visitor exits are QR-only, never by plate.
-    if (raw.startsWith('SLC-VISITOR:')) {
+    // Visitor / no-plate slip QR scanned into the lookup box (USB scanner or
+    // typed) opens the slip. A visitor's plate or name typed here gets to the
+    // same slip — via the plate check or the name picker.
+    if (isSlipCode(raw)) {
       setLoading(true)
-      await recordVisitorExit(raw)
+      await openSlip(raw)
       setPlateInput('')
       setLoading(false)
       return
@@ -1462,7 +1608,7 @@ export default function SecurityEntryManagement() {
               <p className="em-lookup-hint">
                 {isNameQuery
                   ? 'Searching by name — pick the vehicle from the results, then the usual entry check runs on it.'
-                  : 'Entry and exit are detected automatically — vehicles inside campus are logged out on re-check. Type a name instead to look an owner up.'}
+                  : 'Entry and exit are detected automatically — vehicles inside campus are logged out on re-check. Type a name instead to look an owner or visitor up.'}
               </p>
             </div>
           </section>
@@ -1593,6 +1739,13 @@ export default function SecurityEntryManagement() {
                         </div>
                         <button
                           className="em-btn em-btn-secondary em-unrec-exit"
+                          onClick={() => openSlip(`SLC-NOPLATE:${row.id}`)}
+                          title="Open its entry slip — reprint it, or record the exit"
+                        >
+                          <Ticket size={13} /> Slip
+                        </button>
+                        <button
+                          className="em-btn em-btn-secondary em-unrec-exit"
                           onClick={() => handleUnrecognizedExit(row)}
                           title="Record this vehicle's exit"
                         >
@@ -1622,6 +1775,7 @@ export default function SecurityEntryManagement() {
                         <div className="em-visitor-main">
                           <span className="em-visitor-plate">{p.plate_number}</span>
                           <span className="em-visitor-sub">
+                            {p.visitor_name ? `${p.visitor_name} · ` : ''}
                             {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
                           </span>
                         </div>
@@ -1636,6 +1790,15 @@ export default function SecurityEntryManagement() {
                           title="Extend by 30 minutes"
                         >
                           +30m
+                        </button>
+                        <button
+                          type="button"
+                          className="em-visitor-extend"
+                          onClick={() => openSlip(`SLC-VISITOR:${p.id}`)}
+                          title="Open the visitor slip — reprint it, or record the exit"
+                          aria-label={`Open the slip for ${p.plate_number}`}
+                        >
+                          <Ticket size={12} />
                         </button>
                       </div>
                     )
@@ -1652,7 +1815,18 @@ export default function SecurityEntryManagement() {
           </aside>
         </div>
 
-        {scanQueue[0] && (
+        {/* A result carrying a slip (slip QR, a visitor's plate typed or seen
+            by the camera, a picked visitor / no-plate name) shows the slip. */}
+        {scanQueue[0]?.result?.slip && (
+          <SlipStatusModal
+            key={scanQueue[0].id}
+            slip={scanQueue[0].result.slip}
+            gateId={gateId}
+            onChanged={refreshAll}
+            onClose={() => removeFromQueue(scanQueue[0].id)}
+          />
+        )}
+        {scanQueue[0] && !scanQueue[0].result?.slip && (
           <ResultModal
             key={scanQueue[0].id}
             result={scanQueue[0].result}
@@ -1660,7 +1834,6 @@ export default function SecurityEntryManagement() {
             onPassCreated={refreshAll}
             onOverride={refreshAll}
             onDeny={refreshAll}
-            guardName={user?.full_name}
             onDismiss={() => removeFromQueue(scanQueue[0].id)}
             queued={scanQueue.length - 1}
           />

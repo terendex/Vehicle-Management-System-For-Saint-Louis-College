@@ -1,4 +1,5 @@
-"""Direct printing of the visitor slip on the gate's thermal printer.
+"""Direct printing of gate slips — visitor passes and no-plate entries, see
+scanning/slips.py — on the gate's thermal printer.
 
 The slip used to go through the browser's print dialog, which made every gate
 PC depend on three Windows settings nobody would remember to repeat: a custom
@@ -23,7 +24,6 @@ import sys
 import time
 
 from django.conf import settings
-from django.utils import timezone
 
 # JP-58H / POS58: 58mm roll, 48mm printable at 203dpi = 384 dots = 48 bytes a row.
 DOTS_WIDE = 384
@@ -115,16 +115,10 @@ def _wrap(draw, text, font, width):
     return lines
 
 
-def _fmt(dt):
-    if not dt:
-        return '—'
-    dt = timezone.localtime(dt)
-    return f"{dt.strftime('%b')} {dt.day}, {dt.strftime('%I').lstrip('0')}:{dt.strftime('%M %p')}"
-
-
-def render_slip(pass_):
-    """The slip as a 1-bit PIL image, DOTS_WIDE wide. Mirrors the browser slip
-    in SecurityEntryManagement.jsx so a guard sees the same thing either way."""
+def render_slip(slip, reprint=False):
+    """A slip (scanning.slips.slip_data) as a 1-bit PIL image, DOTS_WIDE wide.
+    Mirrors the browser slip in SecurityEntryManagement.jsx so a guard sees
+    the same thing either way."""
     import qrcode
     from PIL import Image, ImageDraw, ImageOps
 
@@ -177,11 +171,14 @@ def render_slip(pass_):
     small = _font(8.5)
     centered('Campus Development and Sustainability Office', small, 4)
     centered('Smart Parking and Vehicle Verification System', small, 6)
-    centered('--- VISITOR SLIP ---', _font(10, bold=True), 8)
+    centered(f"--- {slip['title']} ---", _font(10, bold=True), 2 if reprint else 8)
+    if reprint:
+        # So a replacement for a torn slip is never mistaken for a second pass.
+        centered('** REPRINT **', _font(9, bold=True), 8)
 
-    # Plate, boxed.
+    # Plate (or NP- reference), boxed.
     plate_font = _font(18, bold=True)
-    plate = pass_.plate_number
+    plate = slip['headline']
     track = 4                                          # the browser slip's letter-spacing
     while plate_font.size > 20 and (draw.textlength(plate, font=plate_font)
                                     + track * (len(plate) - 1)) > inner - 16:
@@ -195,19 +192,15 @@ def render_slip(pass_):
     y += box_h + 6
 
     body = _font(10)
-    rule()
-    row('Office:', pass_.office.name if pass_.office else 'N/A', body)
-    row('Purpose:', pass_.purpose or 'N/A', body)
-    row('Duration:', f'{pass_.allowed_duration} min', body)
-    rule()
-    row('Issued:', _fmt(pass_.entered_at), body)
-    row('Expires:', _fmt(pass_.expires_at), body)
-    row('Guard:', pass_.issued_by.full_name if pass_.issued_by else 'N/A', body)
+    for section in slip['sections']:
+        rule()
+        for label, value in section:
+            row(f'{label}:', str(value), body)
     rule()
 
     # QR, 32mm square, drawn module by module so every module is whole dots.
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
-    qr.add_data(pass_.qr_payload)
+    qr.add_data(slip['code'])
     qr.make(fit=True)
     matrix = qr.get_matrix()
     module = max(1, round(32 * 203 / 25.4) // len(matrix))
@@ -320,12 +313,13 @@ def send_raw(printer_name, payload, doc_name='Visitor Slip', wait_seconds=6.0):
         winspool.ClosePrinter(handle)
 
 
-def print_visitor_slip(pass_):
-    """Print the slip. Returns the printer name, or None when this server has
-    no thermal printer (the caller falls back to the browser). Raises
-    SlipPrinterError when a printer exists but the slip did not print."""
+def print_slip(slip, reprint=False):
+    """Print a slip (scanning.slips.slip_data). Returns the printer name, or
+    None when this server has no thermal printer (the caller falls back to the
+    browser). Raises SlipPrinterError when a printer exists but nothing printed."""
     printer = find_printer()
     if not printer:
         return None
-    send_raw(printer, to_escpos(render_slip(pass_)), doc_name=f'Visitor Slip {pass_.plate_number}')
+    send_raw(printer, to_escpos(render_slip(slip, reprint=reprint)),
+             doc_name=f"{slip['title'].title()} {slip['headline']}")
     return printer

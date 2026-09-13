@@ -689,14 +689,17 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             }
 
         if inside_status == 'inside':
-            # Visitor vehicles exit by scanning the printed slip QR, never by plate.
+            # The camera never logs a visitor out on its own. It hands the guard
+            # the slip, and the guard records the exit (or reprints) from it.
             from .views import _active_visitor_pass
-            if _active_visitor_pass(plate_number):
+            from .slips import visitor_slip
+            visitor_pass = _active_visitor_pass(plate_number)
+            if visitor_pass:
                 return {
                     "status":         "visitor_pass_required",
                     "allowed":        False,
-                    "message":        "Visitor is inside on an active pass. Scan the QR on the "
-                                      "printed visitor slip to record the exit.",
+                    "message":        "Visitor is inside on an active pass.",
+                    "slip":           visitor_slip(visitor_pass),
                     "vehicle":        VehicleSerializer(vehicle).data,
                     "has_violations": False,
                     "already_inside": True,

@@ -53,10 +53,20 @@ export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
 export const extendVisitorPass = (id, extra_minutes) =>
   api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
 
-// Print the visitor slip on the campus server's thermal printer — no dialog.
+// Gate slips — visitor passes (SLC-VISITOR:{id}) and no-plate entries
+// (SLC-NOPLATE:{id}). Looking one up changes nothing; exit and reprint are
+// separate, deliberate calls.
+export const lookupSlip = (code) => api.get('/scan/slip/', { params: { code } })
+
+// Print on the campus server's thermal printer — no dialog.
 // 503 = this server has no printer (use the browser dialog); 502 = it did not print.
-export const printVisitorSlipOnServer = (id) =>
-  api.post(`/scan/visitor-pass/${id}/print/`)
+export const printSlipOnServer = (code, reprint = false) =>
+  api.post('/scan/slip/print/', { code, reprint })
+
+// A reprint done through the browser dialog, so it is audited like a server one.
+export const confirmSlipReprinted = (code) => api.post('/scan/slip/reprinted/', { code })
+
+export const exitSlip = (code, gate_id) => api.post('/scan/slip/exit/', { code, gate_id })
 
 // Confirm the visitor slip was printed — this is what logs the visitor's entry
 export const confirmVisitorSlipPrinted = (id, gate_id) =>

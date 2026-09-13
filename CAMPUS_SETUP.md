@@ -187,6 +187,15 @@ with *The system cannot find the file specified* and nothing prints.
 Re-plugging into another socket can move it again, which is why it is checked
 every start rather than once.
 
+Two kinds of slip print: a **visitor slip** (with the visitor's name) when a
+pass is issued, and a **no-plate entry slip** (NP- reference) when a vehicle
+is recorded with *No Plate?*. Scanning either QR, typing a visitor's plate, or
+typing a visitor's / no-plate driver's name opens the slip and shows whether
+the vehicle is **still inside** — it records nothing by itself. From there the
+guard presses **Record Exit**, or **Reprint Slip** if the paper got torn
+(printed as *REPRINT* and written to the audit log). The camera never logs a
+visitor out on its own either; it opens the same slip.
+
 If a slip does not print (printer off, out of paper, lid open), the pass is
 still created and the guard gets **Retry Print** — the visitor's entry is only
 logged once the slip is out. Where there is no printer at all (the Railway

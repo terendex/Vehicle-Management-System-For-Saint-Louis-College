@@ -480,6 +480,107 @@ class VisitorPassAPITests(TestCase):
         self.assertFalse(result['allowed'])
         self.assertEqual(result['status'], 'unknown')
 
+    def test_visitor_name_is_stored_upper_cased(self):
+        resp = self.client.post(
+            '/api/scan/visitor-pass/',
+            {'plate_number': 'VIS011', 'visitor_name': '  juan   dela cruz ', 'purpose': 'Visit'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['visitor_name'], 'JUAN DELA CRUZ')
+
+    def _visitor_inside(self, plate, name='MARIA SANTOS'):
+        """A printed pass — the visitor's entry is logged and they are inside.
+        Not backdated: a backdated entry falls into yesterday just after
+        midnight and stops counting as inside."""
+        from scanning.models import VisitorPass
+        resp = self.client.post(
+            '/api/scan/visitor-pass/',
+            {'plate_number': plate, 'visitor_name': name, 'purpose': 'Visit'},
+            format='json',
+        )
+        self.client.post(f"/api/scan/visitor-pass/{resp.data['id']}/printed/")
+        return VisitorPass.objects.get(pk=resp.data['id'])
+
+    def test_typed_plate_shows_slip_without_logging_exit(self):
+        """Checking a visitor's plate pulls up their slip; it must not log them
+        out — the guard records the exit from the slip on purpose."""
+        pass_ = self._visitor_inside('VIS012')
+        resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'VIS012'}, format='json')
+        self.assertEqual(resp.data['status'], 'visitor_pass_required')
+        self.assertEqual(resp.data['slip']['code'], f'SLC-VISITOR:{pass_.pk}')
+        self.assertEqual(resp.data['slip']['state'], 'inside')
+        self.assertEqual(resp.data['slip']['name'], 'MARIA SANTOS')
+        pass_.refresh_from_db()
+        self.assertEqual(pass_.status, 'active')
+        self.assertFalse(AccessLog.objects.filter(plate_number='VIS012', status='exited').exists())
+
+    def test_slip_lookup_then_exit(self):
+        pass_ = self._visitor_inside('VIS015')
+        code = f'SLC-VISITOR:{pass_.pk}'
+        looked = self.client.get('/api/scan/slip/', {'code': code})
+        self.assertEqual(looked.status_code, 200)
+        self.assertEqual(looked.data['state'], 'inside')
+        pass_.refresh_from_db()
+        self.assertEqual(pass_.status, 'active')            # looking changes nothing
+
+        exited = self.client.post('/api/scan/slip/exit/', {'code': code}, format='json')
+        self.assertEqual(exited.status_code, 200)
+        self.assertEqual(exited.data['slip']['state'], 'exited')
+        again = self.client.post('/api/scan/slip/exit/', {'code': code}, format='json')
+        self.assertEqual(again.status_code, 409)
+
+    def test_noplate_entry_returns_slip_and_exits_by_it(self):
+        resp = self.client.post('/api/scan/unrecognized/', {
+            'driver_name': 'ANA LIM', 'entrant_category': 'visitor',
+            'vehicle_type': 'car', 'vehicle_color': 'Red',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        slip = resp.data['slip']
+        self.assertEqual(slip['kind'], 'noplate')
+        self.assertEqual(slip['headline'], f"NP-{resp.data['id']}")
+
+        found = self.client.get('/api/scan/owner-lookup/', {'q': 'ana lim'})
+        self.assertIn(slip['code'], [r.get('slip_code') for r in found.data['results']])
+
+        exited = self.client.post('/api/scan/slip/exit/', {'code': slip['code']}, format='json')
+        self.assertEqual(exited.status_code, 200)
+        self.assertEqual(exited.data['slip']['state'], 'exited')
+
+    def test_slip_print_without_printer_is_503_and_reprint_is_audited(self):
+        from accounts.models import AuditLog
+        pass_ = self._visitor_inside('VIS016')
+        code = f'SLC-VISITOR:{pass_.pk}'
+        with patch('scanning.slip_printer.find_printer', return_value=None):
+            resp = self.client.post('/api/scan/slip/print/', {'code': code}, format='json')
+        self.assertEqual(resp.status_code, 503)
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw') as send:
+            resp = self.client.post('/api/scan/slip/print/', {'code': code, 'reprint': True}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        send.assert_called_once()
+        self.assertTrue(AuditLog.objects.filter(details__contains=f'Slip reprinted | Ref: VP-{pass_.pk}').exists())
+
+    def test_bad_slip_code_is_400(self):
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': 'VEHICLE:ABC123'}).status_code, 400)
+
+    def test_record_exit_endpoint_accepts_visitor_plate(self):
+        pass_ = self._visitor_inside('VIS013')
+        resp = self.client.post('/api/scan/exit/', {'plate_number': 'VIS013'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        pass_.refresh_from_db()
+        self.assertEqual(pass_.status, 'exited')
+
+    def test_owner_lookup_finds_active_visitor_by_name(self):
+        self._visitor_inside('VIS014', name='PEDRO REYES')
+        resp = self.client.get('/api/scan/owner-lookup/', {'q': 'pedro'})
+        self.assertEqual(resp.status_code, 200)
+        first = resp.data['results'][0]
+        self.assertEqual(first['identifier'], 'VIS014')
+        self.assertEqual(first['owner_name'], 'PEDRO REYES')
+        self.assertEqual(first['classification'], 'visitor')
+        self.assertTrue(first['is_inside'])
+
     def test_unknown_visitor_result_never_issues_violation(self):
         """An ownerless vehicle scanned without a pass must not be auto-fined."""
         vehicle = Vehicle.objects.create(

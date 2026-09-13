@@ -331,8 +331,9 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
 
 
 def _active_visitor_pass(plate_number: str):
-    """Today's ACTIVE visitor pass for this plate, or None. Vehicles on an
-    active pass must exit via the slip-QR scan, not by plate."""
+    """Today's ACTIVE visitor pass for this plate, or None. A plate check on one
+    never logs the visitor out: it returns the slip, and the guard records the
+    exit from it (SlipExitView) — whether they scanned the QR or typed it."""
     return VisitorPass.objects.filter(
         plate_number=plate_number,
         valid_date=timezone.localdate(),
@@ -818,10 +819,14 @@ class VisitorPassView(APIView):
         except (TypeError, ValueError):
             allowed_duration = 60
 
+        # Upper-cased like every other name the system stores.
+        visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
+
         now = timezone.now()
         pass_ = VisitorPass.objects.create(
             vehicle=vehicle,
             plate_number=plate_number,
+            visitor_name=visitor_name,
             office=office,
             purpose=request.data.get('purpose', ''),
             issued_by=request.user,
@@ -842,12 +847,15 @@ class VisitorPassView(APIView):
         _audit(
             request,
             AuditLog.Action.VISITOR_ISSUED,
-            f"Visitor pass issued | Plate: {plate_number} | "
+            f"Visitor pass issued | Plate: {plate_number} | Visitor: {visitor_name or 'N/A'} | "
             f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
             f"Duration: {allowed_duration} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
-        return Response(VisitorPassSerializer(pass_).data, status=201)
+        from .slips import visitor_slip
+        data = VisitorPassSerializer(pass_).data
+        data['slip'] = visitor_slip(pass_)   # printed by the guard page straight away
+        return Response(data, status=201)
 
     def get(self, request):
         """List today's visitor passes."""
@@ -857,24 +865,111 @@ class VisitorPassView(APIView):
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
-class VisitorPassPrintView(APIView):
-    """Print the visitor slip straight to this server's thermal printer — no
-    browser dialog. 503 means this server has no printer (the cloud deployment,
-    or a campus PC without one), and the frontend falls back to the browser
-    print dialog. Printing does not log the entry; VisitorPassPrintedView does."""
+def _slip_from_request(request):
+    """(model row, None) for the slip named by `code` in the query or body, or
+    (None, error Response)."""
+    from . import slips
+    code = request.query_params.get('code') or request.data.get('code')
+    parsed = slips.parse_code(code)
+    if not parsed:
+        return None, Response({'error': 'Not a slip QR. Scan a visitor or no-plate slip.'}, status=400)
+    obj = slips.find(*parsed)
+    if not obj:
+        return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
+    return obj, None
+
+
+class SlipView(APIView):
+    """GET /scan/slip/?code=SLC-VISITOR:12 — what a slip says and whether its
+    vehicle is still inside. Looking a slip up changes nothing: the guard
+    chooses to record the exit or reprint from what comes back."""
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request, pk):
-        from .slip_printer import SlipPrinterError, print_visitor_slip
+    def get(self, request):
+        from .slips import slip_data
+        obj, error = _slip_from_request(request)
+        return error or Response(slip_data(obj))
 
-        pass_ = get_object_or_404(VisitorPass.objects.select_related('office', 'issued_by'), pk=pk)
+
+class SlipPrintView(APIView):
+    """POST /scan/slip/print/ {code, reprint} — print a slip straight to this
+    server's thermal printer, no browser dialog. 503 means this server has no
+    printer (the cloud site) and the frontend falls back to the browser print
+    dialog; 502 means the printer is there but nothing came out. Printing logs
+    nothing about the entry — a reprint is audited so torn-slip replacements
+    are traceable."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .slip_printer import SlipPrinterError, print_slip
+        from .slips import slip_data
+
+        obj, error = _slip_from_request(request)
+        if error:
+            return error
+        slip = slip_data(obj)
+        reprint = str(request.data.get('reprint', '')).lower() in ('1', 'true', 'yes')
         try:
-            printer = print_visitor_slip(pass_)
+            printer = print_slip(slip, reprint=reprint)
         except SlipPrinterError as exc:
             return Response({'printed': False, 'error': f'The slip did not print: {exc}.'}, status=502)
         if not printer:
-            return Response({'printed': False, 'reason': 'no_printer'}, status=503)
-        return Response({'printed': True, 'printer': printer})
+            return Response({'printed': False, 'reason': 'no_printer', 'slip': slip}, status=503)
+        if reprint:
+            _audit_slip_reprint(request, slip)
+        return Response({'printed': True, 'printer': printer, 'slip': slip})
+
+
+class SlipReprintedView(APIView):
+    """POST /scan/slip/reprinted/ {code} — the browser print dialog was used
+    for a reprint (no server printer), so audit it the same way."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .slips import slip_data
+        obj, error = _slip_from_request(request)
+        if error:
+            return error
+        _audit_slip_reprint(request, slip_data(obj))
+        return Response({'ok': True})
+
+
+def _audit_slip_reprint(request, slip):
+    _audit(
+        request,
+        AuditLog.Action.RECORD_UPDATED,
+        f"Slip reprinted | Ref: {slip['reference']} | "
+        + (f"Plate: {slip['plate_number']} | " if slip['plate_number'] else "")
+        + f"Name: {slip['name'] or 'N/A'} | Guard: {request.user.full_name}",
+    )
+
+
+class SlipExitView(APIView):
+    """POST /scan/slip/exit/ {code, gate_id} — record the exit of the vehicle a
+    slip belongs to. Deliberately separate from looking the slip up."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .slips import slip_data
+
+        obj, error = _slip_from_request(request)
+        if error:
+            return error
+        gate_id = (request.data.get('gate_id')
+                   or getattr(request.user, 'gate_assignment', None)
+                   or 'main')
+        if isinstance(obj, VisitorPass):
+            if obj.status != VisitorPass.Status.ACTIVE:
+                return Response({'error': f'This visitor is already marked as {obj.status}.',
+                                 'slip': slip_data(obj)}, status=409)
+            duration, overstay = _record_visitor_exit(request, obj, gate_id)
+        else:
+            if AccessLog.objects.filter(paired_entry=obj).exists():
+                return Response({'error': 'This vehicle has already been logged out.',
+                                 'slip': slip_data(obj)}, status=409)
+            duration, overstay = _record_noplate_exit(request, obj, gate_id)[0], 0
+        obj.refresh_from_db()
+        return Response({'slip': slip_data(obj), 'duration_minutes': duration, 'overstay_minutes': overstay})
 
 
 class VisitorPassPrintedView(APIView):
@@ -911,7 +1006,7 @@ class VisitorPassPrintedView(APIView):
 
 
 def _record_visitor_exit(request, pass_, gate_id):
-    """Shared exit logic for slip-QR scans. Marks the pass exited, logs the
+    """Shared exit logic for slip exits (QR scan or looked-up slip). Marks the pass exited, logs the
     exit AccessLog, and issues an overstay violation when applicable."""
     now = timezone.now()
     pass_.status    = VisitorPass.Status.EXITED
@@ -943,12 +1038,27 @@ def _record_visitor_exit(request, pass_, gate_id):
     _audit(
         request,
         AuditLog.Action.VISITOR_EXITED,
-        f"Visitor exited (slip QR) | Plate: {pass_.plate_number} | "
+        f"Visitor exited (slip) | Plate: {pass_.plate_number} | "
+        f"Visitor: {pass_.visitor_name or 'N/A'} | "
         f"Duration: {duration_minutes} min | "
         + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
         + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
     )
     return duration_minutes, overstay_minutes
+
+
+def _audit_typed_visitor_exit(request, pass_, gate_id, duration_minutes, overstay_minutes):
+    """Audit line for a visitor let out through Record Exit by plate rather
+    than from their slip — worded apart so the trail shows which."""
+    _audit(
+        request,
+        AuditLog.Action.VISITOR_EXITED,
+        f"Visitor exited (record exit by plate) | Plate: {pass_.plate_number} | "
+        f"Visitor: {pass_.visitor_name or 'N/A'} | "
+        + (f"Duration: {duration_minutes} min | " if duration_minutes is not None else "")
+        + (f"OVERSTAYED by {overstay_minutes} min | " if overstay_minutes else "")
+        + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
+    )
 
 
 class ExitScanView(APIView):
@@ -1503,13 +1613,10 @@ class ExitLogView(APIView):
         if not is_valid_ph_plate(plate_number):
             return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
 
-        # Visitor vehicles exit by scanning the printed slip QR, never by plate.
-        if _active_visitor_pass(plate_number):
-            return Response({
-                'error': 'This vehicle is on an active visitor pass. '
-                         'Scan the QR on the printed visitor slip to record the exit.',
-                'visitor_pass_required': True,
-            }, status=409)
+        # An explicit "record exit" — so a visitor on an active pass exits here
+        # too, and _close_active_pass below closes the pass. (A plain plate
+        # CHECK never does; it shows the slip instead.)
+        visitor_pass = _active_visitor_pass(plate_number)
 
         vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
 
@@ -1531,6 +1638,9 @@ class ExitLogView(APIView):
             delta            = exit_log.scanned_at - exit_log.paired_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
             entry_scanned_at = exit_log.paired_entry.scanned_at
+
+        if visitor_pass:
+            _audit_typed_visitor_exit(request, visitor_pass, gate_id, duration_minutes, overstay_minutes)
 
         # Stay-limit enforcement (fetcher / supplier rules)
         if duration_minutes is not None:
@@ -1892,6 +2002,26 @@ class ManualEntryView(APIView):
 
         inside_status, last_entry = _inside_state(plate_number)
 
+        # A visitor inside on an active pass is NOT logged out by a re-check.
+        # The typed plate pulls up their slip — still inside, time left — and
+        # the guard records the exit (or reprints) from there, so the slip's
+        # status only ever changes on purpose. Ahead of the duplicate check:
+        # looking a slip up is harmless however soon after entry it happens.
+        if inside_status in ('inside', 'duplicate'):
+            visitor_pass = _active_visitor_pass(plate_number)
+            if visitor_pass:
+                from .slips import visitor_slip
+                return Response({
+                    'plate_number':   plate_number,
+                    'status':         'visitor_pass_required',
+                    'allowed':        False,
+                    'message':        'Visitor is inside on an active pass.',
+                    'vehicle':        VehicleSerializer(vehicle).data,
+                    'already_inside': True,
+                    'gate_id':        gate_id,
+                    'slip':           visitor_slip(visitor_pass),
+                })
+
         if inside_status == 'duplicate':
             return Response({
                 'plate_number':   plate_number,
@@ -1908,18 +2038,6 @@ class ManualEntryView(APIView):
             # breathing window a re-check is informational; past it, it records the exit
             seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
-            # Visitor vehicles exit by scanning the printed slip QR, never by plate.
-            if _active_visitor_pass(plate_number):
-                return Response({
-                    'plate_number':   plate_number,
-                    'status':         'visitor_pass_required',
-                    'allowed':        False,
-                    'message':        'Visitor is inside on an active pass. Scan the QR on the '
-                                      'printed visitor slip to record the exit.',
-                    'vehicle':        VehicleSerializer(vehicle).data,
-                    'already_inside': True,
-                    'gate_id':        gate_id,
-                })
             if seconds_inside < ENTRY_BREATHING_SECONDS:
                 window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
                 return Response({
@@ -2063,9 +2181,71 @@ class OwnerLookupView(APIView):
         truncated = len(matches) > self.MAX_RESULTS
         matches = matches[:self.MAX_RESULTS]
 
-        inside = _plates_inside([v.identifier for v in matches])
+        # Today's visitors on an active pass, by the name on their slip. A
+        # visitor's car is usually an unregistered plate with no owner account,
+        # so the vehicle search above cannot find them by name. Listed first:
+        # at the barrier an active visitor is by far the likelier match.
+        visitor_passes = list(
+            VisitorPass.objects
+            .select_related('vehicle')
+            .filter(valid_date=timezone.localdate(), status=VisitorPass.Status.ACTIVE)
+            .filter(Q(visitor_name__icontains=query) | Q(plate_number__icontains=identifier))
+            .order_by('-entered_at')[:self.MAX_RESULTS]
+        )
+        visitor_vehicle_ids = {p.vehicle_id for p in visitor_passes}
+        matches = [v for v in matches if v.pk not in visitor_vehicle_ids]
+
+        inside = _plates_inside([v.identifier for v in matches] + [p.plate_number for p in visitor_passes])
 
         results = []
+        for p in visitor_passes:
+            v = p.vehicle
+            results.append({
+                'vehicle_id':        v.pk,
+                'identifier':        p.plate_number,
+                'plate_number':      p.plate_number,
+                'conduction_number': v.conduction_number,
+                'vehicle_type':      v.vehicle_type,
+                'model':             v.model,
+                'color':             v.color,
+                'is_authorized':     v.is_authorized,
+                'owner_name':        p.visitor_name or 'Visitor (no name on pass)',
+                'owner_type':        'visitor',
+                'classification':    'visitor',
+                'is_inside':         p.plate_number in inside,
+                # Picking this opens the slip (inside? record exit? reprint?)
+                # rather than running a plate check.
+                'slip_code':         f'SLC-VISITOR:{p.pk}',
+            })
+
+        # No-plate vehicles still inside today, by the driver's name. They
+        # have no plate to search by, so the name is the only way to them.
+        start, end = day_range(timezone.localdate())
+        noplate = (
+            AccessLog.objects
+            .filter(is_unrecognized=True, status=AccessLog.Status.AUTHORIZED,
+                    driver_name__icontains=query, scanned_at__gte=start, scanned_at__lt=end)
+            .exclude(pk__in=AccessLog.objects.filter(
+                paired_entry__isnull=False, scanned_at__gte=start, scanned_at__lt=end,
+            ).values_list('paired_entry_id', flat=True))
+            .order_by('-scanned_at')[:self.MAX_RESULTS]
+        )
+        for log in noplate:
+            results.append({
+                'vehicle_id':        f'np-{log.pk}',
+                'identifier':        '',
+                'plate_number':      '',
+                'conduction_number': '',
+                'vehicle_type':      log.vehicle_type,
+                'model':             log.vehicle_model,
+                'color':             log.vehicle_color,
+                'is_authorized':     False,
+                'owner_name':        f'{log.driver_name} · NP-{log.pk}',
+                'owner_type':        '',
+                'classification':    log.entrant_category or 'unknown',
+                'is_inside':         True,
+                'slip_code':         f'SLC-NOPLATE:{log.pk}',
+            })
         for v in matches:
             owner = v.user
             plate = v.identifier
@@ -2084,6 +2264,8 @@ class OwnerLookupView(APIView):
                 'is_inside':         plate in inside,
             })
 
+        truncated = truncated or len(results) > self.MAX_RESULTS
+        results = results[:self.MAX_RESULTS]
         return Response({
             'query':     query,
             'count':     len(results),
@@ -2196,7 +2378,38 @@ class UnrecognizedEntryView(APIView):
                 _gate_label(gate_id), request.user.full_name,
             ),
         )
-        return Response(self._serialize(log), status=201)
+        from .slips import noplate_slip
+        data = self._serialize(log)
+        data['slip'] = noplate_slip(log)   # printed by the guard page straight away
+        return Response(data, status=201)
+
+
+def _record_noplate_exit(request, entry, gate_id):
+    """Log the exit of a hand-recorded, plateless vehicle. Returns
+    (minutes inside, the exit AccessLog)."""
+    exit_log = AccessLog.objects.create(
+        plate_number     = '',
+        vehicle_type     = entry.vehicle_type,
+        status           = AccessLog.Status.EXITED,
+        entrant_category = entry.entrant_category,
+        is_unrecognized  = True,
+        driver_name      = entry.driver_name,
+        vehicle_color    = entry.vehicle_color,
+        vehicle_model    = entry.vehicle_model,
+        gate_id          = gate_id,
+        scanned_by       = request.user,
+        paired_entry     = entry,
+    )
+    duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
+    _audit(
+        request, AuditLog.Action.RECORD_UPDATED,
+        'Unrecognized vehicle exited | Ref: NP-%d | Driver: %s | Duration: %d min | '
+        'Gate: %s | Guard: %s' % (
+            entry.pk, entry.driver_name, duration,
+            _gate_label(gate_id), request.user.full_name,
+        ),
+    )
+    return duration, exit_log
 
 
 class UnrecognizedExitView(APIView):
@@ -2215,28 +2428,7 @@ class UnrecognizedExitView(APIView):
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or entry.gate_id or 'main')
-        exit_log = AccessLog.objects.create(
-            plate_number     = '',
-            vehicle_type     = entry.vehicle_type,
-            status           = AccessLog.Status.EXITED,
-            entrant_category = entry.entrant_category,
-            is_unrecognized  = True,
-            driver_name      = entry.driver_name,
-            vehicle_color    = entry.vehicle_color,
-            vehicle_model    = entry.vehicle_model,
-            gate_id          = gate_id,
-            scanned_by       = request.user,
-            paired_entry     = entry,
-        )
-        duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
-        _audit(
-            request, AuditLog.Action.RECORD_UPDATED,
-            'Unrecognized vehicle exited | Ref: NP-%d | Driver: %s | Duration: %d min | '
-            'Gate: %s | Guard: %s' % (
-                entry.pk, entry.driver_name, duration,
-                _gate_label(gate_id), request.user.full_name,
-            ),
-        )
+        duration, exit_log = _record_noplate_exit(request, entry, gate_id)
         return Response({
             'reference':        'NP-%d' % entry.pk,
             'status':           'exited',
