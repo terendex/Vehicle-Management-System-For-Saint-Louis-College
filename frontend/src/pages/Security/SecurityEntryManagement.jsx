@@ -146,16 +146,18 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>Visitor Slip</title>
 <style>
-  /* JP-58H thermal printer: 58mm roll, 48mm (384-dot) printable width. The
-     page height is set to the slip's measured length just before printing,
-     so the printer feeds one slip instead of a Letter-length page. */
-  @page { size: 58mm 200mm; margin: 0; }
+  /* JP-58H thermal printer. Its POS58 driver's paper is 48mm wide (the
+     printable width of the 58mm roll) and its shortest length is 210mm —
+     "Printer 58 (48mmx210mm)". The page matches that exactly: any other size
+     gets shrunk to 48mm and centred on the driver's page, which prints tiny
+     text behind a long run of blank paper. */
+  @page { size: 48mm 210mm; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
   /* Thermal heads cannot print grey — every tint dithers into specks — so
      the slip is pure black on white. */
   body { font-family: 'Courier New', monospace; font-size: 10px; line-height: 1.25; color: #000;
-         width: 48mm; margin: 0 auto; padding: 2mm 1mm 4mm; word-wrap: break-word; overflow-wrap: anywhere; }
+         width: 48mm; margin: 0; padding: 1mm 1.5mm 4mm; word-wrap: break-word; overflow-wrap: anywhere; }
   h2 { text-align: center; font-size: 12px; margin: 3px 0 1px; }
   .sub { text-align: center; font-size: 8.5px; margin-bottom: 3px; }
   .sub.title { font-size: 10px; font-weight: bold; margin: 4px 0 2px; }
@@ -167,9 +169,9 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   .qr { text-align: center; margin: 6px 0 4px; }
   .qr svg { width: 32mm; height: 32mm; }
   .footer { text-align: center; font-size: 8px; margin-top: 6px; }
-  .warn { text-align: center; font-size: 9px; font-weight: bold; margin: 4px 0; }
+  .warn { text-align: center; font-size: 8.5px; font-weight: bold; margin: 4px 0; }
   /* Both seals head the slip, as they head every screen. Kept small for the
-     58mm roll, where anything larger prints as a black smudge. */
+     thermal roll, where anything larger prints as a black smudge. */
   .seals { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 0 0 3px; }
   .seals img { width: 9mm; height: 9mm; object-fit: contain; }
 </style></head><body>
@@ -197,15 +199,7 @@ ${qrSvg ? `<div class="qr">${qrSvg}</div>
 <div class="footer">Unauthorized possession is subject to penalty.</div>
 </body></html>`)
   w.document.close(); w.focus()
-  setTimeout(() => {
-    // Size the page to the slip itself (CSS px → mm, plus a little tail for
-    // the tear bar) so the roll isn't fed a blank Letter-length page.
-    const heightMm = Math.ceil((w.document.body.scrollHeight * 25.4) / 96) + 6
-    const pageStyle = w.document.createElement('style')
-    pageStyle.textContent = `@page { size: 58mm ${heightMm}mm; margin: 0; }`
-    w.document.head.appendChild(pageStyle)
-    w.print(); w.close()
-  }, 400)
+  setTimeout(() => { w.print(); w.close() }, 400)
 }
 
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
