@@ -147,17 +147,19 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
 <meta charset="utf-8"/><title>Visitor Slip</title>
 <style>
   /* JP-58H thermal printer. Its POS58 driver's paper is 48mm wide (the
-     printable width of the 58mm roll) and its shortest length is 210mm —
-     "Printer 58 (48mmx210mm)". The page matches that exactly: any other size
-     gets shrunk to 48mm and centred on the driver's page, which prints tiny
-     text behind a long run of blank paper. */
-  @page { size: 48mm 210mm; margin: 0; }
+     printable width of the 58mm roll), and its shortest built-in length is
+     210mm — ~90mm of blank tail under this slip. The page is instead a custom
+     "Visitor Slip 48x130mm" form added to the guard PC (the driver accepts
+     custom sizes); the slip runs ~121mm, leaving room for a wrapped line or
+     two. A size the driver does not list gets shrunk and centred on its page,
+     so this must match that form exactly. */
+  @page { size: 48mm 130mm; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
   /* Thermal heads cannot print grey — every tint dithers into specks — so
      the slip is pure black on white. */
   body { font-family: 'Courier New', monospace; font-size: 10px; line-height: 1.25; color: #000;
-         width: 48mm; margin: 0; padding: 1mm 1.5mm 4mm; word-wrap: break-word; overflow-wrap: anywhere; }
+         width: 48mm; margin: 0; padding: 1mm 1.5mm 2mm; word-wrap: break-word; overflow-wrap: anywhere; }
   h2 { text-align: center; font-size: 12px; margin: 3px 0 1px; }
   .sub { text-align: center; font-size: 8.5px; margin-bottom: 3px; }
   .sub.title { font-size: 10px; font-weight: bold; margin: 4px 0 2px; }
