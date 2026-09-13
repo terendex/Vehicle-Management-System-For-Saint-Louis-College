@@ -1,0 +1,669 @@
+/* ================================================================
+   CAMERA MONITOR — the one way a live feed is framed
+   Shared by the guard Entry screen, the guard Parking screen and the
+   admin Operations Center.
+
+   Each of those used to size its picture its own way: the entry screen
+   let the canvas take the column's full width with black bars beside a
+   squarer frame, parking was 16:9 of whatever width it was handed, and the
+   Operations Center capped the height but not the width. The same camera
+   looked a different size on every screen, and none of them was the size
+   of the picture.
+
+   Now there is one rule. The feed is a 16:9 stage, never taller than
+   --cm-feed-max-h, centred in a dark well, with the information column
+   beside it always --cm-side-w wide. Same camera, same size, every screen.
+   ================================================================ */
+
+:root {
+  --cm-feed-max-h: min(58vh, 540px);
+  --cm-side-w: 340px;
+  --cm-well-bg: #0B2340;
+  --cm-stage-bg: #04121F;
+}
+
+/* ── Page grid: feed card left, information column right ──────── */
+.cm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--cm-side-w);
+  gap: 14px;
+  align-items: start;
+}
+
+.cm-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+/* When the column is capped and scrolls, its panels keep their height — left
+   to shrink, a panel's own overflow:hidden would clip its last rows instead. */
+.cm-side > * { flex-shrink: 0; }
+
+/* ── The card that holds a feed ───────────────────────────────── */
+.cm-card {
+  background: #FFFFFF;
+  border: 1px solid #D3E1EC;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
+  min-width: 0;
+}
+
+.cm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #EEF4F9;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+.cm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #16374F;
+  white-space: nowrap;
+}
+.cm-title svg { color: #03396C; }
+
+.cm-head-note {
+  font-size: 11.5px;
+  color: #7E9BB2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-head-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Filters / tabs row under the head. */
+.cm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid #EEF4F9;
+  background: #FBFDFE;
+}
+
+.cm-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64839C;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cm-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid #D3E1EC;
+  border-radius: 20px;
+  background: #FFFFFF;
+  color: #4A6B85;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.cm-chip:hover:not(:disabled) { border-color: #03396C; color: #03396C; }
+.cm-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+.cm-chip.active {
+  background: #03396C;
+  border-color: #03396C;
+  color: #FFFFFF;
+}
+
+.cm-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 8px;
+  background: #FFFFFF;
+  border: 1px solid #CFE0EE;
+  border-radius: 8px;
+}
+.cm-search:focus-within { border-color: #2E8CCB; }
+.cm-search svg { color: #6E8CA4; flex-shrink: 0; }
+.cm-search input {
+  border: none;
+  outline: none;
+  background: none;
+  padding: 6px 0;
+  font-size: 12px;
+  font-family: inherit;
+  color: #0B2340;
+  width: 150px;
+}
+.cm-search input::placeholder { color: #9DB6C9; }
+.cm-search input::-webkit-search-cancel-button { display: none; }
+.cm-search-clear {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #6E8CA4;
+  cursor: pointer;
+}
+.cm-search-clear:hover { color: #C2453F; background: rgba(194, 69, 63, 0.1); }
+
+/* ── Live status pill ─────────────────────────────────────────── */
+.cm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.cm-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.cm-pill.live       { background: #E6F5EF; color: #0F7A5A; border-color: #A8DCC8; }
+.cm-pill.connecting { background: #FEF9E4; color: #8A6B00; border-color: #F7E08A; }
+.cm-pill.offline    { background: #FCEDED; color: #C62828; border-color: #F3C0C0; }
+.cm-pill.none       { background: #F7FAFC; color: #64839C; border-color: #D3E1EC; }
+.cm-pill.live .cm-pill-dot,
+.cm-pill.connecting .cm-pill-dot { animation: cm-blink 1.6s ease-in-out infinite; }
+@keyframes cm-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── Well + stage: the standard picture size ──────────────────── */
+/* The well is the dark band the stage sits in. On a column wider than the
+   capped picture it shows either side, and reads as the monitor's bezel
+   rather than as a gap in the layout. */
+.cm-well {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cm-well-bg);
+}
+
+.cm-stage {
+  position: relative;
+  width: min(100%, calc(var(--cm-feed-max-h) * 16 / 9));
+  aspect-ratio: 16 / 9;
+  background: var(--cm-stage-bg);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* The canvas's width/height attributes are the frame's own size; contain
+   letterboxes a squarer (dual-lens) frame inside the 16:9 stage instead of
+   stretching it. */
+.cm-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: var(--cm-stage-bg);
+}
+/* display:block above outranks the browser's own [hidden] rule. */
+.cm-canvas[hidden] { display: none; }
+
+/* Name of the camera on screen, top-left. */
+.cm-tag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 70px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(4, 18, 31, 0.72);
+  color: #FFFFFF;
+  font-size: 11.5px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cm-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #BDD4E5;
+}
+.cm-dot.live { background: #1BA968; }
+.cm-dot.wait { background: #E0B00C; }
+.cm-dot.off  { background: #D93B3B; }
+.cm-dot.idle { background: #8AA5BC; }
+
+/* Status chips along the bottom edge of the picture. */
+.cm-badges {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+.cm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(4, 18, 31, 0.78);
+  color: #FFFFFF;
+  backdrop-filter: blur(4px);
+}
+.cm-badge.ok   { background: rgba(20, 163, 116, 0.2);  color: #6FE0B8; border: 1px solid rgba(20, 163, 116, 0.4); }
+.cm-badge.info { background: rgba(46, 140, 203, 0.22); color: #A9D3F0; border: 1px solid rgba(46, 140, 203, 0.4); }
+
+.cm-fs {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(4, 18, 31, 0.65);
+  color: #C7DDEE;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cm-fs:hover { background: rgba(4, 18, 31, 0.92); color: #FFFFFF; }
+
+/* ── Picture states: connecting / offline / no camera ─────────── */
+.cm-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  background: var(--cm-stage-bg);
+}
+/* Over a picture that has been live, dim it rather than hiding it. */
+.cm-state--over { background: rgba(4, 18, 31, 0.72); }
+.cm-state svg { color: #5C83A3; }
+.cm-state--offline svg { color: #E88080; }
+
+.cm-state-title {
+  margin: 0;
+  color: #D6E6F2;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cm-state-sub {
+  margin: 0;
+  max-width: 380px;
+  color: #8AA9C1;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cm-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(92, 169, 220, 0.18);
+  border-top-color: #5CA9DC;
+  border-radius: 50%;
+  animation: cm-spin 0.8s linear infinite;
+}
+.cm-spinner--sm { width: 12px; height: 12px; border-width: 2px; }
+@keyframes cm-spin { to { transform: rotate(360deg); } }
+
+.cm-state-btn {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #2E4C63;
+  background: rgba(255, 255, 255, 0.06);
+  color: #D6E6F2;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.cm-state-btn:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* ── Camera picker under the picture ──────────────────────────── */
+/* Every camera as a small card — name and whether it is up, readable at a
+   glance, the same on the guard screen and the admin one. */
+.cm-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 7px;
+  padding: 9px 12px;
+  border-top: 1px solid #EEF4F9;
+  max-height: 112px;
+  overflow-y: auto;
+}
+
+.cm-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 9px;
+  background: #FFFFFF;
+  color: #4A6B85;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.cm-pick:hover { border-color: #03396C; color: #03396C; background: #F4F8FB; }
+.cm-pick.active {
+  border-color: #03396C;
+  color: #03396C;
+  background: #EDF4FA;
+  box-shadow: inset 0 0 0 1px #03396C;
+}
+
+.cm-pick-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cm-pick-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-pick-sub { font-size: 10.5px; font-weight: 600; color: #8AA5BC; }
+.cm-pick.active .cm-pick-sub { color: #4A6B85; }
+
+.cm-picker-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: #64839C;
+}
+
+/* Footer strip under the picture (legend, refresh note). */
+.cm-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 1px solid #EEF4F9;
+  background: #F7FAFC;
+  font-size: 12px;
+  color: #5C7B92;
+}
+
+/* ── Side-column cards ────────────────────────────────────────── */
+.cm-panel {
+  background: #FFFFFF;
+  border: 1px solid #D3E1EC;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(3, 57, 108, 0.05);
+  min-width: 0;
+}
+
+.cm-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #EEF4F9;
+  background: #F7FAFC;
+}
+.cm-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #16374F;
+  min-width: 0;
+}
+.cm-panel-title svg { color: #03396C; flex-shrink: 0; }
+.cm-panel-end { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+.cm-count {
+  min-width: 22px;
+  padding: 1px 8px;
+  border-radius: 20px;
+  background: #EEF4F9;
+  color: #4A6B85;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.cm-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: #64839C;
+  cursor: pointer;
+}
+.cm-icon-btn:hover:not(:disabled) { background: #EEF4F9; color: #03396C; border-color: #D3E1EC; }
+.cm-icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cm-empty {
+  margin: 0;
+  padding: 18px 14px;
+  font-size: 12px;
+  color: #7E9BB2;
+  text-align: center;
+}
+
+/* ── Scan log rows ────────────────────────────────────────────── */
+/* One row, three lines, always in the same order: which vehicle and when,
+   what was decided and who they are, then the people involved. A row used to
+   be one line of plate, two or three badges, a name and a time all squeezed
+   side by side — the badges wrapped at random and the name was cut to a few
+   letters, so no two rows read alike. */
+.cm-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #D3E1EC transparent;
+}
+
+.cm-log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid #EEF4F9;
+}
+.cm-log-row:last-child { border-bottom: none; }
+.cm-log-row:hover { background: #F7FAFC; }
+
+.cm-log-mark {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #BDD4E5;
+}
+.cm-log-mark.authorized { background: #14A374; }
+.cm-log-mark.denied,
+.cm-log-mark.wrong_day  { background: #D93B3B; }
+.cm-log-mark.visitor    { background: #E0B00C; }
+.cm-log-mark.exited     { background: #1072B3; }
+.cm-log-mark.pending    { background: #2E8CCB; }
+
+.cm-log-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.cm-log-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cm-log-plate {
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #0B2340;
+}
+.cm-log-time {
+  font-size: 10.5px;
+  color: #7E9BB2;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cm-log-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.cm-log-who {
+  font-size: 11px;
+  color: #5C7B92;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Fullscreen ───────────────────────────────────────────────── */
+/* The well goes fullscreen, not the stage: the stage keeps 16:9 inside it, so
+   an overlay drawn against the picture (parking bays) stays on its bays. */
+.cm-well:fullscreen {
+  background: #000000;
+}
+.cm-card .cm-well:fullscreen .cm-stage {
+  width: min(100%, calc(100vh * 16 / 9));
+}
+.cm-well:fullscreen .cm-tag { top: 16px; left: 16px; font-size: 13px; padding: 6px 12px; }
+.cm-well:fullscreen .cm-fs  { top: 14px; right: 14px; }
+
+/* ── Fill-height screens (the guard terminals) ────────────────── */
+/* The guard screens never scroll. The card is only as tall as its contents,
+   capped at the room there is; when the room runs out the picture is what
+   gives way — the lookup bar and controls under it never do. */
+.admin-content--fill .cm-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.admin-content--fill .cm-page > * { flex: 0 0 auto; }
+.admin-content--fill .cm-page > .cm-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.admin-content--fill .cm-card {
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+.admin-content--fill .cm-card > * { flex: 0 0 auto; }
+.admin-content--fill .cm-card > .cm-well {
+  flex: 0 1 auto;
+  height: min(var(--cm-feed-max-h), calc(100cqw * 9 / 16));
+  min-height: 150px;
+  container-type: size;
+}
+.admin-content--fill .cm-card > .cm-well .cm-stage {
+  width: min(100%, calc(100cqh * 16 / 9));
+}
+
+.admin-content--fill .cm-side {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #D3E1EC transparent;
+  padding-right: 2px;
+}
+
+/* ── Narrow screens ───────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .cm-layout { grid-template-columns: minmax(0, 1fr); }
+
+  /* Stacked, the side column sits under the feed, so the no-scroll screen has
+     to scroll after all — clipping it would hide the scan log entirely. */
+  .admin-content--fill:has(.cm-page) { overflow-y: auto; }
+  .admin-content--fill .cm-page { flex: none; overflow: visible; }
+  .admin-content--fill .cm-page > .cm-layout { flex: none; min-height: auto; grid-template-rows: none; }
+  .admin-content--fill .cm-card { max-height: none; }
+  .admin-content--fill .cm-side { height: auto; overflow: visible; padding-right: 0; }
+}
+
+@media (max-width: 720px) {
+  .cm-head-note { display: none; }
+  .cm-search { margin-left: 0; width: 100%; }
+  .cm-search input { width: 100%; flex: 1; }
+}

@@ -1,0 +1,183 @@
+/* ================================================================
+   GUARD PARKING SCREEN
+   The feed card and the columns come from styles/camera-monitor.css; this is
+   only what the parking screen adds: the bay canvas and the side panels.
+   ================================================================ */
+
+/* The bay overlay is normalised against the stage and drawn with
+   preserveAspectRatio="none", so the picture under it has to fill the stage
+   exactly as well — contain would letterbox it and slide every bay off its
+   painted lines. */
+.pm-guard-canvas { object-fit: fill; }
+
+.pm-guard .pm-canvas-svg { z-index: 1; }
+
+.pm-guard .dpa-banner { margin: 0; }
+
+/* The cameras label sits after the zone chips on the same row. */
+.pm-guard-cams-label {
+  margin-left: 6px;
+  padding-left: 10px;
+  border-left: 1px solid #E3EDF5;
+}
+
+.pm-guard .cm-chip .cm-pick-sub { margin-left: 2px; }
+.pm-guard .cm-chip.active .cm-pick-sub { color: #CFE3F2; }
+
+.pm-legend-strip .pm-legend-note { margin-left: auto; font-style: italic; }
+
+/* ── Occupancy panel ─────────────────────────────────────────── */
+.pm-guard-scope {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64839C;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pm-guard-occ {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+
+.pm-guard-occ .pm-event-banner { margin: 0; font-size: 12px; }
+
+/* The one number a guard at the barrier needs: is there room. */
+.pm-guard-free {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #EFF9F5;
+  border: 1px solid #C9EBDD;
+  color: #0F7A5A;
+}
+.pm-guard-free.full {
+  background: #FCEDED;
+  border-color: #F3C0C0;
+  color: #C62828;
+}
+.pm-guard-free svg { flex-shrink: 0; }
+
+.pm-guard-free-val {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+}
+.pm-guard-free-lbl {
+  margin: 3px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pm-guard-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #E3EDF5;
+}
+.pm-guard-bar-occ  { background: #D93B3B; }
+.pm-guard-bar-held { background: #E0B00C; }
+
+.pm-guard-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.pm-guard-figs > div {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #F7FAFC;
+  border: 1px solid #E3EDF5;
+}
+.pm-guard-figs dt {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64839C;
+}
+.pm-guard-figs dd {
+  margin: 1px 0 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: #0B2340;
+}
+
+.pm-guard-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #7E9BB2;
+}
+
+/* ── This zone's bays ────────────────────────────────────────── */
+.pm-guard-bays {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.pm-guard-bays-val {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  color: #0B2340;
+  white-space: nowrap;
+}
+.pm-guard-bays-val span { font-size: 16px; color: #64839C; font-weight: 700; }
+
+.pm-guard-bays-lbl {
+  margin: 0 0 1px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #2E4C63;
+}
+
+.pm-guard-detector {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64839C;
+}
+.pm-guard-detector.on { color: #0F7A5A; }
+.pm-guard-detector.on .cm-dot { background: #1BA968; }
+
+.pm-guard-override-tag {
+  margin: 0 14px 12px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: #FDF0BE;
+  border: 1px solid #F7E08A;
+  color: #7A5C00;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* ── Actions ─────────────────────────────────────────────────── */
+.pm-guard-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.pm-guard-actions .pm-btn {
+  justify-content: center;
+  padding: 9px 10px;
+  font-size: 12.5px;
+}
+
+.pm-guard-override { background: #8A6B00; color: #FFFFFF; }
+.pm-guard-override:hover:not(:disabled) { background: #6F5600; }
+
+@media (max-width: 400px) {
+  .pm-guard-actions { grid-template-columns: 1fr; }
+}

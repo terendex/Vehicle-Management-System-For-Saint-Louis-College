@@ -81,336 +81,13 @@
 .oc-stat-val  { font-size: 1.4rem; font-weight: 800; color: #0B2340; margin: 0; line-height: 1; }
 .oc-stat-lbl  { font-size: 11px; color: #64839C; margin: 3px 0 0; font-weight: 500; }
 
-/* ── Main grid ── */
-.oc-main-grid {
-  display: grid;
-  grid-template-columns: 1fr 380px;
-  gap: 14px;
-  align-items: start;
-}
-.oc-gates-col {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+/* ── Live Monitor ──
+   The feed card, the gate column beside it and the scan rows are the shared
+   camera-monitor layout (styles/camera-monitor.css), so this camera is the same
+   size here as on the guard terminal. What follows is only what this page adds. */
 
-/* ── Camera panel ── */
-.oc-cam-panel {
-  background: #fff;
-  border: 1px solid #F4F8FB;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-}
-.oc-cam-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 11px 14px;
-  border-bottom: 1px solid #EEF4F9;
-}
-.oc-cam-label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #2E4C63;
-}
-.oc-cam-note {
-  font-size: 11px;
-  color: #BDD4E5;
-  flex: 1;
-}
-.oc-live-pill {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 20px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  flex-shrink: 0;
-}
-.oc-live-pill.live        { background: #E6F5EF; color: #0F7A5A; border: 1px solid #A8DCC8; }
-.oc-live-pill.connecting  { background: #FEF9E4; color: #8A6B00; border: 1px solid #F7E08A; }
-.oc-live-pill.none        { background: #F7FAFC; color: #64839C; border: 1px solid #D3E1EC; }
-.oc-live-dot {
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: oc-blink 1.6s ease-in-out infinite;
-}
-.oc-live-pill.none .oc-live-dot { animation: none; }
-@keyframes oc-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
-
-/* ── Camera scope filter + picker ── */
-.oc-cam-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 9px 14px;
-  border-bottom: 1px solid #EEF4F9;
-  background: #FBFDFE;
-}
-.oc-cam-scopes {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.oc-cam-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid #D3E1EC;
-  border-radius: 20px;
-  background: #fff;
-  color: #4A6B85;
-  font-size: 11.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.oc-cam-scope:hover  { border-color: #03396C; color: #03396C; }
-.oc-cam-scope.active {
-  background: #03396C;
-  border-color: #03396C;
-  color: #fff;
-}
-/* The camera list lives under the display as cards, so no dropdown here. */
-
-.oc-cam-viewport {
-  position: relative;
-  background: #0B2340;
-  /* Shaped to the picture rather than to a number. A fixed 420px height in a
-     column this wide made a 2.8:1 box for a 16:9 feed, so the canvas scaled to
-     the height and left a black bar down either side — the feed read as small
-     and mis-set in a panel much wider than it.
-
-     16:9 is what every camera here delivers, so the box now matches it and the
-     picture fills edge to edge. A stacked dual-lens frame is squarer and still
-     letterboxes, which is unavoidable and much rarer.
-
-     The cap keeps it sane on a tall monitor: without it a 1600px-wide column
-     would ask for 900px of height and push the gate panels beside it off the
-     bottom of the screen. min-height keeps it usable on a narrow one. */
-  aspect-ratio: 16 / 9;
-  min-height: 260px;
-  max-height: min(62vh, 620px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-/* Sized from its own frame: the canvas element's width/height attributes are
-   its intrinsic size, so auto + max 100% letterboxes it into the viewport at
-   the right aspect ratio instead of stretching it. */
-.oc-cam-canvas {
-  display: block;
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
-  background: #000;
-}
-
-/* ── Camera search ───────────────────────────────────────────────────────── */
-
-.oc-cam-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  /* Pushed to the trailing edge, the spot the camera dropdown used to hold. */
-  margin-left: auto;
-  padding: 0 8px;
-  background: #FFFFFF;
-  border: 1px solid #CFE0EE;
-  border-radius: 7px;
-}
-.oc-cam-search:focus-within { border-color: #2E8CCB; }
-.oc-cam-search-icon { color: #6E8CA4; flex-shrink: 0; }
-.oc-cam-search input {
-  border: none;
-  outline: none;
-  background: none;
-  padding: 6px 0;
-  font-size: 12px;
-  color: #0B2340;
-  width: 150px;
-}
-.oc-cam-search input::placeholder { color: #9DB6C9; }
-.oc-cam-search input::-webkit-search-cancel-button { display: none; }
-.oc-cam-search-clear {
-  display: flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  color: #6E8CA4;
-  cursor: pointer;
-}
-.oc-cam-search-clear:hover { color: #C2453F; background: rgba(194, 69, 63, 0.1); }
-
-/* ── Fullscreen ──────────────────────────────────────────────────────────── */
-
-.oc-cam-fs {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  padding: 6px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(4, 18, 31, 0.65);
-  color: #C7DDEE;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.oc-cam-fs:hover { background: rgba(4, 18, 31, 0.9); color: #FFFFFF; }
-
-/* The viewport is a fixed-height band in the page, which would keep the feed
-   in a 420px strip in fullscreen. Fill the screen instead; the centring and
-   the fit-to-box canvas rules are already in the base styles, so the picture
-   simply scales up to whatever the display allows. */
-.oc-cam-viewport:fullscreen {
-  /* aspect-ratio has to be dropped here, not just overridden by width/height:
-     with it still in force the box fights 100vw/100vh and leaves a margin. */
-  aspect-ratio: auto;
-  min-height: 0;
-  max-height: none;
-  height: 100vh;
-  width: 100vw;
-  background: #000;
-}
-
-/* Fullscreen is where a lens is actually studied, so the controls that overlay
-   it grow to match the larger picture. */
-.oc-cam-viewport:fullscreen .oc-cam-name-tag,
-.oc-cam-viewport:fullscreen .oc-cam-lens-btn { font-size: 13px; }
-.oc-cam-viewport:fullscreen .oc-cam-name-tag { padding: 6px 12px; top: 16px; left: 16px; }
-.oc-cam-viewport:fullscreen .oc-cam-lens-switch { bottom: 16px; }
-.oc-cam-viewport:fullscreen .oc-cam-fs { top: 16px; right: 16px; }
-
-/* The "view only" aside is an explanation, not a control, and on a narrow
-   screen it wrapped to three lines and squeezed the panel's own title into a
-   column. Dropped below the width where it stops fitting — the panel has no
-   controls that could be mistaken for detection anyway. */
-@media (max-width: 860px) {
-  .oc-cam-note { display: none; }
-}
-
-@media (max-width: 720px) {
-  /* Own row on a narrow panel: auto-margin plus a full width would otherwise
-     leave the chips and the box fighting for one line. */
-  .oc-cam-search { margin-left: 0; width: 100%; }
-  .oc-cam-search input { width: 100%; flex: 1; }
-}
-.oc-cam-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0,0,0,0.6);
-  gap: 10px;
-}
-.oc-cam-overlay p { color: #8FC4E8; font-size: 12px; margin: 0; }
-.oc-cam-spinner {
-  width: 28px; height: 28px;
-  border: 2.5px solid rgba(92, 169, 220,0.2);
-  border-top-color: #5CA9DC;
-  border-radius: 50%;
-  animation: oc-spin 0.8s linear infinite;
-}
-.oc-cam-name-tag {
-  position: absolute;
-  top: 10px; left: 10px;
-  background: rgba(0,0,0,0.6);
-  color: #fff;
-  padding: 3px 9px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  pointer-events: none;
-}
-.oc-cam-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 60px 24px;
-  color: #5C7B92;
-}
-.oc-cam-empty p { font-size: 13px; font-weight: 600; margin: 0; color: #64839C; }
-.oc-cam-empty span { font-size: 11px; color: #5C7B92; }
-
-/* ── Camera picker (replaces the dropdown) ───────────────────────────────── */
-/* Every available view as its own card. Auto-fill rather than a fixed column
-   count so one camera does not stretch a card across the panel, and a dozen
-   still wrap tidily. */
-.oc-cam-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 7px;
-  padding: 10px 12px;
-  border-top: 1px solid #EEF4F9;
-  max-height: 168px;
-  overflow-y: auto;
-}
-.oc-cam-thumb {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  border: 1.5px solid #D3E1EC;
-  border-radius: 9px;
-  background: #fff;
-  color: #5C7B92;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-  font-family: inherit;
-  text-align: left;
-  min-width: 0;
-}
-.oc-cam-thumb:hover { border-color: #03396C; color: #03396C; background: #F4F8FB; }
-.oc-cam-thumb.active {
-  border-color: #03396C;
-  color: #03396C;
-  background: #EDF4FA;
-  box-shadow: inset 0 0 0 1px #03396C;
-}
-.oc-cam-thumb-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.oc-cam-thumb-name {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11.5px;
-  font-weight: 700;
-  /* The name is what the guard reads; a long one truncates rather than
-     wrapping the card to two heights. */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.oc-cam-thumb-sub { font-size: 10px; font-weight: 600; color: #8AA5BC; }
-.oc-cam-thumb.active .oc-cam-thumb-sub { color: #4A6B85; }
-
-/* Which picture of a multi-lens unit this is. Same badge in the card and on
-   the live feed's name tag, so the two read as the same thing. */
+/* Which picture of a multi-lens unit this is. Same badge in the picker card
+   and on the live feed's name tag, so the two read as the same thing. */
 .oc-cam-lens-badge {
   flex-shrink: 0;
   padding: 1px 6px;
@@ -422,14 +99,15 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
-.oc-cam-name-tag .oc-cam-lens-badge { background: rgba(255,255,255,0.22); color: #fff; }
+.cm-tag .oc-cam-lens-badge { background: rgba(255,255,255,0.22); color: #fff; }
 
-/* Lens switch over the feed — inside the viewport so fullscreen keeps it. */
+/* Lens switch over the feed — inside the stage so fullscreen keeps it. */
 .oc-cam-lens-switch {
   position: absolute;
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 3;
   display: flex;
   gap: 4px;
   padding: 4px;
@@ -453,51 +131,21 @@
 }
 .oc-cam-lens-btn:hover  { background: rgba(255,255,255,0.14); color: #fff; }
 .oc-cam-lens-btn.active { background: #03396C; color: #fff; }
+.cm-well:fullscreen .oc-cam-lens-btn { font-size: 13px; }
+.cm-well:fullscreen .oc-cam-lens-switch { bottom: 16px; }
 
-.oc-cam-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  flex-shrink: 0;
-}
-.oc-cam-dot.live { background: #1BA968; }
-.oc-cam-dot.wait { background: #E0B00C; }
-.oc-cam-dot.off  { background: #BDD4E5; }
-
-/* ── Gate panel ── */
-.oc-gate-panel {
-  background: #fff;
-  border: 1px solid #F4F8FB;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-}
-.oc-gate-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: #F7FAFC;
-  border-bottom: 1px solid #F4F8FB;
-  gap: 8px;
-}
-.oc-gate-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #16374F;
-}
-.oc-gate-title svg { color: #03396C; }
+/* ── Gate panels (beside the feed) ── */
+.oc-gate-log { max-height: 240px; }
 
 .oc-guard-pill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
   padding: 3px 9px;
   border-radius: 20px;
-  max-width: 58%;
+  max-width: 170px;
   overflow: hidden;
 }
 .oc-guard-pill.active   { background: #E6F5EF; color: #0A5C43; border: 1px solid #A8DCC8; }
@@ -505,50 +153,14 @@
 .oc-guard-dot { width: 5px; height: 5px; background: #14A374; border-radius: 50%; flex-shrink: 0; animation: oc-blink 1.6s ease-in-out infinite; }
 .oc-guard-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-guard-since { color: #5C7B92; white-space: nowrap; flex-shrink: 0; }
-
-.oc-gate-log {
-  max-height: 200px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #D3E1EC transparent;
-}
-.oc-gate-log::-webkit-scrollbar { width: 4px; }
-.oc-gate-log::-webkit-scrollbar-track { background: transparent; }
-.oc-gate-log::-webkit-scrollbar-thumb { background: #D3E1EC; border-radius: 4px; }
+@keyframes oc-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
 .oc-empty { font-size: 12px; color: #BDD4E5; padding: 20px; margin: 0; text-align: center; }
 
-/* ── Log items ── */
-.oc-log-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border-bottom: 1px solid #F7FAFC;
-  transition: background 0.1s;
-}
-.oc-log-item:hover { background: #F7FAFC; }
-.oc-log-item.compact { padding: 5px 12px; }
-.oc-log-item:last-child { border-bottom: none; }
-
-.oc-log-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-}
-.oc-log-dot.authorized { background: #14A374; }
-.oc-log-dot.denied     { background: #D93B3B; }
-.oc-log-dot.visitor    { background: #E0B00C; }
-.oc-log-dot.exited     { background: #1072B3; }
-.oc-log-dot.pending    { background: #2E8CCB; }
-
-.oc-log-main { flex: 1; min-width: 0; }
+/* Plate text and status badge, also used by the Gate Records lists. */
 .oc-log-plate {
   font-size: 12px; font-weight: 700;
   color: #0B2340; font-family: monospace; letter-spacing: 0.5px;
-}
-.oc-log-meta {
-  font-size: 10px; color: #BDD4E5;
-  display: block; margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .oc-log-badge {
   font-size: 10px; font-weight: 600;
@@ -560,7 +172,6 @@
 .oc-log-badge.visitor    { background: #FEF9E4; color: #8A6B00; }
 .oc-log-badge.exited     { background: #EAF2F8; color: #1072B3; }
 .oc-log-badge.pending    { background: #EAF2F8; color: #2E8CCB; }
-.oc-log-time { font-size: 10px; color: #BDD4E5; white-space: nowrap; flex-shrink: 0; }
 
 /* ── Guard activity section ── */
 .oc-section { display: flex; flex-direction: column; }
@@ -733,17 +344,13 @@
 .oc-shift-still { color: #0F7A5A; font-weight: 600; }
 
 /* ── Responsive ── */
-@media (max-width: 1200px) {
-  .oc-main-grid { grid-template-columns: 1fr 340px; }
-}
-@media (max-width: 1024px) {
-  .oc-main-grid { grid-template-columns: 1fr; }
-  .oc-gates-col { flex-direction: row; }
-  .oc-gate-panel { flex: 1; }
+/* Once the gate column drops under the feed (camera-monitor.css, 1100px) there
+   is room for the gates side by side instead of one long stack. */
+@media (max-width: 1100px) and (min-width: 769px) {
+  .oc-gates-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 }
 @media (max-width: 768px) {
   .oc-stats-row    { grid-template-columns: repeat(2, 1fr); }
-  .oc-gates-col    { flex-direction: column; }
 }
 
 /* ── List pagination (matches violations table) ─────────────────────────────── */

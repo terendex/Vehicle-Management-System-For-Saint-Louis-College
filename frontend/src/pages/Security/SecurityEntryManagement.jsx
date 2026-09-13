@@ -4,6 +4,7 @@ import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
+  VideoOff, RefreshCw,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -28,6 +29,8 @@ import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
+import { feedState, FEED_LABEL, FEED_DOT } from '../../utils/feedState'
+import '../../styles/camera-monitor.css'
 import './SecurityEntryManagement.css'
 
 
@@ -83,6 +86,10 @@ const VEHICLE_TYPES = [
 // typed down the plate-check path or the name-search path, and it is simple
 // enough to state in the hint under the field.
 const looksLikeIdentifier = (raw) => /\d/.test(raw || '')
+
+// A gate with a handful of cameras is picked from the cards at a glance; the
+// search box is only worth its row once the cards stop fitting.
+const CAM_SEARCH_MIN = 4
 
 // The category for a scan result, for the dialog that reports it. The log rows
 // carry a real `classification` from the server; a fresh scan response carries
@@ -793,11 +800,15 @@ export default function SecurityEntryManagement() {
   const rtspActiveCam = rtspCameras.find(c => c.id === rtspActiveCamId) ?? rtspCameras[0] ?? null
   const fs = useFullscreen()
 
-  // Only the thumbnail strip is filtered. Every camera's canvas stays mounted
-  // in the viewport above — hidden, but registered with the stream context —
+  // Only the camera picker is filtered. Every camera's canvas stays mounted
+  // in the stage above — hidden, but registered with the stream context —
   // so narrowing this list must never remove one, or searching would tear down
   // a live feed and force a reconnect.
-  const camQ = camQuery.trim().toLowerCase()
+  //
+  // The search box only exists once there are enough cameras to need it; a
+  // query typed back then must not keep filtering a list with no box to clear.
+  const camSearchable = rtspCameras.length > CAM_SEARCH_MIN
+  const camQ = camSearchable ? camQuery.trim().toLowerCase() : ''
   const shownCams = camQ
     ? rtspCameras.filter(c => String(c.name ?? '').toLowerCase().includes(camQ))
     : rtspCameras
@@ -806,8 +817,6 @@ export default function SecurityEntryManagement() {
   useEffect(() => {
     if (!rtspActiveCamId && rtspCameras.length > 0) setRtspActiveCam(rtspCameras[0].id)
   }) // intentionally no deps — runs after every render until activeCamId is set
-
-  const isLive = rtspCameras.some(c => c.streamConnected)
 
   // Name-search matches awaiting a pick, and the plateless vehicles recorded
   // by hand that are still inside.
@@ -1147,175 +1156,181 @@ export default function SecurityEntryManagement() {
     if (res?.status === 'exited') setPlateInput('')
   }
 
+  // The picture's state, in the same words every camera screen uses.
+  const activeState = feedState(rtspActiveCam)
+  const liveCount   = rtspCameras.filter(c => c.streamConnected).length
+  const headState   = rtspCameras.length === 0 ? 'none'
+    : liveCount > 0 ? 'live'
+    : activeState
+  const headLabel   = headState === 'live'
+    ? `${liveCount}/${rtspCameras.length} live`
+    : headState === 'none' ? 'No cameras' : FEED_LABEL[headState]
+  // A backend message worth passing on ("attempt 2/6", "Reconnecting in 8s…"),
+  // as opposed to the bare "Connecting…" the title already says.
+  const activeMsg = (rtspActiveCam?.statusMsg || '').trim()
+  const activeDetail = activeMsg && !/^connecting…?$/i.test(activeMsg) ? activeMsg : ''
+  const mlStage = rtspActiveCam?.mlStatus?.stage
+  const mlMessage = rtspActiveCam?.mlStatus?.message
+  // Every row carried "On duty: <name>", and on a guard's own terminal that
+  // name is theirs — twenty copies of it pushed the owner's name out of view.
+  // Only a name that is not the person reading is news.
+  const me = user?.full_name || ''
+
   return (
     <>
-      <div className="em-page">
+      <div className="cm-page">
 
-        {/* Main grid */}
-        <div className="em-grid">
+        <div className="cm-layout">
 
-          {/* Left: CCTV + plate lookup */}
-          <div className="em-card em-camera-card">
-            <div className="em-card-head">
-              <span className="em-card-label"><Video size={15} /> CCTV Monitor</span>
-              <span className={`em-autoscan-status${isLive ? ' scanning' : ''}`} style={{ marginLeft: 'auto' }}>
-                {rtspCameras.length === 0
-                  ? <><Wifi size={12} /> No cameras</>
-                  : isLive
-                    ? <><Video size={12} /> {rtspCameras.filter(c => c.streamConnected).length}/{rtspCameras.length} live</>
-                    : <><div className="em-spinner" style={{ borderTopColor: '#2E8CCB', borderColor: 'rgba(46, 140, 203,.2)' }} /> Connecting…</>
-                }
-              </span>
+          {/* Left: the gate camera, then the manual way in under it. */}
+          <section className="cm-card">
+            <div className="cm-head">
+              <span className="cm-title"><Video size={15} /> CCTV Monitor</span>
+              <span className="cm-head-note">{gateLabel}</span>
+              <div className="cm-head-end">
+                <span className={`cm-pill ${headState}`}>
+                  <span className="cm-pill-dot" /> {headLabel}
+                </span>
+              </div>
             </div>
 
-            {/* Viewport */}
-            <div className="em-viewport" ref={fs.setRef('cctv')} style={{ background: '#04121F', minHeight: 280, position: 'relative' }}>
-              {rtspCameras.length > 0 && (
-                <button
-                  className="em-cam-fs"
-                  onClick={async () => {
-                    if (!(await fs.toggle('cctv'))) toast.error('Fullscreen was blocked by the browser.')
-                  }}
-                  title={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
-                  aria-label={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
-                >
-                  {fs.isFullscreen('cctv') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                </button>
-              )}
-              {rtspCameras.length > 0 ? (
-                <div style={{ position: 'relative', width: '100%', minHeight: 260 }}>
-                  {rtspCameras.map((cam, idx) => (
-                    <div
-                      key={cam.id}
-                      style={{ display: rtspActiveCamId === cam.id ? 'block' : 'none', width: '100%', ...(idx === 0 ? {} : { position: 'absolute', inset: 0 }) }}
-                    >
-                      <canvas
-                        ref={el => registerCanvas(cam.id, el)}
-                        style={{ width: '100%', display: 'block', background: '#000', minHeight: 260 }}
-                      />
-                    </div>
-                  ))}
-                  {rtspActiveCam && !rtspActiveCam.streamConnected && rtspActiveCam.wsActive && (
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', gap: 12, pointerEvents: 'none' }}>
-                      <div className="em-spinner" style={{ width: 36, height: 36, borderWidth: 3, borderTopColor: '#5CA9DC', borderColor: 'rgba(92, 169, 220,0.15)' }} />
-                      <p style={{ color: '#8FC4E8', fontSize: 13, margin: 0 }}>{rtspActiveCam.statusMsg || 'Connecting…'}</p>
-                    </div>
-                  )}
-                  <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: rtspActiveCam?.streamConnected ? '#1BA968' : '#E0B00C', display: 'inline-block' }} />
-                    {rtspActiveCam?.name || 'Camera'}
-                  </div>
-                  {/* Bottom-left status stack: Open Campus pill sits beside the ML status */}
-                  <div style={{ position: 'absolute', bottom: 10, left: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: 'calc(100% - 20px)' }}>
-                    {openCampus && (
-                      <div style={{
-                        background: 'rgba(46, 140, 203,0.20)', color: '#8FC4E8',
-                        border: '1px solid rgba(46, 140, 203,0.40)',
-                        padding: '4px 9px', borderRadius: 7, fontSize: 11,
-                        fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5,
-                        pointerEvents: 'none', backdropFilter: 'blur(4px)',
-                      }}>
-                        <DoorOpen size={12} /> Open Campus
-                      </div>
-                    )}
-                    {(() => {
-                      const s = rtspActiveCam?.mlStatus?.stage
-                      const m = rtspActiveCam?.mlStatus?.message
-                      if (!s || s === 'idle') return null
-                      if (s === 'ready') return (
-                        <div style={{
-                          background: 'rgba(20, 163, 116,0.18)', color: '#14A374',
-                          border: '1px solid rgba(20, 163, 116,0.35)',
-                          padding: '4px 9px', borderRadius: 7, fontSize: 11,
-                          fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
-                          pointerEvents: 'none', backdropFilter: 'blur(4px)',
-                        }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#14A374', display: 'inline-block', flexShrink: 0 }} />
-                          Detection Ready
-                        </div>
-                      )
-                      return (
-                        <div style={{
-                          background: 'rgba(0,0,0,0.78)', color: '#fff',
-                          padding: '5px 10px', borderRadius: 7, fontSize: 11,
-                          fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
-                          pointerEvents: 'none', backdropFilter: 'blur(4px)',
-                        }}>
-                          <div className="em-spinner" style={{ width: 12, height: 12, borderWidth: 2, borderTopColor: '#5CA9DC', borderColor: 'rgba(92, 169, 220,0.2)', flexShrink: 0 }} />
-                          {m || 'Initializing…'}
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </div>
-              ) : (
-                <div className="em-cam-off">
-                  <Wifi size={40} style={{ color: '#2E4C63' }} />
-                  <p>No entry cameras configured.</p>
-                </div>
-              )}
-            </div>
-
-            {/* Camera search — only worth the space once there are several */}
-            {rtspCameras.length > 1 && (
-              <div className="em-cam-search">
-                <Search size={13} className="em-cam-search-icon" />
-                <input
-                  type="search"
-                  placeholder="Search cameras…"
-                  value={camQuery}
-                  onChange={e => setCamQuery(e.target.value)}
-                  aria-label="Search cameras"
-                />
-                {camQ && (
-                  <>
-                    <span className="em-cam-search-count">{shownCams.length}/{rtspCameras.length}</span>
+            {camSearchable && (
+              <div className="cm-toolbar">
+                <span className="cm-toolbar-label"><Video size={12} /> {rtspCameras.length} cameras</span>
+                <div className="cm-search">
+                  <Search size={13} />
+                  <input
+                    type="search"
+                    placeholder="Search cameras…"
+                    value={camQuery}
+                    onChange={e => setCamQuery(e.target.value)}
+                    aria-label="Search cameras"
+                  />
+                  {camQ && (
                     <button
                       type="button"
-                      className="em-cam-search-clear"
+                      className="cm-search-clear"
                       onClick={() => setCamQuery('')}
                       title="Clear search"
                       aria-label="Clear search"
                     >
                       <X size={12} />
                     </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* The standard stage — same size as the parking screen and the
+                Operations Center (styles/camera-monitor.css). */}
+            <div className="cm-well" ref={fs.setRef('cctv')}>
+              <div className="cm-stage">
+                {rtspCameras.map(cam => (
+                  <canvas
+                    key={cam.id}
+                    className="cm-canvas"
+                    hidden={rtspActiveCam?.id !== cam.id}
+                    ref={el => registerCanvas(cam.id, el)}
+                  />
+                ))}
+
+                {rtspCameras.length === 0 ? (
+                  <div className="cm-state">
+                    <Wifi size={30} />
+                    <p className="cm-state-title">No entry cameras at this gate</p>
+                    <p className="cm-state-sub">
+                      Plates can still be checked by hand below. Cameras are added in Device Management.
+                    </p>
+                  </div>
+                ) : activeState !== 'live' && (
+                  <div className={`cm-state cm-state--over${activeState === 'offline' ? ' cm-state--offline' : ''}`}>
+                    {activeState === 'offline' ? <VideoOff size={30} /> : <div className="cm-spinner" />}
+                    <p className="cm-state-title">
+                      {activeState === 'offline'
+                        ? `${rtspActiveCam.name} is offline`
+                        : `Connecting to ${rtspActiveCam.name}…`}
+                    </p>
+                    <p className="cm-state-sub">
+                      {activeDetail || 'Type the plate below while the picture loads.'}
+                    </p>
+                  </div>
+                )}
+
+                {rtspActiveCam && (
+                  <>
+                    <div className="cm-tag">
+                      <span className={`cm-dot ${FEED_DOT[activeState]}`} />
+                      {rtspActiveCam.name}
+                    </div>
+                    <button
+                      className="cm-fs"
+                      onClick={async () => {
+                        if (!(await fs.toggle('cctv'))) toast.error('Fullscreen was blocked by the browser.')
+                      }}
+                      title={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
+                      aria-label={fs.isFullscreen('cctv') ? 'Exit fullscreen' : 'Fullscreen'}
+                    >
+                      {fs.isFullscreen('cctv') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    </button>
                   </>
                 )}
-              </div>
-            )}
 
-            {/* Camera thumbnail strip */}
-            {rtspCameras.length > 1 && (
-              <div className="em-cam-thumbnails" style={{ borderTop: '1px solid #0F2A47' }}>
-                {shownCams.length === 0 && (
-                  <div className="em-cam-thumb-none">No cameras match “{camQuery.trim()}”</div>
-                )}
-                {shownCams.map(cam => (
-                  <div
-                    key={`thumb-${cam.id}`}
-                    className={`em-cam-thumb ${rtspActiveCamId === cam.id ? 'active' : ''}`}
-                    onClick={() => setRtspActiveCam(cam.id)}
-                    style={{ position: 'relative' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: rtspActiveCamId === cam.id ? '#5CA9DC' : '#4A6B85' }}>
-                      <Wifi size={18} />
-                    </div>
-                    <div className="em-cam-thumb-label">{cam.name}</div>
-                    <span style={{ position: 'absolute', top: 4, left: 4, width: 6, height: 6, borderRadius: '50%', background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }} />
+                {/* Bottom-left: Open Campus beside the detector's own status. */}
+                {rtspActiveCam && (openCampus || (mlStage && mlStage !== 'idle')) && (
+                  <div className="cm-badges">
+                    {openCampus && (
+                      <span className="cm-badge info"><DoorOpen size={12} /> Open Campus</span>
+                    )}
+                    {mlStage === 'ready' ? (
+                      <span className="cm-badge ok"><span className="cm-dot live" /> Detection Ready</span>
+                    ) : mlStage && mlStage !== 'idle' && (
+                      <span className="cm-badge"><span className="cm-spinner cm-spinner--sm" /> {mlMessage || 'Initializing…'}</span>
+                    )}
                   </div>
-                ))}
+                )}
+              </div>
+            </div>
+
+            {/* Which camera is on the stage — cards, same as the Operations Center. */}
+            {rtspCameras.length > 1 && (
+              <div className="cm-picker" role="group" aria-label="Gate cameras">
+                {shownCams.length === 0 && (
+                  <p className="cm-picker-empty">No cameras match “{camQuery.trim()}”</p>
+                )}
+                {shownCams.map(cam => {
+                  const st = feedState(cam)
+                  const active = rtspActiveCam?.id === cam.id
+                  return (
+                    <button
+                      key={`pick-${cam.id}`}
+                      type="button"
+                      className={`cm-pick${active ? ' active' : ''}`}
+                      onClick={() => setRtspActiveCam(cam.id)}
+                      aria-pressed={active}
+                    >
+                      <span className={`cm-dot ${FEED_DOT[st]}`} />
+                      <span className="cm-pick-text">
+                        <span className="cm-pick-name">{cam.name}</span>
+                        <span className="cm-pick-sub">{FEED_LABEL[st]}</span>
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             )}
 
-            {/* Combined Plate Input — the manual way in when the detector does
-                not read a plate: type the plate or conduction number, or scan
-                the owner's QR pass. It must never be the thing that gets cut
-                off, hence .em-plate-bar (see the fill-height rules). */}
-            <div className="em-plate-bar" style={{ padding: '8px 16px 10px', borderTop: '1px solid #EEF4F9' }}>
-              <span className="em-card-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Search size={14} /> Owner Name / Plate / Conduction No.</span>
-              <form onSubmit={handleCheckEntry} noValidate style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+            {/* Combined lookup — the manual way in when the detector does not
+                read a plate: type the plate or conduction number, a name, or
+                scan the owner's QR pass. It must never be the thing that gets
+                cut off, which is why the stage above is what shrinks. */}
+            <div className="em-lookup">
+              <label className="em-lookup-label" htmlFor="em-lookup-input">
+                <Search size={14} /> Owner Name / Plate / Conduction No.
+              </label>
+              <form onSubmit={handleCheckEntry} noValidate className="em-lookup-form">
                 <input
-                  className="em-plate-input"
+                  id="em-lookup-input"
+                  className={`em-lookup-input${isNameQuery ? ' is-name' : ''}`}
                   value={plateInput}
                   onChange={e => {
                     const raw = e.target.value
@@ -1327,22 +1342,11 @@ export default function SecurityEntryManagement() {
                     else setPlateInput(raw)
                   }}
                   placeholder="Name, e.g. Juan Dela Cruz — or AAA 0000 / CS12345A678"
-                  style={{
-                    flex: 1, minWidth: 0, padding: '8px 12px', border: '2px solid #D3E1EC',
-                    borderRadius: 9, fontSize: 14, fontWeight: 700, outline: 'none',
-                    boxSizing: 'border-box',
-                    // Plate styling (monospace, tracked out, upper-cased) is for
-                    // plates. A name in it reads as a serial number.
-                    ...(isNameQuery
-                      ? { letterSpacing: 0.2, fontFamily: 'inherit' }
-                      : { letterSpacing: 2, fontFamily: 'monospace', textTransform: 'uppercase' }),
-                  }}
                   autoComplete="off"
                 />
                 <button
                   type="submit"
-                  className="em-btn em-btn-primary"
-                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                  className="em-btn em-btn-primary em-lookup-go"
                   disabled={loading}
                 >
                   {loading
@@ -1351,55 +1355,54 @@ export default function SecurityEntryManagement() {
                       ? <><Users size={15} /> Search by Name</>
                       : <><Search size={15} /> Check Plate — Entry / Exit</>}
                 </button>
-                <button
-                  type="button"
-                  className="em-btn em-btn-secondary"
-                  style={{ flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 12px' }}
-                  onClick={() => setShowExitScanner(true)}
-                  title="Scan a vehicle QR pass or a visitor slip QR — entry / exit"
-                >
-                  <ScanLine size={15} /> Scan QR
-                </button>
-                {/* The way in for a vehicle the plate path cannot serve at all.
-                    Beside the plate field rather than buried in a menu — the
-                    guard needs it while the car is still at the barrier. */}
-                <button
-                  type="button"
-                  className="em-btn em-btn-secondary"
-                  style={{ flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 12px' }}
-                  onClick={() => setShowUnrecognized(true)}
-                  title="Record a vehicle that has no plate and no conduction number"
-                >
-                  <FileQuestion size={15} /> No Plate?
-                </button>
+                <div className="em-lookup-alt">
+                  <button
+                    type="button"
+                    className="em-btn em-btn-secondary"
+                    onClick={() => setShowExitScanner(true)}
+                    title="Scan a vehicle QR pass or a visitor slip QR — entry / exit"
+                  >
+                    <ScanLine size={15} /> Scan QR
+                  </button>
+                  {/* The way in for a vehicle the plate path cannot serve at all.
+                      Beside the plate field rather than buried in a menu — the
+                      guard needs it while the car is still at the barrier. */}
+                  <button
+                    type="button"
+                    className="em-btn em-btn-secondary"
+                    onClick={() => setShowUnrecognized(true)}
+                    title="Record a vehicle that has no plate and no conduction number"
+                  >
+                    <FileQuestion size={15} /> No Plate?
+                  </button>
+                </div>
               </form>
-              <p style={{ margin: '6px 0 0', fontSize: 11, color: '#64839C', textAlign: 'center' }}>
+              <p className="em-lookup-hint">
                 {isNameQuery
                   ? 'Searching by name — pick the vehicle from the results, then the usual entry check runs on it.'
                   : 'Entry and exit are detected automatically — vehicles inside campus are logged out on re-check. Type a name instead to look an owner up.'}
               </p>
             </div>
-          </div>
+          </section>
 
-          {/* Right panel — the lookup result is a dialog now (see ResultModal
-              at the foot of this component), so the column is the log. */}
-          <div className="em-right">
+          {/* Right: what has happened at this gate, and who to watch for. The
+              lookup result is a dialog (ResultModal, below), so this column is
+              reading only. */}
+          <aside className="cm-side">
 
-            {/* Recent scans */}
-            <div className="em-card em-audit-card">
-              <div className="em-card-head">
-                <span className="em-card-label"><ClipboardList size={14} /> Recent Scans — {gateLabel}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="em-logs-count">{logs.length}</span>
+            <section className="cm-panel">
+              <div className="cm-panel-head">
+                <span className="cm-panel-title"><ClipboardList size={14} /> Recent Scans</span>
+                <div className="cm-panel-end">
+                  <span className="cm-count">{logs.length}</span>
                   <button
+                    type="button"
+                    className="cm-icon-btn"
                     onClick={refreshLogs}
                     title="Refresh"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#64839C', display: 'flex', alignItems: 'center' }}
+                    aria-label="Refresh recent scans"
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                    </svg>
+                    <RefreshCw size={13} />
                   </button>
                 </div>
               </div>
@@ -1421,29 +1424,37 @@ export default function SecurityEntryManagement() {
                 </div>
               )}
               {logs.length === 0 ? (
-                <div className="em-audit-empty">
-                  <ClipboardList size={22} style={{ color: '#BDD4E5' }} />
-                  <p>No entries recorded yet today.</p>
-                </div>
+                <p className="cm-empty">No entries recorded yet today.</p>
               ) : (
-                <div className="em-audit-list">
+                <ul className="cm-log em-scan-log">
                   {logs.map((log, i) => {
                     const m = getMeta(log.status)
-                    const { Icon } = m
+                    const owner = log.vehicle_owner_name
+                      // A plateless vehicle has no owner account; the driver
+                      // and the description are all it has.
+                      || (log.driver_name
+                        ? [log.driver_name, [log.vehicle_color, log.vehicle_type, log.vehicle_model].filter(Boolean).join(' ')]
+                            .filter(Boolean).join(' · ')
+                        : '')
+                    const staff = [
+                      log.on_duty_guard_name && log.on_duty_guard_name !== me
+                        ? `On duty: ${log.on_duty_guard_name}` : '',
+                      log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && log.scanned_by_name !== me
+                        ? `By ${log.scanned_by_name}` : '',
+                    ].filter(Boolean)
+                    const who = [owner, ...staff].filter(Boolean).join(' · ')
                     return (
-                      <div key={log.id ?? i} className={`em-audit-row ${m.logCls}`}>
-                        <div className={`em-audit-icon ${m.logCls}`}>
-                          <Icon size={13} />
-                        </div>
-                        <div className="em-audit-info">
-                          <div className="em-audit-top">
-                            <span className="em-audit-plate">
+                      <li key={log.id ?? i} className="cm-log-row">
+                        <span className={`em-audit-icon ${m.logCls}`}><m.Icon size={13} /></span>
+                        <div className="cm-log-main">
+                          <div className="cm-log-line">
+                            <span className="cm-log-plate">
                               {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
                             </span>
+                            <span className="cm-log-time">{timeAgo(log.scanned_at)}</span>
+                          </div>
+                          <div className="cm-log-tags">
                             <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
-                            {/* Which kind of entrant this was. The whole point
-                                of the breakdown above is that a guard can read
-                                it off a row without opening anything. */}
                             {log.classification && (
                               <span className={`em-class-tag ${getClassMeta(log.classification).cls}`}>
                                 {getClassMeta(log.classification).label}
@@ -1453,55 +1464,35 @@ export default function SecurityEntryManagement() {
                                 exit into the entry it pairs with. Without this
                                 the row keeps reading "Approved for Entry" hours
                                 after the car left, and a guard looking down the
-                                list cannot tell who is still inside. Same badge
-                                the audit log uses, in this panel's relative
-                                time. */}
+                                list cannot tell who is still inside. */}
                             {log.exited_at && (
                               <span className="em-log-badge exited em-audit-exit">
                                 <LogOut size={9} />
                                 Exited {timeAgo(log.exited_at)}
-                                {log.duration_minutes != null && ` · ${log.duration_minutes} min inside`}
+                                {log.duration_minutes != null && ` · ${log.duration_minutes} min`}
                               </span>
                             )}
                           </div>
-                          {(log.vehicle_owner_name || log.driver_name || log.scanned_by_name || log.on_duty_guard_name) && (
-                            <div className="em-audit-sub">
-                              {log.vehicle_owner_name && <span>{log.vehicle_owner_name}</span>}
-                              {/* A plateless vehicle has no owner account; the
-                                  driver and the description are all it has. */}
-                              {!log.vehicle_owner_name && log.driver_name && (
-                                <span>
-                                  {log.driver_name}
-                                  {(log.vehicle_color || log.vehicle_model) &&
-                                    ` · ${[log.vehicle_color, log.vehicle_type, log.vehicle_model].filter(Boolean).join(' ')}`}
-                                </span>
-                              )}
-                              {log.on_duty_guard_name && <span>· On duty: {log.on_duty_guard_name}</span>}
-                              {log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && (
-                                <span>· {log.scanned_by_name}</span>
-                              )}
-                            </div>
-                          )}
+                          {who && <div className="cm-log-who" title={who}>{who}</div>}
                         </div>
-                        <span className="em-audit-time">{timeAgo(log.scanned_at)}</span>
-                      </div>
+                      </li>
                     )
                   })}
-                </div>
+                </ul>
               )}
-            </div>
+            </section>
 
             {/* Plateless vehicles recorded by hand. There is no plate to
                 re-check, so this panel is the only way their exit gets
                 logged — without it they would sit in the inside-count for
                 ever. Shown only when there are any. */}
             {unrecognized.length > 0 && (
-              <div className="em-card">
-                <div className="em-card-head">
-                  <span className="em-card-label"><FileQuestion size={14} /> Unrecognized Vehicles Inside</span>
-                  <span className="em-logs-count">{unrecognized.length}</span>
+              <section className="cm-panel">
+                <div className="cm-panel-head">
+                  <span className="cm-panel-title"><FileQuestion size={14} /> Unrecognized Vehicles Inside</span>
+                  <div className="cm-panel-end"><span className="cm-count">{unrecognized.length}</span></div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="em-side-list">
                   {unrecognized.map(row => {
                     const cm = getClassMeta(row.classification)
                     return (
@@ -1529,56 +1520,38 @@ export default function SecurityEntryManagement() {
                     )
                   })}
                 </div>
-              </div>
+              </section>
             )}
 
             {/* Active visitors — time remaining / overstay */}
-            <div className="em-card">
-              <div className="em-card-head">
-                <span className="em-card-label"><Clock size={14} /> Active Visitors</span>
-                <span className="em-logs-count">{passes.length}</span>
+            <section className="cm-panel">
+              <div className="cm-panel-head">
+                <span className="cm-panel-title"><Clock size={14} /> Active Visitors</span>
+                <div className="cm-panel-end"><span className="cm-count">{passes.length}</span></div>
               </div>
               {passes.length === 0 ? (
-                <p style={{ margin: 0, padding: '10px 2px', fontSize: 12, color: '#64839C' }}>
-                  No visitors currently inside.
-                </p>
+                <p className="cm-empty">No visitors currently inside.</p>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="em-side-list">
                   {passes.map(p => {
                     const t = passTimeInfo(p)
                     return (
-                      <div
-                        key={p.id}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px',
-                          borderRadius: 8,
-                          background: t.overdue ? '#FCEDED' : '#F7FAFC',
-                          border: `1px solid ${t.overdue ? '#F3C0C0' : '#D3E1EC'}`,
-                        }}
-                      >
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 12.5, fontFamily: "'Courier New', monospace", letterSpacing: 0.5 }}>
-                            {p.plate_number}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#5C7B92', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div key={p.id} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
+                        <div className="em-visitor-main">
+                          <span className="em-visitor-plate">{p.plate_number}</span>
+                          <span className="em-visitor-sub">
                             {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
-                          </div>
+                          </span>
                         </div>
-                        <span style={{
-                          fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                          color: t.overdue ? '#C62828' : t.soon ? '#8A6B00' : '#0F7A5A',
-                        }}>
-                          {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
+                        <span className={`em-visitor-time${t.overdue ? ' overdue' : t.soon ? ' soon' : ''}`}>
+                          {t.overdue && <AlertTriangle size={11} />}
                           {t.label}
                         </span>
                         <button
+                          type="button"
+                          className="em-visitor-extend"
                           onClick={() => handleExtendPass(p)}
                           title="Extend by 30 minutes"
-                          style={{
-                            fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 6,
-                            border: '1px solid #BDD4E5', background: '#fff', cursor: 'pointer',
-                            color: '#2E4C63', whiteSpace: 'nowrap',
-                          }}
                         >
                           +30m
                         </button>
@@ -1587,15 +1560,14 @@ export default function SecurityEntryManagement() {
                   })}
                 </div>
               )}
-            </div>
-          </div>
-        </div>
+            </section>
 
-        {/* Confiscated owners may not enter. The guard meeting the car at the
-            barrier is the person who has to know, and a car turning up during
-            the penalty is itself a further offence. */}
-        <div className="em-confiscated">
-          <ConfiscatedAccounts />
+            {/* Confiscated owners may not enter. The guard meeting the car at
+                the barrier is the person who has to know, and a car turning up
+                during the penalty is itself a further offence — so it sits in
+                the column the guard is already reading, not under the fold. */}
+            <ConfiscatedAccounts compact />
+          </aside>
         </div>
 
         {scanQueue[0] && (

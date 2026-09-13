@@ -20,14 +20,10 @@
   padding: 0.5rem 0.75rem;
 }
 
-/* Entry grid: left camera column gets more space, right panel a bit wider */
-.security-layout .admin-content--fill .em-grid {
-  grid-template-columns: 1fr 340px;
-  gap: 0.75rem;
-}
+/* The camera screens size their columns from styles/camera-monitor.css, so
+   the entry and parking screens match the admin Operations Center. */
 
-/* Parking / audit pages: full width with scroll */
-.security-layout .pm-page,
+/* Audit page: full width with scroll */
 .security-layout .sal-page {
   max-width: 100%;
   padding: 1rem 1.25rem;

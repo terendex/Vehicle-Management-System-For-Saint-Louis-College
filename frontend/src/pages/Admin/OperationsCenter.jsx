@@ -4,7 +4,7 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from '../../components/Feedback/notify'
@@ -16,6 +16,8 @@ import { useFullscreen } from '../../hooks/useFullscreen'
 import TableLoader from '../../components/TableLoader'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import PageTabs from '../../components/Tabs/PageTabs'
+import { feedState, FEED_LABEL, FEED_DOT } from '../../utils/feedState'
+import '../../styles/camera-monitor.css'
 import './OperationsCenter.css'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -88,60 +90,68 @@ function Pager({ page, totalPages, total, onPage }) {
 }
 
 // ─── Gate Panel ───────────────────────────────────────────────────────────────
+// Rows share the guard screen's layout (.cm-log-row): plate and time, then what
+// was decided and who they are, then the people — so an admin reading a gate
+// here reads it the way the guard standing at that gate does.
 function GatePanel({ label, shift, logs }) {
   return (
-    <div className="oc-gate-panel">
-      <div className="oc-gate-head">
-        <div className="oc-gate-title">
-          <Shield size={15} />
-          <span>{label}</span>
+    <section className="cm-panel oc-gate-panel">
+      <div className="cm-panel-head">
+        <span className="cm-panel-title"><Shield size={14} /> {label}</span>
+        <div className="cm-panel-end">
+          {shift ? (
+            <span
+              className="oc-guard-pill active"
+              title={`${shift.guard_name} — on duty ${shiftDur(shift.clocked_in_at)}`}
+            >
+              <span className="oc-guard-dot" />
+              <span className="oc-guard-name">{shift.guard_name}</span>
+              <span className="oc-guard-since">{shiftDur(shift.clocked_in_at)}</span>
+            </span>
+          ) : (
+            <span className="oc-guard-pill inactive">No guard on duty</span>
+          )}
         </div>
-        {shift ? (
-          <div className="oc-guard-pill active">
-            <span className="oc-guard-dot" />
-            <span className="oc-guard-name">{shift.guard_name}</span>
-            <span className="oc-guard-since">{shiftDur(shift.clocked_in_at)}</span>
-          </div>
-        ) : (
-          <div className="oc-guard-pill inactive">No guard on duty</div>
-        )}
       </div>
 
-      <div className="oc-gate-log">
-        {logs.length === 0 ? (
-          <p className="oc-empty">No recent activity.</p>
-        ) : (
-          logs.map((log, i) => {
-            const { cls, label } = getMeta(log.status)
+      {logs.length === 0 ? (
+        <p className="cm-empty">No recent activity.</p>
+      ) : (
+        <ul className="cm-log oc-gate-log">
+          {logs.map((log, i) => {
+            const { cls, label: statusLabel } = getMeta(log.status)
+            // A hand-recorded plateless vehicle has no owner account; the
+            // driver's name is all it has.
+            const who = [
+              log.vehicle_owner_name || log.driver_name,
+              log.scanned_by_name && `By ${log.scanned_by_name}`,
+            ].filter(Boolean).join(' · ')
             return (
-              <div key={log.id ?? i} className="oc-log-item">
-                <span className={`oc-log-dot ${cls}`} />
-                <div className="oc-log-main">
-                  <span className="oc-log-plate">
-                    {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
-                  </span>
-                  {(log.vehicle_owner_name || log.driver_name || log.scanned_by_name) && (
-                    <span className="oc-log-meta">
-                      {/* A hand-recorded plateless vehicle has no owner
-                          account; the driver's name is all it has. */}
-                      {log.vehicle_owner_name || log.driver_name}
-                      {log.scanned_by_name && ` · ${log.scanned_by_name}`}
+              <li key={log.id ?? i} className="cm-log-row">
+                <span className={`cm-log-mark ${cls}`} />
+                <div className="cm-log-main">
+                  <div className="cm-log-line">
+                    <span className="cm-log-plate">
+                      {log.plate_number || (log.is_unrecognized ? `NP-${log.id}` : '—')}
                     </span>
-                  )}
+                    <span className="cm-log-time">{timeAgo(log.scanned_at)}</span>
+                  </div>
+                  <div className="cm-log-tags">
+                    <span className={`oc-log-badge ${cls}`}>{statusLabel}</span>
+                    {log.classification && (
+                      <span className={`em-class-tag cls-${log.classification}`}>
+                        {classLabel(log.classification)}
+                      </span>
+                    )}
+                  </div>
+                  {who && <div className="cm-log-who" title={who}>{who}</div>}
                 </div>
-                {log.classification && (
-                  <span className={`em-class-tag cls-${log.classification}`}>
-                    {classLabel(log.classification)}
-                  </span>
-                )}
-                <span className={`oc-log-badge ${cls}`}>{label}</span>
-                <span className="oc-log-time">{timeAgo(log.scanned_at)}</span>
-              </div>
+              </li>
             )
-          })
-        )}
-      </div>
-    </div>
+          })}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -315,25 +325,33 @@ function CameraMonitor() {
     return Array.from({ length: n }, (_, p) => ({ cam, pane: p, lenses: n }))
   })
 
+  const state = selected ? feedState(feed) : 'none'
+  const feedMsg = (feed?.statusMsg || '').trim()
+  const feedDetail = feedMsg && !/^connecting…?$/i.test(feedMsg) ? feedMsg : ''
+
   return (
-    <div className="oc-cam-panel">
-      <div className="oc-cam-head">
-        <span className="oc-cam-label"><Video size={14} /> Camera Monitor</span>
-        <span className="oc-cam-note">View only — detection is handled by guard terminals</span>
-        <span className={`oc-live-pill ${isLive ? 'live' : devices.length === 0 ? 'none' : 'connecting'}`}>
-          <span className="oc-live-dot" />
-          {devices.length === 0 ? 'No Cameras' : isLive ? 'Live' : 'Connecting…'}
-        </span>
+    <section className="cm-card">
+      <div className="cm-head">
+        <span className="cm-title"><Video size={15} /> Camera Monitor</span>
+        <span className="cm-head-note">View only — detection runs on the guard terminals</span>
+        <div className="cm-head-end">
+          <span className={`cm-pill ${devices.length === 0 ? 'none' : state}`}>
+            <span className="cm-pill-dot" />
+            {devices.length === 0 ? 'No cameras' : FEED_LABEL[state]}
+          </span>
+        </div>
       </div>
 
       {devices.length > 0 && (
-        <div className="oc-cam-controls">
-          <div className="oc-cam-scopes" role="group" aria-label="Filter cameras">
+        <div className="cm-toolbar">
+          <div className="cm-chips" role="group" aria-label="Filter cameras">
             {scopes.map(s => (
               <button
                 key={s.key}
-                className={`oc-cam-scope ${scope === s.key ? 'active' : ''}`}
+                type="button"
+                className={`cm-chip${scope === s.key ? ' active' : ''}`}
                 onClick={() => setScope(s.key)}
+                aria-pressed={scope === s.key}
               >
                 {s.key === 'parking' ? <ParkingCircle size={12} /> : s.key === 'all' ? null : <Shield size={12} />}
                 {s.label}
@@ -341,8 +359,8 @@ function CameraMonitor() {
             ))}
           </div>
 
-          <div className="oc-cam-search">
-            <Search size={13} className="oc-cam-search-icon" />
+          <div className="cm-search">
+            <Search size={13} />
             <input
               type="search"
               placeholder="Search cameras…"
@@ -353,7 +371,7 @@ function CameraMonitor() {
             {camQ && (
               <button
                 type="button"
-                className="oc-cam-search-clear"
+                className="cm-search-clear"
                 onClick={() => setCamQuery('')}
                 title="Clear search"
                 aria-label="Clear search"
@@ -365,99 +383,113 @@ function CameraMonitor() {
         </div>
       )}
 
-      <div className="oc-cam-viewport" ref={fs.setRef('monitor')}>
-        {selected ? (
-          <>
-            {/* Keyed by stream URL *and* lens so switching either remounts the
-                canvas instead of painting the new picture over the old one's
-                last frame. `pane` is left undefined for a single-lens camera:
-                that asks the context for the whole frame, so a unit that is
-                briefly mis-measured shows everything rather than a half. */}
-            <canvas
-              key={`${selected.rtsp_url}:${split ? pane : 'full'}`}
-              ref={el => feed && registerCanvas(feed.id, el, split ? pane : undefined)}
-              className="oc-cam-canvas"
-            />
-            {!isLive && (
-              <div className="oc-cam-overlay">
-                <div className="oc-cam-spinner" />
-                <p>{feed?.statusMsg || 'Connecting…'}</p>
+      {/* The standard stage — the same size the guard terminals show this
+          camera at (styles/camera-monitor.css). */}
+      <div className="cm-well" ref={fs.setRef('monitor')}>
+        <div className="cm-stage">
+          {selected ? (
+            <>
+              {/* Keyed by stream URL *and* lens so switching either remounts the
+                  canvas instead of painting the new picture over the old one's
+                  last frame. `pane` is left undefined for a single-lens camera:
+                  that asks the context for the whole frame, so a unit that is
+                  briefly mis-measured shows everything rather than a half. */}
+              <canvas
+                key={`${selected.rtsp_url}:${split ? pane : 'full'}`}
+                ref={el => feed && registerCanvas(feed.id, el, split ? pane : undefined)}
+                className="cm-canvas"
+              />
+              {!isLive && (
+                <div className={`cm-state cm-state--over${state === 'offline' ? ' cm-state--offline' : ''}`}>
+                  {state === 'offline' ? <VideoOff size={30} /> : <div className="cm-spinner" />}
+                  <p className="cm-state-title">
+                    {state === 'offline' ? `${selected.name} is offline` : `Connecting to ${selected.name}…`}
+                  </p>
+                  {feedDetail && <p className="cm-state-sub">{feedDetail}</p>}
+                </div>
+              )}
+              <div className="cm-tag">
+                <span className={`cm-dot ${FEED_DOT[state]}`} />
+                {selected.name} — {camScopeLabel(selected)}
+                {split && <span className="oc-cam-lens-badge">Lens {pane + 1}</span>}
               </div>
-            )}
-            <div className="oc-cam-name-tag">
-              <span className={`oc-cam-dot ${isLive ? 'live' : 'wait'}`} />
-              {selected.name} — {camScopeLabel(selected)}
-              {split && <span className="oc-cam-lens-badge">Lens {pane + 1}</span>}
+              {/* The lens switch lives *inside* the stage so it stays reachable
+                  in fullscreen, where the picker below is off screen. */}
+              {split && (
+                <div className="oc-cam-lens-switch" role="group" aria-label="Select lens">
+                  {Array.from({ length: lensCount }, (_, p) => (
+                    <button
+                      key={p}
+                      className={`oc-cam-lens-btn ${p === pane ? 'active' : ''}`}
+                      onClick={() => setLensPane(p)}
+                      aria-pressed={p === pane}
+                    >
+                      <Layers size={11} /> Lens {p + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                className="cm-fs"
+                onClick={async () => {
+                  if (!(await fs.toggle('monitor'))) toast.error('Fullscreen was blocked by the browser.')
+                }}
+                title={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+                aria-label={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {fs.isFullscreen('monitor') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+            </>
+          ) : (
+            <div className="cm-state">
+              <Wifi size={30} />
+              <p className="cm-state-title">
+                {devices.length === 0 ? 'No cameras configured' : 'No cameras match this filter'}
+              </p>
+              <p className="cm-state-sub">
+                {devices.length === 0 ? 'Add cameras in Device Management.' : 'Pick another gate, or Parking.'}
+              </p>
             </div>
-            {/* The lens switch lives *inside* the viewport so it stays reachable
-                in fullscreen, where the picker below is off screen. */}
-            {split && (
-              <div className="oc-cam-lens-switch" role="group" aria-label="Select lens">
-                {Array.from({ length: lensCount }, (_, p) => (
-                  <button
-                    key={p}
-                    className={`oc-cam-lens-btn ${p === pane ? 'active' : ''}`}
-                    onClick={() => setLensPane(p)}
-                    aria-pressed={p === pane}
-                  >
-                    <Layers size={11} /> Lens {p + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button
-              className="oc-cam-fs"
-              onClick={async () => {
-                if (!(await fs.toggle('monitor'))) toast.error('Fullscreen was blocked by the browser.')
-              }}
-              title={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
-              aria-label={fs.isFullscreen('monitor') ? 'Exit fullscreen' : 'Fullscreen'}
-            >
-              {fs.isFullscreen('monitor') ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </button>
-          </>
-        ) : (
-          <div className="oc-cam-empty">
-            <Wifi size={36} />
-            <p>{devices.length === 0
-                  ? 'No cameras configured.'
-                  : 'No cameras match this filter.'}</p>
-            <span>{devices.length === 0
-                     ? 'Add cameras in Device Management.'
-                     : 'Pick another gate, or Parking.'}</span>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* The picker: every available view laid out under the display rather
           than folded into a dropdown, so the whole camera list — and which of
-          them are actually up — is readable at a glance. */}
+          them are actually up — is readable at a glance. Same cards as the
+          guard entry screen. */}
       {views.length > 0 && (
-        <div className="oc-cam-strip" role="group" aria-label="Available cameras">
+        <div className="cm-picker" role="group" aria-label="Available cameras">
           {views.map(({ cam, pane: p, lenses }) => {
             const f = liveCameras.find(l => l.url === cam.rtsp_url)
+            // A camera this panel has not opened has no feed at all — that is
+            // idle, not a fault.
+            const st = f ? feedState(f) : 'none'
             const active = selected?.id === cam.id && (lenses === 1 || p === pane)
             return (
               <button
                 key={`${cam.id}:${p}`}
-                className={`oc-cam-thumb ${active ? 'active' : ''}`}
+                type="button"
+                className={`cm-pick${active ? ' active' : ''}`}
                 onClick={() => pick(cam.id, p)}
                 aria-pressed={active}
               >
-                <span className={`oc-cam-dot ${f?.streamConnected ? 'live' : f?.wsActive ? 'wait' : 'off'}`} />
-                <span className="oc-cam-thumb-text">
-                  <span className="oc-cam-thumb-name">
+                <span className={`cm-dot ${FEED_DOT[st]}`} />
+                <span className="cm-pick-text">
+                  <span className="cm-pick-name">
                     {cam.name}
                     {lenses > 1 && <span className="oc-cam-lens-badge">Lens {p + 1}</span>}
                   </span>
-                  <span className="oc-cam-thumb-sub">{camScopeLabel(cam)}</span>
+                  <span className="cm-pick-sub">
+                    {camScopeLabel(cam)}{f ? ` · ${FEED_LABEL[st]}` : ''}
+                  </span>
                 </span>
               </button>
             )
           })}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -648,10 +680,10 @@ export default function OperationsCenter() {
             cost a reconnect every time. `hidden` keeps it running out of
             sight. */}
         <div className="oc-tabpanel" hidden={tab !== 'live'}>
-          <div className="oc-main-grid">
+          <div className="cm-layout">
             <CameraMonitor />
 
-            <div className="oc-gates-col">
+            <aside className="cm-side oc-gates-col">
               {gates.map(g => (
                 <GatePanel
                   key={g.gate_id}
@@ -660,7 +692,7 @@ export default function OperationsCenter() {
                   logs={logsByGate[g.gate_id] ?? []}
                 />
               ))}
-            </div>
+            </aside>
           </div>
         </div>
 
