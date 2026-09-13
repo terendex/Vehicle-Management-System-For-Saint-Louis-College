@@ -18,23 +18,23 @@ Signing in, password reset, applying for a vehicle pass, and guard sign-in at a 
 
 ![Signing in](01-getting-started/01-login-page.png)
 
-The login page is the entry point for CDSO staff and registered vehicle owners.
+Sign in here with the email address and password issued to you.
 
 1. **Email**: Type the email address registered to your account. It is not case-sensitive.
 2. **Password**: Enter your password. The eye icon shows or hides what you typed.
 3. **Remember Me**: Keeps you signed in on this computer. Leave it unticked on shared computers.
 4. **Forgot Password**: Sends a password-reset link to your email.
-5. **Login**: Signs you in. CDSO and vehicle-owner accounts are then asked for a two-factor code.
+5. **Login**: Signs you in. You are then asked for a code from your authenticator app.
 6. **Apply for a Vehicle Pass**: Starts the online vehicle pass application. No account is needed to apply.
 7. **Privacy Policy & Terms**: Opens the data privacy notice and the vehicle pass terms.
-8. **Need help signing in?**: Opens the step-by-step guide with pictures, for applicants, guards and CDSO staff.
+8. **Need help signing in?**: Opens the step-by-step guide with pictures.
 9. **Help**: The same guide, from the top of the page.
 
 ### Two-factor verification
 
 ![Two-factor verification](01-getting-started/02-two-factor-code.png)
 
-After the password, CDSO and vehicle-owner accounts confirm a 6-digit code from an authenticator app.
+After your password, confirm a 6-digit code from the authenticator app on your phone.
 
 1. **Verification code**: Open your authenticator app (e.g. Google Authenticator) and type the 6-digit code shown for SLC Vehicle Management. It submits by itself on the sixth digit.
 

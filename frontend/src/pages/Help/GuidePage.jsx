@@ -69,6 +69,7 @@ export default function GuidePage() {
           title="Getting started"
           subtitle="Pick a topic, or search. Once you are signed in, Help inside the system has the full guide for your account."
           initialTopicId={params.get('topic')}
+          searchExamples={copy.searchExamples}
           aside={isAuthenticated ? (
             <button className="guide-full-manual" onClick={() => navigate('/help')}>
               <BookOpen size={16} />

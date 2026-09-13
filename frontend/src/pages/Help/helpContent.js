@@ -29,11 +29,13 @@ export const GUIDE_AUDIENCES = {
   owner: {
     title: 'Help for students, employees & fetchers',
     blurb: 'How to apply for a vehicle pass, sign in to your portal, and reset your password.',
+    searchExamples: 'forgot password, vehicle pass, code',
     returnTo: '/login',
   },
   guard: {
     title: 'Help for security guards',
     blurb: 'How to sign in at your gate and start your shift.',
+    searchExamples: 'gate, QR badge, forgot password',
     returnTo: '/security/guard-login',
   },
 }

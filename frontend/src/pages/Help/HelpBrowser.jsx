@@ -60,7 +60,10 @@ function Block({ block, stepStart }) {
  * passes the topics for the user's role, and the public guide (/guide), which
  * passes the topics for the audience the reader picked.
  */
-export default function HelpBrowser({ topics, title, subtitle, aside, initialTopicId }) {
+export default function HelpBrowser({
+  topics, title, subtitle, aside, initialTopicId,
+  searchExamples = 'forgot password, violations, backup',
+}) {
   const phone = usePhoneLayout()
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
@@ -133,7 +136,7 @@ export default function HelpBrowser({ topics, title, subtitle, aside, initialTop
         <Search size={16} />
         <input
           type="text"
-          placeholder="Search the guide… (e.g. forgot password, violations, backup)"
+          placeholder={`Search the guide… (e.g. ${searchExamples})`}
           value={query}
           onChange={e => setQuery(e.target.value)}
           aria-label="Search the guide"
