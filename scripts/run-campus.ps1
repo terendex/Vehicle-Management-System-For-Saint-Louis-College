@@ -389,6 +389,22 @@ $origin = Set-CampusRuntimeEnvironment -Lan $lan -Port $Port
 Say 'Checking the cameras registered in the database...'
 & (Join-Path $PSScriptRoot 'check-cameras.ps1') -Repo $repo
 
+# ── 4b. Thermal slip printer on the right USB port ───────────────────────────
+# Visitor slips print from the server straight to this printer, with no dialog.
+# Windows can leave the printer pointing at a USB port some other device owns
+# (or the socket it was moved from), and then every slip fails in the spooler.
+# Checked on each start because re-plugging can move it. Never fatal.
+try {
+    foreach ($m in @(& (Join-Path $PSScriptRoot 'slip-printer-port.ps1'))) {
+        # Warnings go out without the [campus] prefix: the launcher colours a
+        # line by its first match, and the prefix would win over WARNING.
+        if ($m.Kind -eq 'warn') { Write-Host "WARNING: $($m.Text)" -ForegroundColor Yellow }
+        else { Say $m.Text $(if ($m.Kind -eq 'ok') { 'Green' } else { 'DarkGray' }) }
+    }
+} catch {
+    Write-Host "WARNING: Slip printer check failed ($($_.Exception.Message.Trim()))." -ForegroundColor Yellow
+}
+
 # ── 5. Frontend bundle, rebuilt only when stale ──────────────────────────────
 $buildDir  = Join-Path $repo 'backend\frontend_build'
 $needBuild = $false

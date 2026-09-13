@@ -53,6 +53,11 @@ export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
 export const extendVisitorPass = (id, extra_minutes) =>
   api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
 
+// Print the visitor slip on the campus server's thermal printer — no dialog.
+// 503 = this server has no printer (use the browser dialog); 502 = it did not print.
+export const printVisitorSlipOnServer = (id) =>
+  api.post(`/scan/visitor-pass/${id}/print/`)
+
 // Confirm the visitor slip was printed — this is what logs the visitor's entry
 export const confirmVisitorSlipPrinted = (id, gate_id) =>
   api.post(`/scan/visitor-pass/${id}/printed/`, { gate_id })

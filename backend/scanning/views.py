@@ -857,6 +857,26 @@ class VisitorPassView(APIView):
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
+class VisitorPassPrintView(APIView):
+    """Print the visitor slip straight to this server's thermal printer — no
+    browser dialog. 503 means this server has no printer (the cloud deployment,
+    or a campus PC without one), and the frontend falls back to the browser
+    print dialog. Printing does not log the entry; VisitorPassPrintedView does."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        from .slip_printer import SlipPrinterError, print_visitor_slip
+
+        pass_ = get_object_or_404(VisitorPass.objects.select_related('office', 'issued_by'), pk=pk)
+        try:
+            printer = print_visitor_slip(pass_)
+        except SlipPrinterError as exc:
+            return Response({'printed': False, 'error': f'The slip did not print: {exc}.'}, status=502)
+        if not printer:
+            return Response({'printed': False, 'reason': 'no_printer'}, status=503)
+        return Response({'printed': True, 'printer': printer})
+
+
 class VisitorPassPrintedView(APIView):
     """Confirm the visitor slip was printed. Only at this point is the visitor's
     entry recorded in the AccessLog — a visitor whose slip was never printed is

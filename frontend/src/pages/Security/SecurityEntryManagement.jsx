@@ -20,7 +20,7 @@ import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
-  confirmVisitorSlipPrinted, visitorQrExit,
+  confirmVisitorSlipPrinted, printVisitorSlipOnServer, visitorQrExit,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
@@ -210,6 +210,10 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
   const [purpose, setPurpose]   = useState('')
   const [duration, setDuration] = useState('15')  // typeable string; default 15 min
   const [loading, setLoading]   = useState(false)
+  // A pass that was created but whose slip did not print (printer offline, out
+  // of paper…). The pass already exists, so the modal switches to retrying the
+  // print rather than letting a second submit create a duplicate.
+  const [unprinted, setUnprinted] = useState(null)  // { pass, reason }
 
   const durationNum = Math.max(1, Math.min(480, parseInt(duration, 10) || 15))
 
@@ -222,8 +226,47 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
     })
   }
 
+  // Auto-log the visitor's entry as soon as the slip is printed — no separate
+  // manual confirmation step.
+  const finish = async (pass) => {
+    try {
+      await confirmVisitorSlipPrinted(pass.id)
+      toast.success(`Visitor pass issued & entry logged for ${plate} — valid ${durationNum} min.`)
+    } catch {
+      toast.success(`Visitor pass issued for ${plate}.`)
+    }
+    onCreated()
+    onClose()
+  }
+
+  // The campus server prints straight to the gate's thermal printer, so there
+  // is no print dialog. Only a server with no printer (503 — the cloud site)
+  // falls back to the browser's dialog.
+  const printPass = async (pass) => {
+    try {
+      await printVisitorSlipOnServer(pass.id)
+    } catch (err) {
+      if (err?.response?.status === 503) {
+        doPrint(pass)
+      } else {
+        setUnprinted({
+          pass,
+          reason: err?.response?.data?.error || 'The slip did not print — the printer could not be reached.',
+        })
+        return
+      }
+    }
+    setUnprinted(null)
+    await finish(pass)
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (unprinted) {
+      setLoading(true)
+      try { await printPass(unprinted.pass) } finally { setLoading(false) }
+      return
+    }
     const problems = [...fieldProblems(e.currentTarget)]
     if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
     if (await notify.validation(problems, { title: 'Pass not issued' })) return
@@ -232,21 +275,43 @@ function VisitorPassModal({ plate, offices, onClose, onCreated, guardName }) {
       const res = await createVisitorPass({
         plate_number: plate, office: officeId || null, purpose, allowed_duration: durationNum,
       })
-      const pass = res.data
-      doPrint(pass)
-      // Auto-log the visitor's entry as soon as the slip is sent to the printer —
-      // no separate manual confirmation step.
-      try {
-        await confirmVisitorSlipPrinted(pass.id)
-        toast.success(`Visitor pass issued & entry logged for ${plate} — valid ${durationNum} min.`)
-      } catch {
-        toast.success(`Visitor pass issued for ${plate}.`)
-      }
-      onCreated()
-      onClose()
+      await printPass(res.data)
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
     } finally { setLoading(false) }
+  }
+
+  if (unprinted) {
+    return (
+      <div className="em-overlay">
+        <div className="em-modal">
+          <div className="em-modal-head">
+            <span className="em-modal-title"><AlertTriangle size={17} /> Slip Not Printed</span>
+            <button className="em-modal-close" onClick={() => { onCreated(); onClose() }}><X size={15} /></button>
+          </div>
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="em-modal-body">
+              <p style={{ margin: 0 }}>
+                The visitor pass for <strong>{plate}</strong> was created, but {unprinted.reason.replace(/^The slip/, 'the slip')}
+              </p>
+              <p style={{ margin: '10px 0 0', color: '#3E5B72' }}>
+                Check that the thermal printer is switched on, has paper, and its lid is closed, then retry.
+                The visitor's entry is logged once the slip prints.
+              </p>
+            </div>
+            <div className="em-modal-foot">
+              <button type="button" className="em-btn em-btn-secondary"
+                onClick={() => { doPrint(unprinted.pass); finish(unprinted.pass) }}>
+                Use Print Dialog
+              </button>
+              <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
+                {loading ? <><div className="em-spinner" /> Printing…</> : 'Retry Print'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
   }
 
   return (

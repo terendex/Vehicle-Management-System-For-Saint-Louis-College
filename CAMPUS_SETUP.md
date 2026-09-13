@@ -165,6 +165,33 @@ Port, branch, kiosk and poll interval live in
 `%LOCALAPPDATA%\SLC-VMS\launcher.json`, outside the checkout, so a pull or a
 reinstall never resets them.
 
+### Visitor slip printer
+
+Visitor slips print **from the server**, straight to the thermal printer plugged
+into this machine — no print dialog, and a guard issuing a pass from a phone
+still gets the slip out at the gate. The slip is sent as raw ESC/POS
+(`backend\scanning\slip_printer.py`), so none of the Windows printer settings a
+browser print needs — paper size, margins, the driver's FeedLine — apply.
+
+On a new machine the only setup is installing the printer's Windows driver
+(JP-58H: *POS58 Printer*) and plugging it in. The server finds it by name or
+driver (`POS58`, `JP-58`, `58mm`, `thermal`, `receipt`); set
+`SLIP_PRINTER=<exact printer name>` in `backend\.env` if it has another name, or
+`SLIP_PRINTER=off` to go back to the browser dialog.
+
+Every server start checks the printer's **USB port** and fixes it
+(`scripts\slip-printer-port.ps1`, shown in the launcher log as *Slip printer:*).
+Windows numbers USB printer ports in the order devices first appear, and a
+printer can end up pointing at a port another device owns — the job then fails
+with *The system cannot find the file specified* and nothing prints.
+Re-plugging into another socket can move it again, which is why it is checked
+every start rather than once.
+
+If a slip does not print (printer off, out of paper, lid open), the pass is
+still created and the guard gets **Retry Print** — the visitor's entry is only
+logged once the slip is out. Where there is no printer at all (the Railway
+site), slips use the browser's print dialog as before.
+
 ---
 
 ## Uninstalling

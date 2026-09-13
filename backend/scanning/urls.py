@@ -9,6 +9,7 @@ urlpatterns = [
     path('exit/',                   views.ExitLogView.as_view(),           name='scan-exit'),
     path('visitor-pass/',                    views.VisitorPassView.as_view(),       name='visitor-pass'),
     path('visitor-pass/exit-scan/',          views.VisitorQrExitView.as_view(),     name='visitor-exit-scan'),
+    path('visitor-pass/<int:pk>/print/',     views.VisitorPassPrintView.as_view(),  name='visitor-print'),
     path('visitor-pass/<int:pk>/printed/',   views.VisitorPassPrintedView.as_view(), name='visitor-printed'),
     path('visitor-pass/<int:pk>/exit/',      views.ExitScanView.as_view(),          name='visitor-exit'),
     path('visitor-pass/<int:pk>/extend/',    views.ExtendVisitorPassView.as_view(), name='visitor-extend'),
