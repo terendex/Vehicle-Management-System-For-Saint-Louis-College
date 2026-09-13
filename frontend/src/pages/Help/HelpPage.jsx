@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import { HELP_TOPICS, HELP_ROLE_LABELS } from './helpContent'
 import HelpBrowser from './HelpBrowser'
+import usePhoneLayout from './usePhoneLayout'
 
 // The signed-in manual. Every topic is tagged with the roles it is for, so a
 // guard never wades through CDSO settings and an owner never sees the gate
@@ -13,6 +14,7 @@ export default function HelpPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const role = user?.role || 'vehicle_owner'
+  const phone = usePhoneLayout()
 
   const topics = useMemo(() => HELP_TOPICS.filter(t => t.roles.includes(role)), [role])
 
@@ -29,7 +31,7 @@ export default function HelpPage() {
     <HelpBrowser
       topics={topics}
       title="Help & User Manual"
-      subtitle={`Topics for your role: ${HELP_ROLE_LABELS[role] || 'User'}. Search, or pick a topic on the left.`}
+      subtitle={`Topics for your role: ${HELP_ROLE_LABELS[role] || 'User'}. Search, or pick a topic ${phone ? 'below' : 'on the left'}.`}
       aside={aside}
       initialTopicId={params.get('topic')}
     />

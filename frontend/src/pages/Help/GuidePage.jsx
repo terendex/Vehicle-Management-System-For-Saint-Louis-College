@@ -1,44 +1,37 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Car, ShieldCheck, LayoutDashboard, BookOpen } from 'lucide-react'
+import { ArrowLeft, BookOpen } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import BrandLogos from '../../components/BrandLogos'
 import { HELP_TOPICS, GUIDE_AUDIENCES } from './helpContent'
 import HelpBrowser from './HelpBrowser'
 import './GuidePage.css'
 
-const ICONS = { owner: Car, guard: ShieldCheck, cdso: LayoutDashboard }
-
-// Where "Return" goes for each audience: guards came from the gate sign-in
-// page, everyone else from the main login.
-const RETURN_TO = { guard: '/security/guard-login' }
-
 /**
- * The public help page, reached from the login screens before anyone has an
- * account open. It covers only what a person needs to get IN — signing in,
- * two-factor, a forgotten password, applying for a pass, gate sign-in — split
- * by who is reading. The full manual for a role opens after sign-in at /help,
- * where it is filtered by the account's role.
+ * The public help page, opened from a login screen before anyone is signed in.
+ *
+ * Each login screen opens its own audience and nothing else: the main login's
+ * help (/guide) covers students, employees and fetchers; the gate sign-in
+ * page's (/guide?for=guard) covers guards. There is no picker between them and
+ * no CDSO audience at all — how the administration console works is only
+ * shown inside it, in the CDSO's own signed-in manual at /help.
  */
 export default function GuidePage() {
   const navigate = useNavigate()
   const location = useLocation()
-  // Read once: switching audience replaces the URL and gets a fresh key, which
-  // would otherwise make a directly-opened link look like in-app navigation.
-  const [cameFromApp] = useState(() => location.key !== 'default')
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const { isAuthenticated } = useAuthStore()
+  // Read once: a directly-opened link has no in-app history to go back to.
+  const [cameFromApp] = useState(() => location.key !== 'default')
 
-  const audience = GUIDE_AUDIENCES.some(a => a.id === params.get('for')) ? params.get('for') : 'owner'
-  // What only this audience does (a guard's gate sign-in, an applicant's form)
-  // comes first; the steps everyone shares follow.
+  // Anything but the guard page's own link falls back to the owner guide.
+  const audience = params.get('for') === 'guard' ? 'guard' : 'owner'
+  const copy = GUIDE_AUDIENCES[audience]
   const topics = useMemo(() => {
     const mine = HELP_TOPICS.filter(t => t.guide?.includes(audience))
+    // What only this audience does comes first; shared steps follow.
     return [...mine.filter(t => t.guide.length === 1), ...mine.filter(t => t.guide.length > 1)]
   }, [audience])
-  const current = GUIDE_AUDIENCES.find(a => a.id === audience)
-
-  const choose = (id) => setParams({ for: id }, { replace: true })
 
   return (
     <div className="guide-page">
@@ -55,8 +48,8 @@ export default function GuidePage() {
             className="header-back-btn header-back-btn--end"
             // Back where the reader came from when there is one — a kiosk's
             // /security/guard-login/gate4 URL must survive the detour — or
-            // the right sign-in page for a link opened directly.
-            onClick={() => (cameFromApp ? navigate(-1) : navigate(RETURN_TO[audience] || '/login'))}
+            // the matching sign-in page for a link opened directly.
+            onClick={() => (cameFromApp ? navigate(-1) : navigate(copy.returnTo))}
           >
             <ArrowLeft size={16} />
             <span>Back to Login</span>
@@ -65,39 +58,16 @@ export default function GuidePage() {
       </header>
 
       <section className="guide-hero">
-        <h1 className="guide-hero-title">How can we help?</h1>
-        <p className="guide-hero-sub">Choose who you are to see the steps that apply to you.</p>
-
-        <div className="guide-audiences" role="tablist" aria-label="Who is this help for?">
-          {GUIDE_AUDIENCES.map(a => {
-            const Icon = ICONS[a.id]
-            const selected = a.id === audience
-            return (
-              <button
-                key={a.id}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                className={`guide-audience${selected ? ' is-selected' : ''}`}
-                onClick={() => choose(a.id)}
-              >
-                <span className="guide-audience-icon"><Icon size={22} /></span>
-                <span className="guide-audience-text">
-                  <strong>{a.label}</strong>
-                  <span>{a.blurb}</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
+        <h1 className="guide-hero-title">{copy.title}</h1>
+        <p className="guide-hero-sub">{copy.blurb}</p>
       </section>
 
       <main className="guide-main">
         <HelpBrowser
           key={audience}
           topics={topics}
-          title={`Getting started: ${current.short}`}
-          subtitle="Signed in already? The full manual for your role is under Help inside the system."
+          title="Getting started"
+          subtitle="Pick a topic, or search. Once you are signed in, Help inside the system has the full guide for your account."
           initialTopicId={params.get('topic')}
           aside={isAuthenticated ? (
             <button className="guide-full-manual" onClick={() => navigate('/help')}>

@@ -12,6 +12,7 @@
         wizard-large.bmp  164 x 314, the left panel of the wizard
         wizard-small.bmp  55 x 55, the header badge
         slclogo.jpg       a copy, for the bootstrap window at install time
+        cdsologo.jpg      a copy, the second seal in that window's header
 #>
 
 [CmdletBinding()]
@@ -265,6 +266,8 @@ Write-Ico        (Join-Path $outDir 'slc-vms.ico') @(16, 32, 48, 64, 128, 256)
 Write-WizardLarge (Join-Path $outDir 'wizard-large.bmp')
 Write-WizardSmall (Join-Path $outDir 'wizard-small.bmp')
 Copy-Item $srcLogo (Join-Path $outDir 'slclogo.jpg') -Force
+# The bootstrap window's header carries both seals, like every other lockup.
+Copy-Item (Join-Path $repo 'frontend\src\assets\cdsologo.jpg') (Join-Path $outDir 'cdsologo.jpg') -Force
 
 $logo.Dispose()
 

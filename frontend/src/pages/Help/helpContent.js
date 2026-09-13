@@ -2,10 +2,12 @@
 //
 // Each topic is tagged with:
 //   roles  — which signed-in accounts see it in /help ('admin', 'security', 'vehicle_owner')
-//   guide  — which audiences see it on the public /guide page reached from the
-//            login screens ('owner', 'guard', 'cdso'). Only what someone needs
-//            BEFORE they can sign in belongs here; everything else waits for
-//            the role-filtered manual after login.
+//   guide  — which login page's public help (/guide) shows it: 'owner' for the
+//            main login (students, employees, fetchers), 'guard' for the gate
+//            sign-in page. Only what someone needs BEFORE they can sign in
+//            belongs here. CDSO material is never tagged for the guide: how the
+//            administration console works is not published on a page anyone
+//            can open, so it lives only in the CDSO's own signed-in manual.
 //
 // Body blocks:
 //   { type: 'p',      text }          → paragraph
@@ -20,15 +22,21 @@ export const HELP_ROLE_LABELS = {
   vehicle_owner: 'Vehicle Owner',
 }
 
-// Audiences on the public guide, in the order they are offered.
-export const GUIDE_AUDIENCES = [
-  { id: 'owner', label: 'Students, employees & fetchers', short: 'Vehicle owners',
-    blurb: 'Apply for a vehicle pass, sign in to your portal, reset your password.' },
-  { id: 'guard', label: 'Security guards', short: 'Security guards',
-    blurb: 'Sign in at your gate and start your shift.' },
-  { id: 'cdso', label: 'CDSO staff', short: 'CDSO staff',
-    blurb: 'Sign in to the CDSO console with two-factor verification.' },
-]
+// The public guide's two audiences. Each login page opens its own, and the
+// guide offers no way across — the main login's help is for vehicle owners
+// only, the gate sign-in page's help for guards only.
+export const GUIDE_AUDIENCES = {
+  owner: {
+    title: 'Help for students, employees & fetchers',
+    blurb: 'How to apply for a vehicle pass, sign in to your portal, and reset your password.',
+    returnTo: '/login',
+  },
+  guard: {
+    title: 'Help for security guards',
+    blurb: 'How to sign in at your gate and start your shift.',
+    returnTo: '/security/guard-login',
+  },
+}
 
 export const HELP_TOPICS = [
   // ── Getting Started ─────────────────────────────────────────────────────
@@ -37,16 +45,16 @@ export const HELP_TOPICS = [
     title: 'Logging In',
     category: 'Getting Started',
     roles: ['admin', 'vehicle_owner'],
-    guide: ['owner', 'cdso'],
+    guide: ['owner'],
     body: [
-      { type: 'p', text: 'CDSO staff and registered vehicle owners sign in on the login page with the email address and password issued to them. Emails are not case-sensitive.' },
+      { type: 'p', text: 'Sign in on the login page with the email address and password issued to you. Emails are not case-sensitive.' },
       { type: 'steps', items: [
         'Open the login page and type your email and password.',
         'Press Login.',
         'If this is your first login with a temporary password, you will be asked to set a new one before continuing.',
       ] },
       { type: 'figure', id: 'start-login-page' },
-      { type: 'note', text: 'Security guards do not use this page. They sign in at the gate terminal instead — see “Signing In at a Gate”.' },
+      { type: 'note', text: 'Security guards do not use this page. They sign in at the gate terminal instead.' },
     ],
   },
   {
@@ -54,7 +62,7 @@ export const HELP_TOPICS = [
     title: 'Two-Factor Verification',
     category: 'Getting Started',
     roles: ['admin', 'vehicle_owner'],
-    guide: ['owner', 'cdso'],
+    guide: ['owner'],
     body: [
       { type: 'p', text: 'After your password, the system asks for a 6-digit code from an authenticator app on your phone (for example Google Authenticator). This stops anyone who learns your password from getting into your account.' },
       { type: 'steps', items: [
@@ -63,7 +71,7 @@ export const HELP_TOPICS = [
         'The code submits by itself when the sixth digit is typed.',
       ] },
       { type: 'figure', id: 'start-two-factor-code' },
-      { type: 'note', text: 'You are asked for a code on a new device, after 7 days away, and after resetting your password. If you lose your phone, use a backup code, or ask the CDSO Office to reset your two-factor setup.' },
+      { type: 'note', text: 'You are asked for a code on a new device, after 7 days away, and after resetting your password. If you lose your phone, use a backup code, or visit the CDSO Office to have your two-factor setup reset.' },
     ],
   },
   {
@@ -71,7 +79,7 @@ export const HELP_TOPICS = [
     title: 'Forgot Password',
     category: 'Getting Started',
     roles: ['admin', 'security', 'vehicle_owner'],
-    guide: ['owner', 'guard', 'cdso'],
+    guide: ['owner', 'guard'],
     body: [
       { type: 'p', text: 'If you cannot remember your password, request a reset link by email.' },
       { type: 'steps', items: [
@@ -80,7 +88,7 @@ export const HELP_TOPICS = [
         'Open the email and follow the link to choose a new password. The link expires, so use it soon.',
       ] },
       { type: 'figure', id: 'start-forgot-password' },
-      { type: 'note', text: 'For your security, CDSO and owner accounts are asked for a two-factor code on the next sign-in after a reset.' },
+      { type: 'note', text: 'If your account uses two-factor verification, you are asked for a code on the next sign-in after a reset.' },
     ],
   },
   {
@@ -88,7 +96,7 @@ export const HELP_TOPICS = [
     title: 'Understanding Messages',
     category: 'Getting Started',
     roles: ['admin', 'security', 'vehicle_owner'],
-    guide: ['owner', 'guard', 'cdso'],
+    guide: ['owner', 'guard'],
     body: [
       { type: 'p', text: 'After an action, the system shows a message box in the middle of the screen. Read it, then press its button (for example OK) to close it — it stays until you do, so a message is never missed.' },
       { type: 'list', items: [

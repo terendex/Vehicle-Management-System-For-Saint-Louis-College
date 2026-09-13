@@ -156,6 +156,14 @@ $xaml = @'
           <Ellipse x:Name="Logo" Stroke="#66FFFFFF" StrokeThickness="1"
                    RenderOptions.BitmapScalingMode="HighQuality"/>
         </Grid>
+        <!-- The CDSO emblem beside it, as in every other lockup. -->
+        <Grid Width="38" Height="38" Margin="6,0,0,0">
+          <Ellipse Fill="White"/>
+          <TextBlock x:Name="CdsoFallback" Text="CDSO" FontSize="9" FontWeight="Bold"
+                     Foreground="#FF1B5E20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          <Ellipse x:Name="CdsoLogo" Stroke="#FFBDD4E5" StrokeThickness="1"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+        </Grid>
         <StackPanel Margin="13,0,0,0" VerticalAlignment="Center">
           <TextBlock Text="SAINT LOUIS COLLEGE" Foreground="White" FontSize="13.5" FontWeight="Bold"/>
           <TextBlock Text="Smart Parking and Vehicle Verification System" Foreground="#FFCFE3F5" FontSize="11.5"/>
@@ -210,8 +218,16 @@ $xaml = @'
 '@
 
 $win = [Windows.Markup.XamlReader]::Parse($xaml)
+
+# The SLC seal on the taskbar instead of the powershell.exe icon this window
+# would otherwise borrow from its host. The .ico ships beside this script.
+try {
+    $ico = Join-Path $PSScriptRoot 'slc-vms.ico'
+    if (Test-Path $ico) { $win.Icon = [Windows.Media.Imaging.BitmapFrame]::Create((New-Object Uri($ico))) }
+} catch { }
+
 $ui = @{}
-foreach ($n in @('Logo','LogoFallback','Steps','Phase','BtnDetails','LogBox','LogList','Bar','BtnCancel','BtnDone')) {
+foreach ($n in @('Logo','LogoFallback','CdsoLogo','CdsoFallback','Steps','Phase','BtnDetails','LogBox','LogList','Bar','BtnCancel','BtnDone')) {
     $ui[$n] = $win.FindName($n)
 }
 
@@ -836,8 +852,10 @@ $timer.Add_Tick({
 # ---------------------------------------------------------------------------
 #  Boot
 # ---------------------------------------------------------------------------
-function Set-LogoImage {
-    $logo = Join-Path $PSScriptRoot 'slclogo.jpg'
+function Set-SealImage {
+    param($Target, $Fallback, [string]$File, [string]$Stretch)
+
+    $logo = Join-Path $PSScriptRoot $File
     if (-not (Test-Path $logo)) { return }
     try {
         # Decode near the size it will be drawn at. Handing WPF the full 394px
@@ -857,14 +875,19 @@ function Set-LogoImage {
         $bmp.Freeze()
 
         $brush = New-Object Windows.Media.ImageBrush($bmp)
-        $brush.Stretch = 'UniformToFill'
+        $brush.Stretch = $Stretch
         $brush.Freeze()
-        $ui.Logo.Fill = $brush
-        $ui.LogoFallback.Visibility = 'Collapsed'
+        $Target.Fill = $brush
+        $Fallback.Visibility = 'Collapsed'
     } catch {
-        # The "SLC" lettermark behind it stays visible. A logo that will not
-        # load is not a reason to stop an install.
+        # The lettermark behind it stays visible. A logo that will not load is
+        # not a reason to stop an install.
     }
+}
+function Set-LogoImage {
+    # Uniform for the CDSO emblem: cropping it clips the tips of its arrows.
+    Set-SealImage $ui.Logo     $ui.LogoFallback 'slclogo.jpg'  'UniformToFill'
+    Set-SealImage $ui.CdsoLogo $ui.CdsoFallback 'cdsologo.jpg' 'Uniform'
 }
 $win.Add_ContentRendered({ Set-LogoImage })
 

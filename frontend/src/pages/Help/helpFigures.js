@@ -6,361 +6,381 @@
 // The people, plates and records in these pictures are sample data, and
 // camera panels show an illustration rather than real footage.
 
-import img0 from '../../assets/help/start-login-page.webp'
-import img1 from '../../assets/help/start-two-factor-code.webp'
-import img2 from '../../assets/help/start-forgot-password.webp'
-import img3 from '../../assets/help/start-privacy-consent.webp'
-import img4 from '../../assets/help/start-application-form.webp'
-import img5 from '../../assets/help/start-student-application-form.webp'
-import img6 from '../../assets/help/start-guard-select-gate.webp'
-import img7 from '../../assets/help/start-guard-credentials.webp'
-import img8 from '../../assets/help/cdso-dashboard-layout.webp'
-import img9 from '../../assets/help/cdso-notifications.webp'
-import img10 from '../../assets/help/cdso-vehicle-registration.webp'
-import img11 from '../../assets/help/cdso-registration-review.webp'
-import img12 from '../../assets/help/cdso-registration-decision.webp'
-import img13 from '../../assets/help/cdso-user-management.webp'
-import img14 from '../../assets/help/cdso-detail-change-requests.webp'
-import img15 from '../../assets/help/cdso-device-management.webp'
-import img16 from '../../assets/help/cdso-suppliers.webp'
-import img17 from '../../assets/help/cdso-operations-center.webp'
-import img18 from '../../assets/help/cdso-operations-guards.webp'
-import img19 from '../../assets/help/cdso-operations-gate-records.webp'
-import img20 from '../../assets/help/cdso-parking-spaces.webp'
-import img21 from '../../assets/help/cdso-parking-edit-slots.webp'
-import img22 from '../../assets/help/cdso-events.webp'
-import img23 from '../../assets/help/cdso-violations.webp'
-import img24 from '../../assets/help/cdso-vehicle-log.webp'
-import img25 from '../../assets/help/cdso-rule-constraints.webp'
-import img26 from '../../assets/help/cdso-registration-period.webp'
-import img27 from '../../assets/help/cdso-access-mode.webp'
-import img28 from '../../assets/help/cdso-audit-log.webp'
-import img29 from '../../assets/help/cdso-settings-accounts-fees.webp'
-import img30 from '../../assets/help/cdso-settings-gates-scanning.webp'
-import img31 from '../../assets/help/cdso-settings-parking.webp'
-import img32 from '../../assets/help/cdso-settings-data-backup.webp'
-import img33 from '../../assets/help/guard-entry-management.webp'
-import img34 from '../../assets/help/guard-plate-check-result.webp'
-import img35 from '../../assets/help/guard-no-plate.webp'
-import img36 from '../../assets/help/guard-parking.webp'
-import img37 from '../../assets/help/guard-issue-violation.webp'
-import img38 from '../../assets/help/guard-vehicle-log.webp'
-import img39 from '../../assets/help/owner-portal-overview.webp'
-import img40 from '../../assets/help/owner-portal-violations-parking.webp'
-import img41 from '../../assets/help/owner-security-two-factor.webp'
-import img42 from '../../assets/help/installer-license.webp'
-import img43 from '../../assets/help/installer-destination.webp'
-import img44 from '../../assets/help/installer-components.webp'
-import img45 from '../../assets/help/installer-deployment-options.webp'
-import img46 from '../../assets/help/installer-prerequisites.webp'
-import img47 from '../../assets/help/installer-start-menu.webp'
-import img48 from '../../assets/help/installer-additional-tasks.webp'
-import img49 from '../../assets/help/installer-ready.webp'
-import img50 from '../../assets/help/launcher-launcher-window.webp'
+import img0 from '../../assets/help/start-login-page-mobile.webp'
+import img1 from '../../assets/help/start-login-page.webp'
+import img2 from '../../assets/help/start-two-factor-code-mobile.webp'
+import img3 from '../../assets/help/start-two-factor-code.webp'
+import img4 from '../../assets/help/start-forgot-password-mobile.webp'
+import img5 from '../../assets/help/start-forgot-password.webp'
+import img6 from '../../assets/help/start-privacy-consent-mobile.webp'
+import img7 from '../../assets/help/start-privacy-consent.webp'
+import img8 from '../../assets/help/start-application-form-mobile.webp'
+import img9 from '../../assets/help/start-application-form.webp'
+import img10 from '../../assets/help/start-student-application-form-mobile.webp'
+import img11 from '../../assets/help/start-student-application-form.webp'
+import img12 from '../../assets/help/start-guard-select-gate.webp'
+import img13 from '../../assets/help/start-guard-credentials.webp'
+import img14 from '../../assets/help/cdso-dashboard-layout.webp'
+import img15 from '../../assets/help/cdso-notifications.webp'
+import img16 from '../../assets/help/cdso-vehicle-registration.webp'
+import img17 from '../../assets/help/cdso-registration-review.webp'
+import img18 from '../../assets/help/cdso-registration-decision.webp'
+import img19 from '../../assets/help/cdso-user-management.webp'
+import img20 from '../../assets/help/cdso-detail-change-requests.webp'
+import img21 from '../../assets/help/cdso-device-management.webp'
+import img22 from '../../assets/help/cdso-suppliers.webp'
+import img23 from '../../assets/help/cdso-operations-center.webp'
+import img24 from '../../assets/help/cdso-operations-guards.webp'
+import img25 from '../../assets/help/cdso-operations-gate-records.webp'
+import img26 from '../../assets/help/cdso-parking-spaces.webp'
+import img27 from '../../assets/help/cdso-parking-edit-slots.webp'
+import img28 from '../../assets/help/cdso-events.webp'
+import img29 from '../../assets/help/cdso-violations.webp'
+import img30 from '../../assets/help/cdso-vehicle-log.webp'
+import img31 from '../../assets/help/cdso-rule-constraints.webp'
+import img32 from '../../assets/help/cdso-registration-period.webp'
+import img33 from '../../assets/help/cdso-access-mode.webp'
+import img34 from '../../assets/help/cdso-audit-log.webp'
+import img35 from '../../assets/help/cdso-settings-accounts-fees.webp'
+import img36 from '../../assets/help/cdso-settings-gates-scanning.webp'
+import img37 from '../../assets/help/cdso-settings-parking.webp'
+import img38 from '../../assets/help/cdso-settings-data-backup.webp'
+import img39 from '../../assets/help/guard-entry-management.webp'
+import img40 from '../../assets/help/guard-plate-check-result.webp'
+import img41 from '../../assets/help/guard-no-plate.webp'
+import img42 from '../../assets/help/guard-parking.webp'
+import img43 from '../../assets/help/guard-issue-violation.webp'
+import img44 from '../../assets/help/guard-vehicle-log.webp'
+import img45 from '../../assets/help/owner-portal-overview-mobile.webp'
+import img46 from '../../assets/help/owner-portal-overview.webp'
+import img47 from '../../assets/help/owner-portal-violations-parking-mobile.webp'
+import img48 from '../../assets/help/owner-portal-violations-parking.webp'
+import img49 from '../../assets/help/owner-security-two-factor-mobile.webp'
+import img50 from '../../assets/help/owner-security-two-factor.webp'
+import img51 from '../../assets/help/installer-license.webp'
+import img52 from '../../assets/help/installer-destination.webp'
+import img53 from '../../assets/help/installer-components.webp'
+import img54 from '../../assets/help/installer-deployment-options.webp'
+import img55 from '../../assets/help/installer-prerequisites.webp'
+import img56 from '../../assets/help/installer-start-menu.webp'
+import img57 from '../../assets/help/installer-additional-tasks.webp'
+import img58 from '../../assets/help/installer-ready.webp'
+import img59 from '../../assets/help/launcher-launcher-window.webp'
 
+// `mobile`, where present, is the same screen photographed on a phone.
+// HelpFigure shows it to readers on a phone-sized screen.
 export const HELP_FIGURES = {
   "start-login-page": {
-    src: img0, width: 1600, height: 1000,
+    src: img1, width: 1600, height: 1000,
     title: "Signing in",
     caption: "The login page is the entry point for CDSO staff and registered vehicle owners.",
     callouts: [{"n": 1, "label": "Email", "desc": "Type the email address registered to your account. It is not case-sensitive.", "box": {"x": 35.556, "y": 35.925, "w": 28.889, "h": 6.667}, "badge": {"x": 35.556, "y": 35.925}}, {"n": 2, "label": "Password", "desc": "Enter your password. The eye icon shows or hides what you typed.", "box": {"x": 35.556, "y": 46.219, "w": 28.889, "h": 6.667}, "badge": {"x": 35.556, "y": 46.219}}, {"n": 3, "label": "Remember Me", "desc": "Keeps you signed in on this computer. Leave it unticked on shared computers.", "box": {"x": 35.556, "y": 54.47, "w": 9.149, "h": 3.583}, "badge": {"x": 35.556, "y": 54.47}}, {"n": 4, "label": "Forgot Password", "desc": "Sends a password-reset link to your email.", "box": {"x": 55.997, "y": 54.026, "w": 8.447, "h": 4.472}, "badge": {"x": 55.997, "y": 54.026}}, {"n": 5, "label": "Login", "desc": "Signs you in. CDSO and vehicle-owner accounts are then asked for a two-factor code.", "box": {"x": 35.556, "y": 60.083, "w": 28.889, "h": 7.028}, "badge": {"x": 35.556, "y": 60.083}}, {"n": 6, "label": "Apply for a Vehicle Pass", "desc": "Starts the online vehicle pass application. No account is needed to apply.", "box": {"x": 35.556, "y": 72.837, "w": 28.889, "h": 6.667}, "badge": {"x": 35.556, "y": 72.837}}, {"n": 7, "label": "Privacy Policy & Terms", "desc": "Opens the data privacy notice and the vehicle pass terms.", "box": {"x": 38.804, "y": 81.102, "w": 11.208, "h": 4.833}, "badge": {"x": 38.804, "y": 81.102}}, {"n": 8, "label": "Need help signing in?", "desc": "Opens the step-by-step guide with pictures, for applicants, guards and CDSO staff.", "box": {"x": 50.531, "y": 81.102, "w": 10.664, "h": 4.833}, "badge": {"x": 50.531, "y": 81.102}}, {"n": 9, "label": "Help", "desc": "The same guide, from the top of the page.", "box": {"x": 92.02, "y": 0.667, "w": 6.174, "h": 5.556}, "badge": {"x": 92.02, "y": 1.889}}],
+    mobile: { src: img0, width: 780, height: 1688, callouts: [{"n": 1, "label": "Email", "desc": "Type the email address registered to your account. It is not case-sensitive.", "box": {"x": 6.41, "y": 36.023, "w": 87.179, "h": 7.109}, "badge": {"x": 6.41, "y": 36.023}}, {"n": 2, "label": "Password", "desc": "Enter your password. The eye icon shows or hides what you typed.", "box": {"x": 6.41, "y": 46.483, "w": 87.179, "h": 7.109}, "badge": {"x": 6.41, "y": 46.483}}, {"n": 3, "label": "Remember Me", "desc": "Keeps you signed in on this computer. Leave it unticked on shared computers.", "box": {"x": 6.41, "y": 54.828, "w": 33.357, "h": 3.779}, "badge": {"x": 6.41, "y": 54.828}}, {"n": 4, "label": "Forgot Password", "desc": "Sends a password-reset link to your email.", "box": {"x": 62.901, "y": 54.354, "w": 30.689, "h": 4.726}, "badge": {"x": 62.901, "y": 54.354}}, {"n": 5, "label": "Login", "desc": "Signs you in. CDSO and vehicle-owner accounts are then asked for a two-factor code.", "box": {"x": 6.41, "y": 60.319, "w": 87.179, "h": 7.494}, "badge": {"x": 6.41, "y": 60.319}}, {"n": 6, "label": "Apply for a Vehicle Pass", "desc": "Starts the online vehicle pass application. No account is needed to apply.", "box": {"x": 6.41, "y": 72.967, "w": 87.179, "h": 7.109}, "badge": {"x": 6.41, "y": 72.967}}, {"n": 7, "label": "Privacy Policy & Terms", "desc": "Opens the data privacy notice and the vehicle pass terms.", "box": {"x": 10.016, "y": 81.307, "w": 39.988, "h": 5.065}, "badge": {"x": 10.016, "y": 81.307}}, {"n": 8, "label": "Need help signing in?", "desc": "Opens the step-by-step guide with pictures, for applicants, guards and CDSO staff.", "box": {"x": 51.919, "y": 81.307, "w": 38.061, "h": 5.065}, "badge": {"x": 51.919, "y": 81.307}}, {"n": 9, "label": "Help", "desc": "The same guide, from the top of the page.", "box": {"x": 85.232, "y": 0.861, "w": 12.308, "h": 5.924}, "badge": {"x": 85.232, "y": 2.014}}] },
   },
   "start-two-factor-code": {
-    src: img1, width: 1600, height: 1000,
+    src: img3, width: 1600, height: 1000,
     title: "Two-factor verification",
     caption: "After the password, CDSO and vehicle-owner accounts confirm a 6-digit code from an authenticator app.",
     callouts: [{"n": 1, "label": "Verification code", "desc": "Open your authenticator app (e.g. Google Authenticator) and type the 6-digit code shown for SLC Vehicle Management. It submits by itself on the sixth digit.", "box": {"x": 35.556, "y": 50.825, "w": 28.889, "h": 9}, "badge": {"x": 35.556, "y": 50.825}}],
+    mobile: { src: img2, width: 780, height: 1688, callouts: [{"n": 1, "label": "Verification code", "desc": "Open your authenticator app (e.g. Google Authenticator) and type the 6-digit code shown for SLC Vehicle Management. It submits by itself on the sixth digit.", "box": {"x": 6.41, "y": 51.385, "w": 87.179, "h": 8.886}, "badge": {"x": 6.41, "y": 51.385}}] },
   },
   "start-forgot-password": {
-    src: img2, width: 1600, height: 1000,
+    src: img5, width: 1600, height: 1000,
     title: "Resetting a forgotten password",
     caption: "Request a reset link when you cannot sign in.",
     callouts: [{"n": 1, "label": "Email", "desc": "Enter the email address of your account.", "box": {"x": 35.556, "y": 49.568, "w": 28.889, "h": 6.667}, "badge": {"x": 35.556, "y": 49.568}}, {"n": 2, "label": "Send Reset Link", "desc": "Emails you a link to choose a new password. The link expires, so use it soon.", "box": {"x": 35.556, "y": 57.389, "w": 28.889, "h": 7.028}, "badge": {"x": 35.556, "y": 57.389}}, {"n": 3, "label": "Back to Login", "desc": "Returns to the login page.", "box": {"x": 45.939, "y": 65.571, "w": 8.122, "h": 4.472}, "badge": {"x": 45.939, "y": 65.571}}],
+    mobile: { src: img4, width: 780, height: 1688, callouts: [{"n": 1, "label": "Email", "desc": "Enter the email address of your account.", "box": {"x": 6.41, "y": 50.626, "w": 87.179, "h": 7.109}, "badge": {"x": 6.41, "y": 50.626}}, {"n": 2, "label": "Send Reset Link", "desc": "Emails you a link to choose a new password. The link expires, so use it soon.", "box": {"x": 6.41, "y": 58.492, "w": 87.179, "h": 7.494}, "badge": {"x": 6.41, "y": 58.492}}, {"n": 3, "label": "Back to Login", "desc": "Returns to the login page.", "box": {"x": 35.204, "y": 66.743, "w": 29.587, "h": 4.726}, "badge": {"x": 35.204, "y": 66.743}}] },
   },
   "start-privacy-consent": {
-    src: img3, width: 1600, height: 1000,
+    src: img7, width: 1600, height: 1000,
     title: "Applying for a vehicle pass: privacy consent",
     caption: "Every application starts with the Data Privacy Notice (RA 10173).",
     callouts: [{"n": 1, "label": "What is collected and why", "desc": "Read what information the college collects and how it is used before applying.", "box": {"x": 28.056, "y": 4.333, "w": 43.889, "h": 91.333}, "badge": {"x": 28.056, "y": 4.333}}, {"n": 2, "label": "Consent checkbox", "desc": "Tick to give your consent. Agree & Continue stays disabled until you do.", "box": {"x": 29.861, "y": 66.446, "w": 40.278, "h": 16.665}, "badge": {"x": 29.861, "y": 66.446}}, {"n": 3, "label": "Decline", "desc": "Cancels the application and returns to the login page.", "box": {"x": 48.236, "y": 83.778, "w": 10, "h": 6.333}, "badge": {"x": 48.236, "y": 83.778}}, {"n": 4, "label": "Agree & Continue", "desc": "Opens the application form.", "box": {"x": 58.097, "y": 83.778, "w": 12.042, "h": 6.333}, "badge": {"x": 58.097, "y": 83.778}}],
+    mobile: { src: img6, width: 780, height: 1688, callouts: [{"n": 1, "label": "What is collected and why", "desc": "Read what information the college collects and how it is used before applying.", "box": {"x": 2.564, "y": 2.288, "w": 94.872, "h": 95.422}, "badge": {"x": 4.359, "y": 2.288}}, {"n": 2, "label": "Consent checkbox", "desc": "Tick to give your consent. Agree & Continue stays disabled until you do.", "box": {"x": 7.179, "y": 48.519, "w": 85.641, "h": 27.627}, "badge": {"x": 7.179, "y": 48.519}}, {"n": 3, "label": "Decline", "desc": "Cancels the application and returns to the login page.", "box": {"x": 7.179, "y": 83.373, "w": 85.641, "h": 6.754}, "badge": {"x": 7.179, "y": 83.373}}, {"n": 4, "label": "Agree & Continue", "desc": "Opens the application form.", "box": {"x": 7.179, "y": 76.857, "w": 85.641, "h": 6.754}, "badge": {"x": 7.179, "y": 76.857}}] },
   },
   "start-application-form": {
-    src: img4, width: 1600, height: 1222,
+    src: img9, width: 1600, height: 1222,
     title: "Applying for a vehicle pass: the form",
     caption: "The public application form, used by students, employees and fetchers.",
     callouts: [{"n": 1, "label": "Registration window", "desc": "Shows whether applications are being accepted, and the dates of the current window.", "box": {"x": 32.986, "y": 34.746, "w": 34.028, "h": 8.781}, "badge": {"x": 32.986, "y": 34.746}}, {"n": 2, "label": "Registrant type", "desc": "Choose Student — Vehicle, Employee, or Fetcher / Drop & Go. The form that follows asks only for what that type needs.", "box": {"x": 32.986, "y": 43.709, "w": 34.028, "h": 22.182}, "badge": {"x": 32.986, "y": 43.709}}, {"n": 3, "label": "Back to Login", "desc": "Leave the application without submitting.", "box": {"x": 32.986, "y": 72.709, "w": 34.028, "h": 5.045}, "badge": {"x": 32.986, "y": 72.709}}],
+    mobile: { src: img8, width: 780, height: 1688, callouts: [{"n": 1, "label": "Registration window", "desc": "Shows whether applications are being accepted, and the dates of the current window.", "box": {"x": 1.795, "y": 28.386, "w": 96.41, "h": 11.445}, "badge": {"x": 4.359, "y": 28.386}}, {"n": 2, "label": "Registrant type", "desc": "Choose Student â€” Vehicle, Employee, or Fetcher / Drop & Go. The form that follows asks only for what that type needs.", "box": {"x": 1.795, "y": 40.068, "w": 96.41, "h": 30.306}, "badge": {"x": 4.359, "y": 40.068}}, {"n": 3, "label": "Back to Login", "desc": "Leave the application without submitting.", "box": {"x": 1.795, "y": 81.63, "w": 96.41, "h": 6.576}, "badge": {"x": 4.359, "y": 81.63}}] },
   },
   "start-student-application-form": {
-    src: img5, width: 1600, height: 1667,
+    src: img11, width: 1600, height: 1667,
     title: "Applying for a vehicle pass: student form",
     caption: "The details a student applicant fills in.",
     callouts: [{"n": 1, "label": "Form type", "desc": "The kind of application you are filling in.", "box": {"x": 24.653, "y": 8.733, "w": 50.694, "h": 7.367}, "badge": {"x": 24.653, "y": 8.733}}, {"n": 2, "label": "Campus Schedule", "desc": "Choose one schedule (Mon · Wed · Fri or Tue · Thu · Fri). Slots are first come, first served; a full schedule cannot be selected.", "box": {"x": 24.792, "y": 26.673, "w": 50.417, "h": 7.058}, "badge": {"x": 24.792, "y": 26.673}}, {"n": 3, "label": "Registrant type", "desc": "Switch here if you picked the wrong type.", "box": {"x": 24.792, "y": 41.831, "w": 50.417, "h": 8.167}, "badge": {"x": 24.792, "y": 41.831}}, {"n": 4, "label": "Vehicle identification", "desc": "Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number.", "box": {"x": 24.792, "y": 57.298, "w": 50.417, "h": 9.738}, "badge": {"x": 24.792, "y": 57.298}}, {"n": 5, "label": "Personal information", "desc": "Your name, then contact details further down. Scroll to the end to attach the required documents and submit.", "box": {"x": 24.792, "y": 78.252, "w": 50.417, "h": 17.85}, "badge": {"x": 24.792, "y": 78.252}}],
+    mobile: { src: img10, width: 780, height: 3440, callouts: [{"n": 1, "label": "Form type", "desc": "The kind of application you are filling in.", "box": {"x": 9.487, "y": 6.834, "w": 81.026, "h": 7.994}, "badge": {"x": 9.487, "y": 6.834}}, {"n": 2, "label": "Campus Schedule", "desc": "Choose one schedule (Mon Â· Wed Â· Fri or Tue Â· Thu Â· Fri). Slots are first come, first served; a full schedule cannot be selected.", "box": {"x": 5.897, "y": 23.967, "w": 88.205, "h": 7.271}, "badge": {"x": 5.897, "y": 23.967}}, {"n": 3, "label": "Registrant type", "desc": "Switch here if you picked the wrong type.", "box": {"x": 5.897, "y": 38.215, "w": 88.205, "h": 15.262}, "badge": {"x": 5.897, "y": 38.215}}, {"n": 4, "label": "Vehicle identification", "desc": "Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number.", "box": {"x": 5.897, "y": 59.756, "w": 88.205, "h": 10.767}, "badge": {"x": 5.897, "y": 59.756}}, {"n": 5, "label": "Personal information", "desc": "Your name, then contact details further down. Scroll to the end to attach the required documents and submit.", "box": {"x": 5.897, "y": 85.217, "w": 88.205, "h": 20.16}, "badge": {"x": 5.897, "y": 85.217}}] },
   },
   "start-guard-select-gate": {
-    src: img6, width: 1600, height: 1000,
+    src: img12, width: 1600, height: 1000,
     title: "Guard sign-in: choosing a gate",
     caption: "Security guards sign in at the gate terminal, not through the main login page.",
     callouts: [{"n": 1, "label": "Gate list", "desc": "Pick the gate you are standing at. Your shift and every scan are recorded against this gate.", "box": {"x": 36.597, "y": 44.111, "w": 26.806, "h": 19.778}, "badge": {"x": 36.597, "y": 44.111}}, {"n": 2, "label": "Help", "desc": "Opens the guard sign-in guide with pictures.", "box": {"x": 92.02, "y": 0.667, "w": 6.174, "h": 5.556}, "badge": {"x": 92.02, "y": 1.889}}],
   },
   "start-guard-credentials": {
-    src: img7, width: 1600, height: 1111,
+    src: img13, width: 1600, height: 1111,
     title: "Guard sign-in: clocking in",
     caption: "Sign in with your guard account or scan your QR badge to start your shift.",
     callouts: [{"n": 1, "label": "Change gate", "desc": "Go back if you picked the wrong gate.", "box": {"x": 36.597, "y": 21.675, "w": 7.576, "h": 3.15}, "badge": {"x": 36.597, "y": 21.675}}, {"n": 2, "label": "Selected gate", "desc": "The gate you will be clocked in at.", "box": {"x": 58.304, "y": 21.25, "w": 5.099, "h": 4}, "badge": {"x": 58.304, "y": 21.25}}, {"n": 3, "label": "Email and password", "desc": "Your guard account credentials.", "box": {"x": 36.597, "y": 37.075, "w": 26.806, "h": 14.075}, "badge": {"x": 36.597, "y": 37.075}}, {"n": 4, "label": "Login & Clock In", "desc": "Signs you in and starts your shift at this gate. Whoever was on duty here is signed out.", "box": {"x": 36.597, "y": 51.55, "w": 26.806, "h": 5.7}, "badge": {"x": 36.597, "y": 51.55}}, {"n": 5, "label": "Forgot password?", "desc": "Sends a reset link to your email.", "box": {"x": 46.06, "y": 57.85, "w": 7.879, "h": 3}, "badge": {"x": 46.06, "y": 57.85}}, {"n": 6, "label": "QR badge", "desc": "Appears when your account has a badge. Scan it with a USB scanner or the camera instead of typing the password.", "box": {"x": 36.597, "y": 61.45, "w": 26.806, "h": 18.35}, "badge": {"x": 36.597, "y": 61.45}}, {"n": 7, "label": "Help", "desc": "Opens the guard sign-in guide with pictures.", "box": {"x": 92.02, "y": 0.6, "w": 6.174, "h": 5}, "badge": {"x": 92.02, "y": 1.7}}],
   },
   "cdso-dashboard-layout": {
-    src: img8, width: 1600, height: 1000,
+    src: img14, width: 1600, height: 1000,
     title: "CDSO dashboard and screen layout",
     caption: "Every CDSO screen shares this sidebar. The dashboard summarises the whole system.",
     callouts: [{"n": 1, "label": "Main menu", "desc": "Dashboard, then three groups: Management, Operations and System. Click a group to expand it.", "box": {"x": -0.417, "y": 6.444, "w": 18.819, "h": 71.28}, "badge": {"x": 1.181, "y": 6.444}}, {"n": 2, "label": "Notifications", "desc": "The red badge counts unread alerts about registrations and violations. Click to open the list.", "box": {"x": 13.542, "y": 0.889, "w": 3.194, "h": 5.111}, "badge": {"x": 13.542, "y": 1.889}}, {"n": 3, "label": "Refresh", "desc": "Reloads every number on the dashboard.", "box": {"x": 87.936, "y": 7.042, "w": 8.036, "h": 5.722}, "badge": {"x": 87.936, "y": 7.042}}, {"n": 4, "label": "Summary tiles", "desc": "Accounts, registered vehicles, applications to review, unresolved violations, visitor passes and today’s gate scans.", "box": {"x": 22.083, "y": 17.472, "w": 73.889, "h": 19.899}, "badge": {"x": 22.083, "y": 17.472}}, {"n": 5, "label": "Breakdown charts", "desc": "Applications, owner types, vehicle kinds, today’s gate activity and 30-day violations. Scroll down for the weekly charts.", "box": {"x": 22.083, "y": 41.872, "w": 73.889, "h": 48.889}, "badge": {"x": 22.083, "y": 41.872}}, {"n": 6, "label": "Help, Policy and Security", "desc": "Help opens the in-app user manual. Security manages your two-factor authentication.", "box": {"x": 0.875, "y": 84.59, "w": 16.236, "h": 6.278}, "badge": {"x": 1.181, "y": 84.59}}, {"n": 7, "label": "Change Password", "desc": "Set a new password for your account.", "box": {"x": 0.597, "y": 89.979, "w": 16.793, "h": 5.111}, "badge": {"x": 1.181, "y": 89.979}}, {"n": 8, "label": "Log Out", "desc": "Ends your session. Always log out on shared computers.", "box": {"x": 0.597, "y": 93.757, "w": 16.793, "h": 5.111}, "badge": {"x": 17.389, "y": 93.757}}],
   },
   "cdso-notifications": {
-    src: img9, width: 1600, height: 1000,
+    src: img15, width: 1600, height: 1000,
     title: "Notifications",
     caption: "Alerts raised by new registrations, uploaded receipts and violations.",
     callouts: [{"n": 1, "label": "Bell", "desc": "The number is how many notifications you have not read yet.", "box": {"x": 13.542, "y": 0.889, "w": 3.194, "h": 5.111}, "badge": {"x": 13.542, "y": 1.889}}, {"n": 2, "label": "Notification list", "desc": "Newest first. A blue dot marks an unread item; click one to open the screen it is about.", "box": {"x": 18.194, "y": 5.778, "w": 25.833, "h": 48.497}, "badge": {"x": 18.194, "y": 5.778}}, {"n": 3, "label": "Mark all read", "desc": "Clears the unread dots and the badge without deleting anything.", "box": {"x": 35.004, "y": 7.222, "w": 7.982, "h": 4.139}, "badge": {"x": 35.004, "y": 7.222}}, {"n": 4, "label": "Clear all", "desc": "Removes every notification from the list.", "box": {"x": 19.236, "y": 48.691, "w": 23.75, "h": 4.583}, "badge": {"x": 19.236, "y": 48.691}}],
   },
   "cdso-vehicle-registration": {
-    src: img10, width: 1600, height: 1000,
+    src: img16, width: 1600, height: 1000,
     title: "Vehicle Registration Management",
     caption: "Management › Vehicle Registration. Review and process vehicle pass applications.",
     callouts: [{"n": 1, "label": "Registration Form QR", "desc": "Shows a QR code applicants can scan to open the online application form.", "box": {"x": 81.175, "y": 5.556, "w": 15.353, "h": 6.333}, "badge": {"x": 81.175, "y": 5.556}}, {"n": 2, "label": "Registrations report", "desc": "Pick a date range, then download a PDF or Excel report, or a one-page summary PDF.", "box": {"x": 21.528, "y": 15.444, "w": 75, "h": 6.972}, "badge": {"x": 21.528, "y": 15.444}}, {"n": 3, "label": "Total registrations", "desc": "All applications received.", "box": {"x": 21.528, "y": 22.861, "w": 18.142, "h": 29}, "badge": {"x": 21.528, "y": 22.861}}, {"n": 4, "label": "Quick filters", "desc": "Click a payment state or registrant type to narrow the list below.", "box": {"x": 39.948, "y": 22.861, "w": 56.58, "h": 29}, "badge": {"x": 39.948, "y": 22.861}}, {"n": 5, "label": "Search", "desc": "Find an application by name, plate or type.", "box": {"x": 23.264, "y": 60.278, "w": 15.417, "h": 5.056}, "badge": {"x": 23.264, "y": 60.278}}, {"n": 6, "label": "Type, payment and status filters", "desc": "Pending Review lists the applications still waiting for your decision.", "box": {"x": 60, "y": 60.083, "w": 34.792, "h": 5.444}, "badge": {"x": 60, "y": 60.083}}, {"n": 7, "label": "Applications table", "desc": "Each row shows the applicant, plate, schedule, payment and status.", "box": {"x": 23.264, "y": 65.972, "w": 71.528, "h": 32.778}, "badge": {"x": 23.264, "y": 65.972}}, {"n": 8, "label": "View", "desc": "Opens the application to check documents and approve or reject it.", "box": {"x": 88.115, "y": 72.861, "w": 2.917, "h": 4.667}, "badge": {"x": 88.115, "y": 72.861}}],
   },
   "cdso-registration-review": {
-    src: img11, width: 1600, height: 1111,
+    src: img17, width: 1600, height: 1111,
     title: "Reviewing an application",
     caption: "The application detail window, opened with the View (eye) button.",
     callouts: [{"n": 1, "label": "Applicant details", "desc": "Name, email, registrant type, schedule, department and driver’s license.", "box": {"x": 29.306, "y": 13.2, "w": 41.389, "h": 18.9}, "badge": {"x": 29.306, "y": 13.2}}, {"n": 2, "label": "Payment", "desc": "Whether the fee is paid, the Official Receipt number, amount and date.", "box": {"x": 29.306, "y": 33.3, "w": 41.389, "h": 5.525}, "badge": {"x": 29.306, "y": 33.3}}, {"n": 3, "label": "Campus days", "desc": "The days this pass will allow entry.", "box": {"x": 29.306, "y": 40.35, "w": 41.389, "h": 5.8}, "badge": {"x": 29.306, "y": 40.35}}, {"n": 4, "label": "Vehicle information", "desc": "Plate, vehicle type, colour and conduction number.", "box": {"x": 29.306, "y": 55.75, "w": 41.389, "h": 15.65}, "badge": {"x": 29.306, "y": 55.75}}, {"n": 5, "label": "Accept Registration", "desc": "Check the receipt against the uploaded photo before approving. Scroll down for the documents and the decision buttons.", "box": {"x": 30.764, "y": 75.5, "w": 38.472, "h": 17.959}, "badge": {"x": 30.764, "y": 75.5}}],
   },
   "cdso-registration-decision": {
-    src: img12, width: 1600, height: 1111,
+    src: img18, width: 1600, height: 1111,
     title: "Approving or rejecting an application",
     caption: "The bottom of the Registration Details window.",
     callouts: [{"n": 1, "label": "Official Receipt (OR) Number", "desc": "Filled in from the receipt the applicant uploaded. Correct it only if it does not match the receipt under Submitted Documents.", "box": {"x": 30.764, "y": 51.559, "w": 38.472, "h": 9.3}, "badge": {"x": 30.764, "y": 51.559}}, {"n": 2, "label": "Reason for Extra Days", "desc": "Appears only when the pass allows more than the standard 3 days. Required; the registration is flagged as a Special Case.", "box": {"x": 30.764, "y": 65.759, "w": 38.472, "h": 16.9}, "badge": {"x": 30.764, "y": 65.759}}, {"n": 3, "label": "Reject", "desc": "Turns the application down. You will be asked for the reason.", "box": {"x": 30.764, "y": 84.959, "w": 19.236, "h": 5.7}, "badge": {"x": 30.764, "y": 84.959}}, {"n": 4, "label": "Confirm & Accept", "desc": "Approves the application: the pass and system ID are issued and the owner’s portal account is created.", "box": {"x": 50, "y": 84.959, "w": 19.236, "h": 5.7}, "badge": {"x": 50, "y": 84.959}}],
   },
   "cdso-user-management": {
-    src: img13, width: 1600, height: 1000,
+    src: img19, width: 1600, height: 1000,
     title: "User Management",
     caption: "Management › User Management. Create, edit, disable and delete accounts.",
     callouts: [{"n": 1, "label": "Add User", "desc": "Create a security guard or vehicle-owner account.", "box": {"x": 88.555, "y": 4, "w": 9.64, "h": 5.889}, "badge": {"x": 88.555, "y": 4}}, {"n": 2, "label": "Screen tabs", "desc": "User Accounts lists everyone. Detail Change Requests holds owners’ requested corrections; the badge counts pending ones.", "box": {"x": 19.861, "y": 12.333, "w": 27.766, "h": 5.769}, "badge": {"x": 19.861, "y": 12.333}}, {"n": 3, "label": "Account counts", "desc": "Total, active and disabled accounts.", "box": {"x": 19.861, "y": 18.769, "w": 78.333, "h": 9.444}, "badge": {"x": 19.861, "y": 18.769}}, {"n": 4, "label": "Role tabs", "desc": "Show only one kind of account.", "box": {"x": 21.319, "y": 29.214, "w": 57.133, "h": 6.611}, "badge": {"x": 21.319, "y": 29.214}}, {"n": 5, "label": "Search", "desc": "Search by name, email or user ID (e.g. SLC-OWN-000005).", "box": {"x": 21.319, "y": 36.38, "w": 20.278, "h": 6.111}, "badge": {"x": 21.319, "y": 36.38}}, {"n": 6, "label": "Status filter", "desc": "Show active, disabled or archived accounts.", "box": {"x": 84.097, "y": 36.602, "w": 12.639, "h": 5.667}, "badge": {"x": 84.097, "y": 36.602}}, {"n": 7, "label": "Accounts table", "desc": "User ID, name, email, role and status.", "box": {"x": 19.931, "y": 43.047, "w": 78.194, "h": 73.889}, "badge": {"x": 19.931, "y": 43.047}}, {"n": 8, "label": "Actions menu", "desc": "Edit, disable/enable, reset two-factor, print a guard QR badge, or delete the account.", "box": {"x": 91.067, "y": 49.38, "w": 3.194, "h": 5.111}, "badge": {"x": 91.067, "y": 49.38}}],
   },
   "cdso-detail-change-requests": {
-    src: img14, width: 1600, height: 1000,
+    src: img20, width: 1600, height: 1000,
     title: "Approving detail change requests",
     caption: "Owners cannot edit an accepted registration directly. Their corrections wait here for approval.",
     callouts: [{"n": 1, "label": "Detail Change Requests tab", "desc": "The badge counts requests waiting for your review.", "box": {"x": 30.603, "y": 12.333, "w": 17.061, "h": 5.769}, "badge": {"x": 30.603, "y": 12.333}}, {"n": 2, "label": "Status filter", "desc": "Show requests waiting for review, or ones already decided.", "box": {"x": 83.75, "y": 21.102, "w": 12.986, "h": 5.333}, "badge": {"x": 83.75, "y": 21.102}}, {"n": 3, "label": "Who is asking", "desc": "Owner name, plate, registrant type, email, and when the request was filed.", "box": {"x": 22.5, "y": 32.325, "w": 73.056, "h": 6.417}, "badge": {"x": 22.5, "y": 32.325}}, {"n": 4, "label": "Requested changes", "desc": "Each field shows the current value struck through and the new value the owner wants.", "box": {"x": 22.5, "y": 40.852, "w": 24.755, "h": 8.389}, "badge": {"x": 22.5, "y": 40.852}}, {"n": 5, "label": "Decline / Approve & apply", "desc": "Approve & apply updates the registration. Decline leaves it unchanged. The owner is emailed either way.", "box": {"x": 75.943, "y": 51.797, "w": 19.613, "h": 5.722}, "badge": {"x": 75.943, "y": 51.797}}],
   },
   "cdso-device-management": {
-    src: img15, width: 1600, height: 1389,
+    src: img21, width: 1600, height: 1389,
     title: "Device Management (cameras)",
     caption: "Management › Device Management. Register the IP cameras used at the gates and parking areas.",
     callouts: [{"n": 1, "label": "Add Device", "desc": "Register a new camera: name, IP address, device ID, password and whether it watches a gate or a parking area.", "box": {"x": 85.873, "y": 4, "w": 10.654, "h": 4.56}, "badge": {"x": 85.873, "y": 4}}, {"n": 2, "label": "Camera counts", "desc": "How many cameras are registered, and how many cover entry gates and parking.", "box": {"x": 21.528, "y": 10.96, "w": 75, "h": 8}, "badge": {"x": 21.528, "y": 10.96}}, {"n": 3, "label": "Search", "desc": "Find a camera by name, IP address or device ID.", "box": {"x": 78.611, "y": 21.52, "w": 15.417, "h": 3.8}, "badge": {"x": 78.611, "y": 21.52}}, {"n": 4, "label": "Assignment", "desc": "The gate or parking area this camera covers.", "box": {"x": 40.241, "y": 29.4, "w": 11.109, "h": 5.48}, "badge": {"x": 40.241, "y": 29.4}}, {"n": 5, "label": "Connect / Disconnect", "desc": "Opens or closes the camera’s live picture in Live Feeds below.", "box": {"x": 72.285, "y": 30.56, "w": 8.104, "h": 3.2}, "badge": {"x": 72.285, "y": 30.56}}, {"n": 6, "label": "Test, Edit, Delete", "desc": "Check the camera answers, change its settings, or remove it.", "box": {"x": 83.486, "y": 29.4, "w": 12.972, "h": 5.48}, "badge": {"x": 83.486, "y": 29.4}}, {"n": 7, "label": "Live Feeds", "desc": "Live pictures from the cameras you connected. (Sample picture shown.)", "box": {"x": 21.528, "y": 49.32, "w": 75, "h": 60.24}, "badge": {"x": 21.528, "y": 49.32}}],
   },
   "cdso-suppliers": {
-    src: img16, width: 1600, height: 1000,
+    src: img22, width: 1600, height: 1000,
     title: "Supplier Management",
     caption: "Management › Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.",
     callouts: [{"n": 1, "label": "Add Supplier", "desc": "Register a supplier company and its plates.", "box": {"x": 87.375, "y": 2.889, "w": 10.819, "h": 5.599}, "badge": {"x": 87.375, "y": 2.889}}, {"n": 2, "label": "Supplier card", "desc": "Company name and how many plates it has registered.", "box": {"x": 19.861, "y": 14.599, "w": 78.333, "h": 9.918}, "badge": {"x": 19.861, "y": 14.599}}, {"n": 3, "label": "Category", "desc": "Delivery, maintenance, vendor, contractor or other.", "box": {"x": 30.256, "y": 19.295, "w": 7.639, "h": 3.556}, "badge": {"x": 30.256, "y": 22.851}}, {"n": 4, "label": "Active", "desc": "Click to deactivate a supplier; its vehicles stop being admitted automatically.", "box": {"x": 84.631, "y": 17.184, "w": 6.688, "h": 4.747}, "badge": {"x": 84.631, "y": 17.184}}],
   },
   "cdso-operations-center": {
-    src: img17, width: 1600, height: 1000,
+    src: img23, width: 1600, height: 1000,
     title: "Operations Center: live monitor",
     caption: "Operations › Operations Center. Watch all gates, guards and cameras at once.",
     callouts: [{"n": 1, "label": "Live summary", "desc": "Guards on duty, recent entries, cross-gate flags and total guards.", "box": {"x": 19.861, "y": 11.444, "w": 78.333, "h": 9.323}, "badge": {"x": 19.861, "y": 11.444}}, {"n": 2, "label": "Screen tabs", "desc": "Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate discrepancies and confiscated accounts).", "box": {"x": 19.861, "y": 21.656, "w": 27.702, "h": 5.769}, "badge": {"x": 19.861, "y": 21.656}}, {"n": 3, "label": "Camera Monitor", "desc": "View-only camera pictures. Plate detection runs on the guard terminals. (Sample picture shown.)", "box": {"x": 19.861, "y": 28.536, "w": 53.75, "h": 67.528}, "badge": {"x": 19.861, "y": 28.536}}, {"n": 4, "label": "Gate column", "desc": "Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.", "box": {"x": 73.75, "y": 28.536, "w": 24.444, "h": 33.194}, "badge": {"x": 73.75, "y": 28.536}}, {"n": 5, "label": "Refresh", "desc": "Reloads the screen.", "box": {"x": 90.765, "y": 4.167, "w": 7.429, "h": 5.111}, "badge": {"x": 90.765, "y": 4.167}}],
   },
   "cdso-operations-guards": {
-    src: img18, width: 1600, height: 1000,
+    src: img24, width: 1600, height: 1000,
     title: "Operations Center: guards",
     caption: "Guard shifts: who is on duty at which gate.",
     callouts: [{"n": 1, "label": "Guards tab", "desc": "Guard activity and shift history.", "box": {"x": 29.555, "y": 21.656, "w": 7.836, "h": 5.769}, "badge": {"x": 29.555, "y": 21.656}}, {"n": 2, "label": "Guard activity", "desc": "Each guard’s code, gate, duty status, and today’s totals: scans, authorized, denied, visitors and exits.", "box": {"x": 19.931, "y": 32.314, "w": 78.194, "h": 22.667}, "badge": {"x": 19.931, "y": 32.314}}, {"n": 3, "label": "Duty status", "desc": "On Duty while the guard is signed in at a gate; Off Duty otherwise.", "box": {"x": 53.72, "y": 38.259, "w": 5.462, "h": 3.889}, "badge": {"x": 53.72, "y": 38.259}}, {"n": 4, "label": "Recent shift history", "desc": "When each shift started and ended. \"Still active\" means the guard has not signed out yet.", "box": {"x": 21.389, "y": 55.981, "w": 15.209, "h": 10.389}, "badge": {"x": 21.389, "y": 55.981}}],
   },
   "cdso-operations-gate-records": {
-    src: img19, width: 1600, height: 1000,
+    src: img25, width: 1600, height: 1000,
     title: "Operations Center: gate records",
     caption: "Visitors still on campus, cross-gate discrepancies and confiscated accounts.",
     callouts: [{"n": 1, "label": "Active Visitors", "desc": "Visitor passes still inside, with the office visited, who issued the pass, and time left (or how long they have overstayed).", "box": {"x": 20.694, "y": 28.62, "w": 7.983, "h": 8.361}, "badge": {"x": 20.694, "y": 28.62}}, {"n": 2, "label": "Cross-Gate Discrepancies", "desc": "Vehicles that entered through one gate and left through another, so both gates’ records can be checked.", "box": {"x": 21.389, "y": 42.898, "w": 12.729, "h": 8.722}, "badge": {"x": 21.389, "y": 42.898}}, {"n": 3, "label": "Confiscated accounts", "desc": "Owners serving a violation penalty and when it ends.", "box": {"x": 19.861, "y": 56.62, "w": 78.333, "h": 27.861}, "badge": {"x": 19.861, "y": 56.62}}, {"n": 4, "label": "Lift", "desc": "Ends a confiscation early. The violations themselves stay on record.", "box": {"x": 22.222, "y": 76.481, "w": 5.165, "h": 4.889}, "badge": {"x": 22.222, "y": 76.481}}],
   },
   "cdso-parking-spaces": {
-    src: img20, width: 1600, height: 1278,
+    src: img26, width: 1600, height: 1278,
     title: "Parking Space Management",
     caption: "Operations › Parking Space Management. Bays, zones, live occupancy and events.",
     callouts: [{"n": 1, "label": "Screen tabs", "desc": "Parking Spaces (this view) and Events (campus events that reserve parking).", "box": {"x": 19.861, "y": 9.19, "w": 18.777, "h": 4.515}, "badge": {"x": 19.861, "y": 9.19}}, {"n": 2, "label": "Occupancy tiles", "desc": "Free, Occupied and Capacity come from gate scans. Bays Taken is what the camera sees in the selected zone.", "box": {"x": 19.861, "y": 14.227, "w": 78.333, "h": 7.427}, "badge": {"x": 19.861, "y": 14.227}}, {"n": 3, "label": "Zones", "desc": "Each parking zone and the camera watching it. Click a zone to select it.", "box": {"x": 19.861, "y": 25.588, "w": 78.333, "h": 10.174}, "badge": {"x": 19.861, "y": 25.588}}, {"n": 4, "label": "Refresh, Cameras, New Zone", "desc": "Reload, manage the parking cameras, or draw a new zone.", "box": {"x": 71.911, "y": 28.523, "w": 25.242, "h": 4.304}, "badge": {"x": 71.911, "y": 28.523}}, {"n": 5, "label": "Live View / Edit Parking Slots", "desc": "Switch between watching the bays and drawing or adjusting them.", "box": {"x": 21.25, "y": 37.567, "w": 17.722, "h": 3.652}, "badge": {"x": 21.25, "y": 37.567}}, {"n": 6, "label": "Delete Zone", "desc": "Removes the selected zone and its bays.", "box": {"x": 87.525, "y": 37.24, "w": 9.489, "h": 4.304}, "badge": {"x": 87.525, "y": 37.24}}, {"n": 7, "label": "Bay map", "desc": "Green bays are free, red bays are taken (with the plate when known).", "box": {"x": 19.931, "y": 41.632, "w": 78.194, "h": 55.533}, "badge": {"x": 19.931, "y": 41.632}}],
   },
   "cdso-parking-edit-slots": {
-    src: img21, width: 1600, height: 1278,
+    src: img27, width: 1600, height: 1278,
     title: "Drawing parking bays",
     caption: "Edit Parking Slots mode: draw and adjust bays over the camera picture.",
     callouts: [{"n": 1, "label": "Drawing tools", "desc": "Box draws rectangular bays; Pen draws a free-form outline for angled bays.", "box": {"x": 39.389, "y": 22.249, "w": 9.854, "h": 3.652}, "badge": {"x": 39.389, "y": 22.249}}, {"n": 2, "label": "Upload Image / Save Layout", "desc": "Upload a reference picture of the lot, and save the bays when you are done.", "box": {"x": 67.516, "y": 21.923, "w": 19.384, "h": 4.304}, "badge": {"x": 67.516, "y": 21.923}}, {"n": 3, "label": "Drawing area", "desc": "Click and drag to draw a bay. Click a bay to rename or delete it.", "box": {"x": 19.931, "y": 26.314, "w": 78.194, "h": 55.533}, "badge": {"x": 19.931, "y": 26.314}}, {"n": 4, "label": "Camera", "desc": "The camera whose picture the bays are drawn over.", "box": {"x": 22.431, "y": 81.76, "w": 13.333, "h": 3.739}, "badge": {"x": 22.431, "y": 81.76}}, {"n": 5, "label": "Use as Reference Image", "desc": "Takes the current camera picture as this zone’s reference image.", "box": {"x": 21.042, "y": 93.586, "w": 75.972, "h": 4.13}, "badge": {"x": 21.042, "y": 93.586}}],
   },
   "cdso-events": {
-    src: img22, width: 1600, height: 1000,
+    src: img28, width: 1600, height: 1000,
     title: "Campus events",
     caption: "Events reserve part of campus parking and note organizer plates.",
     callouts: [{"n": 1, "label": "Event Mode overrides", "desc": "Parking Override lets guards admit vehicles when a zone is full; Entry Override lets them admit plates that would be denied. Click the switch to turn each on or off.", "box": {"x": 19.861, "y": 25.276, "w": 78.333, "h": 11.889}, "badge": {"x": 19.861, "y": 25.276}}, {"n": 2, "label": "Add Event", "desc": "Create an event: name, date, times, how much parking it takes, and organizer plates.", "box": {"x": 88.389, "y": 38.943, "w": 9.806, "h": 5.889}, "badge": {"x": 88.389, "y": 38.943}}, {"n": 3, "label": "Event card", "desc": "Date, time, organizer plates, and how much of campus parking the event holds.", "box": {"x": 19.861, "y": 59.792, "w": 78.333, "h": 14.307}, "badge": {"x": 19.861, "y": 59.792}}, {"n": 4, "label": "Event actions", "desc": "Activate the event, reschedule it, show its details, or delete it.", "box": {"x": 80.127, "y": 64.434, "w": 16.609, "h": 5.021}, "badge": {"x": 80.127, "y": 64.434}}, {"n": 5, "label": "Archived Events", "desc": "Past events, kept for reference.", "box": {"x": 19.861, "y": 75.21, "w": 14.436, "h": 5.521}, "badge": {"x": 19.861, "y": 75.21}}],
   },
   "cdso-violations": {
-    src: img23, width: 1600, height: 1000,
+    src: img29, width: 1600, height: 1000,
     title: "Violations",
     caption: "Operations › Violations. The 3-offence penalty ladder and every recorded offence.",
     callouts: [{"n": 1, "label": "Active warnings", "desc": "How many violations are still counting against their owners.", "box": {"x": 19.861, "y": 13.531, "w": 11.33, "h": 4.667}, "badge": {"x": 19.861, "y": 13.531}}, {"n": 2, "label": "Violations report", "desc": "Pick a date range and download a PDF or Excel report.", "box": {"x": 19.861, "y": 19.531, "w": 78.333, "h": 6.972}, "badge": {"x": 19.861, "y": 19.531}}, {"n": 3, "label": "Status filter", "desc": "All, Warnings, Confiscated (3rd offence) or Cleared / Resolved.", "box": {"x": 21.25, "y": 29.726, "w": 31.05, "h": 4.667}, "badge": {"x": 21.25, "y": 29.726}}, {"n": 4, "label": "Type and period", "desc": "Filter by violation type, and by Today, Week, Month or Year.", "box": {"x": 52.37, "y": 29.781, "w": 31.098, "h": 4.556}, "badge": {"x": 52.37, "y": 29.781}}, {"n": 5, "label": "Search", "desc": "Find by plate, owner or notes. The arrow button resets all filters.", "box": {"x": 19.861, "y": 34.503, "w": 16.667, "h": 4.889}, "badge": {"x": 19.861, "y": 34.503}}, {"n": 6, "label": "Violations table", "desc": "Plate, owner, type with offence number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.", "box": {"x": 19.931, "y": 40.837, "w": 86.944, "h": 56.786}, "badge": {"x": 19.931, "y": 40.837}}, {"n": 7, "label": "Lift", "desc": "Voids a violation as a false alarm. It stops counting, and later offences are renumbered.", "box": {"x": 90.65, "y": 46.892, "w": 4.818, "h": 4.444}, "badge": {"x": 90.65, "y": 46.892}}],
   },
   "cdso-vehicle-log": {
-    src: img24, width: 1600, height: 1000,
+    src: img30, width: 1600, height: 1000,
     title: "Vehicle Log",
     caption: "Operations › Vehicle Log. Every gate scan, entry and exit, across all gates.",
     callouts: [{"n": 1, "label": "Record count and exports", "desc": "Download the filtered log as PDF or Excel.", "box": {"x": 30.663, "y": 14.111, "w": 18.764, "h": 5.5}, "badge": {"x": 30.663, "y": 14.111}}, {"n": 2, "label": "Date range", "desc": "Quick ranges, or pick exact start and end dates.", "box": {"x": 21.528, "y": 20.944, "w": 75, "h": 13.889}, "badge": {"x": 21.528, "y": 20.944}}, {"n": 3, "label": "Search", "desc": "Find a plate, owner or guard.", "box": {"x": 22.569, "y": 28.861, "w": 25.581, "h": 4.389}, "badge": {"x": 22.569, "y": 28.861}}, {"n": 4, "label": "Gate, status and category filters", "desc": "Narrow the log; Clear filters resets them.", "box": {"x": 85.372, "y": 28.722, "w": 7.336, "h": 4.667}, "badge": {"x": 85.372, "y": 28.722}}, {"n": 5, "label": "Log table", "desc": "Time, plate, owner, gate, decision and the guard on duty.", "box": {"x": 21.597, "y": 35.389, "w": 74.861, "h": 76.222}, "badge": {"x": 21.597, "y": 35.389}}, {"n": 6, "label": "Exit", "desc": "When the vehicle left and how long it stayed, or \"Still inside\".", "box": {"x": 85.903, "y": 35.389, "w": 10.556, "h": 6.111}, "badge": {"x": 85.903, "y": 35.389}}],
   },
   "cdso-rule-constraints": {
-    src: img25, width: 1600, height: 1000,
+    src: img31, width: 1600, height: 1000,
     title: "Rule Constraints: entry rules",
     caption: "System › Rule Constraints. When each kind of vehicle may enter campus.",
     callouts: [{"n": 1, "label": "Screen tabs", "desc": "Entry Rules, Registration Period (when applications are accepted) and Access Mode.", "box": {"x": 19.861, "y": 11.889, "w": 32.586, "h": 5.769}, "badge": {"x": 19.861, "y": 11.889}}, {"n": 2, "label": "Rule", "desc": "One rule per registrant type: who it applies to, allowed days and hours.", "box": {"x": 19.931, "y": 25.845, "w": 78.194, "h": 12.5}, "badge": {"x": 19.931, "y": 25.845}}, {"n": 3, "label": "Days, hours and stay limit", "desc": "Allowed campus days, the time window, and the maximum stay where one is set.", "box": {"x": 25.069, "y": 61.123, "w": 68.472, "h": 8.611}, "badge": {"x": 25.069, "y": 61.123}}, {"n": 4, "label": "Edit", "desc": "Opens the rule to change its days, hours or stay limit.", "box": {"x": 93.681, "y": 29.595, "w": 3.056, "h": 4.889}, "badge": {"x": 93.681, "y": 29.595}}],
   },
   "cdso-registration-period": {
-    src: img26, width: 1600, height: 1000,
+    src: img32, width: 1600, height: 1000,
     title: "Rule Constraints: registration period",
     caption: "Set when the online application form accepts submissions.",
     callouts: [{"n": 1, "label": "New Period", "desc": "Create a registration window with a label, start date and end date.", "box": {"x": 88.01, "y": 21.28, "w": 8.448, "h": 5.111}, "badge": {"x": 88.01, "y": 21.28}}, {"n": 2, "label": "Period", "desc": "Label, start and end dates. Only one period can be Active; the public form accepts applications only while it is open.", "box": {"x": 21.597, "y": 33.457, "w": 74.861, "h": 7.833}, "badge": {"x": 21.597, "y": 33.457}}, {"n": 3, "label": "Edit / Deactivate", "desc": "Change the dates, or close the window early.", "box": {"x": 82.408, "y": 34.845, "w": 13.078, "h": 5.111}, "badge": {"x": 82.408, "y": 34.845}}],
   },
   "cdso-access-mode": {
-    src: img27, width: 1600, height: 1000,
+    src: img33, width: 1600, height: 1000,
     title: "Rule Constraints: access mode",
     caption: "Campus-wide overrides such as open campus mode.",
     callouts: [{"n": 1, "label": "Open Campus switch", "desc": "When ON, every vehicle may enter regardless of registration, schedule or entry rules. Use it for open events or graduation, and switch it OFF afterwards.", "box": {"x": 22.778, "y": 34.245, "w": 14.451, "h": 5.5}, "badge": {"x": 22.778, "y": 34.245}}, {"n": 2, "label": "Current effect", "desc": "What the setting means right now.", "box": {"x": 37.368, "y": 35.328, "w": 13.571, "h": 3.333}, "badge": {"x": 37.368, "y": 35.328}}],
   },
   "cdso-audit-log": {
-    src: img28, width: 1600, height: 1000,
+    src: img34, width: 1600, height: 1000,
     title: "Audit Log",
     caption: "System › Audit Log. What staff did to accounts and records.",
     callouts: [{"n": 1, "label": "Event count and exports", "desc": "Download the filtered log as PDF or Excel.", "box": {"x": 30.241, "y": 14.111, "w": 18.764, "h": 5.5}, "badge": {"x": 30.241, "y": 14.111}}, {"n": 2, "label": "Date range", "desc": "All, Today, Week, Month, Year, or exact dates.", "box": {"x": 21.528, "y": 20.944, "w": 75, "h": 13.889}, "badge": {"x": 21.528, "y": 20.944}}, {"n": 3, "label": "Search", "desc": "Search by the staff member’s name or the details text.", "box": {"x": 22.569, "y": 28.861, "w": 53.056, "h": 4.389}, "badge": {"x": 22.569, "y": 28.861}}, {"n": 4, "label": "Action filter", "desc": "Show one kind of action, e.g. User Created or Entry Override.", "box": {"x": 76.944, "y": 28.861, "w": 15.625, "h": 4.389}, "badge": {"x": 76.944, "y": 28.861}}, {"n": 5, "label": "Audit table", "desc": "When, who, what kind of action, and the details.", "box": {"x": 21.597, "y": 35.389, "w": 74.861, "h": 66.778}, "badge": {"x": 21.597, "y": 35.389}}],
   },
   "cdso-settings-accounts-fees": {
-    src: img29, width: 1600, height: 1000,
+    src: img35, width: 1600, height: 1000,
     title: "System Settings: accounts & fees",
     caption: "System › System Settings. System-wide policies, grouped into four tabs.",
     callouts: [{"n": 1, "label": "Settings tabs", "desc": "Accounts & Fees, Gates & Scanning, Parking, and Data & Backup.", "box": {"x": 19.861, "y": 11.444, "w": 42.312, "h": 5.769}, "badge": {"x": 19.861, "y": 11.444}}, {"n": 2, "label": "Account expiry period", "desc": "How long a vehicle-owner account lasts before it is archived automatically.", "box": {"x": 75.652, "y": 24.753, "w": 17.923, "h": 5.509}, "badge": {"x": 75.652, "y": 24.753}}, {"n": 3, "label": "Retention notice", "desc": "What the chosen period means for owners’ records.", "box": {"x": 46.736, "y": 34.248, "w": 49.444, "h": 5.592}, "badge": {"x": 46.736, "y": 34.248}}, {"n": 4, "label": "Vehicle pass fees", "desc": "The amounts applicants are asked to pay at the Accounting Office.", "box": {"x": 88.958, "y": 46.102, "w": 7.222, "h": 13.238}, "badge": {"x": 88.958, "y": 46.102}}],
   },
   "cdso-settings-gates-scanning": {
-    src: img30, width: 1600, height: 1000,
+    src: img36, width: 1600, height: 1000,
     title: "System Settings: gates & scanning",
     caption: "Gates, scan timing and event overrides.",
     callouts: [{"n": 1, "label": "Add a gate", "desc": "Enter the gate number and a display label, then Add Gate. It appears on the guard sign-in page straight away.", "box": {"x": 46.736, "y": 25.344, "w": 10.556, "h": 11.434}, "badge": {"x": 46.736, "y": 25.344}}, {"n": 2, "label": "Gate list", "desc": "Every gate. Deactivate removes a gate from the sign-in page without deleting its history.", "box": {"x": 46.736, "y": 38.688, "w": 48.403, "h": 17.128}, "badge": {"x": 46.736, "y": 38.688}}, {"n": 3, "label": "Scan deduplication", "desc": "If the same plate is read again within this many seconds, the repeat is ignored so it is not logged twice.", "box": {"x": 84.746, "y": 65.201, "w": 7.222, "h": 5.509}, "badge": {"x": 84.746, "y": 65.201}}],
   },
   "cdso-settings-parking": {
-    src: img31, width: 1600, height: 1000,
+    src: img37, width: 1600, height: 1000,
     title: "System Settings: parking",
     caption: "Parking detection thresholds.",
     callouts: [{"n": 1, "label": "Counts as parked after", "desc": "How long a vehicle must stay still before its bay counts as taken.", "box": {"x": 84.746, "y": 23.755, "w": 7.222, "h": 5.509}, "badge": {"x": 84.746, "y": 23.755}}, {"n": 2, "label": "Reports double parking after", "desc": "How long a vehicle must sit across two bays before a double-parking violation is issued.", "box": {"x": 84.746, "y": 33.483, "w": 7.222, "h": 5.509}, "badge": {"x": 84.746, "y": 33.483}}, {"n": 3, "label": "Broadcast Parking Notice", "desc": "Write a subject and message, then Broadcast to All Owners. It is emailed and shown in every owner’s portal.", "box": {"x": 46.736, "y": 57.958, "w": 49.444, "h": 27.259}, "badge": {"x": 46.736, "y": 57.958}}, {"n": 4, "label": "Active notices", "desc": "Notices owners can currently see. The × removes one.", "box": {"x": 46.736, "y": 87.127, "w": 49.444, "h": 18.49}, "badge": {"x": 46.736, "y": 87.127}}],
   },
   "cdso-settings-data-backup": {
-    src: img32, width: 1600, height: 1222,
+    src: img38, width: 1600, height: 1222,
     title: "System Settings: data & backup",
     caption: "Backups, restore and data retention.",
     callouts: [{"n": 1, "label": "Retention period", "desc": "Access logs, violations and archived accounts older than this are deleted automatically. The audit log is kept.", "box": {"x": 46.736, "y": 18.618, "w": 49.444, "h": 12.375}, "badge": {"x": 46.736, "y": 18.618}}, {"n": 2, "label": "Download / Restore", "desc": "Download a full snapshot of the system data, or restore the system from a backup file.", "box": {"x": 72.029, "y": 40.243, "w": 13.686, "h": 4.636}, "badge": {"x": 72.029, "y": 40.243}}, {"n": 3, "label": "Automatic backups", "desc": "How often the server backs itself up, and how many automatic backups to keep.", "box": {"x": 84.725, "y": 55.607, "w": 11.455, "h": 14.801}, "badge": {"x": 84.725, "y": 55.607}}, {"n": 4, "label": "Backups on the server", "desc": "Saved backups. Save As downloads a copy, Restore brings the system back to that point, and the bin deletes it.", "box": {"x": 46.736, "y": 79.067, "w": 49.444, "h": 6.818}, "badge": {"x": 46.736, "y": 79.067}}],
   },
   "guard-entry-management": {
-    src: img33, width: 1600, height: 1000,
+    src: img39, width: 1600, height: 1000,
     title: "Entry Management (gate terminal)",
     caption: "The guard’s main screen at the gate. Plates are read automatically from the entry camera.",
     callouts: [{"n": 1, "label": "Menu and gate", "desc": "Entry Management, Parking and Vehicle Log. The green tag shows the gate you are clocked in at.", "box": {"x": -0.417, "y": -0.667, "w": 14.653, "h": 22.5}, "badge": {"x": 1.181, "y": 1.889}}, {"n": 2, "label": "CCTV Monitor", "desc": "Live picture from this gate’s entry camera. Detected plates are boxed and checked automatically. (Sample picture shown.)", "box": {"x": 14.306, "y": 0.222, "w": 60.694, "h": 73.458}, "badge": {"x": 14.306, "y": 1.889}}, {"n": 3, "label": "Owner name / plate search", "desc": "Type a plate, conduction number or owner name when a plate is not read automatically.", "box": {"x": 15.347, "y": 63.847, "w": 27.744, "h": 5.778}, "badge": {"x": 15.347, "y": 63.847}}, {"n": 4, "label": "Check Plate — Entry / Exit", "desc": "Checks the typed plate. A vehicle already inside is logged out; otherwise its entry is checked against its pass and schedule.", "box": {"x": 42.814, "y": 63.847, "w": 15.723, "h": 5.778}, "badge": {"x": 42.814, "y": 63.847}}, {"n": 5, "label": "Scan QR", "desc": "Scan the QR code on the owner’s vehicle pass or a visitor slip.", "box": {"x": 58.258, "y": 63.847, "w": 7.786, "h": 5.778}, "badge": {"x": 58.258, "y": 63.847}}, {"n": 6, "label": "No Plate?", "desc": "Record a vehicle with no plate or conduction sticker by describing it.", "box": {"x": 65.767, "y": 63.847, "w": 8.191, "h": 5.778}, "badge": {"x": 65.767, "y": 63.847}}, {"n": 7, "label": "Recent Scans", "desc": "Latest decisions at this gate. The chips count entries by category.", "box": {"x": 75.139, "y": 0.222, "w": 24.306, "h": 55.778}, "badge": {"x": 75.139, "y": 1.889}}, {"n": 8, "label": "Active Visitors", "desc": "Visitor passes still inside, with time left. +30m extends a pass.", "box": {"x": 75.139, "y": 56, "w": 24.306, "h": 14.083}, "badge": {"x": 75.139, "y": 56}}, {"n": 9, "label": "Confiscated accounts", "desc": "Owners serving a violation penalty. They may not enter or park.", "box": {"x": 75.139, "y": 70.083, "w": 24.306, "h": 29.333}, "badge": {"x": 75.139, "y": 70.083}}, {"n": 10, "label": "Shift controls", "desc": "On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.", "box": {"x": -0.417, "y": 76.479, "w": 14.653, "h": 24.188}, "badge": {"x": 1.181, "y": 76.479}}],
   },
   "guard-plate-check-result": {
-    src: img34, width: 1600, height: 1000,
+    src: img40, width: 1600, height: 1000,
     title: "Checking a plate",
     caption: "The result shown after a plate is checked.",
     callouts: [{"n": 1, "label": "Decision", "desc": "The result in large type: here WRONG SCHEDULE DAY, with the plate and registrant type. Approved entries show in green.", "box": {"x": 44.827, "y": 31.514, "w": 10.553, "h": 6.944}, "badge": {"x": 44.827, "y": 31.514}}, {"n": 2, "label": "Reason and rule", "desc": "Why the vehicle was denied and which entry rule applied.", "box": {"x": 38.056, "y": 43.903, "w": 24.097, "h": 9.694}, "badge": {"x": 38.056, "y": 43.903}}, {"n": 3, "label": "Owner and vehicle", "desc": "Check these against the vehicle in front of you.", "box": {"x": 38.056, "y": 54.486, "w": 24.097, "h": 10}, "badge": {"x": 38.056, "y": 54.486}}, {"n": 4, "label": "Override Entry", "desc": "Let the vehicle in anyway. You must give a reason, and the override is recorded under your name.", "box": {"x": 38.056, "y": 65.375, "w": 24.097, "h": 5.333}, "badge": {"x": 38.056, "y": 65.375}}, {"n": 5, "label": "Acknowledge", "desc": "Accept the decision and close the result.", "box": {"x": 38.056, "y": 70.264, "w": 24.097, "h": 5.333}, "badge": {"x": 38.056, "y": 70.264}}, {"n": 6, "label": "Detected plate", "desc": "The plate the camera read, boxed on the live picture. (Sample picture shown.)", "box": {"x": 32.083, "y": 27, "w": 4.306, "h": 3.444}, "badge": {"x": 32.083, "y": 27}}],
   },
   "guard-no-plate": {
-    src: img35, width: 1600, height: 1111,
+    src: img41, width: 1600, height: 1111,
     title: "Recording a vehicle with no plate",
     caption: "Describe the vehicle when there is no plate the system can read.",
     callouts: [{"n": 1, "label": "Driver's Name", "desc": "The name the driver gives you.", "box": {"x": 37.083, "y": 36.837, "w": 25.833, "h": 4.95}, "badge": {"x": 37.083, "y": 36.837}}, {"n": 2, "label": "Who is entering?", "desc": "Student, employee, fetcher, visitor or supplier.", "box": {"x": 37.083, "y": 44.237, "w": 25.833, "h": 4.8}, "badge": {"x": 37.083, "y": 44.237}}, {"n": 3, "label": "Vehicle description", "desc": "Vehicle type, colour and make/model stand in for the missing plate on the log.", "box": {"x": 37.083, "y": 51.487, "w": 25.833, "h": 12.35}, "badge": {"x": 37.083, "y": 51.487}}, {"n": 4, "label": "Note", "desc": "Anything useful, e.g. \"newly delivered unit, plate not yet issued\".", "box": {"x": 37.083, "y": 66.287, "w": 25.833, "h": 7.2}, "badge": {"x": 37.083, "y": 66.287}}, {"n": 5, "label": "Record Entry", "desc": "Saves the entry to the Vehicle Log. Cancel closes without saving.", "box": {"x": 48.37, "y": 75.987, "w": 14.546, "h": 4.8}, "badge": {"x": 48.37, "y": 75.987}}],
   },
   "guard-parking": {
-    src: img36, width: 1600, height: 1000,
+    src: img42, width: 1600, height: 1000,
     title: "Parking monitor",
     caption: "Watch parking zones, see free spaces and act on parking offences.",
     callouts: [{"n": 1, "label": "Zones", "desc": "Pick the parking zone to watch.", "box": {"x": 15.347, "y": 6.722, "w": 29.397, "h": 4.667}, "badge": {"x": 15.347, "y": 6.722}}, {"n": 2, "label": "Cameras", "desc": "Switch between the cameras watching parking.", "box": {"x": 15.347, "y": 10.944, "w": 23.358, "h": 4.667}, "badge": {"x": 15.347, "y": 10.944}}, {"n": 3, "label": "Live picture", "desc": "The camera view with bay outlines. (Sample picture shown.)", "box": {"x": 14.375, "y": 15.278, "w": 60.556, "h": 55.083}, "badge": {"x": 14.375, "y": 15.278}}, {"n": 4, "label": "Legend", "desc": "Free, Occupied, and Vehicle seen (a vehicle the camera is tracking).", "box": {"x": 15.347, "y": 70.028, "w": 17.195, "h": 3.333}, "badge": {"x": 15.347, "y": 70.028}}, {"n": 5, "label": "Campus-wide spaces", "desc": "Free spaces for this vehicle type across campus, counted from gate entries and exits.", "box": {"x": 75.139, "y": 0.222, "w": 24.306, "h": 31.069}, "badge": {"x": 75.139, "y": 1.889}}, {"n": 6, "label": "Bays in this zone", "desc": "How many bays the camera sees taken.", "box": {"x": 75.139, "y": 31.292, "w": 24.306, "h": 12.688}, "badge": {"x": 75.139, "y": 31.292}}, {"n": 7, "label": "Issue Violation / Override Parking", "desc": "Record a parking offence, or let a vehicle park when the area is full (event mode).", "box": {"x": 76.181, "y": 49.924, "w": 22.222, "h": 5.417}, "badge": {"x": 76.181, "y": 49.924}}],
   },
   "guard-issue-violation": {
-    src: img37, width: 1600, height: 1111,
+    src: img43, width: 1600, height: 1111,
     title: "Issuing a parking violation",
     caption: "The violation form opened from the parking monitor.",
     callouts: [{"n": 1, "label": "License Plate", "desc": "The plate of the offending vehicle. Required.", "box": {"x": 36.944, "y": 39.625, "w": 26.111, "h": 4.75}, "badge": {"x": 36.944, "y": 39.625}}, {"n": 2, "label": "Violation Type", "desc": "Choose the offence, e.g. No Sticker, Double Parking or Time Exceed.", "box": {"x": 36.944, "y": 46.575, "w": 26.111, "h": 4.6}, "badge": {"x": 36.944, "y": 46.575}}, {"n": 3, "label": "Notes", "desc": "Optional details that help the CDSO review it.", "box": {"x": 36.944, "y": 53.375, "w": 26.111, "h": 8.65}, "badge": {"x": 36.944, "y": 53.375}}, {"n": 4, "label": "Issue Violation", "desc": "Records the violation against the vehicle’s owner and counts toward the offence ladder. Cancel closes without saving.", "box": {"x": 36.944, "y": 62.625, "w": 26.111, "h": 4.95}, "badge": {"x": 36.944, "y": 62.625}}],
   },
   "guard-vehicle-log": {
-    src: img38, width: 1600, height: 1000,
+    src: img44, width: 1600, height: 1000,
     title: "Vehicle Log (gate)",
     caption: "Every scan recorded at your gate.",
     callouts: [{"n": 1, "label": "Status filter", "desc": "Show all scans or only one decision: Authorized, Denied, Wrong Day, Visitor or Exited.", "box": {"x": 17.569, "y": 11.321, "w": 32.227, "h": 4.667}, "badge": {"x": 17.569, "y": 11.321}}, {"n": 2, "label": "Date and refresh", "desc": "Pick another day, or reload the list.", "box": {"x": 85.694, "y": 2.889, "w": 11.944, "h": 5.111}, "badge": {"x": 85.694, "y": 2.889}}, {"n": 3, "label": "Scan entry", "desc": "Plate, decision, owner, guard on duty and time. Exits show when the vehicle left and how long it stayed.", "box": {"x": 20.486, "y": 43.599, "w": 69.156, "h": 5.556}, "badge": {"x": 20.486, "y": 43.599}}],
   },
   "owner-portal-overview": {
-    src: img39, width: 1600, height: 1367,
+    src: img46, width: 1600, height: 1367,
     title: "Vehicle owner portal: your pass",
     caption: "What a registered owner sees after signing in.",
     callouts: [{"n": 1, "label": "Help, Policy and Log Out", "desc": "The in-app guide, the privacy policy, and signing out.", "box": {"x": 83.117, "y": 0.569, "w": 15.077, "h": 3.902}, "badge": {"x": 83.117, "y": 1.382}}, {"n": 2, "label": "Security and Change Password", "desc": "Manage two-factor authentication and set a new password.", "box": {"x": 67.045, "y": 9.939, "w": 20.871, "h": 4.187}, "badge": {"x": 67.045, "y": 9.939}}, {"n": 3, "label": "Account and registration IDs", "desc": "Your portal account ID and your vehicle pass registration ID.", "box": {"x": 10.139, "y": 17.398, "w": 79.722, "h": 10.386}, "badge": {"x": 10.139, "y": 17.398}}, {"n": 4, "label": "Personal information", "desc": "Your details and assigned campus days.", "box": {"x": 10.139, "y": 28.435, "w": 54.722, "h": 51.341}, "badge": {"x": 10.139, "y": 28.435}}, {"n": 5, "label": "Pending change request", "desc": "A correction you asked for, waiting for CDSO approval. You can withdraw it.", "box": {"x": 10.208, "y": 62.012, "w": 54.583, "h": 17.683}, "badge": {"x": 10.208, "y": 62.012}}, {"n": 6, "label": "Vehicle access QR code", "desc": "Show this at the gate. Tap to enlarge, show it fullscreen, or copy its data.", "box": {"x": 65.417, "y": 28.435, "w": 24.444, "h": 48.267}, "badge": {"x": 65.417, "y": 28.435}}, {"n": 7, "label": "Registration status", "desc": "Whether your vehicle is authorized to enter campus.", "box": {"x": 65.417, "y": 77.353, "w": 24.444, "h": 17.331}, "badge": {"x": 65.417, "y": 77.353}}, {"n": 8, "label": "Vehicle information", "desc": "Plate, type, colour and conduction number on file.", "box": {"x": 10.139, "y": 80.427, "w": 54.722, "h": 17.846}, "badge": {"x": 10.139, "y": 80.427}}],
+    mobile: { src: img45, width: 780, height: 4574, callouts: [{"n": 1, "label": "Help, Policy and Log Out", "desc": "The in-app guide, the privacy policy, and signing out.", "box": {"x": 62.155, "y": 1.785, "w": 35.385, "h": 2.099}, "badge": {"x": 62.155, "y": 1.785}}, {"n": 2, "label": "Security and Change Password", "desc": "Manage two-factor authentication and set a new password.", "box": {"x": 6.667, "y": 9.254, "w": 86.667, "h": 2.011}, "badge": {"x": 6.667, "y": 9.254}}, {"n": 3, "label": "Account and registration IDs", "desc": "Your portal account ID and your vehicle pass registration ID.", "box": {"x": 2.564, "y": 12.315, "w": 94.872, "h": 9.641}, "badge": {"x": 4.359, "y": 12.315}}, {"n": 4, "label": "Personal information", "desc": "Your details and assigned campus days.", "box": {"x": 2.564, "y": 22.306, "w": 94.872, "h": 28.837}, "badge": {"x": 4.359, "y": 22.306}}, {"n": 5, "label": "Pending change request", "desc": "A correction you asked for, waiting for CDSO approval. You can withdraw it.", "box": {"x": 2.821, "y": 39.84, "w": 94.359, "h": 11.259}, "badge": {"x": 4.359, "y": 39.84}}, {"n": 6, "label": "Vehicle access QR code", "desc": "Show this at the gate. Tap to enlarge, show it fullscreen, or copy its data.", "box": {"x": 2.564, "y": 66.381, "w": 94.872, "h": 24.604}, "badge": {"x": 4.359, "y": 66.381}}, {"n": 7, "label": "Registration status", "desc": "Whether your vehicle is authorized to enter campus.", "box": {"x": 2.564, "y": 91.335, "w": 94.872, "h": 8.228}, "badge": {"x": 4.359, "y": 91.335}}, {"n": 8, "label": "Vehicle information", "desc": "Plate, type, colour and conduction number on file.", "box": {"x": 2.564, "y": 51.493, "w": 94.872, "h": 14.539}, "badge": {"x": 4.359, "y": 51.493}}] },
   },
   "owner-portal-violations-parking": {
-    src: img40, width: 1600, height: 1222,
+    src: img48, width: 1600, height: 1222,
     title: "Vehicle owner portal: violations & parking",
     caption: "Further down the portal: your violation record, announcements and live parking.",
     callouts: [{"n": 1, "label": "My violation record", "desc": "Any violations against your account and their status.", "box": {"x": 10.139, "y": 3.386, "w": 79.722, "h": 24.273}, "badge": {"x": 10.139, "y": 3.386}}, {"n": 2, "label": "Announcements", "desc": "Parking notices from the CDSO.", "box": {"x": 10.139, "y": 32.068, "w": 79.722, "h": 10.104}, "badge": {"x": 10.139, "y": 32.068}}, {"n": 3, "label": "Available / occupied / total", "desc": "Spaces for your vehicle type right now.", "box": {"x": 11.597, "y": 52.717, "w": 76.806, "h": 7.727}, "badge": {"x": 11.597, "y": 52.717}}, {"n": 4, "label": "Zone fill level", "desc": "How full each parking zone is.", "box": {"x": 11.597, "y": 60.808, "w": 76.806, "h": 8.955}, "badge": {"x": 11.597, "y": 60.808}}, {"n": 5, "label": "Bays", "desc": "Green bays are free; red bays are taken.", "box": {"x": 10.208, "y": 69.763, "w": 79.583, "h": 16}, "badge": {"x": 10.208, "y": 69.763}}],
+    mobile: { src: img47, width: 780, height: 2488, callouts: [{"n": 1, "label": "My violation record", "desc": "Any violations against your account and their status.", "box": {"x": 2.564, "y": 2.854, "w": 94.872, "h": 21.141}, "badge": {"x": 4.359, "y": 2.854}}, {"n": 2, "label": "Announcements", "desc": "Parking notices from the CDSO.", "box": {"x": 2.564, "y": 27.653, "w": 94.872, "h": 12.172}, "badge": {"x": 4.359, "y": 27.653}}, {"n": 3, "label": "Available / occupied / total", "desc": "Spaces for your vehicle type right now.", "box": {"x": 5.897, "y": 48.507, "w": 88.205, "h": 6.511}, "badge": {"x": 5.897, "y": 48.507}}, {"n": 4, "label": "Zone fill level", "desc": "How full each parking zone is.", "box": {"x": 7.949, "y": 55.018, "w": 84.103, "h": 7.918}, "badge": {"x": 7.949, "y": 55.018}}, {"n": 5, "label": "Bays", "desc": "Green bays are free; red bays are taken.", "box": {"x": 2.821, "y": 62.936, "w": 94.359, "h": 23.794}, "badge": {"x": 4.359, "y": 62.936}}] },
   },
   "owner-security-two-factor": {
-    src: img41, width: 1600, height: 1000,
+    src: img50, width: 1600, height: 1000,
     title: "Account security (two-factor)",
     caption: "Manage your authenticator and backup codes.",
     callouts: [{"n": 1, "label": "Two-factor status", "desc": "On means an authenticator code is required when you sign in on a new device, after 7 days away, or before sensitive changes.", "box": {"x": 33.472, "y": 33.21, "w": 33.056, "h": 11.222}, "badge": {"x": 33.472, "y": 33.21}}, {"n": 2, "label": "Last used", "desc": "When your authenticator last produced a valid code. If that looks wrong, pair a new phone.", "box": {"x": 33.472, "y": 44.766, "w": 13.867, "h": 5.194}, "badge": {"x": 33.472, "y": 44.766}}, {"n": 3, "label": "Backup code", "desc": "A one-time code for signing in if you lose your phone. Generate one and keep it somewhere safe.", "box": {"x": 33.472, "y": 54.238, "w": 12.5, "h": 5.194}, "badge": {"x": 33.472, "y": 54.238}}, {"n": 4, "label": "New backup code / Pair a new phone", "desc": "Create a fresh backup code, or move two-factor to a different phone.", "box": {"x": 33.472, "y": 64.043, "w": 33.056, "h": 6.556}, "badge": {"x": 33.472, "y": 64.043}}],
+    mobile: { src: img49, width: 780, height: 1688, callouts: [{"n": 1, "label": "Two-factor status", "desc": "On means an authenticator code is required when you sign in on a new device, after 7 days away, or before sensitive changes.", "box": {"x": 6.667, "y": 22.988, "w": 86.667, "h": 14.81}, "badge": {"x": 6.667, "y": 22.988}}, {"n": 2, "label": "Last used", "desc": "When your authenticator last produced a valid code. If that looks wrong, pair a new phone.", "box": {"x": 6.667, "y": 38.154, "w": 51.202, "h": 5.539}, "badge": {"x": 6.667, "y": 38.154}}, {"n": 3, "label": "Backup code", "desc": "A one-time code for signing in if you lose your phone. Generate one and keep it somewhere safe.", "box": {"x": 6.667, "y": 51.098, "w": 40.625, "h": 5.539}, "badge": {"x": 6.667, "y": 51.098}}, {"n": 4, "label": "New backup code / Pair a new phone", "desc": "Create a fresh backup code, or move two-factor to a different phone.", "box": {"x": 6.667, "y": 66.619, "w": 86.667, "h": 13.744}, "badge": {"x": 6.667, "y": 66.619}}] },
   },
   "installer-license": {
-    src: img42, width: 1302, height: 1010,
+    src: img51, width: 1302, height: 1010,
     title: "Step 1 · License Agreement",
     caption: "Run SLC-Smart-Parking-Campus-Setup.exe on the campus computer and accept the license to continue.",
     callouts: [{"n": 1, "label": "License text", "desc": "Read the terms for installing the system.", "box": {"x": 6.164, "y": 30.143, "w": 87.672, "h": 48.335}, "badge": {"x": 6.164, "y": 30.143}}, {"n": 2, "label": "Accept", "desc": "Select \"I accept the agreement\". Next stays disabled until you do.", "box": {"x": 6.164, "y": 79.065, "w": 87.672, "h": 9.758}, "badge": {"x": 6.164, "y": 79.065}}, {"n": 3, "label": "Next / Cancel", "desc": "Next continues. Cancel quits Setup without installing anything.", "box": {"x": 70.713, "y": 91.781, "w": 28.14, "h": 6.74}, "badge": {"x": 70.713, "y": 91.781}}],
   },
   "installer-destination": {
-    src: img43, width: 1302, height: 1010,
+    src: img52, width: 1302, height: 1010,
     title: "Step 2 · Choose the install folder",
     caption: "Keep the default folder unless your IT office says otherwise.",
     callouts: [{"n": 1, "label": "Install folder", "desc": "Default: C:\\Smart Parking and Vehicle Verification System. Keep the path short: Setup refuses folders longer than 110 characters.", "box": {"x": 6.164, "y": 36.393, "w": 73.458, "h": 6.74}, "badge": {"x": 6.164, "y": 36.393}}, {"n": 2, "label": "Browse...", "desc": "Pick a different folder.", "box": {"x": 79.91, "y": 36.177, "w": 13.926, "h": 6.74}, "badge": {"x": 79.91, "y": 36.177}}, {"n": 3, "label": "Disk space", "desc": "About 6 GB is needed once the Python environment and application code are downloaded.", "box": {"x": 6.164, "y": 82.944, "w": 87.672, "h": 5.232}, "badge": {"x": 6.164, "y": 82.944}}, {"n": 4, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-components": {
-    src: img44, width: 1302, height: 1010,
+    src: img53, width: 1302, height: 1010,
     title: "Step 3 · Select components",
     caption: "Choose what Setup installs. A full installation is right for a new gate computer.",
     callouts: [{"n": 1, "label": "Installation type", "desc": "Full installation selects everything. Choose Custom installation to pick items yourself.", "box": {"x": 6.164, "y": 30.143, "w": 87.672, "h": 6.74}, "badge": {"x": 6.164, "y": 30.143}}, {"n": 2, "label": "Component list", "desc": "The launcher is always installed. Untick Git, Python, Node.js or FFmpeg only if your IT office already manages them. The firewall rule lets guards’ computers reach this machine.", "box": {"x": 6.164, "y": 35.315, "w": 87.672, "h": 47.473}, "badge": {"x": 6.164, "y": 35.315}}, {"n": 3, "label": "Space required", "desc": "Disk space the current selection needs.", "box": {"x": 6.164, "y": 83.375, "w": 87.672, "h": 5.232}, "badge": {"x": 6.164, "y": 83.375}}, {"n": 4, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-deployment-options": {
-    src: img45, width: 1302, height: 1010,
+    src: img54, width: 1302, height: 1010,
     title: "Step 4 · Deployment options",
     caption: "Choose the network port the system is served on.",
     callouts: [{"n": 1, "label": "Update branch", "desc": "This computer follows the branch the installer was built for and updates from it. It cannot be changed here.", "box": {"x": 6.164, "y": 21.306, "w": 87.672, "h": 14.93}, "badge": {"x": 6.164, "y": 21.306}}, {"n": 2, "label": "Port to serve on", "desc": "Guards open http://<this computer’s address>:<port>. Keep 8000 unless another program already uses it.", "box": {"x": 6.164, "y": 36.608, "w": 87.672, "h": 10.62}, "badge": {"x": 6.164, "y": 36.608}}, {"n": 3, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-prerequisites": {
-    src: img46, width: 1302, height: 1010,
+    src: img55, width: 1302, height: 1010,
     title: "Step 5 · Prerequisites check",
     caption: "Setup shows what the computer already has before anything is installed.",
     callouts: [{"n": 1, "label": "Detected software", "desc": "[installed] means it is already present; \"will install\" means Setup downloads it through winget.", "box": {"x": 6.164, "y": 30.143, "w": 87.672, "h": 16.87}, "badge": {"x": 6.164, "y": 30.143}}, {"n": 2, "label": "What happens next", "desc": "On first launch the launcher downloads the application (about 300 MB) and builds a Python environment (about 5.7 GB). This takes a while; keep the computer online.", "box": {"x": 6.164, "y": 46.522, "w": 87.672, "h": 19.025}, "badge": {"x": 6.164, "y": 46.522}}, {"n": 3, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-start-menu": {
-    src: img47, width: 1302, height: 1010,
+    src: img56, width: 1302, height: 1010,
     title: "Step 6 · Start Menu folder",
     caption: "Where the launcher, repair and uninstall shortcuts are placed.",
     callouts: [{"n": 1, "label": "Folder name", "desc": "The Start Menu folder for the shortcuts. The default is fine.", "box": {"x": 6.164, "y": 36.177, "w": 87.672, "h": 6.956}, "badge": {"x": 6.164, "y": 36.177}}, {"n": 2, "label": "No Start Menu folder", "desc": "Tick to skip creating Start Menu shortcuts.", "box": {"x": 6.164, "y": 83.16, "w": 87.672, "h": 5.447}, "badge": {"x": 6.164, "y": 83.16}}, {"n": 3, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-additional-tasks": {
-    src: img48, width: 1302, height: 1010,
+    src: img57, width: 1302, height: 1010,
     title: "Step 7 · Additional tasks",
     caption: "Optional shortcuts and system changes.",
     callouts: [{"n": 1, "label": "Desktop shortcut", "desc": "Puts a launcher shortcut on the desktop (recommended).", "box": {"x": 6.164, "y": 35.315, "w": 44.862, "h": 5.663}, "badge": {"x": 6.164, "y": 35.315}}, {"n": 2, "label": "Open at startup", "desc": "Opens the launcher automatically when the computer starts. Recommended for a dedicated gate computer.", "box": {"x": 6.164, "y": 40.056, "w": 48.207, "h": 5.663}, "badge": {"x": 54.371, "y": 40.056}}, {"n": 3, "label": "Add to PATH", "desc": "For IT staff who run the launcher from a command prompt. Usually not needed.", "box": {"x": 6.164, "y": 49.539, "w": 48.207, "h": 5.663}, "badge": {"x": 6.164, "y": 49.539}}, {"n": 4, "label": "Back / Next / Cancel", "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "installer-ready": {
-    src: img49, width: 1302, height: 1010,
+    src: img58, width: 1302, height: 1010,
     title: "Step 8 · Ready to install",
     caption: "Check the summary, then click Install. The launcher opens when Setup finishes.",
     callouts: [{"n": 1, "label": "Summary", "desc": "Install type, destination, components and tasks. Click Back to change anything.", "box": {"x": 6.164, "y": 30.143, "w": 87.672, "h": 57.818}, "badge": {"x": 6.164, "y": 30.143}}, {"n": 2, "label": "Back / Install / Cancel", "desc": "Install continues, Back returns to the previous page, and Cancel quits Setup without installing anything.", "box": {"x": 58.171, "y": 91.781, "w": 40.682, "h": 6.74}, "badge": {"x": 58.171, "y": 91.781}}],
   },
   "launcher-launcher-window": {
-    src: img50, width: 1572, height: 1341,
+    src: img59, width: 1572, height: 1341,
     title: "The campus launcher",
     caption: "Opened from the desktop or Start Menu shortcut. It runs the server that the gate terminals connect to, so leave this window open.",
     callouts: [{"n": 1, "label": "Server status and address", "desc": "RUNNING or STOPPED, and the address guards and CDSO staff open in their browsers.", "box": {"x": 2.29, "y": 9.396, "w": 36.45, "h": 9.843}, "badge": {"x": 2.29, "y": 9.396}}, {"n": 2, "label": "Health", "desc": "Database connection, cameras online, and whether live updates are working.", "box": {"x": 2.672, "y": 19.575, "w": 35.687, "h": 7.047}, "badge": {"x": 2.672, "y": 19.575}}, {"n": 3, "label": "Start / Stop server", "desc": "Starts or stops the system. Stopping it disconnects every gate terminal and camera.", "box": {"x": 2.672, "y": 27.069, "w": 35.687, "h": 6.04}, "badge": {"x": 2.672, "y": 27.069}}, {"n": 4, "label": "Open pages", "desc": "Guard terminal opens the gate sign-in page, Admin login opens the CDSO login, and Copy URL copies the address.", "box": {"x": 2.672, "y": 32.774, "w": 35.687, "h": 5.145}, "badge": {"x": 2.672, "y": 32.774}}, {"n": 5, "label": "Updates", "desc": "Checks for a newer version every few minutes. When one is found, click \"Update and restart\" at a quiet moment: restarting drops the camera feeds briefly.", "box": {"x": 1.145, "y": 39.933, "w": 38.74, "h": 16.219}, "badge": {"x": 1.622, "y": 39.933}}, {"n": 6, "label": "Settings", "desc": "Port, start the server when this window opens, kiosk mode (full screen), and which page opens automatically.", "box": {"x": 2.29, "y": 57.942, "w": 36.45, "h": 25.056}, "badge": {"x": 2.29, "y": 57.942}}, {"n": 7, "label": "Save settings / Credentials", "desc": "Save your changes. Credentials holds the shared database URL and secret key; it is only needed once per computer.", "box": {"x": 2.672, "y": 82.774, "w": 35.687, "h": 5.145}, "badge": {"x": 2.672, "y": 82.774}}, {"n": 8, "label": "Activity", "desc": "Live messages from the server. Log files opens the saved logs; Clear empties this view. Useful when reporting a problem.", "box": {"x": 40.84, "y": 8.054, "w": 58.015, "h": 87.472}, "badge": {"x": 40.84, "y": 8.054}}, {"n": 9, "label": "Install location and version", "desc": "Where the application lives and which version (branch and commit) is running.", "box": {"x": -0.191, "y": 96.421, "w": 100.382, "h": 4.027}, "badge": {"x": 1.622, "y": 96.421}}],

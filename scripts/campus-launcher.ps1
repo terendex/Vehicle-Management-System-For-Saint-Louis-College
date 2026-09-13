@@ -100,6 +100,18 @@ if ($SingleInstanceMutex -and -not $createdNew) {
     exit 0
 }
 
+# This window lives inside powershell.exe, so by default the taskbar files it
+# under PowerShell: PowerShell's icon, grouped with any console that happens to
+# be open. An app id of its own takes it out of that group, and it matches the
+# AppUserModelID on the installer's shortcuts, so pinning the running window
+# pins the SLC shortcut rather than powershell.exe. Must be set before the
+# first window is created; failure only costs the grouping, never the launch.
+Add-Type -Namespace Win32 -Name Shell -MemberDefinition @'
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID(string AppID);
+'@
+try { [void][Win32.Shell]::SetCurrentProcessExplicitAppUserModelID('SaintLouisCollege.SmartParking.Campus') } catch { }
+
 # ---------------------------------------------------------------------------
 #  State
 # ---------------------------------------------------------------------------
@@ -447,6 +459,16 @@ $xaml = @'
             <Ellipse x:Name="Logo" Stroke="#66FFFFFF" StrokeThickness="1"
                      RenderOptions.BitmapScalingMode="HighQuality"/>
           </Grid>
+          <!-- The CDSO emblem beside it: the web lockup (BrandLogos.jsx) is
+               always both seals, and so is this. Same size, a tight gap, and
+               the neutral sky ring the web gives the green emblem. -->
+          <Grid Width="36" Height="36" Margin="6,0,0,0">
+            <Ellipse Fill="White"/>
+            <TextBlock x:Name="CdsoFallback" Text="CDSO" FontSize="8.5" FontWeight="Bold"
+                       Foreground="#FF1B5E20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Ellipse x:Name="CdsoLogo" Stroke="#FFBDD4E5" StrokeThickness="1"
+                     RenderOptions.BitmapScalingMode="HighQuality"/>
+          </Grid>
           <!-- The same two-line lockup the web pages carry, in the same order:
                the college on top, the system name under it. Taken from
                frontend\src\...\header-title / header-subtitle. The system name
@@ -692,6 +714,55 @@ $xaml = @'
 
 $win = [Windows.Markup.XamlReader]::Parse($xaml)
 
+# The SLC seal on the taskbar and Alt+Tab. Without an Icon, WPF borrows the
+# host exe's, which is how the gate terminal ended up wearing PowerShell's.
+#
+# The installer's multi-size .ico comes first: WPF picks the 16px and 32px
+# frames out of it itself, and those are drawn for their size. Only a checkout
+# that has never run installer\build.ps1 lacks one, and that falls back to the
+# seal rendered from the same jpg the header uses.
+function Set-WindowIcon {
+    try {
+        $ico = @(
+            (Join-Path (Split-Path -Parent $repo) 'launcher\slc-vms.ico'),   # installed: <install>\launcher, beside <install>\app
+            (Join-Path $repo 'installer\assets\slc-vms.ico')                  # a dev checkout after build.ps1
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($ico) {
+            $win.Icon = [Windows.Media.Imaging.BitmapFrame]::Create((New-Object Uri($ico)))
+            return
+        }
+        $logo = Join-Path $repo 'frontend\src\assets\slclogo.jpg'
+        if (-not (Test-Path $logo)) { return }
+
+        $size = 64
+        $bmp = New-Object Windows.Media.Imaging.BitmapImage
+        $bmp.BeginInit()
+        $bmp.UriSource = New-Object Uri($logo)
+        $bmp.DecodePixelWidth = $size * 2
+        $bmp.CacheOption = 'OnLoad'
+        $bmp.EndInit()
+        $bmp.Freeze()
+        $brush = New-Object Windows.Media.ImageBrush($bmp)
+        $brush.Stretch = 'UniformToFill'
+
+        $dv = New-Object Windows.Media.DrawingVisual
+        [Windows.Media.RenderOptions]::SetBitmapScalingMode($dv, 'HighQuality')
+        $dc = $dv.RenderOpen()
+        $half = $size / 2
+        $dc.DrawEllipse([Windows.Media.Brushes]::White, $null, (New-Object Windows.Point($half, $half)), $half, $half)
+        $dc.DrawEllipse($brush, $null, (New-Object Windows.Point($half, $half)), $half, $half)
+        $dc.Close()
+
+        $rtb = New-Object Windows.Media.Imaging.RenderTargetBitmap($size, $size, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+        $rtb.Render($dv)
+        $rtb.Freeze()
+        $win.Icon = $rtb
+    } catch {
+        # PowerShell's icon is ugly, not broken - never a reason not to start.
+    }
+}
+Set-WindowIcon
+
 # An exception thrown inside a WPF event handler or a dispatcher timer does not
 # propagate out to whoever started this script - it tears the message loop down
 # where nobody can see it. Under wscript there is no console either, so the
@@ -725,7 +796,7 @@ $win.Dispatcher.Add_UnhandledException({
 })
 
 $ui = @{}
-foreach ($n in @('TitleBar','Logo','LogoFallback','BtnMin','BtnClose','Dot','StateText','OriginText','SubText',
+foreach ($n in @('TitleBar','Logo','LogoFallback','CdsoLogo','CdsoFallback','BtnMin','BtnClose','Dot','StateText','OriginText','SubText',
                  'PillDb','PillDbDot','PillCam','PillCamDot','PillRt','PillRtDot','BtnStart','BtnGuard','BtnAdmin',
                  'BtnCopy','UpdateHead','UpdateSub','BtnUpdate','BtnCheck','LastCheckText','BranchText','TxtPort',
                  'ChkAuto','ChkKiosk','CmbOpen','BtnSave','BtnSecrets','LogList','BtnClear','BtnLogFolder','RepoText',
@@ -1710,10 +1781,10 @@ $timer.Add_Tick({
 # pixels with a box filter, which is what made the seal look chewed. Decoding
 # straight to the device size lets it use a proper filter, and Freeze() stops
 # WPF re-evaluating a bitmap that will never change.
-function Set-LogoImage {
-    param([int]$LogicalSize = 36)
+function Set-SealImage {
+    param($Target, $Fallback, [string]$File, [string]$Stretch, [int]$LogicalSize = 36)
 
-    $logo = Join-Path $repo 'frontend\src\assets\slclogo.jpg'
+    $logo = Join-Path $repo "frontend\src\assets\$File"
     if (-not (Test-Path $logo)) { return }
     try {
         # Read the real device scale rather than assuming 96 DPI. This runs
@@ -1736,17 +1807,25 @@ function Set-LogoImage {
         $bmp.EndInit()
         $bmp.Freeze()
 
-        # UniformToFill on the brush, so a source that is not perfectly square
-        # is cropped to the circle rather than squashed into it.
         $brush = New-Object Windows.Media.ImageBrush($bmp)
-        $brush.Stretch = 'UniformToFill'
+        $brush.Stretch = $Stretch
         $brush.Freeze()
-        $ui.Logo.Fill = $brush
-        $ui.LogoFallback.Visibility = 'Collapsed'
+        $Target.Fill = $brush
+        $Fallback.Visibility = 'Collapsed'
     } catch {
         # The lettermark under it stays visible; a missing or unreadable logo is
         # not a reason to keep the gate terminal from starting.
     }
+}
+
+function Set-LogoImage {
+    param([int]$LogicalSize = 36)
+    # UniformToFill for the SLC seal, so a source that is not perfectly square
+    # is cropped to the circle rather than squashed into it. Uniform for the
+    # CDSO emblem: its arrows run right to the edge of the artwork, and the web
+    # lockup learned that cropping it clips their tips (see BrandLogos.jsx).
+    Set-SealImage $ui.Logo     $ui.LogoFallback 'slclogo.jpg'  'UniformToFill' $LogicalSize
+    Set-SealImage $ui.CdsoLogo $ui.CdsoFallback 'cdsologo.jpg' 'Uniform'       $LogicalSize
 }
 
 # Set before the UI is populated. Assigning IsChecked and SelectedIndex below

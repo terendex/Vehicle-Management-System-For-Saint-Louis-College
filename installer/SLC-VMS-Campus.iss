@@ -36,6 +36,10 @@
 #endif
 #define DefaultPort    "8000"
 #define RegKey         "Software\Saint Louis College\SLC VMS"
+; Must match the id scripts\campus-launcher.ps1 claims at startup. The launcher
+; runs inside powershell.exe; this is what makes Windows group its window under
+; these shortcuts (and the SLC icon) instead of under PowerShell.
+#define LauncherAppId  "SaintLouisCollege.SmartParking.Campus"
 
 [Setup]
 ; The AppId is the upgrade identity. Never change it: a new one makes Windows
@@ -159,6 +163,7 @@ Source: "start-campus.ps1";   DestDir: "{app}\launcher"; Flags: ignoreversion; A
 Source: "start-campus.vbs";   DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
 Source: "assets\slc-vms.ico"; DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
 Source: "assets\slclogo.jpg"; DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
+Source: "assets\cdsologo.jpg"; DestDir: "{app}\launcher"; Flags: ignoreversion; Attribs: hidden
 Source: "LICENSE.txt";        DestDir: "{app}";          Flags: ignoreversion
 
 #ifdef WITHCREDS
@@ -200,14 +205,14 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 Name: "{app}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
-  Comment: "Start the campus gate terminal"
+  AppUserModelID: "{#LauncherAppId}"; Comment: "Start the campus gate terminal"
 
 ; Pointed at the .vbs rather than at powershell.exe so starting the launcher
 ; does not flash a console window on the guard's screen.
 Name: "{group}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
   WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
-  Comment: "Start the campus gate terminal"
+  AppUserModelID: "{#LauncherAppId}"; Comment: "Start the campus gate terminal"
 
 ; Through the .vbs like everything else - pointing this at powershell.exe
 ; directly puts a console window on screen before the setup window appears.
@@ -220,7 +225,8 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 
 Name: "{autodesktop}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
-  WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; Tasks: desktopicon
+  WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
+  AppUserModelID: "{#LauncherAppId}"; Tasks: desktopicon
 
 ; {commonstartup}, not {userstartup}. Setup runs elevated, so a per-user area
 ; resolves to the INSTALLING ADMINISTRATOR's Startup folder - and a gate
@@ -229,7 +235,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
 ; computer starts" has to mean on a shared machine.
 Name: "{commonstartup}\{#AppName}"; Filename: "{sys}\wscript.exe"; \
   Parameters: """{app}\launcher\start-campus.vbs"""; \
-  WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; Tasks: startup
+  WorkingDir: "{app}\launcher"; IconFilename: "{app}\launcher\slc-vms.ico"; \
+  AppUserModelID: "{#LauncherAppId}"; Tasks: startup
 
 [Run]
 ; The long part of the install. bootstrap.ps1 draws its own progress window, so

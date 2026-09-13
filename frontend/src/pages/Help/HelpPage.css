@@ -426,13 +426,22 @@
 /* Phones: a desktop screen shrunk to 360px is unreadable, so inline badges
    get smaller and the enlarged view keeps the screen at a readable width and
    scrolls sideways instead. */
+/* A phone photograph of a screen is portrait and already the right size for
+   a phone: white behind it, and no sideways scrolling when enlarged. */
+.hf-stage--phone-shot { background: #FFFFFF; }
+
 @media (max-width: 760px) {
   .hf-badge { width: 18px; height: 18px; line-height: 18px; font-size: 10px; }
   .hf-box { border-width: 2px; border-radius: 4px; }
+  /* Phone screenshots are drawn near life size, so they keep full badges. */
+  .hf-stage--phone-shot .hf-badge { width: 24px; height: 24px; line-height: 24px; font-size: 12.5px; }
+  .hf-stage--phone-shot .hf-box { border-width: 2.5px; border-radius: 6px; }
   .hf-zoom { opacity: 1; }
   .hf-lightbox { padding: 10px 8px; }
   .hf-lightbox-panel { padding: 10px; }
-  .hf-lightbox-scroll .hf-stage--large { width: 900px; max-width: none; }
+  .hf-lightbox-scroll.is-sideways .hf-stage--large { width: 900px; max-width: none; }
+  .hf-legend { grid-template-columns: 1fr; }
+  .hf-legend-item { padding: 11px 12px; min-height: 44px; }
   .hf-lightbox-hint {
     display: block;
     font-size: 0.78rem;
@@ -460,4 +469,11 @@
   .help-nav {
     position: static;
   }
+  /* Finger-sized targets, and 16px text so iOS does not zoom the page when
+     the search box is tapped. */
+  .help-nav-item { min-height: 44px; font-size: 0.92rem; }
+  .help-search input { font-size: 16px; }
+  .help-header { flex-wrap: wrap; }
+  .help-content { padding: 16px 14px; }
+  .help-title { font-size: 1.2rem; }
 }

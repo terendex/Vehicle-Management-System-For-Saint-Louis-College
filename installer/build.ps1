@@ -119,7 +119,7 @@ if ($SkipAssets) {
 }
 
 foreach ($required in @('assets\slc-vms.ico', 'assets\wizard-large.bmp', 'assets\wizard-small.bmp',
-                        'assets\slclogo.jpg', 'bootstrap.ps1', 'start-campus.ps1', 'start-campus.vbs',
+                        'assets\slclogo.jpg', 'assets\cdsologo.jpg', 'bootstrap.ps1', 'start-campus.ps1', 'start-campus.vbs',
                         'LICENSE.txt')) {
     if (-not (Test-Path (Join-Path $here $required))) { Write-Error "Missing installer\$required" }
 }

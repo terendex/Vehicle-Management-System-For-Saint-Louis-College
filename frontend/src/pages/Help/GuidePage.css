@@ -31,7 +31,7 @@
   gap: clamp(10px, 3vw, 20px);
 }
 
-/* ── Hero with the audience picker ── */
+/* ── Hero ── */
 .guide-hero {
   background: linear-gradient(135deg, #03396C 0%, #0B5C9C 100%);
   padding: 32px clamp(1rem, 4vw, 2rem) 28px;
@@ -49,68 +49,8 @@
 .guide-hero-sub {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.78);
-  margin: 0 0 20px;
-}
-
-.guide-audiences {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  max-width: 1100px;
   margin: 0 auto;
-}
-
-.guide-audience {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  text-align: left;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: #FFFFFF;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
-}
-
-.guide-audience:hover { background: rgba(255, 255, 255, 0.16); }
-.guide-audience:focus-visible { outline: 3px solid #E0B00C; outline-offset: 2px; }
-
-.guide-audience.is-selected {
-  background: #FFFFFF;
-  border-color: #E0B00C;
-  color: #0B2340;
-}
-
-.guide-audience-icon {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.guide-audience.is-selected .guide-audience-icon {
-  background: #03396C;
-  color: #FFFFFF;
-}
-
-.guide-audience-text strong {
-  display: block;
-  font-size: 15px;
-  margin-bottom: 2px;
-}
-
-.guide-audience-text span {
-  display: block;
-  font-size: 13px;
-  line-height: 1.4;
-  opacity: 0.85;
+  max-width: 640px;
 }
 
 .guide-main {
@@ -137,6 +77,6 @@
 .guide-full-manual:hover { background: #EAF2F8; }
 
 @media (max-width: 760px) {
-  .guide-audiences { grid-template-columns: 1fr; }
-  .guide-hero-title { font-size: 22px; }
+  .guide-hero { padding: 22px 1rem 20px; }
+  .guide-hero-title { font-size: 21px; }
 }

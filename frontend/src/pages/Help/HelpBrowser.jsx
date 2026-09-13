@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { Search, X, HelpCircle, Info, ChevronRight, Images } from 'lucide-react'
 import HelpFigure from './HelpFigure'
 import { HELP_FIGURES } from './helpFigures'
+import usePhoneLayout from './usePhoneLayout'
 import './HelpPage.css'
 
 // Text a search should match for a figure: its title, caption and callouts.
@@ -60,6 +61,7 @@ function Block({ block, stepStart }) {
  * passes the topics for the audience the reader picked.
  */
 export default function HelpBrowser({ topics, title, subtitle, aside, initialTopicId }) {
+  const phone = usePhoneLayout()
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
 
@@ -91,9 +93,13 @@ export default function HelpBrowser({ topics, title, subtitle, aside, initialTop
     setActiveId(id)
     setPicks(n => n + 1)
   }
+  // On a phone the topic list sits above the article, so a tap would change
+  // content the reader cannot see; bring the article up to them.
   useEffect(() => {
     const el = articleRef.current
-    if (picks && el && el.getBoundingClientRect().top < 0) {
+    if (!picks || !el) return
+    const top = el.getBoundingClientRect().top
+    if (top < 0 || top > window.innerHeight * 0.5) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [picks])
@@ -171,7 +177,9 @@ export default function HelpBrowser({ topics, title, subtitle, aside, initialTop
                 <p className="help-picture-hint">
                   <Images size={14} />
                   {pictureCount === 1 ? 'This topic has a picture.' : `This topic has ${pictureCount} pictures.`}
-                  {' '}Point at a numbered item to highlight it on the screen, or click a picture to enlarge it.
+                  {phone
+                    ? ' Tap a numbered item to highlight it on the picture, or tap a picture to enlarge it.'
+                    : ' Point at a numbered item to highlight it on the screen, or click a picture to enlarge it.'}
                 </p>
               )}
               {active.body.map((block, i) => <Block key={i} block={block} stepStart={stepStarts[i]} />)}
