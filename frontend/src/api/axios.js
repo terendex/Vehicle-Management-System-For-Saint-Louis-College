@@ -96,8 +96,8 @@ api.interceptors.response.use(
         return api(originalRequest)
       } catch (refreshError) {
         // Let authStore.logout handle cleanup and redirect so the timer is also cleared
-        const { default: useAuthStore } = await import('../stores/authStore')
-        useAuthStore.getState().logout()
+        const { default: useAuthStore, expiredSessionRedirect } = await import('../stores/authStore')
+        useAuthStore.getState().logout(expiredSessionRedirect())
         return Promise.reject(refreshError)
       }
     }

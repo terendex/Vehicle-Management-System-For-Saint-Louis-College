@@ -1196,37 +1196,144 @@ class GuardQrCodeView(APIView):
         })
 
 
+def _text(value):
+    """A request field as text — '' when it is missing or not a string.
+
+    `request.data.get('email', '').strip()` assumed JSON always carries strings.
+    A null, a number or a list reached `.strip()` and came back as a 500 from an
+    endpoint anyone on the internet can call.
+    """
+    return value if isinstance(value, str) else ''
+
+
+def _count_towards_limit(key, window_seconds):
+    """Add one to a rolling counter and return the new total.
+
+    Returns None when the cache cannot answer (the Redis client is configured to
+    swallow errors and return None) — a dead cache must not lock people out of
+    resetting their password, so callers treat None as "under the limit".
+    """
+    from django.core.cache import cache
+    if cache.add(key, 1, window_seconds):
+        return 1
+    try:
+        return cache.incr(key)
+    except ValueError:          # expired between add() and incr()
+        cache.set(key, 1, window_seconds)
+        return 1
+
+
 class PasswordResetRequestView(APIView):
     """Step 1: accept an email, generate a token, send a reset link."""
     permission_classes = [permissions.AllowAny]
+    # No authentication at all. With the default JWT class, a browser still
+    # holding an expired or revoked access token sent it along, DRF rejected the
+    # request with a 401 before AllowAny was consulted, and the frontend's
+    # refresh-then-logout handling threw the user back to the login page — the
+    # people most likely to carry a dead session are exactly the ones who have
+    # been away long enough to forget their password.
+    authentication_classes = []
+
+    # A reset email costs a send against the provider's daily quota (Brevo's
+    # free tier is 300 a day, shared with every registration receipt), and
+    # nothing stopped anyone from requesting one for the same address in a loop.
+    # The per-address cap is silent, so it cannot be used to learn whether an
+    # account exists; the per-client cap answers 429, which says nothing about
+    # any address.
+    RESET_WINDOW_SECONDS      = 15 * 60
+    RESET_EMAILS_PER_ADDRESS  = 3
+    RESET_REQUESTS_PER_CLIENT = 10
 
     def post(self, request):
+        import hashlib
         from django.contrib.auth.tokens import default_token_generator
         from django.utils.http import urlsafe_base64_encode
         from django.utils.encoding import force_bytes
-        from django.core.mail import send_mail
         from django.conf import settings as django_settings
+        from vehicles.email_utils import send_in_background
 
-        email = request.data.get('email', '').strip().lower()
+        email = _text(request.data.get('email')).strip().lower()
         if not email:
             return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        client_hits = _count_towards_limit(
+            f'pwreset:client:{get_client_ip(request)}', self.RESET_WINDOW_SECONDS)
+        if client_hits is not None and client_hits > self.RESET_REQUESTS_PER_CLIENT:
+            return Response(
+                {'error': 'Too many password reset requests. Please wait a few minutes and try again.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         # Always return the same message to avoid leaking which emails exist
         SAFE_MSG = 'If an account with that email exists, a password reset link has been sent.'
 
-        try:
-            user = User.objects.get(email__iexact=email, is_active=True, is_archived=False)
-        except User.DoesNotExist:
+        # A list, not .get(): live-account uniqueness is enforced case-sensitively
+        # by the database and only case-insensitively by the serializers, so two
+        # live rows can differ only in case. .get() raised MultipleObjectsReturned
+        # on those — a 500 — and each of them is a real account that may need
+        # its own link.
+        users = list(User.objects.filter(email__iexact=email, is_active=True, is_archived=False))
+        if not users:
             return Response({'message': SAFE_MSG})
 
-        token = default_token_generator.make_token(user)
-        uid   = urlsafe_base64_encode(force_bytes(user.pk))
+        address_key = hashlib.sha256(email.encode()).hexdigest()
+        address_hits = _count_towards_limit(f'pwreset:address:{address_key}', self.RESET_WINDOW_SECONDS)
+        if address_hits is not None and address_hits > self.RESET_EMAILS_PER_ADDRESS:
+            logger.warning('Password-reset email for user(s) %s withheld: more than %d requests '
+                           'in %d minutes.', [u.pk for u in users], self.RESET_EMAILS_PER_ADDRESS,
+                           self.RESET_WINDOW_SECONDS // 60)
+            return Response({'message': SAFE_MSG})
+
         # PUBLIC_SITE_URL: a reset link built from the campus half's LAN address
         # is unreachable for anyone resetting their password from off campus.
         frontend_url = getattr(django_settings, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
-        reset_link   = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+        lifetime = _reset_link_lifetime()
 
-        html_message = f"""
+        for user in users:
+            token = default_token_generator.make_token(user)
+            uid   = urlsafe_base64_encode(force_bytes(user.pk))
+            reset_link = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+            send_in_background(_send_password_reset_email, user, reset_link, lifetime)
+
+        return Response({'message': SAFE_MSG})
+
+
+def _reset_link_lifetime():
+    """How long a reset link lives, in the words the email uses.
+
+    Read from PASSWORD_RESET_TIMEOUT, the setting Django's token generator
+    actually enforces. The email used to promise "1 hour" as a literal while the
+    setting was left at Django's default of three days.
+    """
+    from django.conf import settings as django_settings
+    seconds = int(getattr(django_settings, 'PASSWORD_RESET_TIMEOUT', 3600))
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f'{hours} hour' + ('' if hours == 1 else 's')
+    minutes = max(1, seconds // 60)
+    return f'{minutes} minute' + ('' if minutes == 1 else 's')
+
+
+def _send_password_reset_email(user, reset_link, lifetime):
+    """Send one reset email; log, never raise.
+
+    Runs on a background thread (send_in_background). Sending inline made the
+    request for a real account take as long as the mail server did while an
+    unknown address answered at once — the response time alone told a caller
+    which addresses have accounts, which the neutral message exists to hide.
+
+    fail_silently=False + an explicit log. The response stays SAFE_MSG either
+    way, but the send itself must not fail invisibly: with fail_silently=True an
+    expired SMTP credential produced a cheerful "a reset link has been sent" for
+    every request while nothing was delivered and nothing was written to the log.
+    """
+    import html
+    from django.core.mail import send_mail
+    from django.conf import settings as django_settings
+
+    # Escaped: the name is user-supplied and lands inside the HTML body.
+    name = html.escape(user.full_name or user.email)
+    html_message = f"""
         <html>
           <body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;margin:0;">
             <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;border-top:4px solid #2A2B61;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
@@ -1235,9 +1342,9 @@ class PasswordResetRequestView(APIView):
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 20px;">
                   We received a request to reset the password for your SLC Smart Parking and Vehicle Verification System account.
                 </p>
-                <p style="margin:0 0 8px;">Hello, <strong>{user.full_name or user.email}</strong>,</p>
+                <p style="margin:0 0 8px;">Hello, <strong>{name}</strong>,</p>
                 <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
-                  Click the button below to set a new password. This link expires in <strong>1 hour</strong>.
+                  Click the button below to set a new password. This link expires in <strong>{lifetime}</strong>.
                 </p>
                 <div style="text-align:center;margin:0 0 24px;">
                   <a href="{reset_link}"
@@ -1263,50 +1370,47 @@ class PasswordResetRequestView(APIView):
           </body>
         </html>
         """
-        
-        # fail_silently=False + an explicit log. The response stays SAFE_MSG
-        # either way — it must not reveal whether the address exists — but the
-        # send itself must not fail invisibly: with fail_silently=True an
-        # expired SMTP credential produced a cheerful "a reset link has been
-        # sent" for every request while nothing was delivered and nothing was
-        # written to the log, so there was no way to tell the two apart.
-        try:
-            send_mail(
-                subject='SPVVS — Password Reset',
-                message=(
-                    f"Hello {user.full_name or user.email},\n\n"
-                    f"Reset your password by visiting:\n{reset_link}\n\n"
-                    f"This link expires in 1 hour.\n\n"
-                    f"If you did not request this, ignore this email."
-                ),
-                from_email=django_settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                html_message=html_message,
-                fail_silently=False,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to send the password-reset email to user %s — they were "
-                "told a link was sent, but none was delivered.", user.pk,
-            )
-
-        return Response({'message': SAFE_MSG})
+    try:
+        send_mail(
+            subject='SPVVS — Password Reset',
+            message=(
+                f"Hello {user.full_name or user.email},\n\n"
+                f"Reset your password by visiting:\n{reset_link}\n\n"
+                f"This link expires in {lifetime}.\n\n"
+                f"If you did not request this, ignore this email."
+            ),
+            from_email=django_settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send the password-reset email to user %s — they were "
+            "told a link was sent, but none was delivered.", user.pk,
+        )
 
 
 class PasswordResetConfirmView(APIView):
     """Step 2: validate the token and set the new password."""
     permission_classes = [permissions.AllowAny]
+    # See PasswordResetRequestView: a stale token in the browser must not turn
+    # the reset into a 401 and a bounce to the login page.
+    authentication_classes = []
 
     def post(self, request):
         import re
         from django.contrib.auth.tokens import default_token_generator
+        from django.db import transaction
         from django.utils.http import urlsafe_base64_decode
         from django.utils.encoding import force_str
 
-        uid             = request.data.get('uid', '').strip()
-        token           = request.data.get('token', '').strip()
-        new_password    = request.data.get('new_password', '').strip()
-        confirm_password = request.data.get('confirm_password', '').strip()
+        uid              = _text(request.data.get('uid')).strip()
+        token            = _text(request.data.get('token')).strip()
+        # Stripped to match login, which trims the password it is given — a
+        # password saved with its surrounding spaces could never be typed back.
+        new_password     = _text(request.data.get('new_password')).strip()
+        confirm_password = _text(request.data.get('confirm_password')).strip()
 
         if not all([uid, token, new_password, confirm_password]):
             return Response({'error': 'All fields are required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1314,10 +1418,12 @@ class PasswordResetConfirmView(APIView):
         if new_password != confirm_password:
             return Response({'error': 'Passwords do not match.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Decode UID and fetch user
+        # Decode UID and fetch user. Only an account that may still sign in: a
+        # link emailed before the account was disabled or archived otherwise went
+        # on setting a password on it for as long as the token lived.
         try:
             pk   = force_str(urlsafe_base64_decode(uid))
-            user = User.objects.get(pk=pk)
+            user = User.objects.get(pk=pk, is_active=True, is_archived=False)
         except (User.DoesNotExist, ValueError, TypeError, Exception):
             return Response({'error': 'Invalid reset link.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1353,15 +1459,17 @@ class PasswordResetConfirmView(APIView):
         # arrives here for their first change, so they get the welcome too.
         was_first_change = user.must_change_password
 
-        user.set_password(new_password)
-        user.must_change_password = False
-        # Demand the second factor on the next login. A reset proves control of
-        # the mailbox, nothing more — and the mailbox is exactly what an attacker
-        # takes first. Guards are skipped because they carry no second factor to
-        # ask for; the flag would sit unread and never be cleared.
-        from . import twofa
-        user.must_verify_2fa = twofa.requires_2fa(user)
-        user.save(update_fields=['password', 'must_change_password', 'must_verify_2fa'])
+        with transaction.atomic():
+            user.set_password(new_password)
+            user.must_change_password = False
+            # Demand the second factor on the next login. A reset proves control of
+            # the mailbox, nothing more — and the mailbox is exactly what an attacker
+            # takes first. Guards are skipped because they carry no second factor to
+            # ask for; the flag would sit unread and never be cleared.
+            from . import twofa
+            user.must_verify_2fa = twofa.requires_2fa(user)
+            user.save(update_fields=['password', 'must_change_password', 'must_verify_2fa'])
+            _end_sessions(user)
 
         notify_password_set(user, was_first_change)
 
@@ -1370,6 +1478,25 @@ class PasswordResetConfirmView(APIView):
             'role': user.role,
             'twofa_required_next_login': user.must_verify_2fa,
         })
+
+
+def _end_sessions(user):
+    """Revoke every refresh token issued to `user` before this moment.
+
+    A password reset is what someone does when they think the account is no
+    longer only theirs. Changing the password stopped new logins but left every
+    existing session running: a stolen refresh token kept renewing for up to
+    REFRESH_TOKEN_LIFETIME afterwards. Access tokens already handed out still
+    live out their own short lifetime — JWTs cannot be recalled — but none of
+    them can be renewed.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+    live = OutstandingToken.objects.filter(
+        user=user, expires_at__gt=timezone.now(), blacklistedtoken__isnull=True,
+    )
+    BlacklistedToken.objects.bulk_create(
+        [BlacklistedToken(token=t) for t in live], ignore_conflicts=True,
+    )
 
 
 # ──────────────────────────────────────────────

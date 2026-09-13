@@ -138,6 +138,12 @@ SIMPLE_JWT = {
     'UPDATE_LAST_LOGIN': True,
 }
 
+# How long a forgot-password link works. Django's default is three days; the
+# reset email and the forgot-password page both tell people one hour, and a
+# link that sits usable in an inbox for three days is three days of exposure
+# for anyone who gets into that mailbox. The email reads its wording from this.
+PASSWORD_RESET_TIMEOUT = 60 * 60
+
 # Shown as the account issuer inside Google Authenticator, so a phone holding
 # codes for several systems labels this one recognisably.
 TWO_FACTOR_ISSUER = os.getenv('TWO_FACTOR_ISSUER', 'SLC Vehicle Management')

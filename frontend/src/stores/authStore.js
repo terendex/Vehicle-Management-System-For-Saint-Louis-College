@@ -3,6 +3,26 @@ import { authApi } from '../api/auth'
 import { deviceToken } from '../api/twofa'
 import { clearStepUpToken, setStepUpToken } from '../api/stepUpToken'
 
+// Pages anyone may open without an account (see the public routes in App.jsx).
+//
+// A session that dies while one of these is open has nothing to protect, so it
+// is cleared in place rather than redirected. Redirecting was the bug: a person
+// opening their emailed reset link in a browser that still held a week-old
+// session watched the page jump to /login a moment later — the refresh failed,
+// logout navigated away, and the token in the link was gone with the URL.
+const PUBLIC_PATHS = [
+  '/login', '/register', '/registration/', '/forgot-password', '/reset-password',
+  '/policy', '/security/guard-login', '/security/qr-login',
+]
+
+export function onPublicPage() {
+  const path = window.location.pathname
+  return path === '/' || PUBLIC_PATHS.some(p => path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`))
+}
+
+// Where an expired session goes: back to sign-in, unless the page does not need one.
+export const expiredSessionRedirect = () => (onPublicPage() ? null : '/login')
+
 // Decode JWT payload without verifying signature (verification is the server's job)
 function _jwtExp(token) {
   try {
@@ -44,7 +64,7 @@ const useAuthStore = create((set, get) => {
   const _doRefresh = async () => {
     const refreshToken = localStorage.getItem('refresh_token')
     if (!refreshToken) {
-      get().logout()
+      get().logout(expiredSessionRedirect())
       return
     }
     try {
@@ -56,7 +76,7 @@ const useAuthStore = create((set, get) => {
       set({ accessToken: newAccess })
       _scheduleRefresh(newAccess, _doRefresh, get().logout)
     } catch {
-      get().logout()
+      get().logout(expiredSessionRedirect())
     }
   }
 
@@ -209,7 +229,8 @@ const useAuthStore = create((set, get) => {
         error: null,
       })
 
-      window.location.href = redirectTo
+      // null: clear the session but stay put (an expired session on a public page).
+      if (redirectTo) window.location.href = redirectTo
     },
 
     /** Guard email + password login at the gate station — replaces the current session. */
