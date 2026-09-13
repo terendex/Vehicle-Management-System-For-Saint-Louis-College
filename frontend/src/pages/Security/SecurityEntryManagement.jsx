@@ -141,24 +141,37 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
   const qrSvg = qrPayload
     ? renderToStaticMarkup(<QRCodeSVG value={qrPayload} size={130} level="M" />)
     : ''
-  const fmt = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
+  // Short form — the year-and-seconds version overflows a 48mm line.
+  const fmt = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>Visitor Slip</title>
 <style>
-  @media print { @page { size: 80mm auto; margin: 0; } }
-  body { font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0 auto; padding: 6px; }
-  h2 { text-align: center; font-size: 13px; margin: 4px 0 2px; }
-  .sub { text-align: center; font-size: 10px; color: #3E5B72; margin-bottom: 8px; }
-  hr { border: none; border-top: 1px dashed #64839C; margin: 6px 0; }
-  .row { display: flex; justify-content: space-between; margin: 3px 0; }
-  .label { color: #3E5B72; }
-  .plate { font-size: 20px; font-weight: bold; text-align: center; letter-spacing: 3px; margin: 8px 0; border: 2px solid #000; padding: 4px; }
-  .footer { text-align: center; font-size: 9px; color: #64839C; margin-top: 10px; }
-  .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 6px 0; }
-  /* Both seals head the slip, as they head every screen. Sized for an 80mm
-     thermal roll, where anything larger prints as a black smudge. */
-  .seals { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 2px 0 4px; }
-  .seals img { width: 34px; height: 34px; object-fit: contain; }
+  /* JP-58H thermal printer: 58mm roll, 48mm (384-dot) printable width. The
+     page height is set to the slip's measured length just before printing,
+     so the printer feeds one slip instead of a Letter-length page. */
+  @page { size: 58mm 200mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  /* Thermal heads cannot print grey — every tint dithers into specks — so
+     the slip is pure black on white. */
+  body { font-family: 'Courier New', monospace; font-size: 10px; line-height: 1.25; color: #000;
+         width: 48mm; margin: 0 auto; padding: 2mm 1mm 4mm; word-wrap: break-word; overflow-wrap: anywhere; }
+  h2 { text-align: center; font-size: 12px; margin: 3px 0 1px; }
+  .sub { text-align: center; font-size: 8.5px; margin-bottom: 3px; }
+  .sub.title { font-size: 10px; font-weight: bold; margin: 4px 0 2px; }
+  hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
+  .row { display: flex; justify-content: space-between; gap: 4px; margin: 2px 0; }
+  .label { flex: none; }
+  .row span:last-child { text-align: right; min-width: 0; }
+  .plate { font-size: 18px; font-weight: bold; text-align: center; letter-spacing: 2px; margin: 5px 0; border: 2px solid #000; padding: 3px 2px; }
+  .qr { text-align: center; margin: 6px 0 4px; }
+  .qr svg { width: 32mm; height: 32mm; }
+  .footer { text-align: center; font-size: 8px; margin-top: 6px; }
+  .warn { text-align: center; font-size: 9px; font-weight: bold; margin: 4px 0; }
+  /* Both seals head the slip, as they head every screen. Kept small for the
+     58mm roll, where anything larger prints as a black smudge. */
+  .seals { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 0 0 3px; }
+  .seals img { width: 9mm; height: 9mm; object-fit: contain; }
 </style></head><body>
 <div class="seals">
   <img src="${slcLogo}" alt="Saint Louis College"/>
@@ -167,7 +180,7 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
 <h2>SAINT LOUIS COLLEGE</h2>
 <div class="sub">Campus Development and Sustainability Office</div>
 <div class="sub">Smart Parking and Vehicle Verification System</div>
-<div class="sub">--- VISITOR SLIP ---</div>
+<div class="sub title">--- VISITOR SLIP ---</div>
 <div class="plate">${plate}</div>
 <hr/>
 <div class="row"><span class="label">Office:</span><span>${officeName || 'N/A'}</span></div>
@@ -178,13 +191,21 @@ function printVisitorSlip({ plate, purpose, officeName, guardName, issuedAt, exp
 <div class="row"><span class="label">Expires:</span><span>${fmt(expiresAt)}</span></div>
 <div class="row"><span class="label">Guard:</span><span>${guardName || 'N/A'}</span></div>
 <hr/>
-${qrSvg ? `<div style="text-align:center;margin:8px 0;">${qrSvg}</div>
+${qrSvg ? `<div class="qr">${qrSvg}</div>
 <div class="warn">SCAN THIS QR AT THE GATE TO EXIT</div>` : ''}
 <div class="warn">RETURN THIS SLIP UPON EXIT</div>
 <div class="footer">Unauthorized possession is subject to penalty.</div>
 </body></html>`)
   w.document.close(); w.focus()
-  setTimeout(() => { w.print(); w.close() }, 400)
+  setTimeout(() => {
+    // Size the page to the slip itself (CSS px → mm, plus a little tail for
+    // the tear bar) so the roll isn't fed a blank Letter-length page.
+    const heightMm = Math.ceil((w.document.body.scrollHeight * 25.4) / 96) + 6
+    const pageStyle = w.document.createElement('style')
+    pageStyle.textContent = `@page { size: 58mm ${heightMm}mm; margin: 0; }`
+    w.document.head.appendChild(pageStyle)
+    w.print(); w.close()
+  }, 400)
 }
 
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
