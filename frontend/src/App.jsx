@@ -34,6 +34,7 @@ const SystemSettings          = lazy(() => import('./pages/Admin/SystemSettings'
 const ViolationsManagement    = lazy(() => import('./pages/Admin/ViolationsManagement'))
 const SupplierManagement      = lazy(() => import('./pages/Admin/SupplierManagement'))
 const HelpPage                = lazy(() => import('./pages/Help/HelpPage'))
+const GuidePage               = lazy(() => import('./pages/Help/GuidePage'))
 const SecurityEntryManagement = lazy(() => import('./pages/Security/SecurityEntryManagement'))
 const SecurityParkingView     = lazy(() => import('./pages/Security/SecurityParkingView'))
 const SecurityAuditLogPage    = lazy(() => import('./pages/Security/SecurityAuditLogPage'))
@@ -141,6 +142,9 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/policy" element={<PolicyPage />} />
+        {/* Public getting-started help, linked from both login screens. The
+            full role-filtered manual stays behind sign-in at /help. */}
+        <Route path="/guide" element={<GuidePage />} />
         <Route path="/security/guard-login" element={<SecurityQRLogin />} />
         <Route path="/security/guard-login/:gateParam" element={<SecurityQRLogin />} />
         {/* Legacy URL — redirect old bookmarks/kiosks */}

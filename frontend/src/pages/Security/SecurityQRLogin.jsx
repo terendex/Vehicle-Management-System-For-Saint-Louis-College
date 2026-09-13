@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ShieldCheck, LogIn, ChevronLeft, Eye, EyeOff } from 'lucide-react'
+import { ShieldCheck, LogIn, ChevronLeft, Eye, EyeOff, HelpCircle } from 'lucide-react'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import jsQR from 'jsqr'
@@ -201,12 +201,22 @@ export default function SecurityQRLogin() {
     <div className="sqr-page">
       {/* Header — same as login page */}
       <header className="sqr-header">
-        <div className="header-logo-group">
-          <BrandLogos size="header" />
-          <div className="header-text">
-            <span className="header-title">SAINT LOUIS COLLEGE</span>
-            <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
+        <div className="header-content">
+          <div className="header-logo-group">
+            <BrandLogos size="header" />
+            <div className="header-text">
+              <span className="header-title">SAINT LOUIS COLLEGE</span>
+              <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
+            </div>
           </div>
+          <button
+            type="button"
+            className="header-back-btn header-back-btn--end"
+            onClick={() => navigate('/guide?for=guard')}
+          >
+            <HelpCircle size={16} />
+            <span>Help</span>
+          </button>
         </div>
       </header>
 

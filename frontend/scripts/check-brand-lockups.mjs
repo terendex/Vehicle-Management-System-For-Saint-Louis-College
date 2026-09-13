@@ -133,6 +133,26 @@ const CASES = [
         </div>
       </header>`,
   })),
+  // The login and guard sign-in headers carry a Help button, and those two
+  // pages are the ones opened on the smallest phones.
+  ...[320, 360].map((width) => ({
+    name: `Login header @ ${width}px with the Help button`,
+    width,
+    kind: 'header',
+    html: `
+      <header class="login-header" style="padding-left:16px;padding-right:16px">
+        <div class="header-content">
+          <div class="header-logo-group">
+            ${logos('header')}
+            <div class="header-text">
+              <span class="header-title">SAINT LOUIS COLLEGE</span>
+              <span class="header-subtitle">Smart Parking and Vehicle Verification System</span>
+            </div>
+          </div>
+          <button class="header-back-btn header-back-btn--end"><span style="width:16px;height:16px;display:inline-block"></span><span>Help</span></button>
+        </div>
+      </header>`,
+  })),
   {
     name: 'Page header @ 360px with a back button',
     width: 360,

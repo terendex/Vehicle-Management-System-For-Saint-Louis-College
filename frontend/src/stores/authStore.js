@@ -12,7 +12,7 @@ import { clearStepUpToken, setStepUpToken } from '../api/stepUpToken'
 // logout navigated away, and the token in the link was gone with the URL.
 const PUBLIC_PATHS = [
   '/login', '/register', '/registration/', '/forgot-password', '/reset-password',
-  '/policy', '/security/guard-login', '/security/qr-login',
+  '/policy', '/guide', '/security/guard-login', '/security/qr-login',
 ]
 
 export function onPublicPage() {

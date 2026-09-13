@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, Car, ChevronRight } from 'lucide-react'
+import { Eye, EyeOff, LogIn, Car, ChevronRight, HelpCircle } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -108,6 +108,15 @@ export default function LoginPage() {
               <span className="header-subtitle">Smart Parking and Vehicle Verification System</span>
             </div>
           </div>
+          <button
+            type="button"
+            className="header-back-btn header-back-btn--end"
+            onClick={() => navigate('/guide')}
+            id="login-help"
+          >
+            <HelpCircle size={16} />
+            <span>Help</span>
+          </button>
         </div>
       </header>
 
@@ -235,6 +244,15 @@ export default function LoginPage() {
                 onClick={() => navigate('/policy')}
               >
                 Privacy Policy &amp; Terms
+              </button>
+              <span className="terms-divider" aria-hidden="true">·</span>
+              <button
+                type="button"
+                className="terms-link"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                onClick={() => navigate('/guide')}
+              >
+                Need help signing in?
               </button>
             </div>
           </form>

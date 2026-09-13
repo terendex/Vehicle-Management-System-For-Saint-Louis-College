@@ -27,6 +27,8 @@ The login page is the entry point for CDSO staff and registered vehicle owners.
 5. **Login**: Signs you in. CDSO and vehicle-owner accounts are then asked for a two-factor code.
 6. **Apply for a Vehicle Pass**: Starts the online vehicle pass application. No account is needed to apply.
 7. **Privacy Policy & Terms**: Opens the data privacy notice and the vehicle pass terms.
+8. **Need help signing in?**: Opens the step-by-step guide with pictures, for applicants, guards and CDSO staff.
+9. **Help**: The same guide, from the top of the page.
 
 ### Two-factor verification
 
@@ -86,6 +88,7 @@ The details a student applicant fills in.
 Security guards sign in at the gate terminal, not through the main login page.
 
 1. **Gate list**: Pick the gate you are standing at. Your shift and every scan are recorded against this gate.
+2. **Help**: Opens the guard sign-in guide with pictures.
 
 ### Guard sign-in: clocking in
 
@@ -99,6 +102,7 @@ Sign in with your guard account or scan your QR badge to start your shift.
 4. **Login & Clock In**: Signs you in and starts your shift at this gate. Whoever was on duty here is signed out.
 5. **Forgot password?**: Sends a reset link to your email.
 6. **QR badge**: Appears when your account has a badge. Scan it with a USB scanner or the camera instead of typing the password.
+7. **Help**: Opens the guard sign-in guide with pictures.
 
 
 ## CDSO (Administrator)
