@@ -167,13 +167,23 @@ function Get-CampusLanAddress {
 # variables already set in the process - so a new DHCP lease never means editing
 # a file. Returns the origin it settled on.
 function Set-CampusRuntimeEnvironment {
-    param([Parameter(Mandatory=$true)][string]$Lan, [Parameter(Mandatory=$true)][int]$Port)
+    param([Parameter(Mandatory=$true)][string]$Lan, [Parameter(Mandatory=$true)][int]$Port, [int]$TlsPort = 0)
     $origin = "http://${Lan}:$Port"
     $env:ALLOWED_HOSTS        = "localhost,127.0.0.1,$Lan"
     $env:FRONTEND_URL         = $origin
     $env:BACKEND_URL          = $origin
     $env:CSRF_TRUSTED_ORIGINS = $origin
     $env:SECURE_SSL_REDIRECT  = 'false'   # plain HTTP on the LAN; the redirect would loop
+    if ($TlsPort -gt 0) {
+        # The HTTPS port exists so other devices get the camera (browsers only
+        # allow it on a secure page). The plain port keeps serving too, so HSTS
+        # must stay off: a browser that honoured it would refuse the http port.
+        $env:CSRF_TRUSTED_ORIGINS = "$origin,https://${Lan}:$TlsPort"
+        $env:CAMPUS_HTTPS_PORT    = "$TlsPort"
+        $env:SECURE_HSTS_SECONDS  = '0'
+    } else {
+        $env:CAMPUS_HTTPS_PORT    = ''
+    }
     $env:RUN_MIGRATIONS       = 'false'   # Railway owns the schema for the shared DB
     $env:PYTHONUNBUFFERED     = '1'       # so a parent reading our stdout sees lines as they happen
     return $origin

@@ -473,6 +473,12 @@ RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
+# The campus server's HTTPS port (run-campus.ps1 sets it; unset on Railway,
+# which is already https). Pages opened over http://<LAN IP> read it from
+# /api/deployment/ to offer the https address, the only way another device gets
+# the camera for QR scanning.
+CAMPUS_HTTPS_PORT = int(os.getenv('CAMPUS_HTTPS_PORT') or 0)
+
 # Every link and image inside an email must use this, never FRONTEND_URL.
 #
 # FRONTEND_URL is per-host by design: on the campus machine it is a LAN address

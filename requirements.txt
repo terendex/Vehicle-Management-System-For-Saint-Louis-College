@@ -109,7 +109,8 @@ wcwidth==0.7.0
 channels~=4.2
 channels-redis~=4.2
 daphne~=4.1
-twisted~=24.11
+# [tls] brings pyOpenSSL + service_identity: the campus HTTPS port (run-campus.ps1 -TlsPort) needs them.
+twisted[tls]~=24.11
 autobahn~=24.4
 django-redis~=5.4
 # Serves the built React bundle + Django static files from the app process, so

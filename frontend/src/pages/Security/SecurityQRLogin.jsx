@@ -4,6 +4,7 @@ import { ShieldCheck, LogIn, ChevronLeft, Eye, EyeOff, HelpCircle } from 'lucide
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { startQrCamera } from '../../utils/qrCamera'
+import SecureCameraLink from '../../components/SecureCameraLink'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
 import { useGates } from '../../hooks/useGates'
@@ -354,6 +355,7 @@ export default function SecurityQRLogin() {
                             </button>
                           </div>
                           {cameraErr && <p className="sqr-err-text">{cameraErr}</p>}
+                          {cameraErr && <SecureCameraLink style={{ margin: '4px 0 8px' }} />}
                           <button className="sqr-toggle" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
                             Use camera instead
                           </button>

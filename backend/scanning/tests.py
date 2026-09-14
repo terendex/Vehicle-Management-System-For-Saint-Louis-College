@@ -682,6 +682,26 @@ class VisitorPassAPITests(TestCase):
         self.assertFalse(Violation.objects.filter(vehicle=vehicle).exists())
 
 
+# ── Campus HTTPS port discovery ───────────────────────────────────────────────
+
+class DeploymentEndpointTests(TestCase):
+    """/api/deployment/ tells a page opened over http://<LAN IP> where the https
+    port is, so the QR scanners can offer it (browsers refuse the camera on http)."""
+
+    def test_reports_campus_https_port(self):
+        from django.test import override_settings
+        with override_settings(CAMPUS_HTTPS_PORT=8443):
+            resp = self.client.get('/api/deployment/')
+        self.assertEqual(resp.json(), {'https_port': 8443})
+
+    def test_no_port_when_not_campus_and_stale_token_is_ignored(self):
+        from django.test import override_settings
+        with override_settings(CAMPUS_HTTPS_PORT=0):
+            resp = self.client.get('/api/deployment/', HTTP_AUTHORIZATION='Bearer expired.token.value')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {'https_port': None})
+
+
 # ── Deny entry API (integration) ──────────────────────────────────────────────
 
 class DenyEntryAPITests(TestCase):

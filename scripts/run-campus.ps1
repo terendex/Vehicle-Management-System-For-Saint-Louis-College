@@ -26,9 +26,15 @@
         makes WhiteNoise serve it compressed - there is no edge proxy on
         this half to do it the way Railway's does
       * pings the cameras actually registered in the database
+      * serves HTTPS on a second port (default 8443) with a self-signed
+        certificate it issues for this machine's LAN address. Browsers only
+        give a page the camera on https:// (or localhost), so this is what
+        lets another gate PC or a phone scan QR badges and slips
 
     Flags
       -Port <n>        serve on a different port (default 8000)
+      -TlsPort <n>     HTTPS port for camera use from other devices (default
+                       8443; 0 turns HTTPS off)
       -SkipFrontend    never rebuild, even if the sources changed
       -Rebuild         force a rebuild even if the bundle looks current
       -Reconfigure     re-ask for the secret values and rewrite them into .env
@@ -45,6 +51,7 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8000,
+    [int]$TlsPort = 8443,
     [switch]$SkipFrontend,
     [switch]$Rebuild,
     [switch]$Reconfigure,
@@ -378,7 +385,36 @@ if ($NonInteractive) {
 # DHCP lease therefore needs no file edit at all.
 $lan = Get-CampusLanAddress
 if ($lan -eq '127.0.0.1') { Say 'No LAN address found - serving on localhost only.' 'Yellow' }
-$origin = Set-CampusRuntimeEnvironment -Lan $lan -Port $Port
+
+# ── 3b. HTTPS for the camera on other devices ────────────────────────────────
+# A browser gives a page the camera only on https:// or http://localhost. The
+# launcher's kiosk window is told to trust this LAN origin, but another gate PC
+# or a phone opening http://<ip>:8000 is refused the camera outright - the
+# guard login and QR scanner then have nothing to scan with. So a self-signed
+# certificate is issued for this machine's LAN address (re-issued when the
+# address changes) and daphne serves https on a second port. Never fatal: if
+# the certificate cannot be made, the plain port still serves everything else.
+$tlsEndpoint = $null
+if ($TlsPort -gt 0) {
+    $tlsDir = Join-Path $env:LOCALAPPDATA 'SLC-VMS\tls'
+    try {
+        # Checked up front: daphne with an ssl endpoint and no pyOpenSSL dies at
+        # startup and takes the plain port down with it.
+        $tlsLibs = (& $python -c "import OpenSSL, service_identity; print('ok')" 2>&1 | Select-Object -Last 1)
+        if ("$tlsLibs" -ne 'ok') { throw 'pyOpenSSL/service_identity are not installed (pip install "twisted[tls]")' }
+        $made = (& $python (Join-Path $PSScriptRoot 'campus-tls-cert.py') $tlsDir $lan 2>&1 | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0) { throw "$made" }
+        # Twisted endpoint strings treat ':' and '\' as syntax, so a Windows
+        # path has to have both escaped or daphne reads C: as a new field.
+        $esc = { param($p) $p.Replace('\', '\\').Replace(':', '\:') }
+        $tlsEndpoint = "ssl:${TlsPort}:privateKey=$(& $esc (Join-Path $tlsDir 'key.pem')):certKey=$(& $esc (Join-Path $tlsDir 'cert.pem'))"
+        Say "HTTPS certificate $made for $lan." 'DarkGray'
+    } catch {
+        Write-Host "WARNING: HTTPS is off - could not create the certificate ($($_.Exception.Message.Trim())). Other devices will not get the camera." -ForegroundColor Yellow
+        $TlsPort = 0
+    }
+}
+$origin = Set-CampusRuntimeEnvironment -Lan $lan -Port $Port -TlsPort $TlsPort
 
 # ── 4. Camera reachability, read from the database ───────────────────────────
 # These addresses used to be hardcoded here and drifted out of date, so the
@@ -529,8 +565,16 @@ Write-Host ''
 Write-Host '  Guards at the gate' -ForegroundColor White
 Write-Host "    $origin/security/guard-login" -ForegroundColor Cyan
 Write-Host "    $origin/security/guard-login/main    (pre-selects the gate)" -ForegroundColor DarkGray
+if ($tlsEndpoint) {
+    Write-Host ''
+    Write-Host '  Guards on another PC or a phone (camera QR scanning needs https)' -ForegroundColor White
+    Write-Host "    https://${lan}:$TlsPort/security/guard-login" -ForegroundColor Cyan
+    Write-Host '    First visit shows a certificate warning: Advanced -> Proceed. Once per browser.' -ForegroundColor DarkGray
+}
 Write-Host ''
 Say 'Ctrl+C to stop.' 'Green'
 Write-Host ''
 
-& $python -m daphne -b 0.0.0.0 -p $Port config.asgi:application
+$daphneArgs = @('-m', 'daphne', '-b', '0.0.0.0', '-p', $Port)
+if ($tlsEndpoint) { $daphneArgs += @('-e', $tlsEndpoint) }
+& $python @daphneArgs config.asgi:application

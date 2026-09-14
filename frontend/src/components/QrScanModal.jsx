@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { X, ScanLine, Camera } from 'lucide-react'
 import { startQrCamera } from '../utils/qrCamera'
+import SecureCameraLink from './SecureCameraLink'
 
 /**
  * Camera-based QR scanner modal (jsQR — works in all browsers).
@@ -57,6 +58,7 @@ export default function QrScanModal({ onClose, onDetected, title = 'Scan QR Code
             <div style={{ textAlign: 'center', color: '#C62828', fontSize: 13, padding: '20px 8px' }}>
               <Camera size={28} style={{ marginBottom: 8, opacity: 0.7 }} />
               <p style={{ margin: 0 }}>{cameraErr}</p>
+              <SecureCameraLink style={{ marginTop: 12 }} />
             </div>
           ) : (
             <>

@@ -1170,18 +1170,12 @@ function Open-CampusPage {
     $url  = "$($App.Origin)$path"
     $name = if ($Which -eq 'guard') { 'guard terminal' } else { 'admin login' }
 
-    if (-not $cfg.Kiosk) {
-        Start-Process $url
-        # ${name} braced, not $name: - a colon straight after a variable name
-        # makes PowerShell read it as a scope qualifier ($script:, $env:).
-        Write-Log "Opened the ${name}: $url" 'note'
-        return
-    }
-
     $browser = Find-Browser
     if (-not $browser) {
         Start-Process $url
-        Write-Log "Kiosk mode needs Chrome or Edge and neither was found - opened the $name in the default browser instead." 'warn'
+        # ${name} braced, not $name: - a colon straight after a variable name
+        # makes PowerShell read it as a scope qualifier ($script:, $env:).
+        Write-Log "Chrome or Edge was not found - opened the ${name} in the default browser. Kiosk mode and the webcam QR scanner need one of them: a plain browser refuses the camera on http://." 'warn'
         return
     }
 
@@ -1204,14 +1198,28 @@ function Open-CampusPage {
     # the page opening in the operator's existing window with kiosk silently
     # ignored, because without its own profile the browser hands off to the
     # process already running.
+    #
+    # The webcam. Browsers give a page the camera only on https:// or
+    # http://localhost, and this server is http://<LAN IP> - so without the two
+    # camera flags below the guard login's QR badge scanner and the gate's
+    # "Scan QR" show "the camera only works on https://" and never start.
+    #   * --unsafely-treat-insecure-origin-as-secure makes this one origin a
+    #     secure context. It only applies with a --user-data-dir, which is one
+    #     more reason the profile above exists.
+    #   * --use-fake-ui-for-media-stream answers the "allow camera?" prompt
+    #     itself, so a gate terminal that boots unattended scans without anyone
+    #     clicking Allow. The camera is still the real one - the fake-device
+    #     flag is a different switch. The profile only ever opens this server.
     $browserArgs = @(
-        '--kiosk', $url,
+        $(if ($cfg.Kiosk) { '--kiosk' } else { '--new-window' }), $url,
         "--user-data-dir=`"$profileDir`"",
+        "--unsafely-treat-insecure-origin-as-secure=$($App.Origin)",
+        '--use-fake-ui-for-media-stream',
         '--no-first-run',
         '--disable-session-crashed-bubble',
         '--disable-infobars'
     )
-    if ($browser.Kind -eq 'edge') {
+    if ($cfg.Kiosk -and $browser.Kind -eq 'edge') {
         # Without this Edge picks its "public browsing" kiosk, which is
         # InPrivate and wipes the session on an idle timer - so a guard who
         # steps away comes back logged out mid-shift.
@@ -1225,7 +1233,8 @@ function Open-CampusPage {
         # within a second. Close-KioskBrowser finds the real ones by profile
         # path instead.
         Start-Process -FilePath $browser.Exe -ArgumentList $browserArgs -ErrorAction Stop | Out-Null
-        Write-Log "Opened the $name in $($browser.Kind) kiosk mode. Alt+F4 closes it." 'ok'
+        if ($cfg.Kiosk) { Write-Log "Opened the $name in $($browser.Kind) kiosk mode, webcam enabled. Alt+F4 closes it." 'ok' }
+        else            { Write-Log "Opened the ${name} in $($browser.Kind), webcam enabled: $url" 'ok' }
     } catch {
         Start-Process $url
         Write-Log "Could not start $($browser.Kind) in kiosk mode ($($_.Exception.Message.Trim())) - opened the default browser." 'warn'

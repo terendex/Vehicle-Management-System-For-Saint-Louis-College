@@ -137,6 +137,30 @@ Closing the launcher closes the kiosk window with it. A full-screen browser with
 no address bar, still pointing at a server that has stopped, is the worst thing
 to leave on a gate terminal.
 
+### The webcam (QR badge login, Scan QR)
+
+A browser only lets a page use the camera on `https://` or `http://localhost`.
+The campus server is `http://<ip>:8000`, so a plain browser opening it shows
+*"This browser blocks the camera on a plain http:// page"* and the QR scanners
+never start. Railway is already `https` and needs nothing. On campus:
+
+- **Pages the launcher opens** (kiosk or not) get the camera automatically.
+  The launcher starts Chrome/Edge with this server's address marked secure
+  (`--unsafely-treat-insecure-origin-as-secure`) and answers the camera prompt
+  itself, so an unattended gate terminal scans after a reboot with nobody
+  clicking *Allow*. Needs Chrome or Edge; a kiosk window that was already open
+  picks the flags up the next time the launcher opens it.
+- **Any other device** — a second gate PC, a phone — uses the HTTPS port:
+  `https://<ip>:8443/security/guard-login`. `run-campus.ps1` issues a
+  self-signed certificate for this machine's LAN address (re-issued if the
+  address changes; kept in `%LOCALAPPDATA%\SLC-VMS\tls`) and serves https there
+  alongside the plain port. The first visit on each device shows a certificate
+  warning: **Advanced → Proceed**. If someone lands on the http address anyway,
+  the camera error on the page carries an **Open the secure page** button that
+  takes them to the same page on https.
+- `-TlsPort 0` turns HTTPS off; `-TlsPort <n>` moves it. If Windows Firewall
+  was opened for port 8000 only (not for Python), open 8443 as well.
+
 ### Updates
 
 The launcher fetches the tracked branch every few minutes. When commits have
@@ -409,7 +433,7 @@ all survive an in-place upgrade.
 | Live camera scanning | **yes** | no — no LAN route |
 | Parking zone monitoring | **yes** | no |
 | Registration, approvals, violations, reports | yes | yes |
-| QR scanning (phone camera) | yes | yes |
+| QR scanning (webcam / phone camera) | yes — launcher window, or `https://<ip>:8443` | yes |
 | Reachable off-campus | no | **yes** |
 | Django admin (`/django-admin/`) | no — see below | **yes** |
 | Hosting cost | none (your hardware) | Railway usage |

@@ -30,6 +30,16 @@ def healthz(_request):
     return JsonResponse({'status': 'ok'})
 
 
+def deployment(_request):
+    """What a page opened over plain http needs to find this server's https
+    port. Browsers refuse the camera on http://<LAN IP>, so the QR scanners
+    offer the https address instead (run-campus.ps1 serves it). A plain Django
+    view, not DRF: it must answer even when the browser still holds a dead JWT.
+    """
+    port = settings.CAMPUS_HTTPS_PORT
+    return JsonResponse({'https_port': port or None})
+
+
 urlpatterns = [
     # Django's admin is NOT at /admin/ — the React app owns that route on this
     # shared origin (/admin, /admin/vehicles, /admin/users, ...). Override the
@@ -37,6 +47,7 @@ urlpatterns = [
     path(f'{settings.DJANGO_ADMIN_URL}/', admin.site.urls),
 
     path('healthz',                     healthz,                              name='healthz'),
+    path('api/deployment/',             deployment,                           name='deployment'),
 
     # JWT Auth
     path('api/auth/login/',             CustomTokenObtainPairView.as_view(),  name='token_obtain'),

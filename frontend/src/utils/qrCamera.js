@@ -57,7 +57,7 @@ export function startQrCamera(video, onCode, onError) {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error(window.isSecureContext
         ? 'This browser has no camera support.'
-        : 'The camera only works on https:// or http://localhost. Open this page from the gate PC itself, or over https.')
+        : 'This browser blocks the camera on a plain http:// page. Use the secure (https://) address of this server.')
     }
     try {
       return await navigator.mediaDevices.getUserMedia({

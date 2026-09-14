@@ -19,6 +19,7 @@ import {
 import notify from '../Feedback/notify'
 import { fieldProblems } from '../Feedback/formProblems'
 import { startQrCamera } from '../../utils/qrCamera'
+import SecureCameraLink from '../SecureCameraLink'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
 import { authApi } from '../../api/auth'
@@ -262,6 +263,7 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
                       </button>
                     </div>
                     {cameraErr && <p className="cs-err-text">{cameraErr}</p>}
+                    {cameraErr && <SecureCameraLink style={{ margin: '4px 0 8px' }} />}
                     <button className="cs-toggle-btn" onClick={() => { setCameraErr(''); setUseCamera(true) }}>
                       Use camera instead
                     </button>
