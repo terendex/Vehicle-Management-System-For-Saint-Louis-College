@@ -24,6 +24,7 @@ import '../../components/RegistrationDetails/detailFields.css'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
+import { isControlNumber } from '../../utils/plateFormat'
 
 /* What each schedule code admits, spelled out — a bare 'ANY' told the owner
    nothing, and "any day" would overstate it (the campus is closed on Sunday). */
@@ -399,7 +400,10 @@ export default function OwnerDashboard() {
   }
 
   const systemId = reg?.system_student_id || reg?.system_employee_id || '—'
+  // An e-bike's FM- control number lives in plate_number, so its QR is the same
+  // VEHICLE:{plate}|ID:{id} shape the guard scanner already reads.
   const qrPayload = reg ? `VEHICLE:${reg.plate_number}|ID:${reg.id}` : ''
+  const hasControlNumber = isControlNumber(reg?.plate_number)
   const strength  = pwStrength(pwForm.new)
 
   const handleLogout = () => {
@@ -833,12 +837,15 @@ export default function OwnerDashboard() {
                   <div className="od-card-head"><Car size={16} /> Vehicle Information</div>
                   <div className="od-details-grid">
                     <div className="od-detail">
-                      <span className="od-detail-label">Plate Number</span>
+                      <span className="od-detail-label">{hasControlNumber ? 'Control Number' : 'Plate Number'}</span>
                       <span className="od-detail-val od-plate">{reg.plate_number || 'Not assigned yet'}</span>
                     </div>
                     <div className="od-detail"><span className="od-detail-label">Vehicle Type</span><span className="od-detail-val od-capitalize">{reg.vehicle_type}</span></div>
                     <div className="od-detail"><span className="od-detail-label">Color</span><span className="od-detail-val">{reg.vehicle_color || '—'}</span></div>
-                    <div className="od-detail"><span className="od-detail-label">Conduction Number</span><span className="od-detail-val">{reg.conduction_number || '—'}</span></div>
+                    {/* An e-bike's control number stands in for both identifiers */}
+                    {!hasControlNumber && (
+                      <div className="od-detail"><span className="od-detail-label">Conduction Number</span><span className="od-detail-val">{reg.conduction_number || '—'}</span></div>
+                    )}
                     {reg.body_number && (
                       <div className="od-detail" style={{ gridColumn: 'span 2' }}><span className="od-detail-label">Body Number</span><span className="od-detail-val">{reg.body_number}</span></div>
                     )}

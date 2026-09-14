@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 
 from django.contrib.postgres.indexes import GinIndex
@@ -67,6 +68,12 @@ class Vehicle(models.Model):
         norm = _normalize_plate(identifier)
         if not norm:
             return None
+        # An e-bike control number is stored as FM-001; a guard typing FM001 or
+        # FM-1 means the same one. FM + digits is no Philippine plate shape, so
+        # canonicalizing it cannot capture a real plate.
+        control = _CONTROL_NUMBER_TYPED_RE.match(norm)
+        if control:
+            norm = f'FM-{int(control.group(1)):03d}'
         return (cls.objects.select_related('user').filter(plate_number=norm).first()
                 or cls.objects.select_related('user').filter(conduction_number=norm).first())
 
@@ -91,6 +98,9 @@ class Vehicle(models.Model):
 
 import uuid
 from django.utils import timezone
+
+_CONTROL_NUMBER_TYPED_RE = re.compile(r'^FM-?(\d{1,6})$')
+
 
 def _normalize_plate(value):
     """Canonical plate form used for uniqueness: upper-cased, no spaces."""

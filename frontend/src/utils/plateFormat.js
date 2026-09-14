@@ -52,3 +52,14 @@ export function isValidConductionNumber(raw) {
   const n = (raw || '').replace(/[\s\-_]/g, '').toUpperCase()
   return /^[A-Z0-9]{5,12}$/.test(n)
 }
+
+// An e-bike's system-issued control number (FM-001, FM-002, ...). It is stored
+// in plate_number, so this is how a screen knows to call it a control number.
+// Mirrors backend/vehicles/control_numbers.py.
+export function isControlNumber(raw) {
+  return /^FM-\d+$/.test((raw || '').trim().toUpperCase())
+}
+
+export function plateLabel(raw) {
+  return isControlNumber(raw) ? 'Control Number' : 'Plate Number'
+}

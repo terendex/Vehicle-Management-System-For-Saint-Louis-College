@@ -1915,6 +1915,41 @@
   cursor: pointer;
 }
 
+/* E-bike control number: system-issued, shown but never typed into. */
+.form-group input.reg-control-number {
+  background: #EAF2F8;
+  border-color: #D3E1EC;
+  color: #03396C;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: default;
+}
+.form-group input.reg-control-number:focus {
+  border-color: #D3E1EC;
+  background: #EAF2F8;
+  box-shadow: none;
+}
+
+.success-control-number {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FAFC;
+  text-align: center;
+  color: #2E4C63;
+  font-size: 13.5px;
+}
+.success-control-number strong {
+  display: block;
+  margin-top: 4px;
+  color: #03396C;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 22px;
+  letter-spacing: 1.5px;
+}
+
 /* ══ Data privacy gate ═══════════════════════════════
    The notice that blocks the form until it is agreed to. It sits above the
    sticky header (z-index 100) and stays below the acknowledgement dialogs in

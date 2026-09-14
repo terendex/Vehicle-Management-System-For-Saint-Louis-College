@@ -38,9 +38,12 @@ export default function DetailFields({
 
         let control
         if (field === 'vehicle_type') {
+          /* Switching to E-Bike is refused — it means trading the plate for a
+             system-issued control number, which only a new application does. */
+          const types = VEHICLE_TYPES.filter(t => t !== 'E-Bike' || value === 'E-Bike')
           control = (
             <select id={id} value={value} onChange={set(field)} disabled={disabled}>
-              {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              {types.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           )
         } else if (field === 'department') {

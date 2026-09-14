@@ -460,6 +460,12 @@ def _shell(*, accent, preheader, heading, intro, rows_html):
     }
 
 
+def _plate_label(registration):
+    """'Control Number' for an e-bike's FM- number, 'Plate Number' otherwise."""
+    from .control_numbers import plate_label
+    return plate_label(registration.plate_number)
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
     # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
@@ -504,6 +510,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     full_name_val       = esc(registration.full_name)
     email_val           = esc(registration.email)
     plate_val           = esc_or_dash(registration.plate_number)
+    plate_label         = _plate_label(registration)
     vehicle_type_val    = esc(registration.vehicle_type)
     registrant_type_val = esc(registrant_type_label(registration))
     temp_password_val   = esc(temp_password)
@@ -513,7 +520,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
         preheader=f'Approved \u2014 your gate QR and portal login for {plate_val}.',
         heading='Vehicle Registration Approved',
         intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your registration '
-               f'for plate number <strong style="color:{INK};">{plate_val}</strong> has been '
+               f'for {plate_label.lower()} <strong style="color:{INK};">{plate_val}</strong> has been '
                f'approved. Your portal login and gate QR code are below.'),
         rows_html=(
             # Credentials first. It is the one thing the owner opens this mail
@@ -557,7 +564,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                 + _authorized_driver_pairs(registration)
                 + campus_pairs))
             + _section('Vehicle', _kv([
-                ('Plate Number',   plate_val),
+                (plate_label,      plate_val),
                 ('Vehicle Type',   vehicle_type_val),
                 ('Color',          color_val),
                 ('Conduction No.', conduction_val),
@@ -650,6 +657,7 @@ def send_pending_email(registration):
     email_val        = esc(registration.email)
     license_val      = esc_or_dash(registration.drivers_license)
     plate_val        = esc_or_dash(registration.plate_number)
+    plate_label      = _plate_label(registration)
     vehicle_type_val = esc(registration.vehicle_type)
     color_val        = esc_or_dash(registration.vehicle_color)
     conduction_val   = esc_or_dash(registration.conduction_number)
@@ -761,7 +769,7 @@ def send_pending_email(registration):
                 + _button(edit_link, 'Edit My Details'),
                 bg=PANEL_BG, border=BORDER)
             + _section('Vehicle', _kv([
-                ('Plate Number',   plate_val),
+                (plate_label,      plate_val),
                 ('Vehicle Type',   vehicle_type_val),
                 ('Color',          color_val),
                 ('Conduction No.', conduction_val),
@@ -783,7 +791,7 @@ def send_pending_email(registration):
             f"Dear {registration.full_name},\n\n"
             f"Your vehicle registration has been received and is pending CDSO review.\n\n"
             f"Reference No.: {ref_number}\n"
-            f"Plate Number:  {registration.plate_number}\n"
+            f"{plate_label}: {registration.plate_number}\n"
             f"Type:          {type_display}\n"
             f"Submitted:     {submitted_at}\n\n"
             f"{fetched_text}"
@@ -842,6 +850,7 @@ def send_receipt_received_email(registration):
     ref_number = f'REG-{registration.id:06d}'
     full_name  = esc(registration.full_name)
     plate_val  = esc_or_dash(registration.plate_number)
+    plate_label = _plate_label(registration)
     or_val     = esc_or_dash(registration.or_number)
     amount_val = (f'PHP {registration.amount_paid:,.2f}'
                   if registration.amount_paid is not None else DASH)
@@ -864,7 +873,7 @@ def send_receipt_received_email(registration):
         rows_html=(
             _section('Payment', _kv([
                 ('Reference No.', ref_number),
-                ('Plate Number',  plate_val),
+                (plate_label,     plate_val),
                 ('OR Number',     or_val),
                 ('Amount Paid',   amount_val),
             ]))
@@ -879,7 +888,7 @@ def send_receipt_received_email(registration):
             f"Dear {registration.full_name},\n\n"
             f"We have received the Official Receipt for your vehicle pass.\n\n"
             f"Reference No.: {ref_number}\n"
-            f"Plate Number:  {registration.plate_number}\n"
+            f"{plate_label}: {registration.plate_number}\n"
             f"OR Number:     {registration.or_number}\n\n"
             + ("Your registration form is attached to this email as a PDF."
                if approved else
@@ -911,13 +920,14 @@ def send_rejection_email(registration, reason):
     reason_html    = esc(rejection_reason)
     full_name_val  = esc(registration.full_name)
     plate_val      = esc_or_dash(registration.plate_number)
+    plate_label    = _plate_label(registration)
 
     html_message = _shell(
         accent=BAD_INK,
         preheader=f'Your application for {plate_val} was not approved.',
         heading='Vehicle Registration Declined',
         intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your registration '
-               f'for plate number <strong style="color:{INK};">{plate_val}</strong> has been '
+               f'for {plate_label.lower()} <strong style="color:{INK};">{plate_val}</strong> has been '
                f'reviewed and could not be approved.'),
         rows_html=(
             _panel(

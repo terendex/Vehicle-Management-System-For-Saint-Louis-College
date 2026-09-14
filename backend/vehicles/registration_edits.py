@@ -19,6 +19,7 @@ is the whole reason the whitelist is a whitelist rather than an exclusion list.
 """
 import re
 
+from .control_numbers import is_control_number, is_ebike
 from .models import ReferenceItem, VehicleRegistration, _normalize_plate
 
 
@@ -102,6 +103,11 @@ def _clean_vehicle_type(value, registration):
     vtype = _text(value)
     if vtype not in VEHICLE_TYPES:
         return None, 'Choose one of the listed vehicle types.'
+    # Becoming an e-bike means trading the plate for a system-issued control
+    # number, which an edit cannot do. (An e-bike is never offered this field.)
+    if is_ebike(vtype) and not is_ebike(registration.vehicle_type):
+        return None, ('E-Bikes are registered with a control number issued at '
+                      'application — please contact the CDSO Office.')
     return vtype, None
 
 
@@ -226,6 +232,18 @@ READ_ONLY_REASONS = {
     'schedule':        'Your schedule is assigned by the CDSO Office.',
 }
 
+# An e-bike's identity is its system-issued control number (stored in
+# plate_number, see control_numbers). Neither it nor the type that earned it may
+# be edited; swapping either would leave a plate-less car holding an FM- number.
+EBIKE_LOCKED_FIELDS = frozenset({'plate_number', 'conduction_number', 'vehicle_type'})
+EBIKE_LOCKED_REASON = 'Your E-Bike control number is issued by the system and cannot be changed.'
+
+
+def holds_control_number(registration):
+    """An e-bike carrying a system-issued FM- number. E-bikes registered before
+    control numbers existed have a real plate and stay editable as before."""
+    return is_ebike(registration.vehicle_type) and is_control_number(registration.plate_number)
+
 
 def editable_for(registration):
     """The fields this particular registration's holder may edit.
@@ -236,8 +254,11 @@ def editable_for(registration):
     row would end up holding two.
     """
     fields = []
+    locked = holds_control_number(registration)
     for field in EDITABLE_FIELDS.values():
         if not field.applies_to(registration):
+            continue
+        if locked and field.name in EBIKE_LOCKED_FIELDS:
             continue
         if field.name == 'plate_number' and not registration.plate_number:
             continue
@@ -306,6 +327,9 @@ def clean_changes(registration, raw):
             errors[key] = READ_ONLY_REASONS[key]
             continue
         field = allowed.get(key)
+        if field is None and key in EBIKE_LOCKED_FIELDS and holds_control_number(registration):
+            errors[key] = EBIKE_LOCKED_REASON
+            continue
         if field is None:
             # Unknown, or not applicable to this registrant — either way it is
             # not silently dropped: a quietly ignored edit reads to the person

@@ -8,6 +8,7 @@ import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, C
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
+import { plateLabel } from '../../utils/plateFormat'
 import './VehicleRegistration.css'
 
 // "Any Day" reads as Sunday included; the campus is closed then, so the ANY
@@ -832,7 +833,7 @@ export default function VehicleRegistration() {
             <h3 className="detail-section-title">Vehicle Information</h3>
             <div className="details-grid" style={{ marginBottom: '24px' }}>
               <div className="detail-item">
-                <div className="detail-label">Plate Number</div>
+                <div className="detail-label">{plateLabel(selectedReg.plate_number)}</div>
                 <div className="detail-value token-link" style={{ fontSize: '14px', fontWeight: 600 }}>{selectedReg.plate_number}</div>
               </div>
               <div className="detail-item">
@@ -1259,7 +1260,7 @@ export default function VehicleRegistration() {
                 <div className="account-section-head"><Car size={14} /> Vehicle Information</div>
                 <div className="account-info-grid">
                   <div className="account-info-item">
-                    <span className="account-info-label">Plate Number</span>
+                    <span className="account-info-label">{plateLabel(accountModal.plate_number)}</span>
                     <span className="account-info-val account-plate">{accountModal.plate_number}</span>
                   </div>
                   <div className="account-info-item">

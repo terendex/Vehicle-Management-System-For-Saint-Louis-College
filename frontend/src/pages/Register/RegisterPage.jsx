@@ -406,6 +406,11 @@ export default function RegisterPage() {
   const [dupErrors, setDupErrors] = useState({}) // live "already registered" hints for plate_number/email/drivers_license
   const [banned, setBanned] = useState(null)     // set if the applicant reached max violations and may not register
   const [isNewVehicle, setIsNewVehicle] = useState(false) // brand-new car → conduction number instead of plate
+  // E-bikes get a system-issued control number (FM-001, ...) instead of either.
+  // The preview is what the read-only field shows; the issued number comes
+  // back from the submit and is what the success screen shows.
+  const [controlNumberPreview, setControlNumberPreview] = useState('')
+  const [issuedControlNumber, setIssuedControlNumber] = useState('')
   const [dupChecking, setDupChecking] = useState({})
 
   /* Data privacy gate — see PrivacyGateModal. `privacyOpen` is only what is on
@@ -467,6 +472,18 @@ export default function RegisterPage() {
     : registrantType === 'employee'
       ? (regStatus?.vehicle_pass_fee_employee ?? 150)
       : (regStatus?.vehicle_pass_fee ?? 300)
+
+  const isEbike = formData.vehicle_type === 'E-Bike'
+
+  useEffect(() => {
+    if (!isEbike) return
+    let cancelled = false
+    registrationApi.getEbikeControlNumber()
+      .then((n) => { if (!cancelled) setControlNumberPreview(n) })
+      // Only a preview — the number is issued on submit regardless.
+      .catch(() => { if (!cancelled) setControlNumberPreview('') })
+    return () => { cancelled = true }
+  }, [isEbike])
 
   // Fetcher-specific: classification + the students being fetched (at least one)
   const [fetcherType, setFetcherType] = useState('')
@@ -617,7 +634,14 @@ export default function RegisterPage() {
         [name]: formatted,
         // Body number only applies to tricycles — drop it if the type changes
         ...(name === 'vehicle_type' && formatted !== 'Tricycle' ? { body_number: '' } : {}),
+        // An e-bike's control number replaces whatever plate/conduction was typed
+        ...(name === 'vehicle_type' && formatted === 'E-Bike' ? { plate_number: '', conduction_number: '' } : {}),
       }))
+      if (name === 'vehicle_type' && formatted === 'E-Bike') {
+        setIsNewVehicle(false)
+        setFormErrors(prev => ({ ...prev, plate_number: '', conduction_number: '' }))
+        setDupErrors(prev => ({ ...prev, plate_number: null, conduction_number: null }))
+      }
       const errorMsg = validateField(name, formatted)
       setFormErrors((prev) => ({ ...prev, [name]: errorMsg }))
       // Stale duplicate hint no longer applies to the value being typed — the debounced
@@ -829,9 +853,10 @@ export default function RegisterPage() {
       const guardian = registrantType === 'student' && formData.who_drives === 'guardian'
       const payload = {
         ...formData,
-        // Either/or: send only the identifier that applies, never both.
-        plate_number:      isNewVehicle ? '' : formData.plate_number,
-        conduction_number: isNewVehicle ? formData.conduction_number : '',
+        // Either/or: send only the identifier that applies, never both. An
+        // e-bike sends neither — the server issues its control number.
+        plate_number:      isEbike || isNewVehicle ? '' : formData.plate_number,
+        conduction_number: !isEbike && isNewVehicle ? formData.conduction_number : '',
         full_name,
         program_year,
         registrant_type: registrantType,
@@ -855,7 +880,8 @@ export default function RegisterPage() {
       // UI-only helper for the colour dropdown — the backend stores vehicle_color.
       delete payload.vehicle_color_choice
 
-      await registrationApi.submitOpenRegistration(payload)
+      const result = await registrationApi.submitOpenRegistration(payload)
+      setIssuedControlNumber(result?.control_number || '')
 
       // Go straight to the success screen
       setSubmitted(true)
@@ -1054,6 +1080,13 @@ export default function RegisterPage() {
               <Clock size={13} />
               Status: <strong>Pending CDSO Review</strong>
             </p>
+
+            {issuedControlNumber && (
+              <div className="success-control-number">
+                Your E-Bike control number
+                <strong>{issuedControlNumber}</strong>
+              </div>
+            )}
 
             {/* Email prompt — main focus */}
             <div className="success-email-prompt">
@@ -1297,8 +1330,9 @@ export default function RegisterPage() {
             <h3 className="section-heading">Vehicle Identification</h3>
 
             {/* Brand-new cars have no plate yet — they register with a conduction
-                sticker instead. Ask up front so only the relevant field shows. */}
-            <label className="reg-newcar-toggle">
+                sticker instead. Ask up front so only the relevant field shows.
+                Not asked for an e-bike, which gets a control number instead. */}
+            {!isEbike && <label className="reg-newcar-toggle">
               <input
                 type="checkbox"
                 checked={isNewVehicle}
@@ -1315,10 +1349,27 @@ export default function RegisterPage() {
                 }}
               />
               <span>My vehicle is brand-new and does not have a plate number yet (I have a conduction number).</span>
-            </label>
+            </label>}
 
             <div className="form-grid">
-              {!isNewVehicle ? (
+              {isEbike ? (
+                <div className="form-group">
+                  <label htmlFor="reg-control-number">Control Number</label>
+                  <input
+                    id="reg-control-number"
+                    type="text"
+                    value={controlNumberPreview || 'FM-···'}
+                    readOnly
+                    aria-readonly="true"
+                    tabIndex={-1}
+                    className="reg-control-number"
+                  />
+                  <span className="field-hint">
+                    E-Bikes are issued a control number instead of a plate. It is assigned
+                    automatically when you submit and cannot be changed.
+                  </span>
+                </div>
+              ) : !isNewVehicle ? (
                 <div className="form-group">
                   <label>Plate Number <span className="required">*</span></label>
                   <input

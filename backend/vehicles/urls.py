@@ -16,6 +16,7 @@ urlpatterns = [
     path('register/status/',         views.RegistrationStatusView.as_view(),          name='registration-status'),
     path('register/schedule-slots/', views.ScheduleSlotsView.as_view(),               name='schedule-slots'),
     path('register/availability/',   views.RegistrationAvailabilityView.as_view(),    name='registration-availability'),
+    path('register/ebike-control-number/', views.EbikeControlNumberPreviewView.as_view(), name='ebike-control-number'),
     path('register/documents/',      views.UploadRegistrationDocumentsView.as_view(), name='upload-registration-documents'),
     path('register/payment/',        views.RegistrationPaymentView.as_view(),        name='registration-payment'),
     # Correcting a still-pending application. Same token as the payment step —

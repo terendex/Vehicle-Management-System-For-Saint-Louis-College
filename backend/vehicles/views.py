@@ -894,6 +894,7 @@ from .models import RegistrationChangeRequest, VehicleRegistration
 from .registration_edits import (READ_ONLY_REASONS, apply_changes, clean_changes,
                                  current_values, describe, editable_for)
 from .serializers import VehicleRegistrationSerializer
+from .control_numbers import allocate_control_number, is_ebike, peek_next_control_number
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
                           resolve_student_schedule, schedule_group)
@@ -1781,11 +1782,17 @@ class CdsoDirectRegisterView(APIView):
             if not or_number.isdigit() or len(or_number) > 7:
                 return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # E-bikes get a system-issued control number, never a typed identifier.
+        ebike = is_ebike(request.data.get('vehicle_type'))
+        if ebike:
+            data['plate_number'] = ''
+            data['conduction_number'] = ''
+
         # 1:1 guard — plate, email and student/employee ID must not already have an active
         # registration (also blocks an email already tied to an existing account)
         conflict = _registration_conflict(
             registrant_type,
-            request.data.get('plate_number', ''),
+            '' if ebike else request.data.get('plate_number', ''),
             request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
@@ -1832,7 +1839,9 @@ class CdsoDirectRegisterView(APIView):
         # the account and the vehicle are created together or not at all, so a
         # failure half-way cannot strand an account holding the walk-in's email.
         with transaction.atomic():
+            identity = {'plate_number': allocate_control_number()} if ebike else {}
             registration = serializer.save(
+                **identity,
                 registrant_type=registrant_type,
                 source=VehicleRegistration.Source.DIRECT,
                 status=VehicleRegistration.Status.ACCEPTED,
@@ -1957,6 +1966,20 @@ class RegistrationStatusView(APIView):
         return Response(_registration_window())
 
 
+class EbikeControlNumberPreviewView(APIView):
+    """The control number the registration form shows once E-Bike is picked.
+
+    A preview: the number is issued at submission, and another applicant may
+    take this one first — the submit response carries the number actually given.
+    """
+    permission_classes = [permissions.AllowAny]
+    # Public page: a stale Bearer token left in the browser must not 401 it.
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({'control_number': peek_next_control_number()})
+
+
 # ALL_DAYS now comes from .campus_days — the same list the validators use, so
 # the slot grid and the accepted day names cannot drift apart.
 
@@ -2058,27 +2081,34 @@ class PublicOpenRegistrationView(APIView):
         if registrant_type not in ['student', 'employee', 'fetcher']:
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # A brand-new car registers with a conduction number instead of a plate.
-        # Exactly one of the two must be provided — never both, never neither.
-        plate_in      = (request.data.get('plate_number') or '').strip()
-        conduction_in = (request.data.get('conduction_number') or '').strip()
-        if plate_in and conduction_in:
-            return Response(
-                {"error": "Enter either a plate number or a conduction number, not both."},
-                status=status.HTTP_400_BAD_REQUEST)
-        if not plate_in and not conduction_in:
-            return Response(
-                {"error": "A plate number is required (or a conduction number for a brand-new vehicle)."},
-                status=status.HTTP_400_BAD_REQUEST)
+        # An e-bike has neither a plate nor a conduction sticker: the system
+        # issues it a control number (FM-001, ...) at save time, and whatever
+        # identifier the payload carries is ignored rather than trusted.
+        ebike = is_ebike(request.data.get('vehicle_type'))
+        if ebike:
+            plate_in = conduction_in = ''
+        else:
+            # A brand-new car registers with a conduction number instead of a plate.
+            # Exactly one of the two must be provided — never both, never neither.
+            plate_in      = (request.data.get('plate_number') or '').strip()
+            conduction_in = (request.data.get('conduction_number') or '').strip()
+            if plate_in and conduction_in:
+                return Response(
+                    {"error": "Enter either a plate number or a conduction number, not both."},
+                    status=status.HTTP_400_BAD_REQUEST)
+            if not plate_in and not conduction_in:
+                return Response(
+                    {"error": "A plate number is required (or a conduction number for a brand-new vehicle)."},
+                    status=status.HTTP_400_BAD_REQUEST)
 
         # Hard block: applicants who reached the maximum number of violations and
         # were archived on expiry may never register again.
         ban = _registration_ban(
-            request.data.get('plate_number', ''),
+            plate_in,
             request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
-            conduction_number=request.data.get('conduction_number', ''),
+            conduction_number=conduction_in,
         )
         if ban:
             return Response({"error": ban, "registration_banned": True}, status=status.HTTP_403_FORBIDDEN)
@@ -2087,17 +2117,19 @@ class PublicOpenRegistrationView(APIView):
         # already have an active registration
         conflict = _registration_conflict(
             registrant_type,
-            request.data.get('plate_number', ''),
+            plate_in,
             request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
             drivers_license=request.data.get('drivers_license', ''),
-            conduction_number=request.data.get('conduction_number', ''),
+            conduction_number=conduction_in,
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
 
         data = dict(request.data)
+        data['plate_number'] = plate_in
+        data['conduction_number'] = conduction_in
         department_type = _normalize_department(data)
 
         # Strip fields that are not model columns (e.g. form-only UI fields)
@@ -2223,13 +2255,18 @@ class PublicOpenRegistrationView(APIView):
             # the request rather than read back off the saved row: it costs no
             # query, and it rides along in the INSERT instead of a second UPDATE.
             exempt = VehicleRegistration.is_fee_exempt(registrant_type, department_type)
-            registration = serializer.save(
-                registrant_type=registrant_type,
-                source=VehicleRegistration.Source.PUBLIC,
-                payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
-                                else VehicleRegistration.PaymentStatus.UNPAID),
-                amount_paid=(Decimal('0.00') if exempt else None),
-            )
+            # The control number is allocated in the same transaction as the
+            # INSERT — see allocate_control_number for why that matters.
+            with transaction.atomic():
+                identity = {'plate_number': allocate_control_number()} if ebike else {}
+                registration = serializer.save(
+                    registrant_type=registrant_type,
+                    source=VehicleRegistration.Source.PUBLIC,
+                    payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
+                                    else VehicleRegistration.PaymentStatus.UNPAID),
+                    amount_paid=(Decimal('0.00') if exempt else None),
+                    **identity,
+                )
             # Acknowledgement mail, handed to a background thread like the
             # acceptance and receipt mails. The registration is already
             # committed, so the send never affected the outcome — it only made
@@ -2251,6 +2288,7 @@ class PublicOpenRegistrationView(APIView):
             return Response(
                 {"message": "Registration submitted successfully. Please wait for CDSO review.",
                  "id": registration.id,
+                 "control_number": registration.plate_number if ebike else None,
                  "email_status": 'queued'},
                 status=status.HTTP_201_CREATED,
             )

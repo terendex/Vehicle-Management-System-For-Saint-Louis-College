@@ -18,6 +18,12 @@ export const registrationApi = {
     const { data } = await api.get('/vehicles/programs/')
     return data
   },
+  // Preview of the FM- control number an e-bike will be issued. The number is
+  // only fixed at submit; the submit response carries the one actually given.
+  getEbikeControlNumber: async () => {
+    const { data } = await api.get('/vehicles/register/ebike-control-number/')
+    return data.control_number
+  },
   submitOpenRegistration: async (registrationData) => {
     const { data } = await api.post('/vehicles/register/open/', registrationData)
     return data

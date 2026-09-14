@@ -221,6 +221,7 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
                                     Paragraph, Spacer, KeepTogether)
+    from vehicles.control_numbers import plate_label
 
     brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
     r = registration
@@ -345,7 +346,7 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
     ])
 
     story += section('Vehicle Details', [
-        ('Plate Number', r.plate_number),
+        (plate_label(r.plate_number), r.plate_number),
         ('Vehicle Type', r.vehicle_type),
         ('Colour', r.vehicle_color),
         ('Conduction Number', r.conduction_number),
