@@ -1,27 +1,36 @@
-"""Printed gate slips — visitor passes and no-plate entries — as one shape.
+"""Printed gate slips — visitor passes, supplier entries and no-plate entries —
+as one shape.
 
-Two kinds of vehicle leave the gate holding a paper slip: a visitor on a pass,
-and a vehicle with no plate that the guard recorded by hand. Both slips carry a
-QR code the guard scans (or a plate / name they type) to pull the slip back up,
-see whether the vehicle is still inside, and then — as a separate, deliberate
-action — record the exit or reprint a torn slip.
+Three kinds of vehicle leave the gate holding a paper slip: a visitor on a
+pass, a supplier vehicle let in off the supplier roster, and a vehicle with no
+plate that the guard recorded by hand. Every slip carries a QR code the guard
+scans (or a plate / name they type) to pull the slip back up, see whether the
+vehicle is still inside, and then — as a separate, deliberate action — record
+the exit or reprint a torn slip.
 
 `slip_data()` is the single description of a slip. The thermal printer
 (slip_printer.py), the browser's print fallback and the guard's status dialog
 all render from it, so the three can never disagree about what a slip says.
+
+Each section row is [label, value] or [label, value, True]; the True marks the
+row the guard reads at a glance (who, and until when), printed bold and larger.
 """
 from django.utils import timezone
 
 from .models import AccessLog, VisitorPass
 
-VISITOR_PREFIX = 'SLC-VISITOR:'
-NOPLATE_PREFIX = 'SLC-NOPLATE:'
+VISITOR_PREFIX  = 'SLC-VISITOR:'
+SUPPLIER_PREFIX = 'SLC-SUPPLIER:'
+NOPLATE_PREFIX  = 'SLC-NOPLATE:'
+
+KEY = True   # marks an important row, see the module docstring
 
 
 def parse_code(code):
-    """('visitor' | 'noplate', pk) for a slip QR payload, else None."""
+    """('visitor' | 'supplier' | 'noplate', pk) for a slip QR payload, else None."""
     code = (code or '').strip().upper()
-    for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (NOPLATE_PREFIX, 'noplate')):
+    for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
+                         (NOPLATE_PREFIX, 'noplate')):
         if code.startswith(prefix):
             try:
                 return kind, int(code[len(prefix):])
@@ -37,7 +46,21 @@ def find(kind, pk):
     if kind == 'noplate':
         return (AccessLog.objects.select_related('scanned_by')
                 .filter(pk=pk, is_unrecognized=True, status=AccessLog.Status.AUTHORIZED).first())
+    if kind == 'supplier':
+        from vehicles.models import SupplierPlate
+        entry = (AccessLog.objects.select_related('scanned_by')
+                 .filter(pk=pk, is_unrecognized=False, status=AccessLog.Status.AUTHORIZED)
+                 .exclude(plate_number='').first())
+        if entry and SupplierPlate.objects.filter(plate_number=entry.plate_number).exists():
+            return entry
     return None
+
+
+def supplier_plate_for(entry):
+    """The roster row behind a supplier entry, or None."""
+    from vehicles.models import SupplierPlate
+    return (SupplierPlate.objects.select_related('supplier')
+            .filter(plate_number=entry.plate_number).first())
 
 
 def _when(dt):
@@ -79,13 +102,43 @@ def visitor_slip(pass_):
         'minutes_inside':   _minutes(pass_.entered_at, end),
         'overstay_minutes': overstay,
         'sections': [
-            [['Visitor', pass_.visitor_name or 'N/A'],
-             ['Office', pass_.office.name if pass_.office else 'N/A'],
+            [['Visitor', pass_.visitor_name or 'N/A', KEY],
+             ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
              ['Purpose', pass_.purpose or 'N/A'],
              ['Duration', f'{pass_.allowed_duration} min']],
             [['Issued', _when(pass_.entered_at)],
-             ['Expires', _when(pass_.expires_at)],
+             ['Expires', _when(pass_.expires_at), KEY],
              ['Guard', pass_.issued_by.full_name if pass_.issued_by else 'N/A']],
+        ],
+    }
+
+
+def supplier_slip(entry):
+    exit_log = AccessLog.objects.filter(paired_entry=entry).order_by('scanned_at').first()
+    end = exit_log.scanned_at if exit_log else timezone.now()
+    roster = supplier_plate_for(entry)
+    supplier = roster.supplier if roster else None
+    return {
+        'kind':             'supplier',
+        'id':               entry.pk,
+        'code':             f'{SUPPLIER_PREFIX}{entry.pk}',
+        'reference':        f'SP-{entry.pk}',
+        'title':            'SUPPLIER SLIP',
+        'headline':         entry.plate_number,
+        'plate_number':     entry.plate_number,
+        'name':             supplier.company_name if supplier else '',
+        'state':            'exited' if exit_log else 'inside',
+        'entered_at':       _iso(entry.scanned_at),
+        'expires_at':       None,
+        'exited_at':        _iso(exit_log.scanned_at) if exit_log else None,
+        'printed_at':       None,
+        'minutes_inside':   _minutes(entry.scanned_at, end),
+        'overstay_minutes': 0,
+        'sections': [
+            [['Company', supplier.company_name if supplier else 'N/A', KEY],
+             ['Category', supplier.get_category_display() if supplier else 'N/A']],
+            [['Entered', _when(entry.scanned_at), KEY],
+             ['Guard', entry.scanned_by.full_name if entry.scanned_by else 'N/A']],
         ],
     }
 
@@ -95,7 +148,7 @@ def noplate_slip(entry):
     end = exit_log.scanned_at if exit_log else timezone.now()
     vehicle = ' '.join(filter(None, [entry.vehicle_color, entry.vehicle_type, entry.vehicle_model])) or 'N/A'
     category = dict(AccessLog.Category.choices).get(entry.entrant_category, entry.entrant_category) or 'N/A'
-    details = [['Driver', entry.driver_name or 'N/A'], ['Vehicle', vehicle], ['Category', category]]
+    details = [['Driver', entry.driver_name or 'N/A', KEY], ['Vehicle', vehicle, KEY], ['Category', category]]
     if entry.entry_note:
         details.append(['Note', entry.entry_note])
     return {
@@ -116,11 +169,13 @@ def noplate_slip(entry):
         'overstay_minutes': 0,
         'sections': [
             details,
-            [['Entered', _when(entry.scanned_at)],
+            [['Entered', _when(entry.scanned_at), KEY],
              ['Guard', entry.scanned_by.full_name if entry.scanned_by else 'N/A']],
         ],
     }
 
 
 def slip_data(obj):
-    return visitor_slip(obj) if isinstance(obj, VisitorPass) else noplate_slip(obj)
+    if isinstance(obj, VisitorPass):
+        return visitor_slip(obj)
+    return noplate_slip(obj) if obj.is_unrecognized else supplier_slip(obj)

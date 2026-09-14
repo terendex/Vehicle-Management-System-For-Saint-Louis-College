@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ShieldCheck, LogIn, ChevronLeft, Eye, EyeOff, HelpCircle } from 'lucide-react'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
-import jsQR from 'jsqr'
+import { startQrCamera } from '../../utils/qrCamera'
 import useAuthStore from '../../stores/authStore'
 import { authApi } from '../../api/auth'
 import { useGates } from '../../hooks/useGates'
@@ -93,60 +93,31 @@ export default function SecurityQRLogin() {
 
   // Camera-based QR detection using jsQR (works in all browsers).
   // Only starts once a gate is selected (valid gate for the scan callback)
-  // and the typed email unlocked the scanner.
+  // and the typed email unlocked the scanner. Stopped while a badge is being
+  // verified: the <video> unmounts for the spinner and a new one mounts after,
+  // so the camera must reopen onto that new element, not the detached one.
   useEffect(() => {
-    if (!useCamera || !selectedGate || !qrAvailable) return
-    let animFrame
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!useCamera || !selectedGate || !qrAvailable || status !== 'idle') return
+    const camera = startQrCamera(videoRef.current, data => { handleQRScan(data) }, msg => {
+      setCameraErr(msg)
+      setUseCamera(false)
+    })
+    streamRef.current = camera
+    return () => camera.stop()
+  }, [useCamera, selectedGate, qrAvailable, status]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } },
-        })
-        streamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
-        }
-
-        const scan = () => {
-          const video = videoRef.current
-          if (video && video.readyState >= 2 && video.videoWidth > 0) {
-            canvas.width  = video.videoWidth
-            canvas.height = video.videoHeight
-            ctx.drawImage(video, 0, 0)
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-            const code = jsQR(imageData.data, imageData.width, imageData.height)
-            if (code?.data) {
-              handleQRScan(code.data)
-              return
-            }
-          }
-          animFrame = requestAnimationFrame(scan)
-        }
-        animFrame = requestAnimationFrame(scan)
-      } catch (err) {
-        setCameraErr(`Camera access denied: ${err.message}`)
-        setUseCamera(false)
-      }
-    }
-
-    startCamera()
-    return () => {
-      cancelAnimationFrame(animFrame)
-      streamRef.current?.getTracks().forEach(t => t.stop())
-    }
-  }, [useCamera, selectedGate, qrAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
+  // `status` in the closure is stale between the scan and the re-render; a ref
+  // is what keeps one badge from being submitted twice.
+  const verifyingRef = useRef(false)
 
   const handleQRScan = async (token) => {
-    if (status === 'scanning') return
+    if (verifyingRef.current) return
     const clean = token.trim()
     if (!clean) {
       await notify.error('Enter or scan your QR token.', { title: 'Nothing to verify' })
       return
     }
+    verifyingRef.current = true
     setStatus('scanning')
     try {
       const guard = await qrLogin(clean, selectedGate)
@@ -159,7 +130,8 @@ export default function SecurityQRLogin() {
       await notify.error(err.message || 'QR scan failed.', {
         title: 'Scan Failed', confirmLabel: 'Try Again',
       })
-      setStatus('idle')
+      verifyingRef.current = false
+      setStatus('idle')               // reopens the camera on the fresh <video>
       inputRef.current?.focus()
     }
   }
@@ -190,7 +162,7 @@ export default function SecurityQRLogin() {
     setEmail('')
     setPassword('')
     setUseCamera(true)
-    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current?.stop()
   }
 
   const handleKeyDown = (e) => {

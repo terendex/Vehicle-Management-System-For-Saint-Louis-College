@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import notify from '../Feedback/notify'
 import { fieldProblems } from '../Feedback/formProblems'
-import jsQR from 'jsqr'
+import { startQrCamera } from '../../utils/qrCamera'
 import useAuthStore from '../../stores/authStore'
 import { getCurrentShifts } from '../../api/scanning'
 import { authApi } from '../../api/auth'
@@ -86,50 +86,15 @@ function ChangeShiftModal({ gate, gateLabel, onClose, onSuccess }) {
   // QR camera scanning loop
   useEffect(() => {
     if (!useCamera || status !== 'idle' || !qrAvailable) return
-    let animFrame
-    const canvas = document.createElement('canvas')
-    const ctx    = canvas.getContext('2d', { willReadFrequently: true })
-
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } },
-        })
-        streamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
-        }
-        const scan = () => {
-          const video = videoRef.current
-          if (video && video.readyState >= 2 && video.videoWidth > 0) {
-            canvas.width  = video.videoWidth
-            canvas.height = video.videoHeight
-            ctx.drawImage(video, 0, 0)
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-            const code = jsQR(imageData.data, imageData.width, imageData.height)
-            if (code?.data) {
-              handleScan(code.data)
-              return
-            }
-          }
-          animFrame = requestAnimationFrame(scan)
-        }
-        animFrame = requestAnimationFrame(scan)
-      } catch (err) {
-        setCameraErr(`Camera unavailable: ${err.message}`)
-        setUseCamera(false)
-      }
-    }
-
-    startCamera()
-    return () => {
-      cancelAnimationFrame(animFrame)
-      streamRef.current?.getTracks().forEach(t => t.stop())
-    }
+    const camera = startQrCamera(videoRef.current, data => { handleScan(data) }, msg => {
+      setCameraErr(msg)
+      setUseCamera(false)
+    })
+    streamRef.current = camera
+    return () => camera.stop()
   }, [useCamera, status, qrAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const stopCamera = () => streamRef.current?.getTracks().forEach(t => t.stop())
+  const stopCamera = () => streamRef.current?.stop()
 
   const handleClose = () => {
     stopCamera()

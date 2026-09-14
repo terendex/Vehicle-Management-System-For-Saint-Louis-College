@@ -144,10 +144,11 @@ const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
 function printSlipInBrowser(slip, { reprint = false } = {}) {
   const w = window.open('', '_blank', 'width=320,height=520')
   if (!w) return false
-  // Scanned at the gate to pull the slip back up (SLC-VISITOR:{id} / SLC-NOPLATE:{id})
+  // Scanned at the gate to pull the slip back up (SLC-VISITOR / SLC-SUPPLIER / SLC-NOPLATE:{id})
   const qrSvg = renderToStaticMarkup(<QRCodeSVG value={slip.code} size={130} level="M" />)
-  const sections = slip.sections.map(rows => rows.map(([label, value]) =>
-    `<div class="row"><span class="label">${escapeHtml(label)}:</span><span>${escapeHtml(value)}</span></div>`,
+  // A third element marks the row a guard reads at a glance — bold and larger.
+  const sections = slip.sections.map(rows => rows.map(([label, value, key]) =>
+    `<div class="row${key ? ' key' : ''}"><span class="label">${escapeHtml(label)}:</span><span>${escapeHtml(value)}</span></div>`,
   ).join('\n')).join('\n<hr/>\n')
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>${escapeHtml(slip.title)}</title>
@@ -168,16 +169,19 @@ function printSlipInBrowser(slip, { reprint = false } = {}) {
          width: 48mm; margin: 0; padding: 1mm 1.5mm 2mm; word-wrap: break-word; overflow-wrap: anywhere; }
   h2 { text-align: center; font-size: 12px; margin: 3px 0 1px; }
   .sub { text-align: center; font-size: 8.5px; margin-bottom: 3px; }
-  .sub.title { font-size: 10px; font-weight: bold; margin: 4px 0 2px; }
+  .sub.title { font-size: 13px; font-weight: bold; margin: 4px 0 2px; }
+  .sub.reprint { font-size: 10px; font-weight: bold; margin: 0 0 2px; }
   hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
-  .row { display: flex; justify-content: space-between; gap: 4px; margin: 2px 0; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; margin: 2px 0; }
   .label { flex: none; }
   .row span:last-child { text-align: right; min-width: 0; }
+  .row.key .label { font-weight: bold; }
+  .row.key span:last-child { font-size: 12px; font-weight: bold; }
   .plate { font-size: 18px; font-weight: bold; text-align: center; letter-spacing: 2px; margin: 5px 0; border: 2px solid #000; padding: 3px 2px; }
   .qr { text-align: center; margin: 6px 0 4px; }
   .qr svg { width: 32mm; height: 32mm; }
   .footer { text-align: center; font-size: 8px; margin-top: 6px; }
-  .warn { text-align: center; font-size: 8.5px; font-weight: bold; margin: 4px 0; }
+  .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 4px 0; }
   /* Both seals head the slip, as they head every screen. Kept small for the
      thermal roll, where anything larger prints as a black smudge. */
   .seals { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 0 0 3px; }
@@ -190,14 +194,14 @@ function printSlipInBrowser(slip, { reprint = false } = {}) {
 <h2>SAINT LOUIS COLLEGE</h2>
 <div class="sub">Campus Development and Sustainability Office</div>
 <div class="sub">Smart Parking and Vehicle Verification System</div>
-<div class="sub title">--- ${escapeHtml(slip.title)} ---</div>
-${reprint ? '<div class="sub title">** REPRINT **</div>' : ''}
+<div class="sub title">${escapeHtml(slip.title)}</div>
+${reprint ? '<div class="sub reprint">** REPRINT **</div>' : ''}
 <div class="plate">${escapeHtml(slip.headline)}</div>
 <hr/>
 ${sections}
 <hr/>
 <div class="qr">${qrSvg}</div>
-<div class="warn">SCAN THIS QR AT THE GATE TO EXIT</div>
+<div class="warn">SCAN QR AT THE GATE TO EXIT</div>
 <div class="warn">RETURN THIS SLIP UPON EXIT</div>
 <div class="footer">Unauthorized possession is subject to penalty.</div>
 </body></html>`)
@@ -222,10 +226,16 @@ async function printSlip(slip, { reprint = false } = {}) {
       )
     }
   }
-  printSlipInBrowser(slip, { reprint })
+  // A print window opened without a click (a camera-admitted supplier) can be
+  // popup-blocked; the caller then offers a button, which is a click.
+  if (!printSlipInBrowser(slip, { reprint })) return 'blocked'
   if (reprint) confirmSlipReprinted(slip.code).catch(() => {})
   return 'dialog'
 }
+
+// Supplier slips print themselves when the result dialog first shows. Codes
+// already printed from this tab, so a re-rendered dialog never prints twice.
+const autoPrintedSlips = new Set()
 
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
 function VisitorPassModal({ plate, offices, onClose, onCreated }) {
@@ -684,7 +694,13 @@ function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
 
 
 // ─── SlipStatusModal ───────────────────────────────────────────────────────────
-// A visitor or no-plate slip pulled back up — by its QR, a typed plate, a
+const SLIP_KIND = {
+  visitor:  { who: 'Visitor',          tag: 'Visitor',  cls: 'cls-visitor'  },
+  supplier: { who: 'Supplier Vehicle', tag: 'Supplier', cls: 'cls-supplier' },
+  noplate:  { who: 'No-Plate Vehicle', tag: 'No Plate', cls: 'cls-unknown'  },
+}
+
+// A visitor, supplier or no-plate slip pulled back up — by its QR, a typed plate, a
 // picked name, or the side panels. It only SHOWS where the vehicle stands
 // (still inside, time left, overstay, already out). Recording the exit and
 // reprinting a torn slip are separate buttons, so looking a slip up never
@@ -708,7 +724,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
   }, [onClose])
 
   const inside   = slip.state === 'inside'
-  const isNoPlate = slip.kind === 'noplate'
+  const kindMeta = SLIP_KIND[slip.kind] ?? SLIP_KIND.visitor
   const minsLeft = inside && slip.expires_at
     ? Math.round((new Date(slip.expires_at).getTime() - openedAt) / 60000)
     : null
@@ -717,7 +733,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
 
   const cls = !inside ? 'exited' : overdue ? 'denied' : 'authorized'
   const statusLabel = inside
-    ? (isNoPlate ? 'No-Plate Vehicle — Still Inside' : 'Visitor — Still Inside')
+    ? `${kindMeta.who} — Still Inside`
     : slip.state === 'exited' ? 'Already Exited' : `Pass ${slip.state}`
   const timeLine = inside
     ? [`Inside for ${slip.minutes_inside} min`,
@@ -767,8 +783,8 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
           <div className="em-result-text">
             <p className="em-result-status">{statusLabel}</p>
             <p className="em-result-plate">{slip.headline}</p>
-            <span className={`em-class-tag ${isNoPlate ? 'cls-unknown' : 'cls-visitor'}`}>
-              {isNoPlate ? 'No Plate' : 'Visitor'} · {slip.reference}
+            <span className={`em-class-tag ${kindMeta.cls}`}>
+              {kindMeta.tag} · {slip.reference}
             </span>
           </div>
         </div>
@@ -830,6 +846,31 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [nestedOpen, onDismiss])
+
+  // An admitted supplier leaves with a slip, like a visitor on a pass. It
+  // prints as soon as the result shows; the guard only acts if it did not.
+  const supplierSlip = result.supplier_slip
+  const [slipPrint, setSlipPrint] = useState(() => (
+    !supplierSlip ? null
+      : autoPrintedSlips.has(supplierSlip.code) ? { state: 'printed' }
+      : { state: 'printing' }
+  ))
+  const sendSupplierSlip = (opts) => printSlip(supplierSlip, opts).then(
+    how => setSlipPrint(how === 'blocked'
+      ? { state: 'failed', reason: 'The print window was blocked.' }
+      : { state: 'printed' }),
+    err => setSlipPrint({ state: 'failed', reason: err.message }),
+  )
+  const printSupplierSlip = (opts) => {
+    setSlipPrint({ state: 'printing' })
+    sendSupplierSlip(opts)
+  }
+  // Starts in 'printing' (see the initial state), so nothing to set here.
+  useEffect(() => {
+    if (!supplierSlip || autoPrintedSlips.has(supplierSlip.code)) return
+    autoPrintedSlips.add(supplierSlip.code)
+    sendSupplierSlip()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { Icon, label, cls } = getMeta(result.status)
   const owner     = result.vehicle?.user
@@ -943,7 +984,37 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                 )}
               </div>
             )}
+            {supplierSlip && (
+              <div className="em-result-rows">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Company</span>
+                  <span className="em-result-row-value">{supplierSlip.name || result.supplier_name}</span>
+                </div>
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Supplier Slip</span>
+                  <span className="em-result-row-value">
+                    {slipPrint?.state === 'printing' && 'Printing…'}
+                    {slipPrint?.state === 'printed' && `Printed · ${supplierSlip.reference}`}
+                    {slipPrint?.state === 'failed' && (
+                      <span className="em-violation-pill"><AlertTriangle size={10} /> Not printed</span>
+                    )}
+                  </span>
+                </div>
+                {slipPrint?.state === 'failed' && (
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#C62828' }}>{slipPrint.reason}</p>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
+              {supplierSlip && (
+                <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
+                  disabled={slipPrint?.state === 'printing'}
+                  onClick={() => printSupplierSlip({ reprint: slipPrint?.state === 'printed' })}>
+                  {slipPrint?.state === 'printing'
+                    ? <><div className="em-spinner" /> Printing…</>
+                    : <><Printer size={14} /> {slipPrint?.state === 'printed' ? 'Reprint Supplier Slip' : 'Print Supplier Slip'}</>}
+                </button>
+              )}
               {isVisitor && (
                 <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
                   <UserPlus size={14} /> Create Visitor Pass
@@ -1212,7 +1283,7 @@ export default function SecurityEntryManagement() {
       return false
     }
   }
-  const isSlipCode = (s) => /^SLC-(VISITOR|NOPLATE):/i.test((s || '').trim())
+  const isSlipCode = (s) => /^SLC-(VISITOR|SUPPLIER|NOPLATE):/i.test((s || '').trim())
 
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
@@ -1346,7 +1417,7 @@ export default function SecurityEntryManagement() {
       return
     }
 
-    toast.error('Unrecognized QR. Scan a vehicle QR pass or a visitor slip QR.')
+    toast.error('Unrecognized QR. Scan a vehicle QR pass or a visitor / supplier slip QR.')
   }
 
   const handleCheckEntry = async (e) => {
@@ -1858,7 +1929,7 @@ export default function SecurityEntryManagement() {
         {showExitScanner && (
           <QrScanModal
             title="Scan QR — Entry / Exit"
-            hint="Point the camera at a vehicle QR pass (first scan = entry, next = exit) or a visitor slip QR."
+            hint="Point the camera at a vehicle QR pass (first scan = entry, next = exit) or a visitor / supplier slip QR."
             busy={exitScanBusy}
             onDetected={handleQrDetected}
             onClose={() => setShowExitScanner(false)}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import jsQR from 'jsqr'
 import { X, ScanLine, Camera } from 'lucide-react'
+import { startQrCamera } from '../utils/qrCamera'
 
 /**
  * Camera-based QR scanner modal (jsQR — works in all browsers).
@@ -15,57 +15,35 @@ import { X, ScanLine, Camera } from 'lucide-react'
  */
 export default function QrScanModal({ onClose, onDetected, title = 'Scan QR Code', hint, busy = false }) {
   const videoRef  = useRef(null)
-  const streamRef = useRef(null)
-  const detectedRef = useRef(false)          // one-shot guard so we don't fire repeatedly
+  const cameraRef = useRef(null)
   const [cameraErr, setCameraErr] = useState('')
 
+  // The parent passes a fresh onDetected every render; reading it through a
+  // ref keeps the camera open instead of restarting it on each re-render
+  // (which is what left the webcam black on the busy guard page).
+  const onDetectedRef = useRef(onDetected)
+  const busyRef = useRef(busy)
   useEffect(() => {
-    let animFrame
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    onDetectedRef.current = onDetected
+    busyRef.current = busy
+  })
 
-    const start = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } },
-        })
-        streamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
-        }
-        const scan = () => {
-          const video = videoRef.current
-          if (!detectedRef.current && video && video.readyState >= 2 && video.videoWidth > 0) {
-            canvas.width  = video.videoWidth
-            canvas.height = video.videoHeight
-            ctx.drawImage(video, 0, 0)
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-            const code = jsQR(imageData.data, imageData.width, imageData.height)
-            if (code?.data) {
-              detectedRef.current = true
-              onDetected(code.data)
-              return
-            }
-          }
-          animFrame = requestAnimationFrame(scan)
-        }
-        animFrame = requestAnimationFrame(scan)
-      } catch (err) {
-        setCameraErr(`Camera access denied: ${err.message}`)
-      }
-    }
+  // One read per scan: the camera pauses on a code and resumes once the parent
+  // finishes processing, so the next slip scans without reopening the modal.
+  // A code the parent rejects without going busy (unrecognized QR) resumes
+  // after a short beat instead of leaving the scanner stuck.
+  useEffect(() => {
+    let retry = 0
+    const camera = startQrCamera(videoRef.current, data => {
+      onDetectedRef.current(data)
+      clearTimeout(retry)
+      retry = setTimeout(() => { if (!busyRef.current) camera.resume() }, 1500)
+    }, setCameraErr)
+    cameraRef.current = camera
+    return () => { clearTimeout(retry); camera.stop() }
+  }, [])
 
-    start()
-    return () => {
-      cancelAnimationFrame(animFrame)
-      streamRef.current?.getTracks().forEach(t => t.stop())
-    }
-  }, [onDetected])
-
-  // Re-arm the one-shot guard when the parent finishes processing, so the guard
-  // can immediately scan the next slip without reopening the modal.
-  useEffect(() => { if (!busy) detectedRef.current = false }, [busy])
+  useEffect(() => { if (!busy) cameraRef.current?.resume() }, [busy])
 
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>

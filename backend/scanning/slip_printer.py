@@ -143,10 +143,12 @@ def render_slip(slip, reprint=False):
             draw.rectangle([x, y, x + 4, y + 1], fill=0)
         y += 8
 
-    def row(label, value, font):
+    def row(label, value, font, label_font=None):
         nonlocal y
-        lw = draw.textlength(label, font=font) + 10
-        draw.text((pad, y), label, font=font, fill=0)
+        label_font = label_font or font
+        lw = draw.textlength(label, font=label_font) + 10
+        # Label sits on the value's first baseline when the value is larger.
+        draw.text((pad, y + font.size - label_font.size), label, font=label_font, fill=0)
         for ln in _wrap(draw, value, font, inner - lw):
             draw.text((DOTS_WIDE - pad - draw.textlength(ln, font=font), y), ln, font=font, fill=0)
             y += round(font.size * 1.25)
@@ -171,10 +173,10 @@ def render_slip(slip, reprint=False):
     small = _font(8.5)
     centered('Campus Development and Sustainability Office', small, 4)
     centered('Smart Parking and Vehicle Verification System', small, 6)
-    centered(f"--- {slip['title']} ---", _font(10, bold=True), 2 if reprint else 8)
+    centered(slip['title'], _font(13, bold=True), 2 if reprint else 8)
     if reprint:
         # So a replacement for a torn slip is never mistaken for a second pass.
-        centered('** REPRINT **', _font(9, bold=True), 8)
+        centered('** REPRINT **', _font(10, bold=True), 8)
 
     # Plate (or NP- reference), boxed.
     plate_font = _font(18, bold=True)
@@ -191,11 +193,16 @@ def render_slip(slip, reprint=False):
         px += draw.textlength(ch, font=plate_font) + track
     y += box_h + 6
 
-    body = _font(10)
+    # Rows marked important in slips.py (who, and until when) are what a guard
+    # reads at a glance: bold, and a size up from the rest.
+    body, key_label, key_value = _font(10), _font(10, bold=True), _font(12, bold=True)
     for section in slip['sections']:
         rule()
-        for label, value in section:
-            row(f'{label}:', str(value), body)
+        for label, value, *flag in section:
+            if flag and flag[0]:
+                row(f'{label}:', str(value), key_value, key_label)
+            else:
+                row(f'{label}:', str(value), body)
     rule()
 
     # QR, 32mm square, drawn module by module so every module is whole dots.
@@ -213,8 +220,8 @@ def render_slip(slip, reprint=False):
                                 qx + (c + 1) * module - 1, y + (r + 1) * module - 1], fill=0)
     y += side + 10
 
-    warn = _font(8.5, bold=True)
-    centered('SCAN THIS QR AT THE GATE TO EXIT', warn, 2)
+    warn = _font(10, bold=True)
+    centered('SCAN QR AT THE GATE TO EXIT', warn, 3)   # one line at this size
     centered('RETURN THIS SLIP UPON EXIT', warn, 8)
     centered('Unauthorized possession is subject to penalty.', _font(8), 0)
 

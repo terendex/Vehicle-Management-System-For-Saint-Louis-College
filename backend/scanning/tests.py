@@ -564,6 +564,44 @@ class VisitorPassAPITests(TestCase):
     def test_bad_slip_code_is_400(self):
         self.assertEqual(self.client.get('/api/scan/slip/', {'code': 'VEHICLE:ABC123'}).status_code, 400)
 
+    def test_supplier_entry_returns_slip_that_prints_and_exits(self):
+        from vehicles.models import Supplier, SupplierPlate
+        supplier = Supplier.objects.create(company_name='JOLLIBEE', category='delivery', is_active=True)
+        SupplierPlate.objects.create(supplier=supplier, plate_number='SUP4321')
+        with patch('scanning.views._supplier_rule_denial', return_value=None):
+            resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'SUP4321'}, format='json')
+        self.assertTrue(resp.data['allowed'])
+        # Not under 'slip' — that key opens the slip-status dialog instead of the result.
+        self.assertNotIn('slip', resp.data)
+        slip = resp.data['supplier_slip']
+        self.assertEqual(slip['kind'], 'supplier')
+        self.assertTrue(slip['code'].startswith('SLC-SUPPLIER:'))
+        self.assertEqual(slip['headline'], 'SUP4321')
+        self.assertIn(['Company', 'JOLLIBEE', True], slip['sections'][0])
+
+        looked = self.client.get('/api/scan/slip/', {'code': slip['code']})
+        self.assertEqual(looked.status_code, 200)
+        self.assertEqual(looked.data['state'], 'inside')
+
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw') as send:
+            printed = self.client.post('/api/scan/slip/print/', {'code': slip['code']}, format='json')
+        self.assertEqual(printed.status_code, 200)
+        send.assert_called_once()
+
+        exited = self.client.post('/api/scan/slip/exit/', {'code': slip['code']}, format='json')
+        self.assertEqual(exited.status_code, 200)
+        self.assertEqual(exited.data['slip']['state'], 'exited')
+        self.assertTrue(AccessLog.objects.filter(plate_number='SUP4321', status='exited').exists())
+        again = self.client.post('/api/scan/slip/exit/', {'code': slip['code']}, format='json')
+        self.assertEqual(again.status_code, 409)
+
+    def test_supplier_slip_code_does_not_open_other_entries(self):
+        _, vehicle = _make_owner('owner-slip@slc.edu.ph', 'OWN1234', 'employee')
+        entry = AccessLog.objects.create(plate_number='OWN1234', vehicle=vehicle, status='authorized')
+        resp = self.client.get('/api/scan/slip/', {'code': f'SLC-SUPPLIER:{entry.pk}'})
+        self.assertEqual(resp.status_code, 404)
+
     def test_record_exit_endpoint_accepts_visitor_plate(self):
         pass_ = self._visitor_inside('VIS013')
         resp = self.client.post('/api/scan/exit/', {'plate_number': 'VIS013'}, format='json')

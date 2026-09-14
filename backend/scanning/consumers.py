@@ -989,7 +989,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": False,
             }
 
-        AccessLog.objects.create(
+        entry_log = AccessLog.objects.create(
             plate_number=plate_number,
             status=AccessLog.Status.AUTHORIZED,
             gate_id=gate_id,
@@ -997,6 +997,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         )
 
         from .entry_logic import is_open_campus
+        from .slips import supplier_slip
         open_campus = is_open_campus()
         return {
             "status":         "open_entry" if open_campus else "authorized",
@@ -1006,6 +1007,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                                f"Supplier vehicle — {supplier_name}. Entry permitted."),
             "is_supplier":    True,
             "supplier_name":  supplier_name,
+            "supplier_slip":  supplier_slip(entry_log),   # printed by the guard page
             "vehicle":        None,
             "registration":   None,
             "has_violations": False,

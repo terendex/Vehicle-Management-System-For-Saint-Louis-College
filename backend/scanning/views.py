@@ -649,11 +649,12 @@ class ScanView(APIView):
                     })
                     continue
 
-                AccessLog.objects.create(
+                entry_log = AccessLog.objects.create(
                     plate_number=plate, status=AccessLog.Status.AUTHORIZED,
                     gate_id=gate_id, scanned_by=request.user,
                 )
                 open_campus = is_open_campus()
+                from .slips import supplier_slip
                 results.append({
                     'plate_number':  plate,
                     'status':        'open_entry' if open_campus else 'authorized',
@@ -663,6 +664,7 @@ class ScanView(APIView):
                                       f'Supplier vehicle — {supplier_name}. Entry permitted.'),
                     'is_supplier':   True,
                     'supplier_name': supplier_name,
+                    'supplier_slip': supplier_slip(entry_log),   # printed by the guard page
                     'bbox':          bbox,
                     'sample_id':     ml_sample.get("sample_id") if ml_sample else None,
                 })
@@ -872,7 +874,7 @@ def _slip_from_request(request):
     code = request.query_params.get('code') or request.data.get('code')
     parsed = slips.parse_code(code)
     if not parsed:
-        return None, Response({'error': 'Not a slip QR. Scan a visitor or no-plate slip.'}, status=400)
+        return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier or no-plate slip.'}, status=400)
     obj = slips.find(*parsed)
     if not obj:
         return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
@@ -967,7 +969,10 @@ class SlipExitView(APIView):
             if AccessLog.objects.filter(paired_entry=obj).exists():
                 return Response({'error': 'This vehicle has already been logged out.',
                                  'slip': slip_data(obj)}, status=409)
-            duration, overstay = _record_noplate_exit(request, obj, gate_id)[0], 0
+            if obj.is_unrecognized:
+                duration, overstay = _record_noplate_exit(request, obj, gate_id)[0], 0
+            else:
+                duration, overstay = _record_supplier_exit(request, obj, gate_id)
         obj.refresh_from_db()
         return Response({'slip': slip_data(obj), 'duration_minutes': duration, 'overstay_minutes': overstay})
 
@@ -1045,6 +1050,28 @@ def _record_visitor_exit(request, pass_, gate_id):
         + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
     )
     return duration_minutes, overstay_minutes
+
+
+def _record_supplier_exit(request, entry, gate_id):
+    """Exit of a supplier vehicle recorded from its slip — the same exit log
+    and stay-limit check the plate scan does. Returns (minutes inside,
+    overstay minutes)."""
+    from .slips import supplier_plate_for
+    exit_log = AccessLog.objects.create(
+        plate_number=entry.plate_number, status=AccessLog.Status.EXITED,
+        gate_id=gate_id, scanned_by=request.user, paired_entry=entry,
+    )
+    duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
+    overstay = _check_stay_limit(entry.plate_number, None, 'supplier', duration, gate_id) or 0
+    roster = supplier_plate_for(entry)
+    _audit(
+        request, AuditLog.Action.RECORD_UPDATED,
+        f"Supplier vehicle exited (slip) | Ref: SP-{entry.pk} | Plate: {entry.plate_number} | "
+        f"Company: {roster.supplier.company_name if roster else 'N/A'} | Duration: {duration} min | "
+        + (f"OVERSTAYED by {overstay} min | " if overstay else "")
+        + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
+    )
+    return duration, overstay
 
 
 def _audit_typed_visitor_exit(request, pass_, gate_id, duration_minutes, overstay_minutes):
@@ -1983,11 +2010,12 @@ class ManualEntryView(APIView):
                     'gate_id':       gate_id,
                 })
 
-            AccessLog.objects.create(
+            entry_log = AccessLog.objects.create(
                 plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
                 gate_id=gate_id, scanned_by=request.user,
             )
             open_campus = is_open_campus()
+            from .slips import supplier_slip
             return Response({
                 'plate_number':  plate_number,
                 'status':        'open_entry' if open_campus else 'authorized',
@@ -1997,6 +2025,7 @@ class ManualEntryView(APIView):
                                   f'Supplier vehicle — {supplier_name}. Entry permitted.'),
                 'is_supplier':   True,
                 'supplier_name': supplier_name,
+                'supplier_slip': supplier_slip(entry_log),   # printed by the guard page
                 'gate_id':       gate_id,
             })
 
