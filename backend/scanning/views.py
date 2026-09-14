@@ -867,24 +867,68 @@ class VisitorPassView(APIView):
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
-def _slip_from_request(request):
+def _slip_from_request(request, any_copy=False):
     """(model row, None) for the slip named by `code` in the query or body, or
-    (None, error Response)."""
+    (None, error Response).
+
+    A visitor slip is refused once the visitor is no longer inside
+    (_spent_visitor_slip), and — unless `any_copy` — when its serial is not
+    the newest print's: every print draws a new serial, so an older paper copy
+    opens and exits nothing. Printing passes `any_copy`, since a print makes a
+    new copy that retires all the others anyway."""
     from . import slips
     code = request.query_params.get('code') or request.data.get('code')
     parsed = slips.parse_code(code)
     if not parsed:
         return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier or no-plate slip.'}, status=400)
-    obj = slips.find(*parsed)
+    kind, pk, serial = parsed
+    obj = slips.find(kind, pk)
     if not obj:
         return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
+    if isinstance(obj, VisitorPass):
+        error = _spent_visitor_slip(obj) or (None if any_copy else _replaced_visitor_slip(obj, serial))
+        if error:
+            return None, error
     return obj, None
 
 
+def _spent_visitor_slip(obj):
+    """409 Response when `obj` is a visitor pass that is no longer active, else
+    None. A visitor slip is good for one visit: once the visitor has exited
+    (or the pass expired) the paper cannot be looked up, reprinted or exited
+    again — a returning visitor is issued a new pass."""
+    from .slips import slip_data, _when
+    if not isinstance(obj, VisitorPass) or obj.status == VisitorPass.Status.ACTIVE:
+        return None
+    if obj.status == VisitorPass.Status.EXITED:
+        error = (f'This visitor slip is no longer valid — {obj.plate_number} already exited on '
+                 f'{_when(obj.exited_at)}. A returning visitor needs a new visitor pass.')
+    else:
+        error = (f'This visitor slip is no longer valid — the pass for {obj.plate_number} is '
+                 f'{obj.get_status_display().lower()}. A returning visitor needs a new visitor pass.')
+    return Response({'error': error, 'reason': 'slip_used', 'slip': slip_data(obj)}, status=409)
+
+
+def _replaced_visitor_slip(pass_, serial):
+    """409 Response when `serial` is not the newest printed copy of this pass.
+    The slip itself is left out of the response: it would hand whoever holds
+    the old paper the current code."""
+    if serial == pass_.slip_token:
+        return None
+    return Response({
+        'error': (f'This visitor slip is no longer valid — a newer copy was printed for '
+                  f'{pass_.plate_number} (VP-{pass_.pk}). Only the latest printed slip can be used. '
+                  f'Look the visitor up by plate or name if they no longer have it.'),
+        'reason': 'slip_replaced',
+    }, status=409)
+
+
 class SlipView(APIView):
-    """GET /scan/slip/?code=SLC-VISITOR:12 — what a slip says and whether its
-    vehicle is still inside. Looking a slip up changes nothing: the guard
-    chooses to record the exit or reprint from what comes back."""
+    """GET /scan/slip/?code=SLC-VISITOR:12-A1B2C3D4 — what a slip says and
+    whether its vehicle is still inside. Looking a slip up changes nothing:
+    the guard chooses to record the exit or reprint from what comes back. A
+    visitor slip whose visitor has already left, or that a newer print
+    replaced, is refused (see _slip_from_request)."""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -894,27 +938,47 @@ class SlipView(APIView):
 
 
 class SlipPrintView(APIView):
-    """POST /scan/slip/print/ {code, reprint} — print a slip straight to this
-    server's thermal printer, no browser dialog. 503 means this server has no
-    printer (the cloud site) and the frontend falls back to the browser print
-    dialog; 502 means the printer is there but nothing came out. Printing logs
-    nothing about the entry — a reprint is audited so torn-slip replacements
-    are traceable."""
+    """POST /scan/slip/print/ {code, reprint, target} — print a slip straight
+    to this server's thermal printer, no browser dialog. 503 means this server
+    has no printer (the cloud site) and the frontend falls back to the browser
+    print dialog; 502 means the printer is there but nothing came out.
+    `target: 'browser'` skips the thermal printer: the guard chose the browser
+    dialog, and only needs the slip to print.
+
+    A visitor slip draws a new serial for every print, so each paper copy has
+    its own QR and only the newest one works. The serial is kept once the slip
+    goes out (thermal, or handed to the browser) — a failed thermal print keeps
+    the previous one, so the copy the visitor holds still works.
+
+    Printing logs nothing about the entry — a reprint is audited so torn-slip
+    replacements are traceable."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         from .slip_printer import SlipPrinterError, print_slip
-        from .slips import slip_data
+        from .slips import new_slip_token, slip_data
 
-        obj, error = _slip_from_request(request)
+        obj, error = _slip_from_request(request, any_copy=True)
         if error:
             return error
+        is_visitor = isinstance(obj, VisitorPass)
+        if is_visitor:
+            obj.slip_token = new_slip_token()
         slip = slip_data(obj)
+
+        def keep_serial():
+            if is_visitor:
+                VisitorPass.objects.filter(pk=obj.pk).update(slip_token=obj.slip_token)
+
+        if request.data.get('target') == 'browser':
+            keep_serial()
+            return Response({'printed': False, 'reason': 'browser', 'slip': slip})
         reprint = str(request.data.get('reprint', '')).lower() in ('1', 'true', 'yes')
         try:
             printer = print_slip(slip, reprint=reprint)
         except SlipPrinterError as exc:
             return Response({'printed': False, 'error': f'The slip did not print: {exc}.'}, status=502)
+        keep_serial()
         if not printer:
             return Response({'printed': False, 'reason': 'no_printer', 'slip': slip}, status=503)
         if reprint:
@@ -929,7 +993,7 @@ class SlipReprintedView(APIView):
 
     def post(self, request):
         from .slips import slip_data
-        obj, error = _slip_from_request(request)
+        obj, error = _slip_from_request(request, any_copy=True)
         if error:
             return error
         _audit_slip_reprint(request, slip_data(obj))
@@ -941,6 +1005,7 @@ def _audit_slip_reprint(request, slip):
         request,
         AuditLog.Action.RECORD_UPDATED,
         f"Slip reprinted | Ref: {slip['reference']} | "
+        + (f"Slip No.: {slip['serial']} | " if slip.get('serial') else "")
         + (f"Plate: {slip['plate_number']} | " if slip['plate_number'] else "")
         + f"Name: {slip['name'] or 'N/A'} | Guard: {request.user.full_name}",
     )
@@ -965,10 +1030,7 @@ class SlipExitView(APIView):
             return Response({'error': 'A supplier pass is not one visit — scan its QR at the gate '
                                       'and the plate check records the exit.',
                              'slip': slip_data(obj)}, status=400)
-        if isinstance(obj, VisitorPass):
-            if obj.status != VisitorPass.Status.ACTIVE:
-                return Response({'error': f'This visitor is already marked as {obj.status}.',
-                                 'slip': slip_data(obj)}, status=409)
+        if isinstance(obj, VisitorPass):   # spent / replaced copies never get here
             duration, overstay = _record_visitor_exit(request, obj, gate_id)
         else:
             if AccessLog.objects.filter(paired_entry=obj).exists():
@@ -1121,19 +1183,23 @@ class VisitorQrExitView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        from .slips import parse_code
         qr_data = (request.data.get('qr_data') or '').strip()
-        if not qr_data.startswith('SLC-VISITOR:'):
+        if not qr_data.upper().startswith('SLC-VISITOR:'):
             return Response({'error': 'Not a visitor slip QR.'}, status=400)
-        try:
-            pk = int(qr_data.split(':', 1)[1])
-        except (ValueError, IndexError):
+        parsed = parse_code(qr_data)
+        if not parsed:
             return Response({'error': 'Malformed visitor slip QR.'}, status=400)
+        _, pk, serial = parsed
 
         pass_ = VisitorPass.objects.filter(pk=pk).select_related('vehicle', 'office').first()
         if not pass_:
             return Response({'error': 'Visitor pass not found.'}, status=404)
         if pass_.status != VisitorPass.Status.ACTIVE:
             return Response({'error': f'Pass is already marked as {pass_.status}.'}, status=400)
+        replaced = _replaced_visitor_slip(pass_, serial)
+        if replaced:
+            return replaced
 
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
@@ -2249,7 +2315,7 @@ class OwnerLookupView(APIView):
                 'is_inside':         p.plate_number in inside,
                 # Picking this opens the slip (inside? record exit? reprint?)
                 # rather than running a plate check.
-                'slip_code':         f'SLC-VISITOR:{p.pk}',
+                'slip_code':         p.qr_payload,   # the newest printed copy's code
             })
 
         # No-plate vehicles still inside today, by the driver's name. They

@@ -174,7 +174,19 @@ function PrintPassModal({ supplier, plate, onClose }) {
     return () => { cancelled = true }
   }, [plate.id])
 
+  const asking = useRef(false)   // a double-click must not confirm once and print twice
+
   const printThermal = async () => {
+    if (asking.current) return
+    asking.current = true
+    try {
+      const go = await notify.confirm({
+        title: 'Print Supplier Pass?',
+        message: `Print the Supplier Pass for ${plate.plate_number} (${supplier.company_name}) on the thermal printer?`,
+        confirmLabel: 'Print',
+      })
+      if (!go) return
+    } finally { asking.current = false }
     setBusy('thermal')
     try {
       await printSlipOnServer(slip.code)

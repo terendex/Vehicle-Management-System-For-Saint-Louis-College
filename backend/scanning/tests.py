@@ -530,6 +530,75 @@ class VisitorPassAPITests(TestCase):
         again = self.client.post('/api/scan/slip/exit/', {'code': code}, format='json')
         self.assertEqual(again.status_code, 409)
 
+    def test_every_visitor_slip_print_is_unique(self):
+        """Each print — thermal, no-printer fallback, browser — gets its own
+        serial and QR; only the newest copy opens or exits."""
+        from accounts.models import AuditLog
+        pass_ = self._visitor_inside('VIS018')
+        codes = []
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw'):
+            first = self.client.post('/api/scan/slip/print/', {'code': pass_.qr_payload}, format='json')
+            codes.append(first.data['slip']['code'])
+            # A reprint started from the now-old code still prints a fresh copy.
+            again = self.client.post('/api/scan/slip/print/', {'code': codes[0], 'reprint': True}, format='json')
+            codes.append(again.data['slip']['code'])
+        with patch('scanning.slip_printer.find_printer', return_value=None):
+            fallback = self.client.post('/api/scan/slip/print/', {'code': codes[-1]}, format='json')
+        self.assertEqual(fallback.status_code, 503)
+        codes.append(fallback.data['slip']['code'])
+        browser = self.client.post('/api/scan/slip/print/', {'code': codes[-1], 'target': 'browser'}, format='json')
+        self.assertEqual(browser.status_code, 200)
+        codes.append(browser.data['slip']['code'])
+
+        self.assertEqual(len(set(codes)), 4)
+        self.assertTrue(all(c.startswith(f'SLC-VISITOR:{pass_.pk}-') for c in codes))
+        pass_.refresh_from_db()
+        self.assertEqual(pass_.qr_payload, codes[-1])
+        self.assertIn(['Slip No.', pass_.slip_token], browser.data['slip']['sections'][1])
+        self.assertTrue(AuditLog.objects.filter(details__contains=f'Slip No.: {codes[1].split("-")[-1]}').exists())
+
+        for old in [f'SLC-VISITOR:{pass_.pk}', *codes[:-1]]:
+            looked = self.client.get('/api/scan/slip/', {'code': old})
+            self.assertEqual(looked.status_code, 409, old)
+            self.assertEqual(looked.data['reason'], 'slip_replaced')
+            self.assertNotIn('slip', looked.data)
+            self.assertEqual(self.client.post('/api/scan/slip/exit/', {'code': old}, format='json').status_code, 409)
+            self.assertEqual(self.client.post('/api/scan/visitor-pass/exit-scan/', {'qr_data': old},
+                                              format='json').status_code, 409)
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': codes[-1]}).status_code, 200)
+        self.assertEqual(self.client.post('/api/scan/slip/exit/', {'code': codes[-1]}, format='json').status_code, 200)
+
+    def test_failed_thermal_print_keeps_the_current_slip(self):
+        from scanning.slip_printer import SlipPrinterError
+        pass_ = self._visitor_inside('VIS019')
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw', side_effect=SlipPrinterError('out of paper')):
+            resp = self.client.post('/api/scan/slip/print/', {'code': pass_.qr_payload}, format='json')
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': pass_.qr_payload}).status_code, 200)
+
+    def test_exited_visitor_slip_cannot_be_used(self):
+        """A visitor slip is good for one visit: once they exit, the QR no
+        longer opens, reprints or exits anything."""
+        from accounts.models import AuditLog
+        pass_ = self._visitor_inside('VIS017')
+        code = f'SLC-VISITOR:{pass_.pk}'
+        self.client.post('/api/scan/slip/exit/', {'code': code}, format='json')
+
+        looked = self.client.get('/api/scan/slip/', {'code': code})
+        self.assertEqual(looked.status_code, 409)
+        self.assertEqual(looked.data['reason'], 'slip_used')
+        self.assertIn('no longer valid', looked.data['error'])
+
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw') as send:
+            printed = self.client.post('/api/scan/slip/print/', {'code': code, 'reprint': True}, format='json')
+        self.assertEqual(printed.status_code, 409)
+        send.assert_not_called()
+        self.assertEqual(self.client.post('/api/scan/slip/reprinted/', {'code': code}, format='json').status_code, 409)
+        self.assertFalse(AuditLog.objects.filter(details__contains=f'Slip reprinted | Ref: VP-{pass_.pk}').exists())
+
     def test_noplate_entry_returns_slip_and_exits_by_it(self):
         resp = self.client.post('/api/scan/unrecognized/', {
             'driver_name': 'ANA LIM', 'entrant_category': 'visitor',

@@ -60,8 +60,11 @@ export const lookupSlip = (code) => api.get('/scan/slip/', { params: { code } })
 
 // Print on the campus server's thermal printer — no dialog.
 // 503 = this server has no printer (use the browser dialog); 502 = it did not print.
-export const printSlipOnServer = (code, reprint = false) =>
-  api.post('/scan/slip/print/', { code, reprint })
+// target 'browser' = skip the printer, just issue the slip to print in the dialog.
+// Every response carries `slip` as printed — a visitor slip gets a new serial
+// (and so a new QR) on every print, so print from that, not the old one.
+export const printSlipOnServer = (code, reprint = false, target) =>
+  api.post('/scan/slip/print/', { code, reprint, ...(target ? { target } : {}) })
 
 // A reprint done through the browser dialog, so it is audited like a server one.
 export const confirmSlipReprinted = (code) => api.post('/scan/slip/reprinted/', { code })

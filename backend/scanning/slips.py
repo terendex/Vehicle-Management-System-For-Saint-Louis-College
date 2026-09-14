@@ -15,6 +15,8 @@ all render from it, so the three can never disagree about what a slip says.
 Each section row is [label, value] or [label, value, True]; the True marks the
 row the guard reads at a glance (who, and until when), printed bold and larger.
 """
+import secrets
+
 from django.utils import timezone
 
 from .models import AccessLog, VisitorPass
@@ -31,17 +33,27 @@ ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
 
 
 def parse_code(code):
-    """('visitor' | 'supplier' | 'supplierpass' | 'noplate', pk) for a slip
-    code, else None."""
+    """('visitor' | 'supplier' | 'supplierpass' | 'noplate', pk, serial) for a
+    slip code, else None. Only a visitor slip carries a serial —
+    SLC-VISITOR:{id}-{serial}; it is '' everywhere else, and on a visitor slip
+    printed before serials existed."""
     code = (code or '').strip().upper()
     for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
                          (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate')):
         if code.startswith(prefix):
+            body, serial = code[len(prefix):], ''
+            if kind == 'visitor' and '-' in body:
+                body, serial = body.split('-', 1)
             try:
-                return kind, int(code[len(prefix):])
+                return kind, int(body), serial
             except ValueError:
                 return None
     return None
+
+
+def new_slip_token():
+    """A fresh visitor slip serial — 8 hex digits, drawn on every print."""
+    return secrets.token_hex(4).upper()
 
 
 def find(kind, pk):
@@ -93,10 +105,16 @@ def visitor_slip(pass_):
     end = pass_.exited_at or now
     state = {'active': 'inside', 'exited': 'exited'}.get(pass_.status, pass_.status)
     overstay = _minutes(pass_.expires_at, end) if pass_.expires_at and end > pass_.expires_at else 0
+    issued = [['Issued', _when(pass_.entered_at)],
+              ['Expires', _when(pass_.expires_at), KEY],
+              ['Guard', pass_.issued_by.full_name if pass_.issued_by else 'N/A']]
+    if pass_.slip_token:
+        issued.append(['Slip No.', pass_.slip_token])   # tells two paper copies apart
     return {
         'kind':             'visitor',
         'id':               pass_.pk,
-        'code':             f'{VISITOR_PREFIX}{pass_.pk}',
+        'code':             pass_.qr_payload,   # carries the serial of the newest print
+        'serial':           pass_.slip_token,
         'reference':        f'VP-{pass_.pk}',
         'title':            'VISITOR SLIP',
         'headline':         pass_.plate_number,
@@ -114,9 +132,7 @@ def visitor_slip(pass_):
              ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
              ['Purpose', pass_.purpose or 'N/A'],
              ['Duration', f'{pass_.allowed_duration} min']],
-            [['Issued', _when(pass_.entered_at)],
-             ['Expires', _when(pass_.expires_at), KEY],
-             ['Guard', pass_.issued_by.full_name if pass_.issued_by else 'N/A']],
+            issued,
         ],
     }
 

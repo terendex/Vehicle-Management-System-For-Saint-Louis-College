@@ -6,11 +6,11 @@ import {
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
   VideoOff, RefreshCw, Printer, Ticket,
 } from 'lucide-react'
-import notify, { toast } from '../../components/Feedback/notify'
+import notify, { toast, useFeedbackStore } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatDistanceToNow } from 'date-fns'
 import QrScanModal from '../../components/QrScanModal'
-import { printSlip, printSlipInBrowser } from '../../utils/slipPrint'
+import { printSlip, printSlipWithFeedback } from '../../utils/slipPrint'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import { useFullscreen } from '../../hooks/useFullscreen'
 import {
@@ -132,6 +132,11 @@ function passTimeInfo(p) {
 }
 
 
+// A confirmation / success / error dialog is up. Its keyboard listener is
+// registered when it opens — after the gate dialog underneath registered its
+// own — so the gate dialog must stand aside or one Escape closes both.
+const feedbackOpen = () => useFeedbackStore.getState().queue.length > 0
+
 // Supplier slips print themselves when the result dialog first shows. Codes
 // already printed from this tab, so a re-rendered dialog never prints twice.
 const autoPrintedSlips = new Set()
@@ -148,45 +153,89 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   // print rather than letting a second submit create a duplicate.
   const [unprinted, setUnprinted] = useState(null)  // { pass, reason }
   const [printing, setPrinting]   = useState(false)
+  // Set while the confirmation is up: notify hands a repeated identical
+  // confirm the same promise, so a second submit would create a second pass.
+  const submitting = useRef(false)
 
   const durationNum = Math.max(1, Math.min(480, parseInt(duration, 10) || 15))
 
   // Auto-log the visitor's entry as soon as the slip is printed — no separate
   // manual confirmation step.
-  const finish = async (pass) => {
+  const finish = async (pass, how = 'printer') => {
+    const printed = how === 'printer' ? 'slip printed' : 'slip sent to the print dialog'
     try {
       await confirmVisitorSlipPrinted(pass.id)
-      toast.success(`Visitor pass issued & entry logged for ${plate} — valid ${durationNum} min.`)
+      toast.success(`Visitor pass issued for ${plate} — ${printed} and entry logged, valid ${durationNum} min.`,
+        { title: 'Visitor slip printed' })
     } catch {
-      toast.success(`Visitor pass issued for ${plate}.`)
+      toast.success(`Visitor pass issued for ${plate} — ${printed}.`, { title: 'Visitor slip printed' })
     }
     onCreated()
     onClose()
   }
 
-  // No print dialog on campus — see printSlip.
+  // No print dialog on campus — see printSlip. Asked for up front (creating
+  // the pass is what prints it), so no second confirmation here; the success
+  // dialog comes from finish().
   const printPass = async (pass) => {
-    try {
-      await printSlip(pass.slip)
-    } catch (err) {
-      setUnprinted({ pass, reason: err.message })
+    const { how, reason } = await printSlipWithFeedback(pass.slip, { confirm: false, success: false })
+    if (how === 'failed') {
+      setUnprinted({ pass, reason })
       return
     }
+    if (how === 'busy') return
     setUnprinted(null)
-    await finish(pass)
+    await finish(pass, how)
+  }
+
+  // The printer is down: print this computer's dialog instead. Still issued by
+  // the server first, so the copy gets its own serial like every other print.
+  const printWithDialog = async () => {
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      const { how } = await printSlip(unprinted.pass.slip, { browser: true })
+      if (how === 'blocked') {
+        await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
+          { title: 'Slip not printed' })
+        return
+      }
+      await finish(unprinted.pass, 'dialog')
+    } catch (err) {
+      await notify.error(err.message, { title: 'Slip not printed' })
+    } finally { submitting.current = false }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (unprinted) {
-      setLoading(true)
-      try { await printPass(unprinted.pass) } finally { setLoading(false) }
-      return
-    }
-    const problems = [...fieldProblems(e.currentTarget)]
-    if (!visitorName.trim()) problems.push("Enter the visitor's name.")
-    if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
-    if (await notify.validation(problems, { title: 'Pass not issued' })) return
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      if (unprinted) {
+        if (!(await notify.confirm({
+          title: 'Retry printing?',
+          message: `Print the visitor slip for ${plate} on the thermal printer again?`,
+          confirmLabel: 'Retry Print',
+        }))) return
+        setLoading(true)
+        try { await printPass(unprinted.pass) } finally { setLoading(false) }
+        return
+      }
+      const problems = [...fieldProblems(e.currentTarget)]
+      if (!visitorName.trim()) problems.push("Enter the visitor's name.")
+      if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
+      if (await notify.validation(problems, { title: 'Pass not issued' })) return
+      if (!(await notify.confirm({
+        title: 'Create visitor pass?',
+        message: `Issue a ${durationNum}-minute visitor pass to ${visitorName.trim()} (${plate}) and print the slip on the thermal printer?`,
+        description: "The visitor's entry is logged once the slip prints.",
+        confirmLabel: 'Create & Print',
+      }))) return
+      await createAndPrint()
+    } finally { submitting.current = false }
+  }
+
+  const createAndPrint = async () => {
     setLoading(true)
     try {
       const res = await createVisitorPass({
@@ -221,7 +270,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
             </div>
             <div className="em-modal-foot">
               <button type="button" className="em-btn em-btn-secondary"
-                onClick={() => { printSlipInBrowser(unprinted.pass.slip); finish(unprinted.pass) }}>
+                onClick={printWithDialog}>
                 Use Print Dialog
               </button>
               <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
@@ -478,18 +527,33 @@ function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
     vehicle_color: '', vehicle_model: '', entry_note: '',
   })
   const [loading, setLoading] = useState(false)
+  const submitting = useRef(false)   // see VisitorPassModal
   const set = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }))
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (await notify.validation(fieldProblems(e.currentTarget))) return
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      if (await notify.validation(fieldProblems(e.currentTarget))) return
+      if (!(await notify.confirm({
+        title: 'Record entry?',
+        message: `Record the ${form.vehicle_color} ${form.vehicle_type} driven by ${form.driver_name} and print its entry slip on the thermal printer?`,
+        confirmLabel: 'Record & Print',
+      }))) return
+      await recordAndPrint()
+    } finally { submitting.current = false }
+  }
+
+  const recordAndPrint = async () => {
     setLoading(true)
     try {
       const { data } = await recordUnrecognizedEntry({ ...form, gate_id: gateId })
       // The entry is recorded either way; the slip is what the driver hands
-      // back (or the guard scans) on the way out.
-      let printProblem = ''
-      try { await printSlip(data.slip) } catch (err) { printProblem = err.message }
+      // back (or the guard scans) on the way out. Confirmed above, and the
+      // outcome is reported below in one dialog with the reference.
+      const { how, reason } = await printSlipWithFeedback(data.slip, { confirm: false, success: false, error: false })
+      const printProblem = how === 'failed' ? reason : ''
       onRecorded(data)
       onClose()
       if (printProblem) {
@@ -613,7 +677,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
   // Same Escape handling as ResultModal: capture phase, one press closes only this.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || feedbackOpen()) return
       e.preventDefault()
       e.stopImmediatePropagation()
       onClose?.()
@@ -658,14 +722,15 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
   }
 
   const reprint = async () => {
-    setBusy('reprint')
     try {
-      const how = await printSlip(slip, { reprint: true })
-      if (how === 'printer') toast.success(`${slip.reference} — slip reprinted.`)
-    } catch (err) {
-      toast.error(err.message, { title: 'Slip not reprinted' })
+      // A visitor reprint comes back with a new serial — show that copy, and
+      // reprint from it next time.
+      const { how, slip: printed } = await printSlipWithFeedback(slip, { reprint: true, onStart: () => setBusy('reprint') })
+      if (how === 'printer' || how === 'dialog') { setSlip(printed); onChanged?.() }
     } finally { setBusy('') }
   }
+  // A visitor slip is spent once the visitor exits — no reprint to hand back.
+  const canReprint = inside || slip.kind !== 'visitor'
 
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose?.()}>
@@ -704,10 +769,12 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
                 {busy === 'exit' ? <><div className="em-spinner" /> Recording…</> : <><LogOut size={14} /> Record Exit</>}
               </button>
             )}
-            <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
-              disabled={!!busy} onClick={reprint}>
-              {busy === 'reprint' ? <><div className="em-spinner" /> Printing…</> : <><Printer size={14} /> Reprint Slip</>}
-            </button>
+            {canReprint && (
+              <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
+                disabled={!!busy} onClick={reprint}>
+                {busy === 'reprint' ? <><div className="em-spinner" /> Printing…</> : <><Printer size={14} /> Reprint Slip</>}
+              </button>
+            )}
             <button className="em-btn em-btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 2 }}
               onClick={() => onClose?.()} autoFocus>
               <CheckCircle size={14} /> {inside ? 'Still Inside — Close' : 'Close'}
@@ -737,7 +804,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
   useEffect(() => {
     if (nestedOpen) return
     const onKey = (e) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || feedbackOpen()) return
       e.preventDefault()
       e.stopImmediatePropagation()
       onDismiss?.()
@@ -757,21 +824,22 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
       : autoPrint ? { state: 'printing' }
       : { state: 'pass' }
   ))
-  const sendSupplierSlip = (opts) => printSlip(supplierSlip, opts).then(
-    how => setSlipPrint(how === 'blocked'
-      ? { state: 'failed', reason: 'The print window was blocked.' }
-      : { state: 'printed' }),
-    err => setSlipPrint({ state: 'failed', reason: err.message }),
-  )
-  const printSupplierSlip = (opts) => {
-    setSlipPrint({ state: 'printing' })
-    sendSupplierSlip(opts)
-  }
+  // The automatic print asks nothing and only speaks up when it fails — the
+  // result dialog already says "Printed". A print the guard presses for is
+  // confirmed and reported like every other.
+  const showOutcome = (before) => ({ how, reason }) => setSlipPrint(
+    how === 'failed' ? { state: 'failed', reason }
+      : how === 'cancelled' || how === 'busy' ? before
+      : { state: 'printed' })
+  const sendSupplierSlip = ({ reprint }) => printSlipWithFeedback(supplierSlip, {
+    reprint, onStart: () => setSlipPrint({ state: 'printing' }),
+  }).then(showOutcome(slipPrint))
   // Starts in 'printing' (see the initial state), so nothing to set here.
   useEffect(() => {
     if (!autoPrint || autoPrintedSlips.has(supplierSlip.code)) return
     autoPrintedSlips.add(supplierSlip.code)
-    sendSupplierSlip()
+    printSlipWithFeedback(supplierSlip, { confirm: false, success: false })
+      .then(showOutcome({ state: 'printing' }))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { Icon, label, cls } = getMeta(result.status)
@@ -912,7 +980,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
               {supplierSlip && (
                 <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
                   disabled={slipPrint?.state === 'printing'}
-                  onClick={() => printSupplierSlip({ reprint: slipPrint?.state === 'printed' })}>
+                  onClick={() => sendSupplierSlip({ reprint: slipPrint?.state === 'printed' })}>
                   {slipPrint?.state === 'printing'
                     ? <><div className="em-spinner" /> Printing…</>
                     : <><Printer size={14} /> {slipPrint?.state === 'printed' ? 'Reprint Supplier Slip' : 'Print Supplier Slip'}</>}
@@ -1182,7 +1250,10 @@ export default function SecurityEntryManagement() {
       addToQueue({ slip: data, plate_number: data.headline, status: 'slip' })
       return true
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not find that slip.')
+      // A visitor slip is good for one visit, and only its newest printed copy
+      // works (qr_payload carries that copy's serial).
+      const title = { slip_used: 'Slip already used', slip_replaced: 'Old slip copy' }[err?.response?.data?.reason]
+      toast.error(err?.response?.data?.error || 'Could not find that slip.', title ? { title } : {})
       return false
     }
   }
@@ -1772,7 +1843,7 @@ export default function SecurityEntryManagement() {
                         <button
                           type="button"
                           className="em-visitor-extend"
-                          onClick={() => openSlip(`SLC-VISITOR:${p.id}`)}
+                          onClick={() => openSlip(p.qr_payload)}
                           title="Open the visitor slip — reprint it, or record the exit"
                           aria-label={`Open the slip for ${p.plate_number}`}
                         >

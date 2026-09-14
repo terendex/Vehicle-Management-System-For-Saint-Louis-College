@@ -14,6 +14,7 @@ class VisitorPassSerializer(serializers.ModelSerializer):
     class Meta:
         model  = VisitorPass
         fields = '__all__'
+        read_only_fields = ['slip_token']   # drawn by the server on each print
 
 class AccessLogSerializer(serializers.ModelSerializer):
     scanned_by_name    = serializers.CharField(source='scanned_by.full_name',     read_only=True, default=None)

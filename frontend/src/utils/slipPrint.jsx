@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import slcLogo from '../assets/slclogo.jpg'
 import cdsoLogo from '../assets/cdsologo.jpg'
 import { printSlipOnServer, confirmSlipReprinted } from '../api/scanning'
+import notify from '../components/Feedback/notify'
 
 // Mirrors ENTRY_FOOTER in slips.py — the lines under the QR when a slip sets none.
 const ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
@@ -89,13 +90,18 @@ ${footer}
 }
 
 // Print a slip: straight to the campus server's thermal printer (no dialog),
-// or — only when this server has no printer (503, the cloud site) — through
-// the browser dialog. Throws with a readable reason when a printer exists but
-// nothing came out.
-export async function printSlip(slip, { reprint = false } = {}) {
+// or through the browser dialog — when this server has no printer (503, the
+// cloud site), or when `browser` asks for it. Either way the server issues the
+// slip first: a visitor slip draws a new serial on every print, so what goes
+// on paper is the slip the server hands back, never the one passed in.
+// Resolves { how: 'printer' | 'dialog' | 'blocked', slip }. Throws with a
+// readable reason when a printer exists but nothing came out.
+export async function printSlip(slip, { reprint = false, browser = false } = {}) {
+  let printed
   try {
-    await printSlipOnServer(slip.code, reprint)
-    return 'printer'
+    const { data } = await printSlipOnServer(slip.code, reprint, browser ? 'browser' : undefined)
+    printed = data.slip || slip
+    if (!browser) return { how: 'printer', slip: printed }
   } catch (err) {
     if (err?.response?.status !== 503) {
       throw new Error(
@@ -103,10 +109,82 @@ export async function printSlip(slip, { reprint = false } = {}) {
         { cause: err },
       )
     }
+    printed = err.response.data?.slip || slip
   }
   // A print window opened without a click (a camera-admitted supplier) can be
   // popup-blocked; the caller then offers a button, which is a click.
-  if (!printSlipInBrowser(slip, { reprint })) return 'blocked'
-  if (reprint) confirmSlipReprinted(slip.code).catch(() => {})
-  return 'dialog'
+  if (!printSlipInBrowser(printed, { reprint })) return { how: 'blocked', slip: printed }
+  if (reprint) confirmSlipReprinted(printed.code).catch(() => {})
+  return { how: 'dialog', slip: printed }
+}
+
+// "Visitor Slip for ABC123 (VP-12)" — a no-plate slip's headline is its reference.
+export function slipName(slip) {
+  const title = slip.title.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+  return slip.headline === slip.reference
+    ? `${title} ${slip.reference}`
+    : `${title} for ${slip.headline} (${slip.reference})`
+}
+
+// Slip codes with a print under way from this tab. notify collapses identical
+// pending dialogs into one promise, so without this a double-click on Print
+// would be confirmed once and print twice.
+const printing = new Set()
+
+// A print a person asked for: confirm → print → a success or error dialog to
+// acknowledge (Feedback/notify). Each step can be switched off where the
+// caller already asks or reports in its own words. `onStart` runs once the
+// print is confirmed, for the caller's "Printing…" state.
+// Resolves { how: 'printer' | 'dialog' | 'cancelled' | 'busy' | 'failed', reason,
+// slip } — `slip` is the copy that printed (a visitor slip's new serial), or
+// the one passed in when nothing did.
+export async function printSlipWithFeedback(slip, {
+  reprint = false, confirm = true, success = true, error = true, onStart,
+} = {}) {
+  // By pass/entry, not code — a visitor slip's code changes with every print.
+  const key = `${slip.kind}:${slip.id}`
+  if (printing.has(key)) return { how: 'busy', slip }
+  printing.add(key)
+  try {
+    const name = slipName(slip)
+    const notes = [
+      reprint && 'The copy is marked REPRINT and the reprint is recorded in the audit log.',
+      reprint && slip.kind === 'visitor' && 'The slip the visitor holds now stops working — only the new copy can be used.',
+    ].filter(Boolean).join(' ')
+    if (confirm && !(await notify.confirm({
+      title:        reprint ? 'Reprint slip?' : 'Print slip?',
+      message:      `${reprint ? 'Reprint' : 'Print'} the ${name} on the thermal printer?`,
+      description:  notes,
+      confirmLabel: reprint ? 'Reprint' : 'Print',
+    }))) return { how: 'cancelled', slip }
+    onStart?.()
+
+    let how, printed = slip, reason = ''
+    try {
+      ({ how, slip: printed } = await printSlip(slip, { reprint }))
+      if (how === 'blocked') reason = 'The print window was blocked by the browser. Allow pop-ups for this site, then try again.'
+    } catch (err) {
+      reason = err.message
+    }
+    if (reason) {
+      if (error) {
+        await notify.error(reason, {
+          title: reprint ? 'Slip not reprinted' : 'Slip not printed',
+          description: how === 'blocked' ? '' : 'Check that the thermal printer is switched on, has paper, and its lid is closed, then try again.',
+        })
+      }
+      return { how: 'failed', reason, slip: printed }
+    }
+    // The browser's own print dialog is its confirmation; only a thermal print
+    // needs telling that it went through.
+    if (success && how === 'printer') {
+      await notify.success(
+        `${slipName(printed)} ${reprint ? 'reprinted' : 'printed'} on the thermal printer.` +
+        (printed.serial ? ` Slip No. ${printed.serial}.` : ''),
+        { title: reprint ? 'Slip reprinted' : 'Slip printed' })
+    }
+    return { how, slip: printed }
+  } finally {
+    printing.delete(key)
+  }
 }

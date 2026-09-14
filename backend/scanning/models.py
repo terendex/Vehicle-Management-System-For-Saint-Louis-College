@@ -74,6 +74,12 @@ class VisitorPass(models.Model):
     printed_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     exited_at  = models.DateTimeField(null=True, blank=True)
+    # Serial of the most recently printed slip, part of its QR. Every print —
+    # first print or reprint, thermal or browser — draws a new one, so no two
+    # paper slips share a code and only the newest copy opens or exits. Blank
+    # until the first print (and on passes printed before serials existed,
+    # whose plain SLC-VISITOR:{id} code keeps working).
+    slip_token = models.CharField(max_length=16, blank=True, default='')
 
     class Meta:
         db_table = 'tbl_visitor_pass'
@@ -85,8 +91,9 @@ class VisitorPass(models.Model):
 
     @property
     def qr_payload(self):
-        """Encoded in the QR printed on the slip; scanned at the gate to record exit."""
-        return f'SLC-VISITOR:{self.pk}'
+        """Encoded in the QR printed on the slip; scanned at the gate to record exit.
+        Carries the current slip serial, so it names the newest printed copy."""
+        return f'SLC-VISITOR:{self.pk}-{self.slip_token}' if self.slip_token else f'SLC-VISITOR:{self.pk}'
 
     def __str__(self):
         office_name = self.office.name if self.office else 'No office'
