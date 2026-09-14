@@ -19,18 +19,23 @@ from django.utils import timezone
 
 from .models import AccessLog, VisitorPass
 
-VISITOR_PREFIX  = 'SLC-VISITOR:'
-SUPPLIER_PREFIX = 'SLC-SUPPLIER:'
-NOPLATE_PREFIX  = 'SLC-NOPLATE:'
+VISITOR_PREFIX       = 'SLC-VISITOR:'
+SUPPLIER_PREFIX      = 'SLC-SUPPLIER:'
+SUPPLIER_PASS_PREFIX = 'SLC-SUPPLIER-PASS:'
+NOPLATE_PREFIX       = 'SLC-NOPLATE:'
 
 KEY = True   # marks an important row, see the module docstring
 
+# The two lines under the QR. A slip can override them with 'footer'.
+ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
+
 
 def parse_code(code):
-    """('visitor' | 'supplier' | 'noplate', pk) for a slip QR payload, else None."""
+    """('visitor' | 'supplier' | 'supplierpass' | 'noplate', pk) for a slip
+    code, else None."""
     code = (code or '').strip().upper()
     for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
-                         (NOPLATE_PREFIX, 'noplate')):
+                         (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate')):
         if code.startswith(prefix):
             try:
                 return kind, int(code[len(prefix):])
@@ -53,6 +58,9 @@ def find(kind, pk):
                  .exclude(plate_number='').first())
         if entry and SupplierPlate.objects.filter(plate_number=entry.plate_number).exists():
             return entry
+    if kind == 'supplierpass':
+        from vehicles.models import SupplierPlate
+        return SupplierPlate.objects.select_related('supplier').filter(pk=pk).first()
     return None
 
 
@@ -175,7 +183,46 @@ def noplate_slip(entry):
     }
 
 
+def supplier_pass_slip(plate):
+    """A standing pass for one supplier plate, printed from Supplier
+    Management and kept in the vehicle. Unlike every other slip it belongs to
+    no single visit: its QR carries the plate in the same VEHICLE: format a
+    registered vehicle's QR pass uses, so scanning it at the gate runs the
+    ordinary plate check — the first scan logs the entry, the next the exit —
+    with the supplier roster and rules applied as for a camera read."""
+    supplier = plate.supplier
+    return {
+        'kind':             'supplierpass',
+        'id':               plate.pk,
+        'code':             f'{SUPPLIER_PASS_PREFIX}{plate.pk}',
+        'qr':               f'VEHICLE:{plate.plate_number}|SUPPLIER:{supplier.pk}',
+        'reference':        f'SPP-{plate.pk}',
+        'title':            'SUPPLIER PASS',
+        'headline':         plate.plate_number,
+        'plate_number':     plate.plate_number,
+        'name':             supplier.company_name,
+        'state':            'active' if supplier.is_active else 'inactive',
+        'entered_at':       None,
+        'expires_at':       None,
+        'exited_at':        None,
+        'printed_at':       None,
+        'minutes_inside':   0,
+        'overstay_minutes': 0,
+        'sections': [
+            [['Company', supplier.company_name, KEY],
+             ['Category', supplier.get_category_display()]],
+            [['Registered', _when(plate.created_at)],
+             ['Printed', _when(timezone.now())]],
+        ],
+        # Each line fits the 48mm roll without wrapping.
+        'footer': ['SCAN QR AT THE GATE', 'ON ENTRY AND ON EXIT', 'KEEP THIS PASS IN VEHICLE'],
+    }
+
+
 def slip_data(obj):
+    from vehicles.models import SupplierPlate
     if isinstance(obj, VisitorPass):
         return visitor_slip(obj)
+    if isinstance(obj, SupplierPlate):
+        return supplier_pass_slip(obj)
     return noplate_slip(obj) if obj.is_unrecognized else supplier_slip(obj)

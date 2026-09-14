@@ -9,18 +9,15 @@ import {
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatDistanceToNow } from 'date-fns'
-import { QRCodeSVG } from 'qrcode.react'
-import { renderToStaticMarkup } from 'react-dom/server'
 import QrScanModal from '../../components/QrScanModal'
-import slcLogo from '../../assets/slclogo.jpg'
-import cdsoLogo from '../../assets/cdsologo.jpg'
+import { printSlip, printSlipInBrowser } from '../../utils/slipPrint'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import { useFullscreen } from '../../hooks/useFullscreen'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
   getVisitorPasses, extendVisitorPass,
-  confirmVisitorSlipPrinted, lookupSlip, printSlipOnServer, confirmSlipReprinted, exitSlip,
+  confirmVisitorSlipPrinted, lookupSlip, exitSlip,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
@@ -134,104 +131,6 @@ function passTimeInfo(p) {
   return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
 }
 
-const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
-  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-
-// Browser print of a gate slip — the fallback for a server with no thermal
-// printer (the cloud site). `slip` is the server's slip description
-// (backend scanning/slips.py), the same one the thermal printer renders, so
-// the two prints cannot disagree.
-function printSlipInBrowser(slip, { reprint = false } = {}) {
-  const w = window.open('', '_blank', 'width=320,height=520')
-  if (!w) return false
-  // Scanned at the gate to pull the slip back up (SLC-VISITOR / SLC-SUPPLIER / SLC-NOPLATE:{id})
-  const qrSvg = renderToStaticMarkup(<QRCodeSVG value={slip.code} size={130} level="M" />)
-  // A third element marks the row a guard reads at a glance — bold and larger.
-  const sections = slip.sections.map(rows => rows.map(([label, value, key]) =>
-    `<div class="row${key ? ' key' : ''}"><span class="label">${escapeHtml(label)}:</span><span>${escapeHtml(value)}</span></div>`,
-  ).join('\n')).join('\n<hr/>\n')
-  w.document.write(`<!DOCTYPE html><html><head>
-<meta charset="utf-8"/><title>${escapeHtml(slip.title)}</title>
-<style>
-  /* JP-58H thermal printer. Its POS58 driver's paper is 48mm wide (the
-     printable width of the 58mm roll), and its shortest built-in length is
-     210mm — ~90mm of blank tail under this slip. The page is instead a custom
-     "Visitor Slip 48x130mm" form added to the guard PC (the driver accepts
-     custom sizes); the slip runs ~121mm, leaving room for a wrapped line or
-     two. A size the driver does not list gets shrunk and centred on its page,
-     so this must match that form exactly. */
-  @page { size: 48mm 130mm; margin: 0; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #fff; }
-  /* Thermal heads cannot print grey — every tint dithers into specks — so
-     the slip is pure black on white. */
-  body { font-family: 'Courier New', monospace; font-size: 10px; line-height: 1.25; color: #000;
-         width: 48mm; margin: 0; padding: 1mm 1.5mm 2mm; word-wrap: break-word; overflow-wrap: anywhere; }
-  h2 { text-align: center; font-size: 12px; margin: 3px 0 1px; }
-  .sub { text-align: center; font-size: 8.5px; margin-bottom: 3px; }
-  .sub.title { font-size: 13px; font-weight: bold; margin: 4px 0 2px; }
-  .sub.reprint { font-size: 10px; font-weight: bold; margin: 0 0 2px; }
-  hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
-  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; margin: 2px 0; }
-  .label { flex: none; }
-  .row span:last-child { text-align: right; min-width: 0; }
-  .row.key .label { font-weight: bold; }
-  .row.key span:last-child { font-size: 12px; font-weight: bold; }
-  .plate { font-size: 18px; font-weight: bold; text-align: center; letter-spacing: 2px; margin: 5px 0; border: 2px solid #000; padding: 3px 2px; }
-  .qr { text-align: center; margin: 6px 0 4px; }
-  .qr svg { width: 32mm; height: 32mm; }
-  .footer { text-align: center; font-size: 8px; margin-top: 6px; }
-  .warn { text-align: center; font-size: 10px; font-weight: bold; margin: 4px 0; }
-  /* Both seals head the slip, as they head every screen. Kept small for the
-     thermal roll, where anything larger prints as a black smudge. */
-  .seals { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 0 0 3px; }
-  .seals img { width: 9mm; height: 9mm; object-fit: contain; }
-</style></head><body>
-<div class="seals">
-  <img src="${slcLogo}" alt="Saint Louis College"/>
-  <img src="${cdsoLogo}" alt="CDSO"/>
-</div>
-<h2>SAINT LOUIS COLLEGE</h2>
-<div class="sub">Campus Development and Sustainability Office</div>
-<div class="sub">Smart Parking and Vehicle Verification System</div>
-<div class="sub title">${escapeHtml(slip.title)}</div>
-${reprint ? '<div class="sub reprint">** REPRINT **</div>' : ''}
-<div class="plate">${escapeHtml(slip.headline)}</div>
-<hr/>
-${sections}
-<hr/>
-<div class="qr">${qrSvg}</div>
-<div class="warn">SCAN QR AT THE GATE TO EXIT</div>
-<div class="warn">RETURN THIS SLIP UPON EXIT</div>
-<div class="footer">Unauthorized possession is subject to penalty.</div>
-</body></html>`)
-  w.document.close(); w.focus()
-  setTimeout(() => { w.print(); w.close() }, 400)
-  return true
-}
-
-// Print a slip: straight to the campus server's thermal printer (no dialog),
-// or — only when this server has no printer (503, the cloud site) — through
-// the browser dialog. Throws with a guard-readable reason when a printer
-// exists but nothing came out.
-async function printSlip(slip, { reprint = false } = {}) {
-  try {
-    await printSlipOnServer(slip.code, reprint)
-    return 'printer'
-  } catch (err) {
-    if (err?.response?.status !== 503) {
-      throw new Error(
-        err?.response?.data?.error || 'The slip did not print — the printer could not be reached.',
-        { cause: err },
-      )
-    }
-  }
-  // A print window opened without a click (a camera-admitted supplier) can be
-  // popup-blocked; the caller then offers a button, which is a click.
-  if (!printSlipInBrowser(slip, { reprint })) return 'blocked'
-  if (reprint) confirmSlipReprinted(slip.code).catch(() => {})
-  return 'dialog'
-}
 
 // Supplier slips print themselves when the result dialog first shows. Codes
 // already printed from this tab, so a re-rendered dialog never prints twice.
@@ -849,11 +748,14 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
 
   // An admitted supplier leaves with a slip, like a visitor on a pass. It
   // prints as soon as the result shows; the guard only acts if it did not.
+  // Not when they came in on their Supplier Pass — they already carry one.
   const supplierSlip = result.supplier_slip
+  const autoPrint = !!supplierSlip && !result._fromSupplierPass
   const [slipPrint, setSlipPrint] = useState(() => (
     !supplierSlip ? null
       : autoPrintedSlips.has(supplierSlip.code) ? { state: 'printed' }
-      : { state: 'printing' }
+      : autoPrint ? { state: 'printing' }
+      : { state: 'pass' }
   ))
   const sendSupplierSlip = (opts) => printSlip(supplierSlip, opts).then(
     how => setSlipPrint(how === 'blocked'
@@ -867,7 +769,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
   }
   // Starts in 'printing' (see the initial state), so nothing to set here.
   useEffect(() => {
-    if (!supplierSlip || autoPrintedSlips.has(supplierSlip.code)) return
+    if (!autoPrint || autoPrintedSlips.has(supplierSlip.code)) return
     autoPrintedSlips.add(supplierSlip.code)
     sendSupplierSlip()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -993,6 +895,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                 <div className="em-result-row">
                   <span className="em-result-row-label">Supplier Slip</span>
                   <span className="em-result-row-value">
+                    {slipPrint?.state === 'pass' && 'Not needed — entered on Supplier Pass'}
                     {slipPrint?.state === 'printing' && 'Printing…'}
                     {slipPrint?.state === 'printed' && `Printed · ${supplierSlip.reference}`}
                     {slipPrint?.state === 'failed' && (
@@ -1288,7 +1191,7 @@ export default function SecurityEntryManagement() {
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
   // inside logs the exit. Returns the response data so callers can react.
-  const runPlateCheck = async (plate) => {
+  const runPlateCheck = async (plate, { fromSupplierPass = false } = {}) => {
     // Conduction numbers get through too. ManualEntryView has accepted them
     // since it was written — it resolves the identifier before it validates the
     // format — but this check ran first and answered "invalid plate" without
@@ -1308,7 +1211,9 @@ export default function SecurityEntryManagement() {
       // the plate, the server's message and the owner, so a second bare
       // "Entry approved" alert on top of it would only be one more thing to
       // click past. Failures that never reach a dialog still alert below.
-      addToQueue(res.data)
+      // A supplier who scanned their standing pass already holds paper, so
+      // the entry slip waits for the guard's button instead of printing.
+      addToQueue(fromSupplierPass ? { ...res.data, _fromSupplierPass: true } : res.data)
       // The check action doubles as the exit action once a vehicle is inside
       if (res.data.status === 'exited') refreshAll()
       // Previously-scanned re-checks are informational — card only, kept out of
@@ -1386,17 +1291,19 @@ export default function SecurityEntryManagement() {
     }
   }
 
-  // Registered vehicle QR pass payload is "VEHICLE:{plate}|ID:{regId}".
+  // Registered vehicle QR pass payload is "VEHICLE:{plate}|ID:{regId}"; a
+  // supplier pass printed from Supplier Management is "VEHICLE:{plate}|SUPPLIER:{id}".
   // Returns the plate, or '' if the string isn't that format.
   const plateFromVehicleQr = (raw) => {
     const s = (raw || '').trim().toUpperCase()
     if (!s.startsWith('VEHICLE:')) return ''
     return s.slice('VEHICLE:'.length).split('|')[0].trim()
   }
+  const isSupplierPassQr = (raw) => /\|SUPPLIER:/i.test(raw || '')
 
   // Camera scanner read a QR. Route by payload type:
-  //  • SLC-VISITOR:{id} / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
-  //  • VEHICLE:{plate}|ID:{n}              → registered vehicle entry / exit (rules applied)
+  //  • SLC-VISITOR / SLC-SUPPLIER / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
+  //  • VEHICLE:{plate}|ID:{n}, VEHICLE:{plate}|SUPPLIER:{n} → plate entry / exit (rules applied)
   const handleQrDetected = async (data) => {
     const upper = (data || '').trim().toUpperCase()
 
@@ -1411,7 +1318,7 @@ export default function SecurityEntryManagement() {
     const plate = plateFromVehicleQr(upper)
     if (plate) {
       setExitScanBusy(true)
-      const res = await runPlateCheck(plate)
+      const res = await runPlateCheck(plate, { fromSupplierPass: isSupplierPassQr(upper) })
       setExitScanBusy(false)
       if (res) setShowExitScanner(false)
       return
@@ -1451,7 +1358,7 @@ export default function SecurityEntryManagement() {
       return
     }
 
-    const res = await runPlateCheck(qrPlate || raw)
+    const res = await runPlateCheck(qrPlate || raw, { fromSupplierPass: !!qrPlate && isSupplierPassQr(raw) })
     if (res?.status === 'exited') setPlateInput('')
   }
 

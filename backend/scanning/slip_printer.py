@@ -207,7 +207,7 @@ def render_slip(slip, reprint=False):
 
     # QR, 32mm square, drawn module by module so every module is whole dots.
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
-    qr.add_data(slip['code'])
+    qr.add_data(slip.get('qr') or slip['code'])
     qr.make(fit=True)
     matrix = qr.get_matrix()
     module = max(1, round(32 * 203 / 25.4) // len(matrix))
@@ -220,9 +220,11 @@ def render_slip(slip, reprint=False):
                                 qx + (c + 1) * module - 1, y + (r + 1) * module - 1], fill=0)
     y += side + 10
 
+    from .slips import ENTRY_FOOTER
     warn = _font(10, bold=True)
-    centered('SCAN QR AT THE GATE TO EXIT', warn, 3)   # one line at this size
-    centered('RETURN THIS SLIP UPON EXIT', warn, 8)
+    footer = slip.get('footer') or ENTRY_FOOTER
+    for i, line in enumerate(footer):
+        centered(line, warn, 8 if i == len(footer) - 1 else 3)
     centered('Unauthorized possession is subject to penalty.', _font(8), 0)
 
     canvas = canvas.crop((0, 0, DOTS_WIDE, y + 4))

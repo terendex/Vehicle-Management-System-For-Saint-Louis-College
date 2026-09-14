@@ -352,6 +352,77 @@
   color: #C62828;
 }
 
+/* The print action reads as a labelled pill inside the tag, not a second ×. */
+.sp-plate-tag .sp-plate-print {
+  gap: 3px;
+  padding: 1px 7px;
+  margin-left: 2px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #BDD4E5;
+  color: #03396C;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.sp-plate-tag .sp-plate-print:hover:not(:disabled) {
+  color: #fff;
+  background: #03396C;
+  border-color: #03396C;
+}
+
+/* Three actions on one row; they still wrap on a phone (see Responsive). */
+.sp-modal.sp-modal--print { max-width: 580px; }
+.sp-modal--print .sp-modal-actions { flex-wrap: wrap; }
+.sp-modal--print .sp-modal-actions .sp-btn { white-space: nowrap; }
+
+/* ── Supplier Pass preview — a paper-roll look, black on white like the print ── */
+.sp-pass-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: #7A5C00;
+  background: #FEF9E4;
+  border: 1px solid #F7E08A;
+  border-radius: 7px;
+}
+
+.sp-pass-preview {
+  align-self: center;
+  width: 100%;
+  max-width: 240px;
+  padding: 12px 12px 10px;
+  background: #fff;
+  border: 1px dashed #BDD4E5;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.72rem;
+  color: #000;
+}
+
+.sp-pass-title { text-align: center; font-weight: 700; font-size: 0.9rem; }
+
+.sp-pass-plate {
+  margin: 6px 0 8px;
+  padding: 3px;
+  border: 2px solid #000;
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 2px;
+}
+
+.sp-pass-row { display: flex; justify-content: space-between; gap: 6px; margin: 2px 0; }
+.sp-pass-row span:last-child { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.sp-pass-row--key { font-weight: 700; }
+.sp-pass-row--key span:last-child { font-size: 0.85rem; }
+.sp-pass-qr { display: flex; justify-content: center; margin: 8px 0 4px; }
+.sp-pass-foot { text-align: center; font-weight: 700; font-size: 0.7rem; }
+
 /* ── Buttons ─────────────────────────────────────────────────── */
 
 .sp-btn {

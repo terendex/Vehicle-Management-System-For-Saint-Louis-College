@@ -596,6 +596,60 @@ class VisitorPassAPITests(TestCase):
         again = self.client.post('/api/scan/slip/exit/', {'code': slip['code']}, format='json')
         self.assertEqual(again.status_code, 409)
 
+    @staticmethod
+    def _qr_on_printed_slip(slip):
+        """Decode the QR off the actual thermal bitmap — what a gate camera
+        or USB scanner would read from the paper."""
+        import cv2
+        import numpy as np
+        from scanning.slip_printer import render_slip
+        img = np.array(render_slip(slip).convert('L'))
+        img = cv2.copyMakeBorder(img, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255)
+        data, _, _ = cv2.QRCodeDetector().detectAndDecode(img)
+        return data
+
+    def test_supplier_pass_prints_and_its_qr_runs_the_gate_check(self):
+        from vehicles.models import Supplier, SupplierPlate
+        supplier = Supplier.objects.create(company_name='ACME DELIVERIES', category='delivery', is_active=True)
+        plate = SupplierPlate.objects.create(supplier=supplier, plate_number='PAS4321')
+
+        looked = self.client.get('/api/scan/slip/', {'code': f'SLC-SUPPLIER-PASS:{plate.pk}'})
+        self.assertEqual(looked.status_code, 200)
+        pass_slip = looked.data
+        self.assertEqual(pass_slip['kind'], 'supplierpass')
+        self.assertEqual(pass_slip['title'], 'SUPPLIER PASS')
+
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'), \
+             patch('scanning.slip_printer.send_raw') as send:
+            printed = self.client.post('/api/scan/slip/print/', {'code': pass_slip['code']}, format='json')
+        self.assertEqual(printed.status_code, 200)
+        send.assert_called_once()
+
+        # The printed QR is the plate in VEHICLE: form, which the guard page
+        # turns into a plate check — do exactly that, twice.
+        payload = self._qr_on_printed_slip(pass_slip)
+        self.assertEqual(payload, f'VEHICLE:PAS4321|SUPPLIER:{supplier.pk}')
+        plate_from_qr = payload[len('VEHICLE:'):].split('|')[0]
+        with patch('scanning.views._supplier_rule_denial', return_value=None):
+            entry = self.client.post('/api/scan/manual-entry/', {'plate_number': plate_from_qr}, format='json')
+        self.assertEqual(entry.data['status'], 'authorized')
+        self.assertTrue(entry.data['is_supplier'])
+
+        # The per-visit supplier slip's QR opens that visit at the gate.
+        visit_slip = entry.data['supplier_slip']
+        self.assertEqual(self._qr_on_printed_slip(visit_slip), visit_slip['code'])
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': visit_slip['code']}).data['state'], 'inside')
+
+        # A second scan of the pass past the entry window records the exit.
+        AccessLog.objects.filter(pk=visit_slip['id']).update(
+            scanned_at=timezone.now() - timedelta(minutes=5))
+        exited = self.client.post('/api/scan/manual-entry/', {'plate_number': plate_from_qr}, format='json')
+        self.assertEqual(exited.data['status'], 'exited')
+
+        # A pass is no single visit, so it cannot "record exit" from the slip dialog.
+        self.assertEqual(self.client.post('/api/scan/slip/exit/', {'code': pass_slip['code']},
+                                          format='json').status_code, 400)
+
     def test_supplier_slip_code_does_not_open_other_entries(self):
         _, vehicle = _make_owner('owner-slip@slc.edu.ph', 'OWN1234', 'employee')
         entry = AccessLog.objects.create(plate_number='OWN1234', vehicle=vehicle, status='authorized')

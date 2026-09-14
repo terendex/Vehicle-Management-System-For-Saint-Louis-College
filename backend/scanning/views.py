@@ -960,6 +960,11 @@ class SlipExitView(APIView):
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
+        from vehicles.models import SupplierPlate
+        if isinstance(obj, SupplierPlate):
+            return Response({'error': 'A supplier pass is not one visit — scan its QR at the gate '
+                                      'and the plate check records the exit.',
+                             'slip': slip_data(obj)}, status=400)
         if isinstance(obj, VisitorPass):
             if obj.status != VisitorPass.Status.ACTIVE:
                 return Response({'error': f'This visitor is already marked as {obj.status}.',

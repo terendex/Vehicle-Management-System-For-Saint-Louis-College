@@ -3,8 +3,12 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
+  Printer, Monitor,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
+import { lookupSlip, printSlipOnServer } from '../../api/scanning'
+import { printSlipInBrowser } from '../../utils/slipPrint'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
@@ -151,6 +155,104 @@ function AddSupplierModal({ onClose, onCreated }) {
   )
 }
 
+// ── Print Supplier Pass modal ─────────────────────────────────────────
+// A standing pass for one plate. Its QR carries the plate (VEHICLE:{plate}),
+// so the guard scans it at the gate like a registered vehicle's QR: the first
+// scan logs the entry, the next the exit. The slip comes from the server
+// (scanning/slips.py) so the preview, the thermal print and the browser print
+// all say the same thing.
+function PrintPassModal({ supplier, plate, onClose }) {
+  const [slip, setSlip]   = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy]   = useState('')   // 'thermal' | 'browser' | ''
+
+  useEffect(() => {
+    let cancelled = false
+    lookupSlip(`SLC-SUPPLIER-PASS:${plate.id}`)
+      .then(({ data }) => { if (!cancelled) setSlip(data) })
+      .catch(err => { if (!cancelled) setError(err?.response?.data?.error || 'Could not load the pass.') })
+    return () => { cancelled = true }
+  }, [plate.id])
+
+  const printThermal = async () => {
+    setBusy('thermal')
+    try {
+      await printSlipOnServer(slip.code)
+      onClose()
+      await notify.success(`Supplier Pass for ${plate.plate_number} printed on the thermal printer.`, { title: 'Pass printed' })
+    } catch (err) {
+      const noPrinter = err?.response?.status === 503
+      await notify.error(
+        noPrinter
+          ? 'This server has no thermal printer connected. Use “Print from This Computer” instead.'
+          : (err?.response?.data?.error || 'The pass did not print — the printer could not be reached.'),
+        { title: 'Pass not printed' },
+      )
+    } finally { setBusy('') }
+  }
+
+  const printBrowser = async () => {
+    setBusy('browser')
+    const opened = printSlipInBrowser(slip)
+    setBusy('')
+    if (!opened) {
+      await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
+        { title: 'Pass not printed' })
+    }
+  }
+
+  return (
+    <div className="sp-overlay" onClick={onClose}>
+      <div className="sp-modal sp-modal--print" onClick={e => e.stopPropagation()}>
+        <div className="sp-modal-head">
+          <h2 className="sp-modal-title">Print Supplier Pass</h2>
+          <button className="sp-modal-close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="sp-modal-form">
+          {error ? (
+            <p className="sp-modal-body" style={{ color: '#C62828' }}>{error}</p>
+          ) : !slip ? (
+            <div className="sp-loading"><Loader2 size={22} className="sp-spinner" /><span>Loading pass…</span></div>
+          ) : (
+            <>
+              {!supplier.is_active && (
+                <p className="sp-pass-warn">
+                  <AlertTriangle size={14} /> {supplier.company_name} is inactive. The pass will print, but the
+                  gate will not admit this plate until the supplier is activated.
+                </p>
+              )}
+              <div className="sp-pass-preview" aria-label="Pass preview">
+                <div className="sp-pass-title">{slip.title}</div>
+                <div className="sp-pass-plate">{slip.headline}</div>
+                {slip.sections.flat().map(([label, value, key]) => (
+                  <div key={label} className={`sp-pass-row${key ? ' sp-pass-row--key' : ''}`}>
+                    <span>{label}:</span><span>{value}</span>
+                  </div>
+                ))}
+                <div className="sp-pass-qr"><QRCodeSVG value={slip.qr || slip.code} size={116} level="M" /></div>
+                {(slip.footer || []).map(line => <div key={line} className="sp-pass-foot">{line}</div>)}
+              </div>
+              <p className="sp-field-hint" style={{ margin: 0 }}>
+                The guard scans this QR at the gate — first scan records the entry, the next records the exit.
+              </p>
+            </>
+          )}
+          <div className="sp-modal-actions">
+            <button type="button" className="sp-btn sp-btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="sp-btn sp-btn-ghost" onClick={printBrowser} disabled={!slip || !!busy}>
+              <Monitor size={14} /> Print from This Computer
+            </button>
+            <button type="button" className="sp-btn sp-btn-primary" onClick={printThermal} disabled={!slip || !!busy}>
+              {busy === 'thermal' ? <Loader2 size={14} className="sp-spinner" /> : <Printer size={14} />}
+              {busy === 'thermal' ? 'Printing…' : 'Print on Thermal Printer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Single supplier card ──────────────────────────────────────────────
 function SupplierCard({ supplier, onUpdated, onDeleted }) {
   const [expanded, setExpanded]     = useState(false)
@@ -160,6 +262,7 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
   const [deleting, setDeleting]     = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
   const [saving, setSaving]         = useState(false)
+  const [printPlate, setPrintPlate] = useState(null)
   const plateRef = useRef(null)
 
   const plates = supplier.plates ?? []
@@ -339,14 +442,28 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
               {plates.map(pl => (
                 <span key={pl.id} className="sp-plate-tag">
                   {pl.plate_number}
-                  <button onClick={() => removePlate(pl)} disabled={saving}>
+                  <button className="sp-plate-print" onClick={() => setPrintPlate(pl)}
+                    title={`Print Supplier Pass for ${pl.plate_number}`} aria-label={`Print Supplier Pass for ${pl.plate_number}`}>
+                    <Printer size={12} /> Print Pass
+                  </button>
+                  <button onClick={() => removePlate(pl)} disabled={saving}
+                    title={`Remove ${pl.plate_number}`} aria-label={`Remove ${pl.plate_number}`}>
                     <X size={11} />
                   </button>
                 </span>
               ))}
             </div>
           )}
+          {plates.length > 0 && (
+            <span className="sp-field-hint">
+              Print a Supplier Pass for a plate — the guard scans its QR at the gate to record entry and exit.
+            </span>
+          )}
         </div>
+      )}
+
+      {printPlate && (
+        <PrintPassModal supplier={supplier} plate={printPlate} onClose={() => setPrintPlate(null)} />
       )}
 
       {confirmDel && (
