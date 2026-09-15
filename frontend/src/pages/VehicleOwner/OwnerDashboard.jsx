@@ -59,6 +59,11 @@ const VIOLATION_TYPE_LABELS = {
 const OFFENSE_LABELS = { 1: '1st offense', 2: '2nd offense', 3: '3rd offense' }
 
 const MOTORCYCLE_TYPES = ['Motorcycle', 'motorcycle']
+
+// How often the parking card re-reads availability while the tab is visible.
+// Bays themselves take ~5s to claim, so polling much faster than this only
+// costs requests without making the card any more current.
+const PARKING_POLL_MS = 10_000
 const isMotorcycle = (vtype) => MOTORCYCLE_TYPES.some(m => vtype?.toLowerCase().includes(m.toLowerCase()))
 
 export default function OwnerDashboard() {
@@ -365,6 +370,27 @@ export default function OwnerDashboard() {
     ['parkingspace', 'parkingzone', 'accesslog', 'event'],
     { debounce: 1000 },
   )
+
+  // Owners use the Railway site, while bays are scored by the campus machine.
+  // A live update only reaches browsers connected to the server that made the
+  // change, so without a Redis shared by both (REDIS_URL) the push above never
+  // arrives here. This poll is what keeps the card current regardless: every
+  // PARKING_POLL_MS while the tab is visible, nothing while it is hidden, and
+  // straight away on coming back to the tab. The endpoint is a flat four
+  // queries, and a hidden tab costs nothing.
+  useEffect(() => {
+    if (!parkingCategory) return
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      fetchParking(parkingCategory, { silent: true })
+    }
+    const timer = setInterval(refresh, PARKING_POLL_MS)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [parkingCategory])
 
   /* ── password change ── */
   const handlePwChange = async (e) => {
