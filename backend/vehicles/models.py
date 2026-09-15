@@ -643,7 +643,11 @@ class ParkingZone(models.Model):
     baseline_image       = models.ImageField(upload_to='parking_baselines/', blank=True, null=True)
     baseline_captured_at = models.DateTimeField(null=True, blank=True)
     occupancy_method     = models.CharField(
-        max_length=20, choices=OccupancyMethod.choices, default=OccupancyMethod.ML,
+        # Baseline by default: occupancy is a question about one fixed bay, and
+        # the detector's false boxes on plants, stairs and air-conditioners in
+        # a cluttered campus scene cost more than a model buys there. The
+        # detector still runs for double parking, which only it can see.
+        max_length=20, choices=OccupancyMethod.choices, default=OccupancyMethod.CLASSIC,
         help_text="How this zone decides a bay is taken. 'classic' compares each bay "
                   "against an empty baseline and needs no detector; it falls back to "
                   "the detector until a baseline is captured.",

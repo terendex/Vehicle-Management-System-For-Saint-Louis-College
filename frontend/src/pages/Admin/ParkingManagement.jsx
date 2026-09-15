@@ -517,7 +517,7 @@ export default function ParkingManagement({ embedded = false }) {
 
   // ── Bay scoring method ──────────────────────────────────────────
   const handleMethodChange = async (method) => {
-    if (!selId || method === (selZone?.occupancy_method ?? 'ml')) return
+    if (!selId || method === (selZone?.occupancy_method ?? 'classic')) return
     setMethodSaving(true)
     try {
       const z = await zoneApi.setOccupancyMethod(selId, method)
@@ -1529,9 +1529,10 @@ export default function ParkingManagement({ embedded = false }) {
             )}
 
             {/* ── Bay scoring method ──
-                The detector is the default. The baseline method needs no
-                model at all, but it only works while the camera stays put —
-                it judges each bay against a picture of that same bay empty. */}
+                Baseline is the default: it judges each bay against a picture
+                of that same bay empty, so it needs no model but only works
+                while the camera stays put. The detector still runs for double
+                parking either way. */}
             {selZone && mode === 'edit' && (
               <div className="pm-method-box">
                 <div className="pm-method-head">
@@ -1545,7 +1546,7 @@ export default function ParkingManagement({ embedded = false }) {
                   ].map(m => (
                     <button
                       key={m.key}
-                      className={`pm-method-tab${(selZone.occupancy_method ?? 'ml') === m.key ? ' pm-method-tab--active' : ''}`}
+                      className={`pm-method-tab${(selZone.occupancy_method ?? 'classic') === m.key ? ' pm-method-tab--active' : ''}`}
                       onClick={() => handleMethodChange(m.key)}
                       disabled={methodSaving}
                     >
@@ -1554,7 +1555,7 @@ export default function ParkingManagement({ embedded = false }) {
                   ))}
                 </div>
 
-                {(selZone.occupancy_method ?? 'ml') === 'classic' && (
+                {(selZone.occupancy_method ?? 'classic') === 'classic' && (
                   <>
                     <button
                       className="pm-btn pm-btn--outline"

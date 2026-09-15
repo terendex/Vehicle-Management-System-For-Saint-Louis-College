@@ -305,6 +305,36 @@ class OccupancyHysteresisTests(TestCase):
         self.assertTrue(self._miss_at(500.0))
 
 
+    def _hit_at(self, t, claim_after):
+        self.thread._apply_hits([self.bay], {self.bay.id: True}, now=t,
+                                claim_after=claim_after)
+        self.bay.refresh_from_db()
+        return self.bay.is_occupied
+
+    def test_baseline_claims_only_after_five_unbroken_seconds(self):
+        wait = pc.BASELINE_CLAIM_SECONDS
+        for t in (0.0, 1.0, 2.0, 3.0, wait - 0.5):
+            self.assertFalse(self._hit_at(t, wait))
+        self.assertTrue(self._hit_at(wait, wait))
+
+    def test_a_break_restarts_the_baseline_claim_clock(self):
+        """Someone walking through the bay twice is two short changes, not one
+        long one."""
+        wait = pc.BASELINE_CLAIM_SECONDS
+        for t in (0.0, 1.0, 2.0, 3.0, 4.0):
+            self._hit_at(t, wait)
+        self.assertFalse(self._miss_at(4.5))
+        for t in (5.0, 6.0, 7.0, 8.0, 9.0):
+            self.assertFalse(self._hit_at(t, wait))
+        self.assertTrue(self._hit_at(10.0, wait))
+
+
+class BaselineDefaultTests(TestCase):
+    def test_new_zones_score_against_a_baseline(self):
+        zone = ParkingZone.objects.create(name='Default', vehicle_category='car')
+        self.assertEqual(zone.occupancy_method, 'classic')
+
+
 class PlausibleSizeTests(SimpleTestCase):
     """Boxes too big or too small to be one vehicle in these bays claim nothing,
     but are still reported so the screens can show them."""

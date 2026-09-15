@@ -51,6 +51,15 @@ OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 # only reads taken for one extra minute.
 OCCUPIED_GRACE_SECONDS = 60.0
 
+# How long a bay must look different from its empty baseline, without a break,
+# before the baseline scorer claims it. The scorer has no idea what changed, so
+# a person walking through or a cart pushed past reads exactly like a vehicle
+# for as long as it is there; five seconds outlasts passing traffic.
+#
+# The detector path has no equivalent because it already waits for the vehicle
+# itself to stand still (parked_after_seconds).
+BASELINE_CLAIM_SECONDS = 5.0
+
 # Sampling density for the space-coverage test (see _space_coverage).
 COVERAGE_GRID = 6
 
@@ -597,6 +606,8 @@ class ParkingCameraThread(threading.Thread):
         self._hyst:   dict[int, int]    = {}
         # When each occupied bay was last seen filled — the grace clock.
         self._last_filled: dict[int, float] = {}
+        # When each bay's current unbroken run of hits began — the claim clock.
+        self._changed_since: dict[int, float] = {}
         # Newest detector output, for the screens — see _remember().
         self._last_vehicles: list[dict] = []
         self._last_ignored:  list[dict] = []
@@ -833,7 +844,7 @@ class ParkingCameraThread(threading.Thread):
         return {sp.id: signals[sp.id]['occupied'] for sp in spaces if sp.id in signals}
 
     def _apply_hits(self, spaces, hits: dict, now: "float | None" = None,
-                    presence: "dict | None" = None) -> None:
+                    presence: "dict | None" = None, claim_after: float = 0.0) -> None:
         """Run the occupancy hysteresis and persist any transitions.
 
         Shared by both scoring methods on purpose — swapping how a bay is judged
@@ -842,7 +853,9 @@ class ParkingCameraThread(threading.Thread):
         Claiming counts frames: OCCUPY_THR in a row, reset by any miss, so a
         flickering box never creeps a bay toward taken. (It used to share one
         signed accumulator with the release side, so a long-free bay needed 24
-        frames to claim rather than 4.)
+        frames to claim rather than 4.) `claim_after` adds a minimum unbroken
+        duration on top, for a scorer that cannot tell a parked vehicle from
+        something passing through — see BASELINE_CLAIM_SECONDS.
 
         Releasing counts time: OCCUPIED_GRACE_SECONDS since the bay was last
         seen filled. `presence` is the evidence that restarts that clock —
@@ -868,13 +881,16 @@ class ParkingCameraThread(threading.Thread):
                 self._last_filled.pop(sp.id, None)
 
             if hits[sp.id]:
+                since = self._changed_since.setdefault(sp.id, now)
                 nxt = min(self._hyst.get(sp.id, 0) + 1, OCCUPY_THR)
                 self._hyst[sp.id] = nxt
-                if not sp.is_occupied and nxt >= OCCUPY_THR:
+                if (not sp.is_occupied and nxt >= OCCUPY_THR
+                        and now - since >= claim_after):
                     self._set_occupied(sp, True)
                     self._last_filled[sp.id] = now
             else:
                 self._hyst[sp.id] = 0
+                self._changed_since.pop(sp.id, None)
                 if (sp.is_occupied
                         and now - self._last_filled[sp.id] >= OCCUPIED_GRACE_SECONDS):
                     self._set_occupied(sp, False)
@@ -901,7 +917,7 @@ class ParkingCameraThread(threading.Thread):
                    .first())
             if row:
                 self._cfg = {
-                    'method':   row['occupancy_method'] or 'ml',
+                    'method':   row['occupancy_method'] or 'classic',
                     'baseline': row['baseline_image'] or '',
                     # Identity of the current baseline. A re-capture changes the
                     # timestamp even when the filename is reused, which is what
@@ -913,7 +929,7 @@ class ParkingCameraThread(threading.Thread):
             log.warning("[ParkingCam] Zone config refresh failed zone %d: %s", self.zone_id, exc)
 
         self._refresh_dwell()
-        return self._cfg or {'method': 'ml', 'baseline': '', 'token': ''}
+        return self._cfg or {'method': 'classic', 'baseline': '', 'token': ''}
 
     def _refresh_dwell(self) -> None:
         """Pick up the admin's dwell thresholds from the process-wide cache.
@@ -1093,8 +1109,11 @@ class ParkingCameraThread(threading.Thread):
         now = time.monotonic()
 
         hits = None
+        claim_after = 0.0
         if cfg['method'] == 'classic':
             hits = self._classic_hits(frame, spaces, cfg)
+            if hits is not None:
+                claim_after = BASELINE_CLAIM_SECONDS
 
         # The tracker is fed once per frame at most, and both questions below
         # read the same result — running the detector twice on one frame would
@@ -1106,7 +1125,7 @@ class ParkingCameraThread(threading.Thread):
             hits     = self._detector_hits(spaces, vehicles, now)
             presence = self._detector_hits(spaces, vehicles, now, settled_only=False)
 
-        self._apply_hits(spaces, hits, now, presence)
+        self._apply_hits(spaces, hits, now, presence, claim_after)
 
         # Occupancy may be settled, but only the detector can see one car lying
         # across two bays — a per-bay signal reads that as two occupied bays,
