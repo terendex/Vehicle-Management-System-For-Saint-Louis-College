@@ -96,6 +96,26 @@ class OrganizerEntryTests(TestCase):
         self.assertEqual(exit_log.entrant_category, AccessLog.Category.EVENT)
         self.assertEqual(self.client.post(SLIP_EXIT, {'code': slip['code']}, format='json').status_code, 409)
 
+    def test_the_printed_event_slip_carries_a_qr_that_opens_it(self):
+        """Decoded off the thermal bitmap itself — what a gate camera or USB
+        scanner reads from the paper. SLIP_PREVIEW_DIR saves the image too."""
+        import os
+        import cv2
+        import numpy as np
+        from scanning.slip_printer import render_slip
+
+        _event()
+        slip = self._check()['event_slip']
+        image = render_slip(slip)
+        if os.environ.get('SLIP_PREVIEW_DIR'):
+            image.save(os.path.join(os.environ['SLIP_PREVIEW_DIR'], 'event_slip_preview.png'))
+
+        gray = np.array(image.convert('L'))
+        gray = cv2.copyMakeBorder(gray, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255)
+        data, _, _ = cv2.QRCodeDetector().detectAndDecode(gray)
+        self.assertEqual(data, slip['code'])
+        self.assertEqual(self.client.get(SLIP, {'code': data}).data['state'], 'inside')
+
     def test_a_recheck_past_the_entry_window_records_the_exit(self):
         _event()
         slip = self._check()['event_slip']
