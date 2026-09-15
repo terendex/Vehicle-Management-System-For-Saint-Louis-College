@@ -3379,6 +3379,21 @@ def _parse_event_time(raw):
     raise ValueError('Invalid time format. Use HH:MM (24-hour).')
 
 
+def _clean_organizer_plates(raw):
+    """Organizer identifiers in the form the gate compares against: upper-case,
+    no spaces, control numbers as FM-001, no repeats. A plate, a conduction
+    number or an e-bike control number may all be listed. Spaces were kept
+    before, while every scan path strips them from the plate it reads — so
+    "ABC 1234" typed into an event never matched the ABC1234 that drove up."""
+    from .models import canonical_identifier
+    plates = []
+    for p in raw or []:
+        plate = canonical_identifier(str(p or ''))
+        if plate and plate not in plates:
+            plates.append(plate)
+    return plates
+
+
 def _apply_event_times(ev, data, errors):
     """Read start_time / end_time / parking_share off `data` onto `ev`.
 
@@ -3433,7 +3448,7 @@ class EventListCreateView(APIView):
         except ValueError:
             return Response({'date': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
 
-        plates = [p.strip().upper() for p in (organizer_plates or []) if p.strip()]
+        plates = _clean_organizer_plates(organizer_plates)
         ev = Event(
             name=name, date=date_obj, organizer_plates=plates, created_by=request.user,
         )
@@ -3482,8 +3497,7 @@ class EventDetailView(APIView):
             ev.is_active = bool(request.data['is_active'])
 
         if 'organizer_plates' in request.data:
-            plates = [p.strip().upper() for p in (request.data['organizer_plates'] or []) if p.strip()]
-            ev.organizer_plates = plates
+            ev.organizer_plates = _clean_organizer_plates(request.data['organizer_plates'])
 
         errors = _apply_event_times(ev, request.data, {})
         if errors:

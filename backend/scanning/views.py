@@ -14,7 +14,8 @@ from accounts.models import User, AuditLog
 from accounts.views import IsAdminRole
 from .models import (AccessLog, VisitorPass, Office, MLTrainingSample,
                      GuardShift, open_shift_for)
-from .entry_logic import check_entry, classify_entrant, get_organizer_event, is_open_campus
+from .entry_logic import (check_entry, classify_entrant, get_organizer_event, is_open_campus,
+                          vehicle_identifiers)
 from .ml.reader import read_plate
 from .ml.collector import record_scan
 from .ml.validator import is_valid_ph_plate
@@ -287,6 +288,92 @@ def _supplier_rule_denial() -> str | None:
     return None
 
 
+def _event_for_unregistered_plate(plate_number: str):
+    """The event an unregistered plate is to be handled under, or None.
+
+    An organizer listed on an event under way, first. Failing that, an event
+    this plate was already admitted for today and has not left: the event may
+    have ended while the organizer was still inside, and they must still be
+    able to drive out on the same plate check that let them in — falling
+    through to "Plate not registered" would strand the exit.
+
+    Callers ask this before the supplier roster. A supplier the CDSO listed as
+    an organizer is coming for the event: while it is on, they enter under the
+    event (event slip, counted against the event's parking share, supplier
+    hours do not turn them away) and are an ordinary supplier again after.
+    """
+    from .entry_logic import organizer_event_for
+    event = organizer_event_for(plate_number)
+    if event:
+        return event
+    inside_status, last_entry = _inside_state(plate_number)
+    if (inside_status != 'outside' and last_entry.event_id
+            and last_entry.entrant_category == AccessLog.Category.EVENT):
+        return last_entry.event
+    return None
+
+
+def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
+    """Entry/exit for an unregistered organizer plate during its event.
+
+    The supplier state machine, applied to an event's plate list: the first
+    check logs an entry and hands back an event slip to print, a re-check past
+    the entry window logs the exit, and the usual duplicate/cooldown guards
+    apply. Registered owners who are organizers never come here — they keep
+    their own rules and only carry the organizer label. Returns the response
+    body without plate_number/gate_id, which each caller adds.
+    """
+    from django.db import transaction as _tx
+    from .entry_logic import event_summary
+    from .slips import event_slip
+
+    base = {'vehicle': None, 'is_event': True, 'organizer_event': event_summary(event),
+            'has_violations': False}
+    who = f'Event organizer — {event.name}'
+    inside_status, last_entry = _inside_state(plate_number)
+
+    if inside_status == 'duplicate':
+        return {**base, 'status': 'duplicate', 'allowed': False, 'already_inside': True,
+                'message': 'Duplicate scan — already processed within grace period.'}
+
+    if inside_status == 'inside':
+        seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+        if seconds_inside < ENTRY_BREATHING_SECONDS:
+            window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
+            return {**base, 'status': 'already_inside', 'allowed': False, 'already_inside': True,
+                    'retry_after_seconds': window_left,
+                    'message': f'{who} just entered. Re-check in {window_left}s to record an exit.'}
+        with _tx.atomic():
+            locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+            if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
+                return {**base, 'status': 'duplicate', 'allowed': False, 'already_inside': False,
+                        'message': 'Duplicate scan — already processed.'}
+            exit_log = AccessLog.objects.create(
+                plate_number=plate_number, status=AccessLog.Status.EXITED,
+                gate_id=gate_id, scanned_by=user, paired_entry=locked_entry,
+                event=locked_entry.event or event, entrant_category=AccessLog.Category.EVENT,
+            )
+        duration = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
+        return {**base, 'status': 'exited', 'allowed': False, 'already_inside': False,
+                'duration_minutes': duration,
+                'message': f'{who}. Exit recorded. Duration: {duration} min.'}
+
+    cooldown_left = _exit_cooldown_remaining(plate_number)
+    if cooldown_left:
+        return {**base, 'status': 'duplicate', 'allowed': False, 'already_inside': False,
+                'retry_after_seconds': cooldown_left,
+                'message': f'Exit cooldown — entry suppressed for {cooldown_left}s more.'}
+
+    entry_log = AccessLog.objects.create(
+        plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
+        gate_id=gate_id, scanned_by=user,
+        event=event, entrant_category=AccessLog.Category.EVENT,
+    )
+    return {**base, 'status': 'authorized', 'allowed': True, 'already_inside': False,
+            'message': f'{who}. Entry permitted.',
+            'event_slip': event_slip(entry_log)}   # printed by the guard page
+
+
 def _is_standby_fetcher(user) -> bool:
     """Standby fetchers are allowed to park inside campus while waiting, so the
     fetcher max-stay limit does not apply to them (only to Drop & Go)."""
@@ -549,6 +636,19 @@ class ScanView(APIView):
             vehicle = Vehicle.resolve(plate)
 
             if not vehicle:
+                # An organizer list outranks the supplier roster while its
+                # event is on — see _event_for_unregistered_plate.
+                event = _event_for_unregistered_plate(plate)
+                if event:
+                    r = _event_plate_result(plate, event, gate_id, request.user)
+                    results.append({
+                        **r,
+                        'plate_number': plate,
+                        'bbox': bbox,
+                        'sample_id': ml_sample.get("sample_id") if ml_sample else None,
+                    })
+                    continue
+
                 supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                     plate_number=plate, supplier__is_active=True
                 ).first()
@@ -718,7 +818,7 @@ class ScanView(APIView):
                     'message':         f'{owner_name} — Exit recorded. Duration: {duration_minutes} min.',
                     'vehicle':         VehicleSerializer(vehicle).data,
                     'already_inside':  False,
-                    'organizer_event': get_organizer_event(plate),
+                    'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate)),
                     'duration_minutes': duration_minutes,
                     'bbox':            bbox,
                 }
@@ -772,7 +872,7 @@ class ScanView(APIView):
                 'vehicle':         VehicleSerializer(vehicle).data,
                 'has_violations':  has_violations,
                 'already_inside':  already_inside,
-                'organizer_event': get_organizer_event(plate),
+                'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate)),
                 'bbox':            bbox,
             }
             if ml_sample:
@@ -880,7 +980,7 @@ def _slip_from_request(request, any_copy=False):
     code = request.query_params.get('code') or request.data.get('code')
     parsed = slips.parse_code(code)
     if not parsed:
-        return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier or no-plate slip.'}, status=400)
+        return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier, event or no-plate slip.'}, status=400)
     kind, pk, serial = parsed
     obj = slips.find(kind, pk)
     if not obj:
@@ -1036,7 +1136,10 @@ class SlipExitView(APIView):
             if AccessLog.objects.filter(paired_entry=obj).exists():
                 return Response({'error': 'This vehicle has already been logged out.',
                                  'slip': slip_data(obj)}, status=409)
-            if obj.is_unrecognized:
+            from .slips import is_event_entry
+            if is_event_entry(obj):
+                duration, overstay = _record_event_exit(request, obj, gate_id)
+            elif obj.is_unrecognized:
                 duration, overstay = _record_noplate_exit(request, obj, gate_id)[0], 0
             else:
                 duration, overstay = _record_supplier_exit(request, obj, gate_id)
@@ -1136,6 +1239,31 @@ def _record_supplier_exit(request, entry, gate_id):
         f"Supplier vehicle exited (slip) | Ref: SP-{entry.pk} | Plate: {entry.plate_number} | "
         f"Company: {roster.supplier.company_name if roster else 'N/A'} | Duration: {duration} min | "
         + (f"OVERSTAYED by {overstay} min | " if overstay else "")
+        + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
+    )
+    return duration, overstay
+
+
+def _record_event_exit(request, entry, gate_id):
+    """Exit of an event organizer's vehicle recorded from its event slip.
+    Returns (minutes inside, minutes past the event's end). Staying past the
+    end is reported, not fined: there is no event stay rule to break, and the
+    organizer is often the last one to leave."""
+    from .slips import event_end
+    exit_log = AccessLog.objects.create(
+        plate_number=entry.plate_number, status=AccessLog.Status.EXITED,
+        gate_id=gate_id, scanned_by=request.user, paired_entry=entry,
+        event=entry.event, entrant_category=AccessLog.Category.EVENT,
+    )
+    duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
+    ends = event_end(entry.event)
+    overstay = (int((exit_log.scanned_at - ends).total_seconds() // 60)
+                if ends and exit_log.scanned_at > ends else 0)
+    _audit(
+        request, AuditLog.Action.RECORD_UPDATED,
+        f"Event organizer exited (slip) | Ref: EV-{entry.pk} | Plate: {entry.plate_number} | "
+        f"Event: {entry.event.name if entry.event else 'N/A'} | Duration: {duration} min | "
+        + (f"Past event end by {overstay} min | " if overstay else "")
         + f"Gate: {_gate_label(gate_id)} | Guard: {request.user.full_name}",
     )
     return duration, overstay
@@ -1728,6 +1856,15 @@ class ExitLogView(APIView):
         )
 
         _pair_entry_exit(exit_log)
+        # The exit row was classified from the plate alone, which reads an
+        # organizer's unregistered plate as "unknown". It is the other half of
+        # an event visit, so it says so.
+        entry_log = exit_log.paired_entry
+        event_visit = bool(entry_log and entry_log.entrant_category == AccessLog.Category.EVENT)
+        if event_visit:
+            exit_log.entrant_category = AccessLog.Category.EVENT
+            exit_log.event_id = entry_log.event_id
+            exit_log.save(update_fields=['entrant_category', 'event'])
         overstay_minutes = _close_active_pass(plate_number, gate_id)
 
         duration_minutes = None
@@ -1745,7 +1882,10 @@ class ExitLogView(APIView):
             if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
-            elif SupplierPlate.objects.filter(plate_number=plate_number, supplier__is_active=True).exists():
+            # A supplier who came in for an event was not on a supplier visit,
+            # so the supplier stay limit does not apply to that stay.
+            elif (not event_visit and SupplierPlate.objects.filter(
+                    plate_number=plate_number, supplier__is_active=True).exists()):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'supplier', duration_minutes, gate_id))
 
@@ -1955,10 +2095,20 @@ class ManualEntryView(APIView):
         # valid PH plate — accept it when it resolves to a registered vehicle, but
         # still reject free-text garbage that matches nothing.
         vehicle = Vehicle.resolve(plate_number)
-        if not vehicle and not is_valid_ph_plate(plate_number):
+        # An organizer list may name a brand-new car by its conduction sticker,
+        # which is no plate shape — so a listed identifier is let through the
+        # format check the same way a registered one is.
+        event = None if vehicle else _event_for_unregistered_plate(plate_number)
+        if not vehicle and not event and not is_valid_ph_plate(plate_number):
             return Response({'error': 'Invalid plate format. Enter a valid Philippine plate or conduction number.'}, status=400)
 
         if not vehicle:
+            # An organizer list outranks the supplier roster while its event
+            # is on — see _event_for_unregistered_plate.
+            if event:
+                r = _event_plate_result(plate_number, event, gate_id, request.user)
+                return Response({**r, 'plate_number': plate_number, 'gate_id': gate_id})
+
             supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                 plate_number=plate_number, supplier__is_active=True
             ).first()
@@ -2233,7 +2383,7 @@ class ManualEntryView(APIView):
             'vehicle':         VehicleSerializer(vehicle).data,
             'has_violations':  has_violations,
             'already_inside':  False,
-            'organizer_event': get_organizer_event(plate_number),
+            'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate_number)),
             'gate_id':         gate_id,
         })
 

@@ -626,6 +626,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         gate_id = getattr(self, '_gate_id', 'main')
 
         if not vehicle:
+            # An organizer's unregistered plate during its event — the same
+            # entry/exit and event slip the manual and image scans give. Ahead
+            # of the supplier roster: a supplier listed as an organizer enters
+            # for the event while it is on.
+            from .views import _event_for_unregistered_plate, _event_plate_result
+            event = _event_for_unregistered_plate(plate_number)
+            if event:
+                result = _event_plate_result(plate_number, event, gate_id, self._user)
+                result.setdefault("registration", None)
+                result.setdefault("constraint", None)
+                return result
+
             # Supplier vehicles have no Vehicle/owner record — permitted by plate list
             supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                 plate_number=plate_number, supplier__is_active=True
@@ -854,8 +866,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 pass
 
         try:
-            from .entry_logic import get_organizer_event
-            organizer_event = get_organizer_event(plate_number)
+            from .entry_logic import get_organizer_event, vehicle_identifiers
+            organizer_event = get_organizer_event(*vehicle_identifiers(vehicle, plate_number))
         except Exception:
             organizer_event = None
 

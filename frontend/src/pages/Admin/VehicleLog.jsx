@@ -42,7 +42,7 @@ const STATUS_FILTERS = [
 
 const CLASSIFICATION_LABELS = {
   student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher',
-  visitor: 'Visitor', supplier: 'Supplier', unknown: 'Unregistered',
+  visitor: 'Visitor', supplier: 'Supplier', event: 'Event Organizer', unknown: 'Unregistered',
 }
 
 // Narrow the log to one kind of entrant — "how many students came through in

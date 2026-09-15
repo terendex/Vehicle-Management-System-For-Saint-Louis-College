@@ -1,15 +1,11 @@
-"""Live campus occupancy, derived from the gate ledger.
+"""Vehicles on campus, derived from the gate ledger.
 
-Capacity is a gate question, not a camera question. A vehicle takes up a slot
-from the moment a guard scans it in until one scans it out, and the AccessLog
-already records exactly that with `paired_entry`. Counting from there is
-deterministic and auditable: it does not care about rain, darkness, a camera
-that drifted off its mounting, or how a parked car happens to overlap a drawn
-box.
-
-The parking cameras keep answering the *other* question — is each car parked
-properly, and is anyone straddling two bays. Bay occupancy is a map, not a
-count.
+A vehicle is on campus from the moment a guard scans it in until one scans it
+out, and the AccessLog already records exactly that with `paired_entry`.
+Counting from there is deterministic and auditable. It is the "on campus"
+figure — parked or not; free parking spaces are counted from the bays the
+cameras read as taken (see vehicles/capacity.py) — and, narrowed to an event's
+organizer plates, how many of those organizers have already arrived.
 
 Cost
 ----
@@ -106,8 +102,11 @@ OCCUPANT_KEY = Coalesce(
 )
 
 
-def inside_counts(now=None) -> dict:
+def inside_counts(now=None, plates=None) -> dict:
     """Vehicles currently on campus, grouped by parking category.
+
+    `plates` narrows the count to those identifiers — how the parking reserve
+    learns how many of an event's organizers have already arrived.
 
     Returns::
 
@@ -147,13 +146,22 @@ def inside_counts(now=None) -> dict:
     # AccessLog.vehicle_type column — that column is declared but no write path
     # ever populates it, so reading it would report every vehicle as
     # uncategorised.
+    entries = AccessLog.objects.filter(
+        status=AccessLog.Status.AUTHORIZED,
+        scanned_at__gte=start, scanned_at__lt=end,
+        # Future-dated rows from clock skew must not count — the same guard the
+        # scan hot path applies.
+        scanned_at__lte=now,
+    )
+    if plates is not None:
+        plates = list(plates)
+        # The typed plate, or the registered vehicle's own identifiers: a guard
+        # typing FM001 logs "FM001", while the list holds FM-001.
+        entries = entries.filter(Q(plate_number__in=plates)
+                                 | Q(vehicle__plate_number__in=plates)
+                                 | Q(vehicle__conduction_number__in=plates))
     rows = (
-        AccessLog.objects
-        .filter(status=AccessLog.Status.AUTHORIZED,
-                scanned_at__gte=start, scanned_at__lt=end,
-                # Future-dated rows from clock skew must not count — the same
-                # guard the scan hot path applies.
-                scanned_at__lte=now)
+        entries
         .exclude(pk__in=paired)
         .values('vehicle__vehicle_type')
         .annotate(

@@ -83,11 +83,9 @@ def category_capacity() -> dict:
     return {cat: t['capacity'] for cat, t in zone_totals().items()}
 
 
-def event_reservation() -> dict | None:
-    """Parking an event under way right now is expected to take up.
-
-    Returns ``{'name', 'share', 'share_label', 'fraction', 'time_display'}`` for
-    the event with the largest declared share, or None when nothing is running.
+def reserving_event():
+    """The event holding parking back right now — the one under way with the
+    largest declared share — or None.
 
     Only events that are *under way* reserve anything. An event that is active
     today but starts at 6pm must not make the car park read as half gone at
@@ -104,30 +102,57 @@ def event_reservation() -> dict | None:
             continue
         if best is None or ev.share_fraction > best.share_fraction:
             best = ev
-    if best is None:
+    return best
+
+
+def _reservation(ev) -> dict | None:
+    # The shape the screens receive. Organizer plates stay out of it: this
+    # rides the owner portal's availability response.
+    if ev is None:
         return None
     return {
-        'name':         best.name,
-        'share':        best.parking_share,
-        'share_label':  best.get_parking_share_display(),
-        'fraction':     best.share_fraction,
-        'time_display': best.time_display,
+        'name':         ev.name,
+        'share':        ev.parking_share,
+        'share_label':  ev.get_parking_share_display(),
+        'fraction':     ev.share_fraction,
+        'time_display': ev.time_display,
     }
 
 
-def category_state(inside=None, zones=None, event=None) -> dict:
+def event_reservation() -> dict | None:
+    """Parking an event under way right now is expected to take up.
+
+    Returns ``{'name', 'share', 'share_label', 'fraction', 'time_display'}`` for
+    the event with the largest declared share, or None when nothing is running.
+    """
+    return _reservation(reserving_event())
+
+
+def category_state(inside=None, zones=None, event=None, arrived=None) -> dict:
     """Capacity, parking occupancy, vehicles on campus and fullness per category.
 
     Returns ``{'car': {...}, 'motorcycle': {...}, 'stale_excluded': int}`` where
     each category holds ``capacity``, ``occupied`` (bays parked in),
     ``on_campus`` (gate ledger), ``unmonitored`` (zones with no baseline),
-    ``reserved``, ``available``, ``is_full`` and ``fill_pct``.
+    ``event_share``, ``event_arrived``, ``reserved``, ``available``,
+    ``is_full`` and ``fill_pct``.
 
-    ``reserved`` is the share an event under way has declared it will fill. It
-    is held back from ``available`` rather than added to ``occupied``: those
-    bays are spoken for but no car has driven into them yet, and a screen that
-    reported them as occupied would be claiming to have counted vehicles that
-    are not there.
+    ``event_share`` is the part of capacity an event under way has declared it
+    will fill. ``reserved`` is what is still held back of it: the share minus
+    ``event_arrived``, the event's listed organizer vehicles already inside.
+    Those vehicles take bays and count as parked, so leaving the full share
+    held on top of them subtracted every one of them twice — ten bays, half
+    held, five organizers parked read as FULL with five bays standing empty.
+    Attendees the system cannot identify still count both ways, so the error
+    that remains is on the cautious side: fewer free spaces shown, never more.
+
+    ``reserved`` is held back from ``available`` rather than added to
+    ``occupied``: those bays are spoken for but no car has driven into them
+    yet, and a screen that reported them as occupied would be claiming to have
+    counted vehicles that are not there.
+
+    `event` and `arrived` are injectable together (a dict as event_reservation
+    returns, and an inside_counts-shaped dict); pass neither to look them up.
 
     Both halves are injectable so a caller that already fetched them (a list
     endpoint building serializer context) pays for them once.
@@ -147,11 +172,17 @@ def category_state(inside=None, zones=None, event=None) -> dict:
         zones = zone_totals()
     if event is None:
         try:
-            event = event_reservation()
+            ev = reserving_event()
+            event = _reservation(ev)
+            # One more ledger query, and only while an event with a plate list
+            # is actually holding parking back.
+            if ev is not None and ev.organizer_plates and arrived is None:
+                arrived = inside_counts(plates=ev.organizer_plates)
         except Exception:
             log.exception("[capacity] event reservation unreadable; reserving nothing")
             event = None
     fraction = (event or {}).get('fraction', 0.0)
+    arrived = arrived or empty_counts()
 
     # Vehicles on campus with no registration record still take up room. They
     # are charged to one category rather than dropped — see
@@ -168,13 +199,19 @@ def category_state(inside=None, zones=None, event=None) -> dict:
             on_campus += unknown
         # Rounded down, so a declared half of an odd capacity leaves the spare
         # bay usable rather than quietly withheld.
-        reserved = min(cap, int(cap * fraction)) if cap > 0 else 0
+        share = min(cap, int(cap * fraction)) if cap > 0 else 0
+        came = arrived.get(category, 0)
+        if category == UNCATEGORIZED_COUNTS_AS:
+            came += arrived.get(UNCATEGORIZED, 0)
+        reserved = max(0, share - came)
         state[category] = {
-            'capacity':    cap,
-            'occupied':    occupied,
-            'on_campus':   on_campus,
-            'unmonitored': totals.get('unmonitored', 0),
-            'reserved':    reserved,
+            'capacity':      cap,
+            'occupied':      occupied,
+            'on_campus':     on_campus,
+            'unmonitored':   totals.get('unmonitored', 0),
+            'event_share':   share,
+            'event_arrived': min(came, share),
+            'reserved':      reserved,
             # Never negative: an override lowered below the live count (or an
             # uncategorised admit) must read as full, not as minus three free.
             'available': max(0, cap - occupied - reserved),

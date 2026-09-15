@@ -123,6 +123,7 @@ class AccessLog(models.Model):
         FETCHER  = 'fetcher',  'Fetcher / Drop & Go'
         VISITOR  = 'visitor',  'Visitor'
         SUPPLIER = 'supplier', 'Supplier'
+        EVENT    = 'event',    'Event Organizer'
         UNKNOWN  = 'unknown',  'Unregistered'
 
     id             = models.BigAutoField(primary_key=True, db_column='access_log_id')
@@ -153,6 +154,14 @@ class AccessLog(models.Model):
         'self', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='exit_log',
         help_text="For exit logs: points to the matching entry log.",
+    )
+    # The event an unregistered organizer plate was admitted for. Kept on the
+    # row, not re-derived from the event's plate list, so the slip still says
+    # which event it was after the list is edited — and SET_NULL so deleting
+    # an event never deletes the record that its organizers came and went.
+    event          = models.ForeignKey(
+        'vehicles.Event', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='access_logs',
     )
     snapshot       = models.ImageField(upload_to='snapshots/', blank=True)
     scanned_at     = models.DateTimeField(auto_now_add=True)

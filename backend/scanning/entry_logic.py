@@ -115,16 +115,50 @@ def _day_denial(rule, user, today_weekday) -> str | None:
     return None
 
 
-def get_organizer_event(plate_number: str):
-    """Return the first active event listing this plate as an organizer, or None."""
-    plate_upper = plate_number.strip().upper()
-    event = Event.objects.filter(
-        is_active=True,
-        organizer_plates__contains=[plate_upper],
-    ).first()
-    if event:
-        return {'id': event.id, 'name': event.name, 'date': event.date.isoformat()}
-    return None
+def organizer_event_for(*identifiers):
+    """The event under way right now that lists any of these identifiers — a
+    plate, conduction number or e-bike control number, however typed — as an
+    organizer, or None. A registered vehicle is looked up by all of its
+    identifiers, since the list may name it by any one of them.
+
+    "Under way" is Event.is_under_way — switched on, not archived, today, and
+    inside its start/end times when it has them — the same test the parking
+    reserve uses. This used to check `is_active` alone, so an event nobody
+    switched off kept tagging its organizers at the gate for weeks, while the
+    parking screens (which did check the clock) had long stopped reserving for
+    it.
+    """
+    from vehicles.models import canonical_identifier
+    wanted = {canonical_identifier(i) for i in identifiers} - {''}
+    if not wanted:
+        return None
+    listed = Q()
+    for ident in wanted:
+        listed |= Q(organizer_plates__contains=[ident])
+    candidates = Event.objects.filter(
+        listed, is_active=True, archived=False, date=timezone.localdate(),
+    )
+    return next((ev for ev in candidates if ev.is_under_way()), None)
+
+
+def event_summary(event):
+    """The organizer event as the scan responses carry it."""
+    if event is None:
+        return None
+    return {'id': event.id, 'name': event.name, 'date': event.date.isoformat(),
+            'time_display': event.time_display}
+
+
+def get_organizer_event(*identifiers):
+    """`organizer_event_for` in response form: {id, name, date, time_display} or None."""
+    return event_summary(organizer_event_for(*identifiers))
+
+
+def vehicle_identifiers(vehicle, typed=''):
+    """Everything an event list might name this vehicle by."""
+    if vehicle is None:
+        return (typed,)
+    return (typed, vehicle.plate_number, getattr(vehicle, 'conduction_number', ''))
 
 
 def classify_entrant(vehicle, plate_number: str = '') -> str:

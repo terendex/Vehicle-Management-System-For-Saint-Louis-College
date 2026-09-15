@@ -42,7 +42,7 @@ function getMeta(s) { return STATUS_META[s] ?? STATUS_META.unknown }
 // stylesheet imports.
 const CLASSIFICATION_LABELS = {
   student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher',
-  supplier: 'Supplier', visitor: 'Visitor', unknown: 'Unregistered',
+  supplier: 'Supplier', event: 'Event Organizer', visitor: 'Visitor', unknown: 'Unregistered',
 }
 const classLabel = (c) => CLASSIFICATION_LABELS[c] ?? CLASSIFICATION_LABELS.unknown
 

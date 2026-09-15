@@ -44,6 +44,7 @@ const CLASSIFICATION_META = {
   employee: { label: 'Employee',     cls: 'cls-employee' },
   fetcher:  { label: 'Fetcher',      cls: 'cls-fetcher' },
   supplier: { label: 'Supplier',     cls: 'cls-supplier' },
+  event:    { label: 'Event',        cls: 'cls-event' },
   visitor:  { label: 'Visitor',      cls: 'cls-visitor' },
   unknown:  { label: 'Unregistered', cls: 'cls-unknown' },
 }

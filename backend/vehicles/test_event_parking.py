@@ -303,6 +303,36 @@ class EventAndLedgerTogetherTests(APITestCase):
         self.assertEqual(s['available'], 2)
         self.assertFalse(s['is_full'])
 
+    def test_organizers_who_arrived_come_off_the_hold_instead_of_counting_twice(self):
+        """Ten bays, half held, two organizers in and parked: they fill two of
+        the held bays, so the hold shrinks to three — not five held on top of
+        the two parked, which read the lot as fuller than it is."""
+        from scanning.models import AccessLog
+        event = _event(parking_share='half', organizer_plates=['ORG0001', 'ORG0002'])
+        for plate in ('ORG0001', 'ORG0002'):
+            AccessLog.objects.create(plate_number=plate, status=AccessLog.Status.AUTHORIZED,
+                                     gate_id='gate1', event=event,
+                                     entrant_category=AccessLog.Category.EVENT)
+        self._park(2)
+
+        s = self._summary()
+        self.assertEqual(s['occupied'], 2)
+        self.assertEqual(s['reserved'], 3)
+        self.assertEqual(s['available'], 5)
+
+    def test_the_hold_never_goes_below_zero_when_more_organizers_arrive(self):
+        from scanning.models import AccessLog
+        plates = [f'ORG{i:04d}' for i in range(7)]
+        event = _event(parking_share='half', organizer_plates=plates)
+        for plate in plates:
+            AccessLog.objects.create(plate_number=plate, status=AccessLog.Status.AUTHORIZED,
+                                     gate_id='gate1', event=event,
+                                     entrant_category=AccessLog.Category.EVENT)
+        self._park(7)
+        s = self._summary()
+        self.assertEqual(s['reserved'], 0)
+        self.assertEqual(s['available'], 3)
+
     def test_full_once_the_reserve_and_the_parked_cars_fill_it(self):
         self._park(5)
         _event(parking_share='half')
@@ -346,13 +376,14 @@ class CategoryCoversEveryOwnerTypeTests(TestCase):
                    if t not in AccessLog.Category.values]
         self.assertEqual(missing, [], f'owner types with no category: {missing}')
 
-    def test_the_category_adds_the_two_that_are_not_account_types(self):
+    def test_the_category_adds_the_three_that_are_not_account_types(self):
         from scanning.models import AccessLog
 
-        # A supplier is a plate on the supplier roster, not an owner account,
-        # and 'unknown' is the catch-all for a plate nothing is known about.
+        # A supplier is a plate on the supplier roster and an event organizer a
+        # plate on an event's list — neither is an owner account — and
+        # 'unknown' is the catch-all for a plate nothing is known about.
         extra = set(AccessLog.Category.values) - set(User.OwnerType.values)
-        self.assertEqual(extra, {'supplier', 'unknown'})
+        self.assertEqual(extra, {'supplier', 'event', 'unknown'})
 
     def test_each_owner_type_classifies_to_its_own_category(self):
         from scanning.entry_logic import classify_entrant

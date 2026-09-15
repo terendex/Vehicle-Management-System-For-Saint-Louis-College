@@ -10,7 +10,7 @@ import { fieldProblems } from '../../components/Feedback/formProblems'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
 import { zoneApi } from '../../api/parking'
-import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
 import './Events.css'
 
 // How much of campus parking an event is expected to take up. Fractions rather
@@ -27,6 +27,12 @@ const PARKING_SHARES = [
   { value: 'full',           label: 'All of parking',            short: 'All full' },
 ]
 const shareShort = (v) => PARKING_SHARES.find(s => s.value === v)?.short ?? null
+
+// What an organizer may be listed by: a plate, a conduction sticker (a new car
+// with no plate yet), or an e-bike control number (FM-001). The server stores
+// each the way the gate compares it — FM001 becomes FM-001.
+const isOrganizerIdentifier = (raw) => isValidPlateNumber(raw) || isValidConductionNumber(raw)
+const IDENTIFIER_ERROR = 'Enter a plate, conduction sticker, or e-bike control number (e.g. FM-001).'
 
 // ── Toggle card for event mode switches ──────────────────────────────
 function ModeToggle({ label, description, enabled, loading, onToggle }) {
@@ -69,8 +75,8 @@ function AddEventModal({ onClose, onCreated }) {
       await notify.error('Enter a plate number first.', { title: 'Nothing to add' })
       return
     }
-    if (!isValidPlateNumber(p)) {
-      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
+    if (!isOrganizerIdentifier(p)) {
+      await notify.error(IDENTIFIER_ERROR, { title: 'Plate not added' })
       return
     }
     if (plates.includes(p)) { toast.error('Plate already added.'); return }
@@ -187,7 +193,7 @@ function AddEventModal({ onClose, onCreated }) {
                 onChange={e => {
                   const formatted = formatPlateNumber(e.target.value)
                   setPlateInput(formatted)
-                  setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+                  setPlateError(formatted && !isOrganizerIdentifier(formatted) ? IDENTIFIER_ERROR : '')
                 }}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
               />
@@ -195,7 +201,7 @@ function AddEventModal({ onClose, onCreated }) {
                 <Plus size={15} /> Add
               </button>
             </div>
-            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
+            <span className="ev-field-hint">Plate (AAA 0000 · AA 0000), conduction sticker, or e-bike control number (FM-001)</span>
             {plates.length > 0 && (
               <div className="ev-plate-tags">
                 {plates.map(p => (
@@ -300,8 +306,8 @@ function EventCard({ event, onUpdated, onDeleted }) {
   const addPlate = async () => {
     const p = formatPlateNumber(plateInput.trim())
     if (!p) return
-    if (!isValidPlateNumber(p)) {
-      await notify.error('Invalid Philippine plate number format.', { title: 'Plate not added' })
+    if (!isOrganizerIdentifier(p)) {
+      await notify.error(IDENTIFIER_ERROR, { title: 'Plate not added' })
       return
     }
     if (localPlates.includes(p)) { toast.error('Plate already listed.'); return }
@@ -530,7 +536,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
               onChange={e => {
                 const formatted = formatPlateNumber(e.target.value)
                 setPlateInput(formatted)
-                setPlateError(formatted && !isValidPlateNumber(formatted) ? 'Invalid Philippine plate number format.' : '')
+                setPlateError(formatted && !isOrganizerIdentifier(formatted) ? IDENTIFIER_ERROR : '')
               }}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPlate() } }}
               disabled={saving}
@@ -540,7 +546,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
               Add
             </button>
           </div>
-            <span className="ev-field-hint">e.g. AAA 0000 · AA 0000 · A000AA · AAA000</span>
+            <span className="ev-field-hint">Plate (AAA 0000 · AA 0000), conduction sticker, or e-bike control number (FM-001)</span>
 
           {localPlates.length === 0 ? (
             <p className="ev-no-plates">No organizer plates added yet.</p>
@@ -783,7 +789,8 @@ export default function Events({ embedded = false }) {
                 <div>
                   <h2 className="ev-section-title">Events &amp; Organizers</h2>
                   <p className="ev-section-desc">
-                    Organizer plates are noted by the system so they can be identified during entry scanning.
+                    While an event is running, an unregistered organizer plate is let in at the gate
+                    and gets an event slip. Registered vehicles keep their usual rules.
                   </p>
                 </div>
                 {/* Sits with the list it adds to, now that the page header is gone */}

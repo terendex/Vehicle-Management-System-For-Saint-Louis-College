@@ -57,6 +57,7 @@ const CLASSIFICATION_META = {
   employee: { label: 'Employee',             cls: 'cls-employee' },
   fetcher:  { label: 'Drop & Go / Fetcher',  cls: 'cls-fetcher'  },
   supplier: { label: 'Supplier',             cls: 'cls-supplier' },
+  event:    { label: 'Event Organizer',      cls: 'cls-event'    },
   visitor:  { label: 'Visitor',              cls: 'cls-visitor'  },
   unknown:  { label: 'Unregistered',         cls: 'cls-unknown'  },
 }
@@ -95,6 +96,7 @@ function resultClassification(result) {
   if (result.classification) return result.classification
   const ownerType = result.vehicle?.user?.owner_type
   if (ownerType && CLASSIFICATION_META[ownerType]) return ownerType
+  if (result.is_event) return 'event'
   if (result.is_supplier) return 'supplier'
   if (result.status === 'unknown' || result.status === 'unreadable') return 'unknown'
   return 'visitor'
@@ -660,10 +662,11 @@ function UnrecognizedVehicleModal({ onClose, onRecorded, gateId }) {
 const SLIP_KIND = {
   visitor:  { who: 'Visitor',          tag: 'Visitor',  cls: 'cls-visitor'  },
   supplier: { who: 'Supplier Vehicle', tag: 'Supplier', cls: 'cls-supplier' },
+  event:    { who: 'Event Vehicle',    tag: 'Event',    cls: 'cls-event'    },
   noplate:  { who: 'No-Plate Vehicle', tag: 'No Plate', cls: 'cls-unknown'  },
 }
 
-// A visitor, supplier or no-plate slip pulled back up — by its QR, a typed plate, a
+// A visitor, supplier, event or no-plate slip pulled back up — by its QR, a typed plate, a
 // picked name, or the side panels. It only SHOWS where the vehicle stands
 // (still inside, time left, overstay, already out). Recording the exit and
 // reprinting a torn slip are separate buttons, so looking a slip up never
@@ -813,10 +816,13 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
     return () => window.removeEventListener('keydown', onKey, true)
   }, [nestedOpen, onDismiss])
 
-  // An admitted supplier leaves with a slip, like a visitor on a pass. It
-  // prints as soon as the result shows; the guard only acts if it did not.
-  // Not when they came in on their Supplier Pass — they already carry one.
-  const supplierSlip = result.supplier_slip
+  // An admitted supplier or event organizer leaves with a slip, like a visitor
+  // on a pass. It prints as soon as the result shows; the guard only acts if
+  // it did not. Not when a supplier came in on their Supplier Pass — they
+  // already carry one.
+  const supplierSlip = result.supplier_slip || result.event_slip
+  const isEventSlip  = !!result.event_slip
+  const slipName     = isEventSlip ? 'Event Slip' : 'Supplier Slip'
   const autoPrint = !!supplierSlip && !result._fromSupplierPass
   const [slipPrint, setSlipPrint] = useState(() => (
     !supplierSlip ? null
@@ -956,12 +962,22 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
             )}
             {supplierSlip && (
               <div className="em-result-rows">
+                {isEventSlip ? (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Event</span>
+                    <span className="em-result-row-value">
+                      {supplierSlip.name}
+                      {result.organizer_event?.time_display ? ` · ${result.organizer_event.time_display}` : ''}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Company</span>
+                    <span className="em-result-row-value">{supplierSlip.name || result.supplier_name}</span>
+                  </div>
+                )}
                 <div className="em-result-row">
-                  <span className="em-result-row-label">Company</span>
-                  <span className="em-result-row-value">{supplierSlip.name || result.supplier_name}</span>
-                </div>
-                <div className="em-result-row">
-                  <span className="em-result-row-label">Supplier Slip</span>
+                  <span className="em-result-row-label">{slipName}</span>
                   <span className="em-result-row-value">
                     {slipPrint?.state === 'pass' && 'Not needed — entered on Supplier Pass'}
                     {slipPrint?.state === 'printing' && 'Printing…'}
@@ -983,7 +999,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                   onClick={() => sendSupplierSlip({ reprint: slipPrint?.state === 'printed' })}>
                   {slipPrint?.state === 'printing'
                     ? <><div className="em-spinner" /> Printing…</>
-                    : <><Printer size={14} /> {slipPrint?.state === 'printed' ? 'Reprint Supplier Slip' : 'Print Supplier Slip'}</>}
+                    : <><Printer size={14} /> {slipPrint?.state === 'printed' ? `Reprint ${slipName}` : `Print ${slipName}`}</>}
                 </button>
               )}
               {isVisitor && (
@@ -1257,7 +1273,7 @@ export default function SecurityEntryManagement() {
       return false
     }
   }
-  const isSlipCode = (s) => /^SLC-(VISITOR|SUPPLIER|NOPLATE):/i.test((s || '').trim())
+  const isSlipCode = (s) => /^SLC-(VISITOR|SUPPLIER|NOPLATE|EVENT):/i.test((s || '').trim())
 
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
@@ -1373,7 +1389,7 @@ export default function SecurityEntryManagement() {
   const isSupplierPassQr = (raw) => /\|SUPPLIER:/i.test(raw || '')
 
   // Camera scanner read a QR. Route by payload type:
-  //  • SLC-VISITOR / SLC-SUPPLIER / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
+  //  • SLC-VISITOR / SLC-SUPPLIER / SLC-EVENT / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
   //  • VEHICLE:{plate}|ID:{n}, VEHICLE:{plate}|SUPPLIER:{n} → plate entry / exit (rules applied)
   const handleQrDetected = async (data) => {
     const upper = (data || '').trim().toUpperCase()
@@ -1395,7 +1411,7 @@ export default function SecurityEntryManagement() {
       return
     }
 
-    toast.error('Unrecognized QR. Scan a vehicle QR pass or a visitor / supplier slip QR.')
+    toast.error('Unrecognized QR. Scan a vehicle QR pass or a visitor / supplier / event slip QR.')
   }
 
   const handleCheckEntry = async (e) => {

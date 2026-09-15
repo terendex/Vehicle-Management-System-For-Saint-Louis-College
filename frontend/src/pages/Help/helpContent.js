@@ -217,7 +217,7 @@ export const HELP_TOPICS = [
         'Authorized vehicles are recognised automatically from their plate.',
         'Unregistered or denied plates are flagged so you can act on them.',
         'Visitor passes can be issued for guests, and their exit recorded.',
-        'Every scan is labelled with who is entering — Student, Employee, Drop & Go / Fetcher, Supplier, Visitor, or Unregistered — as a coloured tag beside the plate.',
+        'Every scan is labelled with who is entering — Student, Employee, Drop & Go / Fetcher, Supplier, Event Organizer, Visitor, or Unregistered — as a coloured tag beside the plate.',
       ] },
       { type: 'figure', id: 'guard-entry-management' },
       { type: 'p', text: 'When a plate is checked, the result appears in the middle of the screen. Compare the owner and vehicle with the car in front of you, then Acknowledge — or Override Entry with a reason if it should be let in anyway.' },
@@ -426,7 +426,7 @@ export const HELP_TOPICS = [
       { type: 'list', items: [
         'Time — give a start and end time, or leave both blank for an all-day event.',
         'Parking taken up — a fraction rather than a number: about 1/4, 1/3, 1/2, 2/3, 3/4, or all of parking.',
-        'Organizer plates — noted so organizers are identified at the gate.',
+        'Organizer plates — while the event is running, an unregistered organizer plate is let in at the gate and an Event Slip prints; scan its QR to record the exit. A registered vehicle on the list keeps its usual rules and is only labelled as an organizer.',
       ] },
       { type: 'figure', id: 'cdso-events' },
       { type: 'p', text: 'The declared share is held back from the free-space count while the event is actually running, so the gate stops admitting before the bays the event needs are taken. Outside those hours nothing is held back — an evening event does not make the car park read as half gone in the morning.' },

@@ -1,9 +1,10 @@
-"""Printed gate slips — visitor passes, supplier entries and no-plate entries —
-as one shape.
+"""Printed gate slips — visitor passes, supplier entries, event organizer
+entries and no-plate entries — as one shape.
 
-Three kinds of vehicle leave the gate holding a paper slip: a visitor on a
-pass, a supplier vehicle let in off the supplier roster, and a vehicle with no
-plate that the guard recorded by hand. Every slip carries a QR code the guard
+Four kinds of vehicle leave the gate holding a paper slip: a visitor on a
+pass, a supplier vehicle let in off the supplier roster, an organizer's vehicle
+let in off an event's plate list, and a vehicle with no plate that the guard
+recorded by hand. Every slip carries a QR code the guard
 scans (or a plate / name they type) to pull the slip back up, see whether the
 vehicle is still inside, and then — as a separate, deliberate action — record
 the exit or reprint a torn slip.
@@ -25,6 +26,7 @@ VISITOR_PREFIX       = 'SLC-VISITOR:'
 SUPPLIER_PREFIX      = 'SLC-SUPPLIER:'
 SUPPLIER_PASS_PREFIX = 'SLC-SUPPLIER-PASS:'
 NOPLATE_PREFIX       = 'SLC-NOPLATE:'
+EVENT_PREFIX         = 'SLC-EVENT:'
 
 KEY = True   # marks an important row, see the module docstring
 
@@ -33,13 +35,14 @@ ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
 
 
 def parse_code(code):
-    """('visitor' | 'supplier' | 'supplierpass' | 'noplate', pk, serial) for a
-    slip code, else None. Only a visitor slip carries a serial —
+    """('visitor' | 'supplier' | 'supplierpass' | 'noplate' | 'event', pk,
+    serial) for a slip code, else None. Only a visitor slip carries a serial —
     SLC-VISITOR:{id}-{serial}; it is '' everywhere else, and on a visitor slip
     printed before serials existed."""
     code = (code or '').strip().upper()
     for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
-                         (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate')):
+                         (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate'),
+                         (EVENT_PREFIX, 'event')):
         if code.startswith(prefix):
             body, serial = code[len(prefix):], ''
             if kind == 'visitor' and '-' in body:
@@ -73,7 +76,29 @@ def find(kind, pk):
     if kind == 'supplierpass':
         from vehicles.models import SupplierPlate
         return SupplierPlate.objects.select_related('supplier').filter(pk=pk).first()
+    if kind == 'event':
+        # By category rather than by event_id, so the slip still opens (and
+        # the vehicle can still be let out) after its event was deleted.
+        return (AccessLog.objects.select_related('scanned_by', 'event')
+                .filter(pk=pk, status=AccessLog.Status.AUTHORIZED,
+                        entrant_category=AccessLog.Category.EVENT).first())
     return None
+
+
+def is_event_entry(entry):
+    """True for an AccessLog row that admitted an organizer off an event list."""
+    return (isinstance(entry, AccessLog)
+            and entry.entrant_category == AccessLog.Category.EVENT
+            and not entry.is_unrecognized)
+
+
+def event_end(event):
+    """When the event's window closes, as an aware datetime, or None when the
+    event runs all day or has no end time."""
+    from datetime import datetime
+    if not event or not event.end_time:
+        return None
+    return timezone.make_aware(datetime.combine(event.date, event.end_time))
 
 
 def supplier_plate_for(entry):
@@ -199,6 +224,43 @@ def noplate_slip(entry):
     }
 
 
+def event_slip(entry):
+    """One organizer visit for an event. Its window's end doubles as the slip's
+    expiry, so a vehicle still inside after the event is shown overstaying the
+    same way a visitor past their pass is."""
+    exit_log = AccessLog.objects.filter(paired_entry=entry).order_by('scanned_at').first()
+    end = exit_log.scanned_at if exit_log else timezone.now()
+    event = entry.event
+    expires = event_end(event)
+    overstay = _minutes(expires, end) if expires and end > expires else 0
+    event_rows = [['Event', event.name if event else 'N/A', KEY]]
+    if event:
+        event_rows += [['Date', f"{event.date.strftime('%b')} {event.date.day}, {event.date.year}"],
+                       ['Time', event.time_display, KEY]]
+    return {
+        'kind':             'event',
+        'id':               entry.pk,
+        'code':             f'{EVENT_PREFIX}{entry.pk}',
+        'reference':        f'EV-{entry.pk}',
+        'title':            'EVENT SLIP',
+        'headline':         entry.plate_number,
+        'plate_number':     entry.plate_number,
+        'name':             event.name if event else '',
+        'state':            'exited' if exit_log else 'inside',
+        'entered_at':       _iso(entry.scanned_at),
+        'expires_at':       _iso(expires),
+        'exited_at':        _iso(exit_log.scanned_at) if exit_log else None,
+        'printed_at':       None,
+        'minutes_inside':   _minutes(entry.scanned_at, end),
+        'overstay_minutes': overstay,
+        'sections': [
+            event_rows,
+            [['Entered', _when(entry.scanned_at), KEY],
+             ['Guard', entry.scanned_by.full_name if entry.scanned_by else 'N/A']],
+        ],
+    }
+
+
 def supplier_pass_slip(plate):
     """A standing pass for one supplier plate, printed from Supplier
     Management and kept in the vehicle. Unlike every other slip it belongs to
@@ -241,4 +303,6 @@ def slip_data(obj):
         return visitor_slip(obj)
     if isinstance(obj, SupplierPlate):
         return supplier_pass_slip(obj)
+    if is_event_entry(obj):
+        return event_slip(obj)
     return noplate_slip(obj) if obj.is_unrecognized else supplier_slip(obj)
