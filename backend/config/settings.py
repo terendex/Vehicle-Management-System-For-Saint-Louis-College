@@ -213,6 +213,24 @@ if REDIS_URL:
     _REDIS_CONNECT_TIMEOUT = float(os.getenv('REDIS_CONNECT_TIMEOUT', '3'))
     _REDIS_SOCKET_TIMEOUT  = float(os.getenv('REDIS_SOCKET_TIMEOUT', '5'))
 
+    # The channel layer cannot use that read timeout as it stands. Receiving is
+    # a BZPOPMIN the server deliberately holds open for
+    # RedisChannelLayer.brpop_timeout (5 s in channels_redis 4.x, a class
+    # attribute with no setting) before answering "nothing yet" — so a socket
+    # timeout of 5 s fires on every quiet stretch the moment the round trip
+    # adds anything. Over Railway's TCP proxy (~300 ms) it fired every time:
+    # `check_realtime --listen` died with "Timeout reading from
+    # sakura.proxy.rlwy.net", and every open WebSocket would have been dropped
+    # after five idle seconds and reconnected forever. Held above the block
+    # plus a network margin; the cache below keeps the short timeout, and a
+    # dead connection still gives up in seconds rather than never.
+    try:
+        from channels_redis.core import RedisChannelLayer as _RedisLayer
+        _CHANNEL_BLOCK_SECONDS = float(getattr(_RedisLayer, 'brpop_timeout', 5))
+    except Exception:
+        _CHANNEL_BLOCK_SECONDS = 5.0
+    _REDIS_CHANNEL_SOCKET_TIMEOUT = max(_REDIS_SOCKET_TIMEOUT, _CHANNEL_BLOCK_SECONDS + 5)
+
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -220,7 +238,7 @@ if REDIS_URL:
                 'hosts': [{
                     'address': REDIS_URL,
                     'socket_connect_timeout': _REDIS_CONNECT_TIMEOUT,
-                    'socket_timeout': _REDIS_SOCKET_TIMEOUT,
+                    'socket_timeout': _REDIS_CHANNEL_SOCKET_TIMEOUT,
                 }],
                 'capacity': 1500,
                 'expiry': 10,
