@@ -672,7 +672,7 @@
 .pm-legend-dot   { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .pm-legend-dot--free { background: #A8DCC8; border: 1.5px solid #1BA968; }
 .pm-legend-dot--occ  { background: #F0B4B4; border: 1.5px solid #D93B3B; }
-.pm-legend-dot--det  { background: rgba(246, 206, 17,0.3); border: 1.5px solid #F6CE11; }
+.pm-legend-dot--dbl  { background: transparent; border: 1.5px dashed #D93B3B; }
 .pm-legend-note      { margin-left: auto; font-style: italic; }
 
 /* Camera active badge */

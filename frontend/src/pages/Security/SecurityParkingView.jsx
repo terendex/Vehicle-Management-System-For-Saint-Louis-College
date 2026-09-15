@@ -573,36 +573,22 @@ export default function SecurityParkingView() {
                       )
                     })}
 
-                    {/* What the detector sees, drawn over the bays it is judging.
-                        Dashed while the vehicle is still moving — only a
-                        settled one is allowed to claim a bay. */}
-                    {(detections?.vehicles ?? []).map(v => (
-                      <rect
-                        key={`veh-${v.id}`}
-                        x={v.bbox.x} y={v.bbox.y}
-                        width={v.bbox.width} height={v.bbox.height}
-                        fill="rgba(246, 206, 17, 0.12)"
-                        stroke="#F6CE11"
-                        strokeWidth={0.0025}
-                        strokeDasharray={v.settled ? undefined : '0.012 0.008'}
-                      />
-                    ))}
-
-                    {/* Seen, but too big or too small to be one vehicle in one of
-                        these bays (a carport, a potted plant), so it claims nothing. Drawn thin and grey rather than
-                        dropped: a detector seeing nothing and a detector seeing
-                        something the rules reject must not look the same. */}
-                    {(detections?.ignored ?? []).map((v, i) => (
-                      <rect
-                        key={`ign-${i}`}
-                        x={v.bbox.x} y={v.bbox.y}
-                        width={v.bbox.width} height={v.bbox.height}
-                        fill="none"
-                        stroke="rgba(255,255,255,0.45)"
-                        strokeWidth={0.0015}
-                        strokeDasharray="0.006 0.006"
-                      />
-                    ))}
+                    {/* Only vehicles lying across two bays. Bays are scored
+                        against their baseline, so every other detector box is
+                        noise here. Dashed while the double-park wait runs. */}
+                    {(detections?.vehicles ?? [])
+                      .filter(v => v.double_parking)
+                      .map(v => (
+                        <rect
+                          key={`veh-${v.id}`}
+                          x={v.bbox.x} y={v.bbox.y}
+                          width={v.bbox.width} height={v.bbox.height}
+                          fill="rgba(217, 59, 59, 0.12)"
+                          stroke="#D93B3B"
+                          strokeWidth={0.0025}
+                          strokeDasharray={v.double_parking === 'flagged' ? undefined : '0.012 0.008'}
+                        />
+                      ))}
                   </svg>
                 )}
 
@@ -673,7 +659,7 @@ export default function SecurityParkingView() {
             <div className="cm-foot pm-legend-strip">
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--free" />Free</span>
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--occ" />Occupied</span>
-              <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--det" />Vehicle seen</span>
+              <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--dbl" />Double parking</span>
               <span className="pm-legend-note">Live picture · bays refresh every 8 s</span>
             </div>
           </section>

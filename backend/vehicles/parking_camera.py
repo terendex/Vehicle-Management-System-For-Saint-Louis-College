@@ -612,6 +612,9 @@ class ParkingCameraThread(threading.Thread):
         self._last_vehicles: list[dict] = []
         self._last_ignored:  list[dict] = []
         self._last_vehicles_at = 0.0
+        # {track_id: flagged} for vehicles lying across two bays on the newest
+        # detector pass — False while still inside the double-park dwell.
+        self._straddling_tracks: dict[int, bool] = {}
 
         # Vehicle identity and stillness across frames. Every dwell threshold in
         # this file is measured off it — see vehicle_tracker for why the bay,
@@ -1091,8 +1094,18 @@ class ParkingCameraThread(threading.Thread):
         """The newest boxes and how long ago they were measured."""
         with self._lock:
             at = self._last_vehicles_at
+            straddling = self._straddling_tracks
             return {
-                'vehicles': list(self._last_vehicles),
+                # `double_parking` is None, 'pending' (across two bays, dwell
+                # not yet served) or 'flagged'. Baseline zones decide occupancy
+                # without these boxes, so the screens draw only the ones that
+                # carry a double-parking verdict.
+                'vehicles': [
+                    {**v, 'double_parking': (
+                        None if v['id'] not in straddling
+                        else 'flagged' if straddling[v['id']] else 'pending')}
+                    for v in self._last_vehicles
+                ],
                 # Seen by the detector, but too large to be one vehicle in one
                 # of these bays. Shown so "it detects nothing" and "it detects
                 # something I refuse to count" cannot look the same on screen.
@@ -1162,6 +1175,7 @@ class ParkingCameraThread(threading.Thread):
 
         straddling: dict[tuple[int, ...], object] = {}
         blocked: set[int] = set()
+        tracks: dict[int, bool] = {}
 
         for v in vehicles:
             # Both directions must agree. Bay coverage alone counts a correctly
@@ -1179,8 +1193,10 @@ class ParkingCameraThread(threading.Thread):
             # episode already reported does not flicker away and back as the
             # driver shuffles. Only the reporting below waits for the dwell.
             straddling[key] = v
+            settled = v.has_settled(now, self._double_park_after)
+            tracks[v.track_id] = settled
 
-            if v.has_settled(now, self._double_park_after):
+            if settled:
                 blocked.update(sp.id for sp in covered)
                 if key not in self._reported:      # once per episode
                     self._reported.add(key)
@@ -1204,6 +1220,7 @@ class ParkingCameraThread(threading.Thread):
         self._reported.difference_update(
             [k for k in self._reported if k not in straddling])
         with self._lock:
+            self._straddling_tracks = tracks
             for key in [k for k in self._alerts if k not in straddling]:
                 self._alerts.pop(key, None)
                 self._alert_evidence.pop(key, None)

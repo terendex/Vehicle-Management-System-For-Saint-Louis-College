@@ -1330,33 +1330,23 @@ export default function ParkingManagement({ embedded = false }) {
                   </g>
                 )}
 
-                {/* Seen, but too big or too small to be one vehicle in a bay —
-                    thin and grey, because it claims nothing. */}
-                {mode === 'live' && (detections?.ignored ?? []).map((v, i) => (
-                  <rect
-                    key={`ign-${i}`}
-                    x={v.bbox.x} y={v.bbox.y}
-                    width={v.bbox.width} height={v.bbox.height}
-                    fill="none"
-                    stroke="rgba(255,255,255,0.45)"
-                    strokeWidth={0.0015}
-                    strokeDasharray="0.006 0.006"
-                    pointerEvents="none"
-                  />
-                ))}
-
-                {mode === 'live' && (detections?.vehicles ?? []).map(v => (
-                  <rect
-                    key={`veh-${v.id}`}
-                    x={v.bbox.x} y={v.bbox.y}
-                    width={v.bbox.width} height={v.bbox.height}
-                    fill="rgba(246, 206, 17, 0.12)"
-                    stroke="#F6CE11"
-                    strokeWidth={0.0025}
-                    strokeDasharray={v.settled ? undefined : '0.012 0.008'}
-                    pointerEvents="none"
-                  />
-                ))}
+                {/* Only vehicles lying across two bays. Bays are scored against
+                    their baseline, so every other detector box is noise here.
+                    Dashed while the double-park wait is still running. */}
+                {mode === 'live' && (detections?.vehicles ?? [])
+                  .filter(v => v.double_parking)
+                  .map(v => (
+                    <rect
+                      key={`veh-${v.id}`}
+                      x={v.bbox.x} y={v.bbox.y}
+                      width={v.bbox.width} height={v.bbox.height}
+                      fill="rgba(217, 59, 59, 0.12)"
+                      stroke="#D93B3B"
+                      strokeWidth={0.0025}
+                      strokeDasharray={v.double_parking === 'flagged' ? undefined : '0.012 0.008'}
+                      pointerEvents="none"
+                    />
+                  ))}
               </svg>
 
               {/* Space label popover (edit mode) */}

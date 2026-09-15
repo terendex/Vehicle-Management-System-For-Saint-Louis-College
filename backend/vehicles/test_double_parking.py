@@ -159,6 +159,30 @@ class DoubleParkingReportingTests(TestCase):
             self._hold([straightened], pc.DOUBLE_PARK_AFTER_SECONDS * 2)
             rep.assert_not_called()
 
+    # ── what the screens draw ───────────────────────────────────────────────
+    def _seen(self, dets):
+        """One observation as the loop makes it, then what the API reports."""
+        self.now += 1.0
+        vehicles = self.thread._tracker.update(dets, self.now)
+        self.thread._remember(vehicles, [], self.now)
+        self.thread._check_double_parking(self.spaces, vehicles, frame=None, now=self.now)
+        return {v['bbox']['x']: v['double_parking']
+                for v in self.thread.vehicles_seen()['vehicles']}
+
+    def test_only_straddling_vehicles_carry_a_double_parking_state(self):
+        inside_a1 = det(0.11, 0.42, 0.18, 0.26)
+        elsewhere = det(0.70, 0.10, 0.10, 0.10)
+        with patch.object(pc.ParkingCameraThread, '_report_double_parking'):
+            first = self._seen([self.straddle, inside_a1, elsewhere])
+            self.assertEqual(first[0.20], 'pending')
+            self.assertIsNone(first[0.11])
+            self.assertIsNone(first[0.70])
+
+            for _ in range(int(pc.DOUBLE_PARK_AFTER_SECONDS) + 1):
+                later = self._seen([self.straddle, elsewhere])
+            self.assertEqual(later[0.20], 'flagged')
+            self.assertIsNone(later[0.70])
+
     def test_a_detector_blink_does_not_restart_the_clock(self):
         """A frame the detector misses is not the car moving. Losing the track
         on every miss would mean a busy lot never accumulates any dwell."""
