@@ -2996,13 +2996,14 @@ class ParkingAvailabilityView(APIView):
     def get(self, request):
         """Live availability for the owner portal.
 
-        `summary` is the number that matters — capacity and occupancy per
-        category, counted from the gate ledger, so it reflects vehicles actually
-        on campus rather than how many bays a camera happens to have resolved.
+        `summary` per category: capacity, bays parked in (`occupied`, from the
+        cameras) and the free spaces that leaves, plus `on_campus` — vehicles
+        inside the gates per the entry/exit scans, parked or not. The gate
+        figure is reported beside the parking one and never subtracted from it.
+        `unmonitored` counts zones with no baseline, whose bays are not scored.
 
         `zones` and `spaces` are the bay map: which specific slots look free, so
-        an owner can see where to head. Those stay camera-derived, and a zone
-        with no camera simply reports its bays as free.
+        an owner can see where to head.
 
         Three queries flat, whatever the number of zones, bays or vehicles: the
         spaces page, the declared-capacity aggregate, and the ledger count. The
@@ -3031,13 +3032,15 @@ class ParkingAvailabilityView(APIView):
             summary[cat] = {
                 'total':     cat_state.get('capacity', 0),
                 'occupied':  cat_state.get('occupied', 0),
+                'on_campus': cat_state.get('on_campus', 0),
+                'unmonitored': cat_state.get('unmonitored', 0),
                 # Bays an event under way has declared it will fill. Reported
                 # separately from 'occupied' so the screen can say WHY the free
                 # count dropped instead of looking like a miscount.
                 'reserved':  cat_state.get('reserved', 0),
                 'available': cat_state.get('available', 0),
                 'is_full':   cat_state.get('is_full', False),
-                'source':    'gate_ledger',
+                'source':    'camera_bays',
             }
 
         zone_agg = {}  # zone_id -> bay tallies for that zone

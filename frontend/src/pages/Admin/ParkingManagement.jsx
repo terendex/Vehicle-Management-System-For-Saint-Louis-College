@@ -742,13 +742,14 @@ export default function ParkingManagement({ embedded = false }) {
     : allSpaces
   const selDraftSp  = drafts.find(s => s._id === selDraft)
   const liveSpaces  = selZone?.spaces ?? []
-  // Bays are what the camera reads on this zone's map. Free/Occupied come from
-  // the gate ledger for the whole vehicle category, because that is what
-  // capacity actually means — a slot is taken from the entry scan to the exit
-  // scan. The bay count falls back in only when the API has not answered yet.
+  // Free / Parked / Capacity cover every zone of this vehicle category, from
+  // the bays the cameras read as taken. On Campus is the gate ledger — vehicles
+  // scanned in and not yet out, parked or not. This zone's own bays fall back
+  // in only when the API has not answered yet.
   const baysOccupied = liveSpaces.filter(s => s.is_occupied).length
   const occ         = selZone?.category_occupied  ?? baysOccupied
   const sumFr       = selZone?.category_available ?? Math.max(0, liveSpaces.length - baysOccupied)
+  const unmonitored = selZone?.category_unmonitored ?? 0
   const catLabel    = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
 
   // ════════════════════════════════════════════════════════════════
@@ -796,7 +797,7 @@ export default function ParkingManagement({ embedded = false }) {
               <div className="pm-stat-icon red"><Car size={18} /></div>
               <div>
                 <p className="pm-stat-val">{occ}</p>
-                <p className="pm-stat-lbl">Occupied</p>
+                <p className="pm-stat-lbl">Parked</p>
               </div>
             </div>
             <div className="pm-stat-card">
@@ -809,19 +810,25 @@ export default function ParkingManagement({ embedded = false }) {
             <div className="pm-stat-card">
               <div className="pm-stat-icon purple"><LayoutGrid size={18} /></div>
               <div>
-                <p className="pm-stat-val">{baysOccupied}/{liveSpaces.length}</p>
-                <p className="pm-stat-lbl">Bays Taken</p>
+                <p className="pm-stat-val">{selZone?.category_on_campus ?? 0}</p>
+                <p className="pm-stat-lbl">On Campus</p>
               </div>
             </div>
           </div>
         )}
 
         {/* Naming the two sources beats letting an admin discover the mismatch
-            and assume something is broken. */}
+            and assume something is broken. On Campus is normally higher than
+            Parked: drop-offs, cars still circling, cars parked off-camera. */}
         {selZone && mode === 'live' && (
           <p className="pm-stat-caption">
-            Free / Occupied / Capacity count <strong>{catLabel.toLowerCase()}s on campus</strong> from
-            gate entry and exit scans. <strong>Bays Taken</strong> is what the camera sees in {selZone.name}.
+            <strong>Free / Parked / Capacity</strong> cover every {catLabel.toLowerCase()} zone, from the
+            parking cameras ({selZone.name}: {baysOccupied} of {liveSpaces.length} bays taken).{' '}
+            <strong>On Campus</strong> counts {catLabel.toLowerCase()}s scanned in at the gate, parked or not.
+            {unmonitored > 0 && (
+              <> {unmonitored} {catLabel.toLowerCase()} zone{unmonitored === 1 ? ' is' : 's are'} not monitored yet,
+              so Free may be too high.</>
+            )}
           </p>
         )}
 

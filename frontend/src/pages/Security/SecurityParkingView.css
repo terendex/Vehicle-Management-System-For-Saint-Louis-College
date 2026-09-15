@@ -163,6 +163,8 @@
   font-size: 11.5px;
   font-weight: 600;
 }
+/* Inside the padded parking panel, which already supplies the side inset. */
+.pm-guard-unmonitored { margin: 0; font-weight: 500; line-height: 1.45; }
 
 /* ── Actions ─────────────────────────────────────────────────── */
 .pm-guard-actions {

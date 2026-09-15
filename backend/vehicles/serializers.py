@@ -185,17 +185,17 @@ class ParkingNoticeSerializer(serializers.ModelSerializer):
 class ParkingZoneSerializer(serializers.ModelSerializer):
     """A zone's map plus the capacity picture its category sits in.
 
-    Two granularities on purpose, because they come from two different sources:
+    Two granularities on purpose:
 
       * **Zone/bay fields** (`space_count`, `bays_occupied`, `total_capacity`)
         describe this zone's drawn map and what the camera sees in it.
-      * **Category fields** (`category_*`) describe capacity and live occupancy
-        for every zone of this vehicle category, counted from the gate ledger.
-        The ledger knows how many cars are on campus, not which car zone each
-        one chose, so a per-zone occupancy would be a fabricated number.
+      * **Category fields** (`category_*`) describe every zone of this vehicle
+        category together: capacity, bays parked in (`category_occupied`, from
+        the cameras) and the free spaces that leaves. `category_on_campus` is
+        the separate gate-ledger figure — vehicles inside the gates, parked or
+        not — and never feeds the free count. See vehicles/capacity.py.
 
-    `is_full` deliberately reports the *category* answer — it is the one that
-    decides whether another car can be let in.
+    `is_full` deliberately reports the *category* answer.
     """
     spaces              = ParkingSpaceSerializer(many=True, read_only=True)
     reference_image_url = serializers.SerializerMethodField()
@@ -207,6 +207,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
     camera_name         = serializers.SerializerMethodField()
     category_capacity   = serializers.SerializerMethodField()
     category_occupied   = serializers.SerializerMethodField()
+    category_on_campus  = serializers.SerializerMethodField()
+    category_unmonitored = serializers.SerializerMethodField()
     category_available  = serializers.SerializerMethodField()
     category_reserved   = serializers.SerializerMethodField()
     category_event      = serializers.SerializerMethodField()
@@ -221,7 +223,8 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'vehicle_category', 'lens_index', 'camera', 'camera_name', 'reference_image',
                   'reference_image_url', 'capacity_override', 'space_count',
                   'total_capacity', 'occupied_count', 'bays_occupied', 'is_full',
-                  'category_capacity', 'category_occupied', 'category_available',
+                  'category_capacity', 'category_occupied', 'category_on_campus',
+                  'category_unmonitored', 'category_available',
                   'category_reserved', 'category_event',
                   'category_is_full', 'category_fill_pct', 'occupancy_source',
                   'occupancy_method', 'detection_enabled',
@@ -229,7 +232,7 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
                   'has_baseline', 'created_at', 'spaces']
         read_only_fields = ['baseline_captured_at']
 
-    # ── Category state (gate ledger) ──────────────────────────────────────────
+    # ── Category state (bays + gate ledger) ───────────────────────────────────
 
     def _state(self):
         """Category capacity/occupancy, fetched at most once per serialization.
@@ -257,7 +260,17 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         return self._category(obj).get('capacity', 0)
 
     def get_category_occupied(self, obj):
+        """Bays parked in across every zone of this category, per the cameras."""
         return self._category(obj).get('occupied', 0)
+
+    def get_category_on_campus(self, obj):
+        """Vehicles of this category inside the gates, per the entry/exit scans —
+        parked or not."""
+        return self._category(obj).get('on_campus', 0)
+
+    def get_category_unmonitored(self, obj):
+        """Zones of this category with no baseline, whose bays are not scored."""
+        return self._category(obj).get('unmonitored', 0)
 
     def get_category_available(self, obj):
         return self._category(obj).get('available', 0)
@@ -282,12 +295,12 @@ class ParkingZoneSerializer(serializers.ModelSerializer):
         return self._category(obj).get('fill_pct', 0)
 
     def get_is_full(self, obj):
-        # The question a guard is really asking: can another one of these come
-        # in? That is a category answer, from the gate ledger.
+        # The question a guard is really asking: is there a space left for one
+        # of these? A category answer, across every zone of that kind.
         return self._category(obj).get('is_full', False)
 
     def get_occupancy_source(self, obj):
-        return 'gate_ledger'
+        return 'camera_bays'
 
     # ── Classic-scorer baseline ───────────────────────────────────────────────
 

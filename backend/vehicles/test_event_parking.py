@@ -210,14 +210,13 @@ class EventApiTests(APITestCase):
 
 
 class EventAndLedgerTogetherTests(APITestCase):
-    """The two halves of the free-space number, exercised through the real
-    endpoint rather than through category_state() alone.
+    """The free-space number and the on-campus number, exercised through the
+    real endpoint rather than through category_state() alone.
 
-    Capacity is declared by an admin. Occupancy comes from the gate ledger —
-    a vehicle takes a slot when it is scanned in and gives it back when it is
-    scanned out. An event's declared share is a third term that holds bays back
-    on top of both. All three have to move the same number, or the screen and
-    the gate disagree about whether the campus is full.
+    Capacity is declared by an admin. Parked is the bays the cameras read as
+    taken. An event's declared share holds bays back on top of both. The gate
+    ledger is reported beside them as vehicles on campus, and must never move
+    the free count.
     """
     AVAIL = '/api/vehicles/parking-availability/'
 
@@ -229,9 +228,16 @@ class EventAndLedgerTogetherTests(APITestCase):
 
     def setUp(self):
         from vehicles.models import ParkingZone
-        ParkingZone.objects.create(
+        self.zone = ParkingZone.objects.create(
             name='Car Zone', vehicle_category='car', capacity_override=10)
         self.client.force_authenticate(self.guard)
+
+    def _park(self, n):
+        from vehicles.models import ParkingSpace
+        return [ParkingSpace.objects.create(
+                    zone=self.zone, space_number=f'EV{i}', is_occupied=True,
+                    x1=0.1, y1=0.1, x2=0.2, y2=0.2)
+                for i in range(n)]
 
     def _car(self, plate):
         from vehicles.models import Vehicle
@@ -253,21 +259,25 @@ class EventAndLedgerTogetherTests(APITestCase):
     def _summary(self):
         return self.client.get(f'{self.AVAIL}?category=car').data['summary']['car']
 
-    def test_the_ledger_moves_the_number_in_both_directions(self):
+    def test_the_ledger_moves_on_campus_but_not_the_free_count(self):
         start = self._summary()
-        self.assertEqual((start['total'], start['occupied'], start['available']),
-                         (10, 0, 10))
+        self.assertEqual((start['total'], start['occupied'], start['available'],
+                          start['on_campus']), (10, 0, 10, 0))
 
         car = self._car('LED1111')
         entry = self._enter(car)
         after_entry = self._summary()
-        self.assertEqual(after_entry['occupied'], 1)
-        self.assertEqual(after_entry['available'], 9)
+        self.assertEqual(after_entry['on_campus'], 1)
+        self.assertEqual(after_entry['available'], 10)
 
         self._exit(car, entry)
-        after_exit = self._summary()
-        self.assertEqual(after_exit['occupied'], 0)
-        self.assertEqual(after_exit['available'], 10)
+        self.assertEqual(self._summary()['on_campus'], 0)
+
+    def test_a_parked_bay_takes_a_space(self):
+        self._park(1)
+        s = self._summary()
+        self.assertEqual(s['occupied'], 1)
+        self.assertEqual(s['available'], 9)
 
     def test_the_event_share_comes_off_the_available_count(self):
         before = self._summary()
@@ -282,10 +292,9 @@ class EventAndLedgerTogetherTests(APITestCase):
         self.assertEqual(after['reserved'], 5)      # but five are spoken for
         self.assertEqual(after['available'], 5)
 
-    def test_occupancy_and_the_event_share_stack(self):
-        # Three cars inside and half the lot reserved leaves two, not five.
-        for i in range(3):
-            self._enter(self._car(f'STK{i:04d}'))
+    def test_parked_bays_and_the_event_share_stack(self):
+        # Three cars parked and half the lot reserved leaves two, not five.
+        self._park(3)
         _event(parking_share='half')
 
         s = self._summary()
@@ -294,22 +303,21 @@ class EventAndLedgerTogetherTests(APITestCase):
         self.assertEqual(s['available'], 2)
         self.assertFalse(s['is_full'])
 
-    def test_the_gate_reads_full_once_the_reserve_and_the_cars_fill_it(self):
-        for i in range(5):
-            self._enter(self._car(f'FUL{i:04d}'))
+    def test_full_once_the_reserve_and_the_parked_cars_fill_it(self):
+        self._park(5)
         _event(parking_share='half')
 
         s = self._summary()
         self.assertEqual(s['available'], 0)
         self.assertTrue(s['is_full'])
 
-    def test_an_exit_gives_a_slot_back_while_an_event_is_running(self):
-        car = self._car('EVX1111')
-        entry = self._enter(car)
+    def test_a_bay_freeing_gives_a_space_back_while_an_event_is_running(self):
+        bay = self._park(1)[0]
         _event(parking_share='half')
         self.assertEqual(self._summary()['available'], 4)
 
-        self._exit(car, entry)
+        bay.is_occupied = False
+        bay.save(update_fields=['is_occupied'])
         self.assertEqual(self._summary()['available'], 5)
 
     def test_the_event_is_named_on_the_response(self):

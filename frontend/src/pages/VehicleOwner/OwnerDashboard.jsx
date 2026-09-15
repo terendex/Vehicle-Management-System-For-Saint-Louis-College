@@ -339,18 +339,32 @@ export default function OwnerDashboard() {
     }
   }
 
-  const fetchParking = async (category) => {
-    setParkingLoading(true)
-    setParkingError(null)
+  // `silent` refreshes in place: a live update must not blank the card to a
+  // spinner every time a car parks, or a busy lot would never stop flashing.
+  const fetchParking = async (category, { silent = false } = {}) => {
+    if (!silent) {
+      setParkingLoading(true)
+      setParkingError(null)
+    }
     try {
       const data = await registrationApi.getParkingAvailability(category)
       setParking(data)
+      setParkingError(null)
     } catch {
-      setParkingError('Could not load parking availability.')
+      if (!silent) setParkingError('Could not load parking availability.')
     } finally {
-      setParkingLoading(false)
+      if (!silent) setParkingLoading(false)
     }
   }
+
+  // The parking card follows the lots themselves: a bay flipping (parkingspace),
+  // a zone's setup or capacity changing (parkingzone), a gate scan moving the
+  // on-campus count (accesslog), or an event holding spaces back (event).
+  useLiveUpdates(
+    () => { if (parkingCategory) fetchParking(parkingCategory, { silent: true }) },
+    ['parkingspace', 'parkingzone', 'accesslog', 'event'],
+    { debounce: 1000 },
+  )
 
   /* ── password change ── */
   const handlePwChange = async (e) => {
@@ -1161,7 +1175,7 @@ export default function OwnerDashboard() {
                       )}
                       <div className="od-parking-stat occupied">
                         <span className="od-parking-stat-num">{parkingSummary.occupied}</span>
-                        <span className="od-parking-stat-label">Occupied</span>
+                        <span className="od-parking-stat-label">Parked</span>
                       </div>
                       <div className="od-parking-stat total">
                         <span className="od-parking-stat-num">{parkingSummary.total}</span>
@@ -1169,6 +1183,25 @@ export default function OwnerDashboard() {
                       </div>
                     </div>
                   ) : null}
+
+                  {/* A separate question from the counters above: how many are
+                      inside the gates, parked or not. Said in a sentence rather
+                      than as a fourth counter so nobody subtracts it from Total. */}
+                  {parkingSummary && (
+                    <p className="od-parking-oncampus">
+                      <strong>{parkingSummary.on_campus ?? 0}</strong>{' '}
+                      {parkingCategory === 'motorcycle' ? 'motorcycle' : 'car'}
+                      {(parkingSummary.on_campus ?? 0) === 1 ? ' is' : 's are'} on campus right now,
+                      counted at the gate. Some may still be looking for a space.
+                    </p>
+                  )}
+                  {parkingSummary?.unmonitored > 0 && (
+                    <p className="od-parking-unmonitored">
+                      <AlertTriangle size={14} />
+                      {parkingSummary.unmonitored} parking area{parkingSummary.unmonitored === 1 ? ' is' : 's are'} not
+                      monitored yet, so some spaces shown as available may be taken.
+                    </p>
+                  )}
 
                   {/* Per-zone fill percentage */}
                   {parkingZones.length > 0 && (
@@ -1218,8 +1251,7 @@ export default function OwnerDashboard() {
                     <div className="od-parking-empty">
                       <p>No parking spaces configured yet.</p>
                       <span className="od-parking-cctv-note">
-                        Parking availability will be updated in real time once CCTV integration is enabled.
-                        Each space is monitored via camera overview with designated zones.
+                        Spaces appear here once campus security sets up the parking cameras for this area.
                       </span>
                     </div>
                   )}
@@ -1229,7 +1261,7 @@ export default function OwnerDashboard() {
                     <span className="od-legend-item occupied"><span className="od-legend-dot occupied" />Occupied</span>
                   </div>
                   <p className="od-parking-note">
-                    Parking data is updated by security personnel and will be linked to CCTV camera zones.
+                    Spaces are watched by the parking cameras and update on their own.
                     Only {parkingCategory === 'motorcycle' ? 'motorcycle' : 'car/van/SUV'} spaces are shown for your vehicle type.
                   </p>
                 </>

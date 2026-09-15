@@ -1,9 +1,10 @@
-"""Parking capacity is counted from the gate ledger, not from the bay cameras.
+"""Parking counts parked bays; the gate ledger counts vehicles on campus.
 
-A vehicle takes a slot when a guard scans it in and gives it back when one
-scans it out. These tests pin that rule, the guard-discipline backstop that
-keeps a missed exit scan from holding a slot all day, and the query budget —
-the whole point of deriving the number this way is that it costs the same
+Free spaces are capacity minus the bays the cameras read as taken. The gate
+ledger is the separate "on campus" figure: a vehicle counts from its entry scan
+to its exit scan, parked or not. These tests pin that split, the
+guard-discipline backstop that keeps a missed exit scan from inflating the
+on-campus count all day, and the query budget — the numbers cost the same
 whether three vehicles are on campus or three hundred.
 """
 from datetime import timedelta
@@ -156,11 +157,14 @@ class CategoryStateTests(TestCase):
                                    capacity_override=20)
         self.assertEqual(category_capacity()['car'], 50)
 
-    def test_full_when_occupancy_reaches_capacity(self):
-        self.zone.capacity_override = 2
-        self.zone.save(update_fields=['capacity_override'])
-        _enter(_vehicle('III9999'))
-        _enter(_vehicle('JJJ0000'))
+    def _bays(self, taken, free=0):
+        for i in range(taken + free):
+            ParkingSpace.objects.create(zone=self.zone, space_number=f'P{i}',
+                                        x1=0.1, y1=0.1, x2=0.2, y2=0.2,
+                                        is_occupied=i < taken)
+
+    def test_full_when_parked_bays_reach_capacity(self):
+        self._bays(taken=2)
 
         state = category_state()['car']
         self.assertEqual(state['occupied'], 2)
@@ -168,23 +172,33 @@ class CategoryStateTests(TestCase):
         self.assertTrue(state['is_full'])
 
     def test_available_never_goes_negative(self):
-        """An override lowered below the live count reads as full, not as a
+        """An override lowered below the parked count reads as full, not as a
         negative number of free slots."""
+        self._bays(taken=2)
         self.zone.capacity_override = 1
         self.zone.save(update_fields=['capacity_override'])
-        _enter(_vehicle('KKK1111'))
-        _enter(_vehicle('LLL2222'))
 
         state = category_state()['car']
         self.assertEqual(state['available'], 0)
         self.assertEqual(state['fill_pct'], 100)
         self.assertTrue(state['is_full'])
 
-    def test_unregistered_entry_still_consumes_a_slot(self):
-        """Nothing can classify a visitor's vehicle — the detector is
-        single-class and there is no registration row to read a type from. It
-        must still take up room, or the lot reports free slots it does not
-        have."""
+    def test_gate_entries_count_on_campus_not_parked(self):
+        """A car inside the gates has not necessarily parked — it may still be
+        looking, dropping someone off, or parked where no camera watches. It
+        must not take a free space off the count."""
+        self._bays(taken=1, free=4)
+        for plate in ('GAT0001', 'GAT0002', 'GAT0003'):
+            _enter(_vehicle(plate))
+
+        state = category_state()['car']
+        self.assertEqual(state['on_campus'], 3)
+        self.assertEqual(state['occupied'], 1)
+        self.assertEqual(state['available'], 4)
+
+    def test_unregistered_entry_counts_as_on_campus(self):
+        """Nothing can classify a visitor's vehicle — there is no registration
+        row to read a type from. It still counts as a vehicle inside."""
         self.zone.capacity_override = 5
         self.zone.save(update_fields=['capacity_override'])
         log = AccessLog.objects.create(
@@ -194,8 +208,8 @@ class CategoryStateTests(TestCase):
         AccessLog.objects.filter(pk=log.pk).update(scanned_at=timezone.now())
 
         state = category_state()
-        self.assertEqual(state['car']['occupied'], 1)
-        self.assertEqual(state['car']['available'], 4)
+        self.assertEqual(state['car']['on_campus'], 1)
+        self.assertEqual(state['car']['available'], 5)
         # Reported separately, so the assumption is visible rather than buried.
         self.assertEqual(state['unknown'], 1)
 
@@ -208,8 +222,15 @@ class CategoryStateTests(TestCase):
         AccessLog.objects.filter(pk=log.pk).update(scanned_at=timezone.now())
 
         state = category_state()
-        self.assertEqual(state['motorcycle']['occupied'], 0)
-        self.assertEqual(state['car']['occupied'], 1)
+        self.assertEqual(state['motorcycle']['on_campus'], 0)
+        self.assertEqual(state['car']['on_campus'], 1)
+
+    def test_zones_without_a_baseline_are_reported_as_unmonitored(self):
+        ParkingZone.objects.create(name='Car B', vehicle_category='car',
+                                   baseline_image='parking_baselines/b.jpg')
+        state = category_state()
+        self.assertEqual(state['car']['unmonitored'], 1)     # Car A only
+        self.assertEqual(state['motorcycle']['unmonitored'], 0)
 
     def test_zero_capacity_is_not_full(self):
         """A category with nothing configured must not report FULL — that would
@@ -232,9 +253,9 @@ class CapacityQueryBudgetTests(TestCase):
             for j in range(4):
                 ParkingSpace.objects.create(zone=zone, space_number=f'{i}-{j}',
                                             x1=0.1, y1=0.1, x2=0.2, y2=0.2)
-        # Capacity aggregate + ledger count + the active-event lookup. Three,
-        # not two, since events can reserve part of the car park — but still
-        # three for five zones, twenty bays, or five hundred.
+        # Zone aggregate (capacity + parked bays) + ledger count + the
+        # active-event lookup. Three for five zones, twenty bays, or five
+        # hundred.
         with self.assertNumQueries(3):
             category_state()
 
@@ -258,14 +279,17 @@ class ParkingApiTests(APITestCase):
         ParkingSpace.objects.filter(zone=self.zone, space_number='B0').update(
             is_occupied=True, occupied_by='CAMERA')
 
+        _enter(_vehicle('MMM4444'))
+
         row = self.client.get(f'{ZONES}{self.zone.id}/').data
         self.assertEqual(row['category_capacity'], 10)   # declared
-        self.assertEqual(row['category_occupied'], 1)    # gate ledger
+        self.assertEqual(row['category_occupied'], 1)    # bays parked in
+        self.assertEqual(row['category_on_campus'], 2)   # gate ledger
         self.assertEqual(row['category_available'], 9)
-        self.assertEqual(row['bays_occupied'], 1)        # camera map
+        self.assertEqual(row['bays_occupied'], 1)        # this zone's map
         self.assertEqual(row['space_count'], 3)
         self.assertFalse(row['is_full'])
-        self.assertEqual(row['occupancy_source'], 'gate_ledger')
+        self.assertEqual(row['occupancy_source'], 'camera_bays')
 
     def test_zone_list_does_not_scale_queries_with_zone_count(self):
         for i in range(4):
@@ -277,15 +301,19 @@ class ParkingApiTests(APITestCase):
         with self.assertNumQueries(5):
             self.client.get(ZONES)
 
-    def test_availability_summary_comes_from_the_ledger(self):
+    def test_availability_summary_splits_parked_from_on_campus(self):
         _enter(_vehicle('NNN4444'))
         _enter(_vehicle('OOO5555'))
+        ParkingSpace.objects.filter(zone=self.zone, space_number='B0').update(
+            is_occupied=True, occupied_by='CAMERA')
 
-        body = self.client.get(f'{AVAIL}?category=car').data
-        self.assertEqual(body['summary']['car']['total'], 10)
-        self.assertEqual(body['summary']['car']['occupied'], 2)
-        self.assertEqual(body['summary']['car']['available'], 8)
-        self.assertEqual(body['summary']['car']['source'], 'gate_ledger')
+        car = self.client.get(f'{AVAIL}?category=car').data['summary']['car']
+        self.assertEqual(car['total'], 10)
+        self.assertEqual(car['occupied'], 1)
+        self.assertEqual(car['on_campus'], 2)
+        self.assertEqual(car['available'], 9)
+        self.assertEqual(car['unmonitored'], 1)
+        self.assertEqual(car['source'], 'camera_bays')
 
     def test_availability_still_reports_the_bay_map(self):
         ParkingSpace.objects.filter(zone=self.zone, space_number='B0').update(
@@ -304,8 +332,8 @@ class ParkingApiTests(APITestCase):
             zone = ParkingZone.objects.create(name=f'More {i}', vehicle_category='car')
             ParkingSpace.objects.create(zone=zone, space_number=f'M{i}',
                                         x1=0.1, y1=0.1, x2=0.2, y2=0.2)
-        # Four flat: the spaces page, the ledger count, the capacity
-        # aggregate, the active-event lookup. The zone-name lookup used to sit
+        # Four flat: the spaces page, the ledger count, the zone aggregate
+        # (capacity + parked bays), the active-event lookup. The zone-name lookup used to sit
         # inside the aggregation loop, costing one extra SELECT per zone on top.
         with self.assertNumQueries(4):
             self.client.get(f'{AVAIL}?category=car')

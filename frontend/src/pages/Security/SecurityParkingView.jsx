@@ -272,17 +272,19 @@ export default function SecurityParkingView() {
   // ── Derived ─────────────────────────────────────────────────────
   // Two different questions, two different sources.
   //
-  // Capacity/occupancy comes from the gate ledger and is per *category* — a
-  // vehicle takes a slot when a guard scans it in and gives it back when one
-  // scans it out. That is what decides whether another car can be let in.
+  // Free / parked / capacity are per *category*, across every zone of that
+  // kind: parked is the bays the cameras read as taken, free is what that
+  // leaves. On campus is the gate ledger — vehicles scanned in and not yet out,
+  // parked or not — shown beside them and never subtracted from capacity.
   //
-  // The bay numbers come from the camera and describe this zone's map only:
-  // which specific slots are taken and whether anyone is parked across a line.
+  // The bay numbers in the second panel describe this zone's map only.
   const liveSpaces   = selZone?.spaces ?? []
   const baysOccupied = selZone?.bays_occupied ?? liveSpaces.filter(s => s.is_occupied).length
   const bayTotal     = liveSpaces.length
   const totalCap     = selZone?.category_capacity  ?? 0
   const occ          = selZone?.category_occupied  ?? 0
+  const onCampus     = selZone?.category_on_campus ?? 0
+  const unmonitored  = selZone?.category_unmonitored ?? 0
   const isFull       = selZone?.category_is_full   ?? false
   const sumFr        = selZone?.category_available ?? Math.max(0, totalCap - occ)
   const catLabel     = selZone?.vehicle_category === 'motorcycle' ? 'Motorcycle' : 'Car'
@@ -712,18 +714,26 @@ export default function SecurityParkingView() {
                   </div>
 
                   <dl className="pm-guard-figs">
-                    <div><dt>Occupied</dt><dd>{occ}</dd></div>
+                    <div><dt>Parked</dt><dd>{occ}</dd></div>
                     <div><dt>Capacity</dt><dd>{totalCap}</dd></div>
                     {reserved > 0 && <div><dt>Held</dt><dd>{reserved}</dd></div>}
+                    <div><dt>On campus</dt><dd>{onCampus}</dd></div>
                   </dl>
 
-                  {/* Where these numbers come from. They move on gate scans for
-                      the whole campus, while the bays below are this zone's
-                      camera — they are not expected to match, and a guard who
-                      thinks they should would distrust both. */}
+                  {/* Where these numbers come from. On campus will usually be
+                      higher than parked — drop-offs, cars still circling, cars
+                      parked where no camera watches — and a guard who expects
+                      the two to match would distrust both. */}
                   <p className="pm-guard-note">
-                    Counted from gate entry and exit scans for every {catLabel.toLowerCase()} on campus.
+                    Free and parked come from the parking cameras in every {catLabel.toLowerCase()} zone.
+                    On campus counts gate entry and exit scans, parked or not.
                   </p>
+                  {unmonitored > 0 && (
+                    <p className="pm-guard-override-tag pm-guard-unmonitored">
+                      {unmonitored} {catLabel.toLowerCase()} zone{unmonitored === 1 ? ' is' : 's are'} not
+                      monitored yet, so the free count may be too high.
+                    </p>
+                  )}
                 </div>
               </section>
             )}
