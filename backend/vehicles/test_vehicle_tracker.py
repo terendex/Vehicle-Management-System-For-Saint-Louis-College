@@ -243,7 +243,7 @@ class OccupancyHysteresisTests(TestCase):
         return None
 
     def test_claiming_a_long_free_bay_takes_the_documented_frames(self):
-        """A bay free for a while sat at -FREE_THR, so claiming it took 24
+        """A bay free for a while sat at -20 on the old shared counter, so claiming it took 24
         frames rather than OCCUPY_THR. Every parked car now passes through that
         floor while the dwell gate holds it, so the configured wait would not be
         the wait an admin gets."""
@@ -259,19 +259,78 @@ class OccupancyHysteresisTests(TestCase):
         self.bay.refresh_from_db()
         self.assertFalse(self.bay.is_occupied)
 
-    def test_releasing_a_bay_still_takes_the_full_free_threshold(self):
-        """The slow side is deliberate: a car hidden for a moment must not free
-        its bay."""
-        self._free_for(40)
-        self._taken_until_occupied()
-        for _ in range(pc.FREE_THR - 1):
-            self.thread._apply_hits([self.bay], {self.bay.id: False})
+    def _occupy_at(self, t):
+        for _ in range(pc.OCCUPY_THR):
+            self.thread._apply_hits([self.bay], {self.bay.id: True}, now=t)
         self.bay.refresh_from_db()
         self.assertTrue(self.bay.is_occupied)
 
-        self.thread._apply_hits([self.bay], {self.bay.id: False})
+    def _miss_at(self, t, presence=False):
+        self.thread._apply_hits([self.bay], {self.bay.id: False}, now=t,
+                                presence={self.bay.id: presence})
         self.bay.refresh_from_db()
-        self.assertFalse(self.bay.is_occupied)
+        return self.bay.is_occupied
+
+    def test_a_lost_detection_holds_the_bay_for_the_grace_period(self):
+        """The slow side is deliberate: a car the detector loses for a while
+        must not free its bay."""
+        self._occupy_at(1000.0)
+        self.assertTrue(self._miss_at(1001.0))
+        self.assertTrue(self._miss_at(1000.0 + pc.OCCUPIED_GRACE_SECONDS - 1))
+        self.assertFalse(self._miss_at(1000.0 + pc.OCCUPIED_GRACE_SECONDS))
+
+    def test_each_sighting_restarts_the_grace_period(self):
+        """Filled again at +50s, so the minute counts from there — a bay seen
+        intermittently stays taken however long the gaps add up to."""
+        self._occupy_at(1000.0)
+        self.assertTrue(self._miss_at(1050.0, presence=True))
+        self.assertTrue(self._miss_at(1050.0 + pc.OCCUPIED_GRACE_SECONDS - 1))
+        self.assertFalse(self._miss_at(1050.0 + pc.OCCUPIED_GRACE_SECONDS))
+
+    def test_a_bay_already_occupied_gets_a_full_grace_from_first_sight(self):
+        """Marked by a guard, or taken before this worker started: there is no
+        sighting on record, and that must not read as one a minute old."""
+        self.bay.is_occupied = True
+        self.bay.save(update_fields=['is_occupied'])
+        self.assertTrue(self._miss_at(5000.0))
+        self.assertTrue(self._miss_at(5000.0 + pc.OCCUPIED_GRACE_SECONDS - 1))
+        self.assertFalse(self._miss_at(5000.0 + pc.OCCUPIED_GRACE_SECONDS))
+
+    def test_a_sighting_while_free_does_not_shorten_a_later_grace(self):
+        """A car passing a free bay at t=0 must not leave a stale clock behind
+        that frees the bay the instant a guard later marks it taken."""
+        self.assertFalse(self._miss_at(0.0, presence=True))
+        self.bay.is_occupied = True
+        self.bay.save(update_fields=['is_occupied'])
+        self.assertTrue(self._miss_at(500.0))
+
+
+class PlausibleSizeTests(SimpleTestCase):
+    """Boxes too big or too small to be one vehicle in these bays claim nothing,
+    but are still reported so the screens can show them."""
+
+    def setUp(self):
+        self.thread = pc.ParkingCameraThread(1, 'rtsp://unused')
+        # One bay of area 0.2 x 0.2 = 0.04.
+        self.thread._spaces = [ParkingSpace(id=1, space_number='A1',
+                                            x1=0.1, y1=0.1, x2=0.3, y2=0.3)]
+
+    def test_a_potted_plant_sized_box_is_ignored(self):
+        # 0.05 x 0.03 = 0.0015, 0.04 of the bay — the plants measured on campus.
+        kept, ignored = self.thread._split_plausible([det(0.15, 0.15, 0.05, 0.03)])
+        self.assertEqual(kept, [])
+        self.assertEqual(ignored[0]['reason'], 'too_small')
+
+    def test_a_motorcycle_in_a_car_bay_is_kept(self):
+        # 0.08 x 0.08 = 0.0064, 0.16 of the bay.
+        kept, ignored = self.thread._split_plausible([det(0.15, 0.15, 0.08, 0.08)])
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(ignored, [])
+
+    def test_a_box_around_half_the_frame_is_still_ignored(self):
+        kept, ignored = self.thread._split_plausible([det(0.0, 0.0, 0.6, 0.6)])
+        self.assertEqual(kept, [])
+        self.assertEqual(ignored[0]['reason'], 'too_big')
 
 
 class DwellCacheTests(TestCase):

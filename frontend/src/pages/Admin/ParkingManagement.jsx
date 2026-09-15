@@ -1330,8 +1330,8 @@ export default function ParkingManagement({ embedded = false }) {
                   </g>
                 )}
 
-                {/* What the detector sees. Dashed until the vehicle settles —
-                    only a settled one is allowed to claim a bay. */}
+                {/* Seen, but too big or too small to be one vehicle in a bay —
+                    thin and grey, because it claims nothing. */}
                 {mode === 'live' && (detections?.ignored ?? []).map((v, i) => (
                   <rect
                     key={`ign-${i}`}

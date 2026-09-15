@@ -38,7 +38,18 @@ from vehicles.vehicle_tracker import VehicleTracker
 log = logging.getLogger(__name__)
 
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
-FREE_THR   = 20  # consecutive frames without vehicle    → mark free
+
+# How long an occupied bay stays occupied after the last time anything filled
+# it. Every frame that sees a vehicle covering the bay restarts the clock, so
+# only a full minute of *continuous* absence releases it.
+#
+# This replaced a 20-frame release (~2s), which let the detector's weak side
+# drive the verdict: a tricycle in a dim, cluttered bay scores near the
+# confidence floor and drops out for a few frames at a time, and each dropout
+# flipped a plainly taken bay to free. A miss is the costlier error here — it
+# sends someone to a space that is not there — while a car that really left
+# only reads taken for one extra minute.
+OCCUPIED_GRACE_SECONDS = 60.0
 
 # Sampling density for the space-coverage test (see _space_coverage).
 COVERAGE_GRID = 6
@@ -148,6 +159,17 @@ OCCUPANCY_CONF = 0.25
 # above is low enough to see real vehicles in a dim scene, which is also low
 # enough to let through one box drawn around half the picture.
 MAX_VEHICLE_BAY_RATIO = 4.0
+
+# The other end: how much smaller than this zone's smallest bay a detection may
+# be. A box wholly inside a bay claims it through OCCUPY_VEHICLE_SHARE however
+# small it is, so a potted plant or a bucket called a "vehicle" at 0.27 would
+# take the bay it stands in.
+#
+# Measured on the campus Tri zone: potted plants read at 0.056 and 0.083 of the
+# bay, the rear of a partly hidden motorcycle at 0.41. A motorcycle wholly
+# inside a car-sized bay is the smallest real case, ~0.13 by footprint, which is
+# what keeps this below 0.15.
+MIN_VEHICLE_BAY_RATIO = 0.12
 
 # How often the vehicle detector runs when a zone scores occupancy classically.
 # Occupancy no longer needs it there, but double parking still does, and a
@@ -573,6 +595,8 @@ class ParkingCameraThread(threading.Thread):
         # run(). None outside it — nothing may assume a frame source exists.
         self._reader: "_StreamReader | None" = None
         self._hyst:   dict[int, int]    = {}
+        # When each occupied bay was last seen filled — the grace clock.
+        self._last_filled: dict[int, float] = {}
         # Newest detector output, for the screens — see _remember().
         self._last_vehicles: list[dict] = []
         self._last_ignored:  list[dict] = []
@@ -749,8 +773,14 @@ class ParkingCameraThread(threading.Thread):
 
         return detect_across_lenses(frame, detect_vehicles, conf=OCCUPANCY_CONF)
 
-    def _detector_hits(self, spaces, vehicles, now: float) -> dict:
+    def _detector_hits(self, spaces, vehicles, now: float, settled_only: bool = True) -> dict:
         """{space_id: is a parked vehicle occupying this bay} from tracked boxes.
+
+        `settled_only=False` asks the weaker question "is anything filling this
+        bay right now", which is what keeps an already-occupied bay's grace
+        clock running: a detector that loses a parked tricycle for longer than
+        the tracker remembers hands it back as a brand-new, unsettled track, and
+        that must still count as the bay being filled.
 
         Taken either way round: enough of the bay is covered, OR enough of a
         vehicle sits inside it. The second clause is what stops a motorcycle in
@@ -763,7 +793,8 @@ class ParkingCameraThread(threading.Thread):
         the four-frame hysteresis to latch it. Waiting for the vehicle to stop
         means a bay is claimed by a car that parked in it, not by one going by.
         """
-        parked = [v for v in vehicles if v.has_settled(now, self._parked_after)]
+        parked = [v for v in vehicles
+                  if not settled_only or v.has_settled(now, self._parked_after)]
         hits = {}
         for sp in spaces:
             taken = False
@@ -801,36 +832,51 @@ class ParkingCameraThread(threading.Thread):
         # `.get` leaves it alone rather than flipping it free on missing data.
         return {sp.id: signals[sp.id]['occupied'] for sp in spaces if sp.id in signals}
 
-    def _apply_hits(self, spaces, hits: dict) -> None:
+    def _apply_hits(self, spaces, hits: dict, now: "float | None" = None,
+                    presence: "dict | None" = None) -> None:
         """Run the occupancy hysteresis and persist any transitions.
 
         Shared by both scoring methods on purpose — swapping how a bay is judged
         must not change how long it takes to claim or release one.
 
-        The counter is evidence toward the *next* change of state, so it resets
-        when the evidence turns around. It used to run as one signed accumulator
-        between -FREE_THR and +OCCUPY_THR, which is not what OCCUPY_THR says it
-        is: a bay that had been free for a couple of seconds sat at -20, so
-        claiming it took 24 positive frames rather than 4 — 2.4s instead of the
-        documented 0.4s. Harmless while bays flipped the moment a box overlapped
-        them; not harmless once a vehicle has to stand still first, because then
-        every car that parks passes through that floor and the wait an admin
-        configured is not the wait they get.
+        Claiming counts frames: OCCUPY_THR in a row, reset by any miss, so a
+        flickering box never creeps a bay toward taken. (It used to share one
+        signed accumulator with the release side, so a long-free bay needed 24
+        frames to claim rather than 4.)
+
+        Releasing counts time: OCCUPIED_GRACE_SECONDS since the bay was last
+        seen filled. `presence` is the evidence that restarts that clock —
+        anything covering the bay, settled or not — and defaults to `hits` for
+        a scorer that has only the one answer.
         """
+        now = time.monotonic() if now is None else now
+        presence = hits if presence is None else presence
+
         for sp in spaces:
             if sp.id not in hits:
                 continue
-            prev = self._hyst.get(sp.id, 0)
+
+            if sp.is_occupied:
+                # A bay found occupied with no clock yet — marked by a guard,
+                # or taken before this worker started — gets a full grace from
+                # the moment it is first seen, not an instant release.
+                if hits[sp.id] or presence.get(sp.id) or sp.id not in self._last_filled:
+                    self._last_filled[sp.id] = now
+            else:
+                # Dropped while free, so a stale time from an earlier episode
+                # can never cut a later one's grace short.
+                self._last_filled.pop(sp.id, None)
 
             if hits[sp.id]:
-                nxt = min(max(prev, 0) + 1, OCCUPY_THR)
+                nxt = min(self._hyst.get(sp.id, 0) + 1, OCCUPY_THR)
                 self._hyst[sp.id] = nxt
                 if not sp.is_occupied and nxt >= OCCUPY_THR:
                     self._set_occupied(sp, True)
+                    self._last_filled[sp.id] = now
             else:
-                nxt = max(min(prev, 0) - 1, -FREE_THR)
-                self._hyst[sp.id] = nxt
-                if sp.is_occupied and nxt <= -FREE_THR:
+                self._hyst[sp.id] = 0
+                if (sp.is_occupied
+                        and now - self._last_filled[sp.id] >= OCCUPIED_GRACE_SECONDS):
                     self._set_occupied(sp, False)
 
     def _load_zone_config(self) -> dict:
@@ -943,7 +989,9 @@ class ParkingCameraThread(threading.Thread):
         ]
 
     def _split_plausible(self, dets: list) -> tuple:
-        """Drop boxes too big to be one vehicle standing in one of these bays.
+        """Drop boxes too big — or too small — to be one vehicle standing in one
+        of these bays. The small side is MIN_VEHICLE_BAY_RATIO; the rest of this
+        is about the big side.
 
         Lowering the confidence floor far enough to see a vehicle in a dim,
         cluttered scene also lets through the detector's worst habit there:
@@ -958,24 +1006,25 @@ class ParkingCameraThread(threading.Thread):
         two bays is still ~3x one of them, and double-parking detection depends
         on those surviving.
         """
-        biggest = max(
-            (abs(sp.x2 - sp.x1) * abs(sp.y2 - sp.y1)
-             for sp in (self._spaces or []) if sp.x1 is not None),
-            default=0.0,
-        )
-        if biggest <= 0:
+        areas = [abs(sp.x2 - sp.x1) * abs(sp.y2 - sp.y1)
+                 for sp in (self._spaces or []) if sp.x1 is not None]
+        areas = [a for a in areas if a > 0]
+        if not areas:
             return dets, []   # no drawn bays yet — nothing to judge scale against
 
-        cap = biggest * MAX_VEHICLE_BAY_RATIO
+        biggest, smallest = max(areas), min(areas)
+        cap   = biggest * MAX_VEHICLE_BAY_RATIO
+        floor = smallest * MIN_VEHICLE_BAY_RATIO
         kept, ignored = [], []
         for d in dets:
             b = d.get('bbox') or {}
             area = float(b.get('width', 0)) * float(b.get('height', 0))
-            if area > cap:
+            if area > cap or area < floor:
                 ignored.append({
-                    'bbox':  dict(b),
-                    'score': round(float(d.get('score', 0)), 2),
-                    'ratio': round(area / biggest, 1),
+                    'bbox':   dict(b),
+                    'score':  round(float(d.get('score', 0)), 2),
+                    'ratio':  round(area / biggest, 2),
+                    'reason': 'too_big' if area > cap else 'too_small',
                 })
                 continue
             kept.append(d)
@@ -1051,11 +1100,13 @@ class ParkingCameraThread(threading.Thread):
         # read the same result — running the detector twice on one frame would
         # double every cost and hand the tracker the same car twice.
         vehicles = None
+        presence = None
         if hits is None:
             vehicles = self._track(frame, now)
             hits     = self._detector_hits(spaces, vehicles, now)
+            presence = self._detector_hits(spaces, vehicles, now, settled_only=False)
 
-        self._apply_hits(spaces, hits)
+        self._apply_hits(spaces, hits, now, presence)
 
         # Occupancy may be settled, but only the detector can see one car lying
         # across two bays — a per-bay signal reads that as two occupied bays,
@@ -1121,7 +1172,10 @@ class ParkingCameraThread(threading.Thread):
         # partly-covered side kept showing as free and the count overstated
         # capacity.
         for sp in spaces:
-            if sp.id in blocked and not sp.is_occupied:
+            if sp.id not in blocked:
+                continue
+            self._last_filled[sp.id] = now
+            if not sp.is_occupied:
                 self._hyst[sp.id] = OCCUPY_THR
                 self._set_occupied(sp, True)
 

@@ -588,8 +588,8 @@ export default function SecurityParkingView() {
                       />
                     ))}
 
-                    {/* Seen, but too big to be one vehicle in one of these bays,
-                        so it claims nothing. Drawn thin and grey rather than
+                    {/* Seen, but too big or too small to be one vehicle in one of
+                        these bays (a carport, a potted plant), so it claims nothing. Drawn thin and grey rather than
                         dropped: a detector seeing nothing and a detector seeing
                         something the rules reject must not look the same. */}
                     {(detections?.ignored ?? []).map((v, i) => (
