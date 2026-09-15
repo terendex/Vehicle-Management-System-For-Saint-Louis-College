@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
-  AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, SlidersHorizontal,
+  AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, ListChecks, Check,
   VideoOff, Search, Maximize2, Minimize2,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
@@ -107,7 +107,6 @@ export default function ParkingManagement({ embedded = false }) {
   const [camRunning,   setCamRunning]   = useState({})
   const [assigning,    setAssigning]    = useState(false)
   const [capturing,    setCapturing]    = useState(false)
-  const [methodSaving,   setMethodSaving]   = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
 
   const { cameras: allCameras, syncCameras: syncPkCameras,
@@ -184,6 +183,10 @@ export default function ParkingManagement({ embedded = false }) {
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
 
   const selZone = zones.find(z => z.id === selId) ?? null
+  // Setup progress. A zone's bays are only monitored once all three hold.
+  const hasReference = !!selZone?.reference_image
+  const bayCount     = selZone?.spaces?.length ?? 0
+  const hasBaseline  = !!selZone?.has_baseline
   // Scoped to the zone that actually failed, so selecting another zone shows
   // its own image rather than inheriting the previous one's error.
   const imgFailed = !!selZone && imgFailedFor === selZone.id
@@ -503,49 +506,48 @@ export default function ParkingManagement({ embedded = false }) {
       return
     }
     setCapturing(true)
+    let z = null
     try {
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
       if (!blob) throw new Error('empty capture')
       const file = new File([blob], `zone-${selId}-capture.jpg`, { type: 'image/jpeg' })
-      const z    = await zoneApi.uploadImage(selId, file)
+      z = await zoneApi.uploadImage(selId, file)
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
-      toast.success('Captured frame set as reference image.')
     } catch {
       setResultModal({ type: 'error', message: 'Failed to capture frame. Please try again.' })
     } finally { setCapturing(false) }
+    if (z) await offerBaseline(z)
   }
 
-  // ── Bay scoring method ──────────────────────────────────────────
-  const handleMethodChange = async (method) => {
-    if (!selId || method === (selZone?.occupancy_method ?? 'classic')) return
-    setMethodSaving(true)
-    try {
-      const z = await zoneApi.setOccupancyMethod(selId, method)
-      setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
-      toast.success(method === 'classic'
-        ? (z.has_baseline
-            ? 'Zone now scores bays against its baseline.'
-            : 'Switched to baseline scoring — capture a baseline to activate it.')
-        : 'Zone now scores bays with the vehicle detector.')
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not change the detection method.')
-    } finally { setMethodSaving(false) }
+  // The baseline is a copy of the reference image, so a new reference image
+  // leaves the zone scoring against the old picture until it is set again.
+  // Asking right here closes that gap at the one moment the admin is looking at
+  // the new picture and can say whether its bays are empty.
+  const offerBaseline = async (z) => {
+    const yes = await notify.confirm({
+      title: 'Reference image saved',
+      message: z.has_baseline
+        ? 'Update the empty baseline to this picture as well?'
+        : 'Use this picture as the empty baseline and start monitoring the bays?',
+      description: 'Only if every bay in the picture is empty. Anything parked in a bay now '
+        + 'would be treated as empty, and that bay would read Free while it is taken.',
+      confirmLabel: 'Yes, the bays are empty',
+      cancelLabel: 'Not now',
+    })
+    if (yes) await handleSetBaseline()
   }
 
-  // Captured server-side from the running feed, not from the browser canvas:
-  // the baseline has to be the exact frame the detector sees, and the canvas is
-  // a re-encoded copy that may be a frame or two behind.
   const handleSetBaseline = async () => {
     if (!selId) return
     setBaselineSaving(true)
     try {
       const z = await zoneApi.setBaseline(selId)
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
-      toast.success('Empty-lot baseline captured.')
+      toast.success(`Baseline set. Bays in ${z.name} are now monitored.`)
     } catch (err) {
       setResultModal({
         type: 'error',
-        message: err?.response?.data?.error || 'Failed to capture the baseline.',
+        message: err?.response?.data?.error || 'Failed to set the baseline.',
       })
     } finally { setBaselineSaving(false) }
   }
@@ -554,11 +556,13 @@ export default function ParkingManagement({ embedded = false }) {
   const onImageFile = async (e) => {
     const f = e.target.files?.[0]
     if (!f || !selId) return
+    let z = null
     try {
-      const z = await zoneApi.uploadImage(selId, f)
+      z = await zoneApi.uploadImage(selId, f)
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
     } catch { toast.error('Image upload failed.') }
     finally { e.target.value = '' }
+    if (z) await offerBaseline(z)
   }
 
   // ── SVG drawing (edit mode) ─────────────────────────────────────
@@ -964,9 +968,13 @@ export default function ParkingManagement({ embedded = false }) {
                     remains is the status, because "is it running" is a real
                     question a person needs answered. */}
                 {mode === 'live' && selZone.camera != null && (
-                  <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
-                    {camRunning[selZone.id] ? 'Auto-detect running' : 'Starting detector…'}
-                  </span>
+                  !hasBaseline ? (
+                    <span className="pm-detect-badge pm-detect-badge--warn">Not monitored yet</span>
+                  ) : (
+                    <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
+                      {camRunning[selZone.id] ? 'Monitoring bays' : 'Starting camera…'}
+                    </span>
+                  )
                 )}
 
                 {/* Occupancy counts now live in the stats row above. */}
@@ -1043,15 +1051,33 @@ export default function ParkingManagement({ embedded = false }) {
               </div>
             </div>
 
-            {/* Drawing bays is only meaningful against the picture the detector
-                will actually read. Both of these say, before a single box is
+            {/* The bays on this feed are not being watched, and the colours
+                would otherwise sit there looking like a reading. One click
+                takes the admin to the checklist that says what is missing. */}
+            {mode === 'live' && selZone.camera != null && !hasBaseline && (
+              <div className="pm-draw-warn">
+                <AlertTriangle size={15} />
+                <span>
+                  <strong>Bays in {selZone.name} are not monitored yet.</strong>{' '}
+                  {hasReference
+                    ? 'Set its empty baseline to start.'
+                    : 'Capture a reference image with the bays empty, draw the slots, then set it as the baseline.'}
+                </span>
+                <button className="pm-btn pm-btn--outline" onClick={() => setMode('edit')}>
+                  <ListChecks size={13} /> Finish Setup
+                </button>
+              </div>
+            )}
+
+            {/* Drawing bays is only meaningful against the picture this zone's
+                camera actually sends. Both of these say, before a single box is
                 drawn, that this layout will not be scored the way it looks. */}
             {mode === 'edit' && selZone.camera == null && (
               <div className="pm-draw-warn">
                 <AlertTriangle size={15} />
                 <span>
                   <strong>{selZone.name} has no camera assigned.</strong> Bays drawn here are saved,
-                  but nothing will detect them until you pick a camera above.
+                  but nothing will monitor them until you pick a camera above.
                 </span>
               </div>
             )}
@@ -1501,77 +1527,84 @@ export default function ParkingManagement({ embedded = false }) {
               </p>
             )}
 
-            {/* Setup, not monitoring: capturing a reference image and choosing
-                how bays are scored are both things you do while laying a zone
-                out. On the Live View they were permanent clutter under a feed
-                someone is watching. */}
-            {parkingCams.length > 0 && selZone && mode === 'edit' && (
-              <button
-                className="pm-btn pm-btn--primary"
-                style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
-                onClick={handleCapture}
-                disabled={capturing || !pkActiveCam?.streamConnected}
-                title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
-              >
-                {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
-                Use as Reference Image for {selZone.name}
-              </button>
-            )}
-
-            {/* ── Bay scoring method ──
-                Baseline is the default: it judges each bay against a picture
-                of that same bay empty, so it needs no model but only works
-                while the camera stays put. The detector still runs for double
-                parking either way. */}
+            {/* ── Zone setup ──
+                Bays are monitored by comparing each one against an empty
+                picture of itself, which takes three things in order. Shown as
+                a checklist rather than loose buttons so the admin can see at a
+                glance what is done, what is next, and why the bays are not
+                being watched yet. Only the next step's button is primary. */}
             {selZone && mode === 'edit' && (
-              <div className="pm-method-box">
+              <div className="pm-setup">
                 <div className="pm-method-head">
-                  <SlidersHorizontal size={12} /> Bay Detection
+                  <ListChecks size={12} /> Set Up Bay Monitoring
                 </div>
 
-                <div className="pm-method-tabs">
-                  {[
-                    { key: 'ml',      label: 'Detector' },
-                    { key: 'classic', label: 'Baseline' },
-                  ].map(m => (
-                    <button
-                      key={m.key}
-                      className={`pm-method-tab${(selZone.occupancy_method ?? 'classic') === m.key ? ' pm-method-tab--active' : ''}`}
-                      onClick={() => handleMethodChange(m.key)}
-                      disabled={methodSaving}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
+                <ol className="pm-setup-steps">
+                  <li className={`pm-setup-step${hasReference ? ' pm-setup-step--done' : ''}`}>
+                    <span className="pm-setup-mark">{hasReference ? <Check size={11} /> : 1}</span>
+                    <div className="pm-setup-body">
+                      <p className="pm-setup-title">Reference image</p>
+                      <p className="pm-setup-desc">
+                        {hasReference
+                          ? 'Saved. The bays are drawn on this picture.'
+                          : 'A still of this camera’s view with every bay empty. Capture it here, or use Upload Image.'}
+                      </p>
+                      {parkingCams.length > 0 && (
+                        <button
+                          className={`pm-btn ${hasReference ? 'pm-btn--outline' : 'pm-btn--primary'} pm-setup-btn`}
+                          onClick={handleCapture}
+                          disabled={capturing || !pkActiveCam?.streamConnected}
+                          title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
+                        >
+                          {capturing ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
+                          {hasReference ? 'Capture Again' : 'Capture from Live Feed'}
+                        </button>
+                      )}
+                    </div>
+                  </li>
 
-                {(selZone.occupancy_method ?? 'classic') === 'classic' && (
-                  <>
-                    <button
-                      className="pm-btn pm-btn--outline"
-                      style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
-                      onClick={handleSetBaseline}
-                      disabled={baselineSaving || !camRunning[selZone.id]}
-                      title={camRunning[selZone.id]
-                        ? 'Capture the current frame as the empty-lot reference'
-                        : 'Start this zone’s camera first'}
-                    >
-                      {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <Camera size={13} />}
-                      {selZone.has_baseline ? 'Re-capture Baseline' : 'Set Empty Baseline'}
-                    </button>
+                  <li className={`pm-setup-step${bayCount > 0 ? ' pm-setup-step--done' : ''}`}>
+                    <span className="pm-setup-mark">{bayCount > 0 ? <Check size={11} /> : 2}</span>
+                    <div className="pm-setup-body">
+                      <p className="pm-setup-title">Parking slots</p>
+                      <p className="pm-setup-desc">
+                        {bayCount > 0
+                          ? `${bayCount} slot${bayCount === 1 ? '' : 's'} saved.`
+                          : 'Draw each bay on the picture with Box or Pen, then press Save Layout.'}
+                      </p>
+                    </div>
+                  </li>
 
-                    {/* Says which method is really running, not which was
-                        picked — without a baseline this zone is still on the
-                        detector, and silently doing so would be worse. */}
-                    <p className={`pm-method-note${selZone.has_baseline ? '' : ' pm-method-note--warn'}`}>
-                      {selZone.has_baseline
-                        ? `Baseline captured ${selZone.baseline_captured_at
-                            ? new Date(selZone.baseline_captured_at).toLocaleString()
-                            : ''}. Re-capture it after moving the camera.`
-                        : 'No baseline yet — this zone is still using the detector. Capture one with the lot empty.'}
-                    </p>
-                  </>
-                )}
+                  <li className={`pm-setup-step${hasBaseline ? ' pm-setup-step--done' : ''}`}>
+                    <span className="pm-setup-mark">{hasBaseline ? <Check size={11} /> : 3}</span>
+                    <div className="pm-setup-body">
+                      <p className="pm-setup-title">Empty baseline</p>
+                      <p className="pm-setup-desc">
+                        {hasBaseline
+                          ? `Set ${selZone.baseline_captured_at
+                              ? new Date(selZone.baseline_captured_at).toLocaleString()
+                              : ''}. A bay turns Occupied once it looks different from this for 5 seconds.`
+                          : hasReference
+                            ? 'Copies the reference image as each bay’s empty picture. The bays are not monitored until this is set.'
+                            : 'Needs a reference image first.'}
+                      </p>
+                      <button
+                        className={`pm-btn ${hasBaseline || !hasReference ? 'pm-btn--outline' : 'pm-btn--primary'} pm-setup-btn`}
+                        onClick={handleSetBaseline}
+                        disabled={baselineSaving || !hasReference}
+                        title={hasReference ? '' : 'Capture or upload a reference image first'}
+                      >
+                        {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <CheckCircle2 size={13} />}
+                        {hasBaseline ? 'Set Again from Reference Image' : 'Use Reference Image as Baseline'}
+                      </button>
+                    </div>
+                  </li>
+                </ol>
+
+                <p className="pm-setup-foot">
+                  Set the baseline again after changing the reference image or moving the camera.
+                  Double parking is checked separately by the vehicle detector.
+                </p>
               </div>
             )}
 
@@ -1813,7 +1846,7 @@ export default function ParkingManagement({ embedded = false }) {
               This frame comes from <strong>{activeDeviceCam?.name}</strong>, but{' '}
               <strong>{selZone?.name}</strong> is watched by{' '}
               <strong>{selZoneCamName ?? 'no camera'}</strong>. Bays drawn on it would not match
-              what the detector reads for this zone.
+              what this zone’s camera sees.
             </p>
             <div className="pm-modal-center-actions">
               <button className="pm-btn pm-btn--outline" onClick={() => setConfirmModal(null)}>

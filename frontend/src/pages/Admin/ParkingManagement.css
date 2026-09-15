@@ -120,6 +120,7 @@
 }
 .pm-detect-badge--on  { background: #D6F0E6; color: #0F7A5A; }
 .pm-detect-badge--off { background: #EAF2F8; color: #6B8CA6; }
+.pm-detect-badge--warn { background: #FDF0BE; color: #8A6B00; }
 
 /* ── Zone tabs ── */
 /* ── Occupancy stats (mirrors the Operations Center stat cards) ──
@@ -163,14 +164,6 @@
 .pm-stat-lbl { font-size: 12px; color: #4A6B85; margin: 3px 0 0; font-weight: 500; }
 
 /* ── Bay detection method (camera sidebar) ── */
-.pm-method-box {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid #D3E1EC;
-  border-radius: 10px;
-  background: #F7FBFD;
-}
-
 .pm-method-head {
   display: flex;
   align-items: center;
@@ -183,43 +176,81 @@
   margin-bottom: 8px;
 }
 
-.pm-method-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+/* ── Zone setup checklist ──
+   Three steps in order. A done step goes green and quiet; the others keep
+   their number so "what is left" reads without parsing any text. */
+.pm-setup {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+  background: #F7FBFD;
 }
 
-.pm-method-tab {
-  padding: 6px 8px;
-  border: 1.5px solid #BDD4E5;
-  border-radius: 7px;
-  background: #fff;
-  color: #2E4C63;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.pm-method-tab:disabled { opacity: 0.6; cursor: default; }
-.pm-method-tab--active {
-  background: #03396C;
-  border-color: #03396C;
-  color: #fff;
+.pm-setup-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.pm-method-note {
-  margin: 8px 0 0;
+.pm-setup-step {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+.pm-setup-mark {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
-  line-height: 1.5;
+  font-weight: 700;
+  color: #03396C;
+  background: #fff;
+  border: 1.5px solid #9DBAD1;
+}
+.pm-setup-step--done .pm-setup-mark {
+  color: #fff;
+  background: #1BA968;
+  border-color: #1BA968;
+}
+
+.pm-setup-body { flex: 1; min-width: 0; }
+
+.pm-setup-title {
+  margin: 1px 0 2px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1F3B52;
+}
+
+.pm-setup-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: #5C7B92;
 }
-/* A zone set to baseline scoring with no baseline is still on the detector.
-   That has to read as an unfinished setup, not as a neutral hint. */
-.pm-method-note--warn {
-  color: #8A6B00;
-  background: #FDF0BE;
-  border: 1px solid #F7E08A;
-  border-radius: 6px;
-  padding: 6px 8px;
+
+.pm-setup-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.pm-setup-foot {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid #E3EDF5;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #6B8CA6;
 }
 
 /* Sits directly under the stat row: says which numbers come from the gate
@@ -469,7 +500,7 @@
 }
 
 /* Inside the panel these sit in a row rather than stacked in a narrow column. */
-.pm-cam-panel .pm-method-box { margin-top: 0; }
+.pm-cam-panel .pm-setup { margin-top: 0; }
 .pm-cam-panel .pm-cam-thumb-strip { padding-bottom: 0; }
 
 /* ── Camera options, under the picture ───────────────────────────────────── */
@@ -1421,7 +1452,7 @@
   padding: 1px 6px;
 }
 
-/* Sidebar notices. Light cards on the dark sidebar, matching .pm-method-box. */
+/* Sidebar notices. Light cards on the dark sidebar, matching .pm-setup. */
 .pm-cam-notice {
   margin-top: 10px;
   padding: 10px;

@@ -36,7 +36,7 @@ class CoverageGeometryTests(TestCase):
 
     def test_car_in_its_own_bay_does_not_touch_the_neighbour(self):
         b = box(0.11, 0.42, 0.18, 0.26)
-        self.assertGreaterEqual(pc._space_coverage(self.a, b), pc.OCCUPY_COVERAGE)
+        self.assertGreater(pc._space_coverage(self.a, b), 0.5)
         self.assertLess(pc._space_coverage(self.b, b), pc.DOUBLE_PARK_COVERAGE)
 
     def test_car_clipping_the_neighbour_is_not_double_parking(self):
@@ -262,8 +262,9 @@ class DoubleParkingReportingTests(TestCase):
         self.assertEqual(self.thread.get_alerts(), [])
 
     def test_both_straddled_bays_are_marked_occupied(self):
-        # A1 is only partly covered — below OCCUPY_COVERAGE — but nobody can use
-        # it while a car sits across the line, so it must not read as free.
+        # A1 may be too little covered to read as changed from its baseline, but
+        # nobody can use it while a car sits across the line, so it must not
+        # read as free.
         with patch.object(pc.ParkingCameraThread, '_read_plate', return_value=''):
             self._settled_straddle()
         self.a.refresh_from_db()

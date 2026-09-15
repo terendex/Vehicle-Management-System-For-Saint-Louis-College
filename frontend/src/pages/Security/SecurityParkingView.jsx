@@ -185,6 +185,8 @@ export default function SecurityParkingView() {
 
   const selZone    = zones.find(z => z.id === selId) ?? null
   const camRunning = !!camStatus[selId]
+  // Bays are only watched once the zone has an empty baseline to compare against.
+  const monitored  = camRunning && !!selZone?.has_baseline
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -731,8 +733,9 @@ export default function SecurityParkingView() {
                 <div className="cm-panel-head">
                   <span className="cm-panel-title"><LayoutGrid size={14} /> Bays in {selZone.name}</span>
                   <div className="cm-panel-end">
-                    <span className={`pm-guard-detector${camRunning ? ' on' : ''}`}>
-                      <span className="cm-dot" /> {camRunning ? 'Detector on' : 'Detector off'}
+                    <span className={`pm-guard-detector${monitored ? ' on' : ''}${!selZone.has_baseline ? ' warn' : ''}`}>
+                      <span className="cm-dot" />{' '}
+                      {!selZone.has_baseline ? 'Not set up' : monitored ? 'Monitoring' : 'Camera off'}
                     </span>
                   </div>
                 </div>
@@ -742,7 +745,14 @@ export default function SecurityParkingView() {
                   </p>
                   <div>
                     <p className="pm-guard-bays-lbl">bays taken</p>
-                    <p className="pm-guard-note">What the camera sees in this zone.</p>
+                    {/* A zone with no baseline is not scored at all, so its bay
+                        colours are whatever they last were. A guard has to know
+                        that before sending anyone to a "free" bay. */}
+                    <p className="pm-guard-note">
+                      {selZone.has_baseline
+                        ? 'What the camera sees in this zone.'
+                        : 'Not monitored yet. An admin needs to finish this zone’s setup, so these bays may be out of date.'}
+                    </p>
                   </div>
                 </div>
                 {selZone.capacity_override != null && (

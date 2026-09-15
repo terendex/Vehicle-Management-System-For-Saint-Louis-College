@@ -39,34 +39,25 @@ log = logging.getLogger(__name__)
 
 OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 
-# How long an occupied bay stays occupied after the last time anything filled
-# it. Every frame that sees a vehicle covering the bay restarts the clock, so
-# only a full minute of *continuous* absence releases it.
+# How long an occupied bay stays occupied after the last time it looked
+# filled. Every frame that sees the bay changed from its baseline restarts the
+# clock, so only a full minute of *continuous* emptiness releases it.
 #
-# This replaced a 20-frame release (~2s), which let the detector's weak side
-# drive the verdict: a tricycle in a dim, cluttered bay scores near the
-# confidence floor and drops out for a few frames at a time, and each dropout
-# flipped a plainly taken bay to free. A miss is the costlier error here — it
-# sends someone to a space that is not there — while a car that really left
-# only reads taken for one extra minute.
+# This replaced a 20-frame release (~2s), where any momentary dropout — a
+# shadow, a person stepping in front, a frame the scorer read badly — flipped a
+# plainly taken bay to free. A miss is the costlier error here — it sends
+# someone to a space that is not there — while a car that really left only
+# reads taken for one extra minute.
 OCCUPIED_GRACE_SECONDS = 60.0
 
 # How long a bay must look different from its empty baseline, without a break,
-# before the baseline scorer claims it. The scorer has no idea what changed, so
-# a person walking through or a cart pushed past reads exactly like a vehicle
-# for as long as it is there; five seconds outlasts passing traffic.
-#
-# The detector path has no equivalent because it already waits for the vehicle
-# itself to stand still (parked_after_seconds).
+# before it is claimed. The comparison has no idea what changed, so a person
+# walking through or a cart pushed past reads exactly like a vehicle for as long
+# as it is there; five seconds outlasts passing traffic.
 BASELINE_CLAIM_SECONDS = 5.0
 
 # Sampling density for the space-coverage test (see _space_coverage).
 COVERAGE_GRID = 6
-
-# Fraction of a bay a vehicle must cover before that bay counts as taken.
-# 0.35 tolerates a car parked off-centre or partly hidden by the one in front,
-# while staying above the incidental overlap a neighbouring car's box produces.
-OCCUPY_COVERAGE = 0.35
 
 # How much of a vehicle must sit inside a bay before that bay counts as one the
 # vehicle is genuinely in. Paired with the bay-side thresholds below, so both
@@ -82,11 +73,6 @@ OCCUPY_COVERAGE = 0.35
 # genuine straddle splits roughly 35/65 to 50/50 and clears 0.25 on both sides,
 # while an overhang lands near 0.05–0.15 and does not.
 DOUBLE_PARK_VEHICLE_SHARE = 0.25
-
-# For occupancy the vehicle side is an alternative, not an extra condition: a
-# motorcycle wholly inside a car-sized bay covers little of it but the bay is
-# plainly taken.
-OCCUPY_VEHICLE_SHARE = 0.80
 
 # A single vehicle covering this much of two or more bays is straddling.
 # Tuned against the case this exists for: a car parked across a line typically
@@ -110,8 +96,9 @@ DOUBLE_PARK_COVERAGE = 0.30
 # values a zone falls back on when the settings row cannot be read. Keep them in
 # step with the model field defaults on SystemSettings.
 
-# Stationary this long → the vehicle counts as parked, and the bays it covers
-# are claimed.
+# Stationary this long → the vehicle counts as parked. Bays are claimed by the
+# baseline comparison now, so this only labels tracked vehicles as settled on
+# the diagnostics endpoints.
 PARKED_AFTER_SECONDS = 8.0
 
 # Stationary this long *while* covering two or more bays → double parking.
@@ -170,9 +157,8 @@ OCCUPANCY_CONF = 0.25
 MAX_VEHICLE_BAY_RATIO = 4.0
 
 # The other end: how much smaller than this zone's smallest bay a detection may
-# be. A box wholly inside a bay claims it through OCCUPY_VEHICLE_SHARE however
-# small it is, so a potted plant or a bucket called a "vehicle" at 0.27 would
-# take the bay it stands in.
+# be. A potted plant or a bucket called a "vehicle" at 0.27 must not be tracked
+# as a car that could be lying across a line.
 #
 # Measured on the campus Tri zone: potted plants read at 0.056 and 0.083 of the
 # bay, the rear of a partly hidden motorcycle at 0.41. A motorcycle wholly
@@ -180,10 +166,10 @@ MAX_VEHICLE_BAY_RATIO = 4.0
 # what keeps this below 0.15.
 MIN_VEHICLE_BAY_RATIO = 0.12
 
-# How often the vehicle detector runs when a zone scores occupancy classically.
-# Occupancy no longer needs it there, but double parking still does, and a
-# straddle must persist seconds before it counts — so running the model ten
-# times a second to answer a six-second question is pure waste.
+# How often the vehicle detector runs. Occupancy does not use it at all; double
+# parking does, and a straddle must persist seconds before it counts — so
+# running the model ten times a second to answer a twelve-second question is
+# pure waste.
 DETECT_INTERVAL_SECONDS = 2.0
 
 # A vehicle unseen for this long is treated as gone. It has to stay well clear
@@ -787,46 +773,13 @@ class ParkingCameraThread(threading.Thread):
 
         return detect_across_lenses(frame, detect_vehicles, conf=OCCUPANCY_CONF)
 
-    def _detector_hits(self, spaces, vehicles, now: float, settled_only: bool = True) -> dict:
-        """{space_id: is a parked vehicle occupying this bay} from tracked boxes.
-
-        `settled_only=False` asks the weaker question "is anything filling this
-        bay right now", which is what keeps an already-occupied bay's grace
-        clock running: a detector that loses a parked tricycle for longer than
-        the tracker remembers hands it back as a brand-new, unsettled track, and
-        that must still count as the bay being filled.
-
-        Taken either way round: enough of the bay is covered, OR enough of a
-        vehicle sits inside it. The second clause is what stops a motorcycle in
-        a car-sized bay reading free — it covers little of the bay while being
-        entirely within it.
-
-        Only vehicles that have settled count. A car driving down the aisle
-        crosses several bays on its way past, and each of those used to read as
-        taken for as long as the box overlapped — briefly, but long enough for
-        the four-frame hysteresis to latch it. Waiting for the vehicle to stop
-        means a bay is claimed by a car that parked in it, not by one going by.
-        """
-        parked = [v for v in vehicles
-                  if not settled_only or v.has_settled(now, self._parked_after)]
-        hits = {}
-        for sp in spaces:
-            taken = False
-            for v in parked:
-                if (_space_coverage(sp, v.bbox) >= OCCUPY_COVERAGE
-                        or _vehicle_share(sp, v.bbox) >= OCCUPY_VEHICLE_SHARE):
-                    taken = True
-                    break
-            hits[sp.id] = taken
-        return hits
-
     def _classic_hits(self, frame, spaces, cfg) -> "dict | None":
         """{space_id: occupied} from baseline comparison, or None when this zone
-        cannot be scored that way yet.
+        cannot be scored yet.
 
-        Returning None rather than an empty result is what makes the fallback
-        safe: a zone switched to 'classic' before anyone captured a baseline
-        keeps running on the detector instead of reporting every bay free.
+        None rather than an empty result so the caller leaves every bay exactly
+        as it is: a zone without a baseline has not been set up, which is not
+        the same statement as "every bay is free".
         """
         from vehicles import bay_occupancy
 
@@ -847,26 +800,19 @@ class ParkingCameraThread(threading.Thread):
         return {sp.id: signals[sp.id]['occupied'] for sp in spaces if sp.id in signals}
 
     def _apply_hits(self, spaces, hits: dict, now: "float | None" = None,
-                    presence: "dict | None" = None, claim_after: float = 0.0) -> None:
+                    claim_after: float = 0.0) -> None:
         """Run the occupancy hysteresis and persist any transitions.
 
-        Shared by both scoring methods on purpose — swapping how a bay is judged
-        must not change how long it takes to claim or release one.
-
         Claiming counts frames: OCCUPY_THR in a row, reset by any miss, so a
-        flickering box never creeps a bay toward taken. (It used to share one
-        signed accumulator with the release side, so a long-free bay needed 24
-        frames to claim rather than 4.) `claim_after` adds a minimum unbroken
-        duration on top, for a scorer that cannot tell a parked vehicle from
-        something passing through — see BASELINE_CLAIM_SECONDS.
+        flickering reading never creeps a bay toward taken. (It used to share
+        one signed accumulator with the release side, so a long-free bay needed
+        24 frames to claim rather than 4.) `claim_after` adds a minimum unbroken
+        duration on top — see BASELINE_CLAIM_SECONDS.
 
-        Releasing counts time: OCCUPIED_GRACE_SECONDS since the bay was last
-        seen filled. `presence` is the evidence that restarts that clock —
-        anything covering the bay, settled or not — and defaults to `hits` for
-        a scorer that has only the one answer.
+        Releasing counts time: OCCUPIED_GRACE_SECONDS since the bay last looked
+        filled, restarted by every hit.
         """
         now = time.monotonic() if now is None else now
-        presence = hits if presence is None else presence
 
         for sp in spaces:
             if sp.id not in hits:
@@ -876,7 +822,7 @@ class ParkingCameraThread(threading.Thread):
                 # A bay found occupied with no clock yet — marked by a guard,
                 # or taken before this worker started — gets a full grace from
                 # the moment it is first seen, not an instant release.
-                if hits[sp.id] or presence.get(sp.id) or sp.id not in self._last_filled:
+                if hits[sp.id] or sp.id not in self._last_filled:
                     self._last_filled[sp.id] = now
             else:
                 # Dropped while free, so a stale time from an earlier episode
@@ -899,7 +845,7 @@ class ParkingCameraThread(threading.Thread):
                     self._set_occupied(sp, False)
 
     def _load_zone_config(self) -> dict:
-        """The zone's scoring method and baseline, re-read at most every TTL.
+        """The zone's baseline, re-read at most every TTL.
 
         Same reasoning as _load_spaces: an admin changes these once in a while,
         the loop runs ten times a second, and against Neon a per-frame lookup
@@ -916,11 +862,10 @@ class ParkingCameraThread(threading.Thread):
         try:
             row = (ParkingZone.objects
                    .filter(pk=self.zone_id)
-                   .values('occupancy_method', 'baseline_image', 'baseline_captured_at')
+                   .values('baseline_image', 'baseline_captured_at')
                    .first())
             if row:
                 self._cfg = {
-                    'method':   row['occupancy_method'] or 'classic',
                     'baseline': row['baseline_image'] or '',
                     # Identity of the current baseline. A re-capture changes the
                     # timestamp even when the filename is reused, which is what
@@ -932,7 +877,7 @@ class ParkingCameraThread(threading.Thread):
             log.warning("[ParkingCam] Zone config refresh failed zone %d: %s", self.zone_id, exc)
 
         self._refresh_dwell()
-        return self._cfg or {'method': 'classic', 'baseline': '', 'token': ''}
+        return self._cfg or {'baseline': '', 'token': ''}
 
     def _refresh_dwell(self) -> None:
         """Pick up the admin's dwell thresholds from the process-wide cache.
@@ -1121,36 +1066,22 @@ class ParkingCameraThread(threading.Thread):
         cfg = self._load_zone_config()
         now = time.monotonic()
 
-        hits = None
-        claim_after = 0.0
-        if cfg['method'] == 'classic':
-            hits = self._classic_hits(frame, spaces, cfg)
-            if hits is not None:
-                claim_after = BASELINE_CLAIM_SECONDS
+        # Occupancy comes from the empty baseline and nothing else. A zone with
+        # no baseline yet is simply not scored: falling back to the detector
+        # here used to let its boxes on potted plants, stairs and air
+        # conditioners claim bays — the false positives the baseline replaced.
+        # The screens say "not set up" for such a zone instead.
+        hits = self._classic_hits(frame, spaces, cfg)
+        if hits is not None:
+            self._apply_hits(spaces, hits, now, BASELINE_CLAIM_SECONDS)
 
-        # The tracker is fed once per frame at most, and both questions below
-        # read the same result — running the detector twice on one frame would
-        # double every cost and hand the tracker the same car twice.
-        vehicles = None
-        presence = None
-        if hits is None:
-            vehicles = self._track(frame, now)
-            hits     = self._detector_hits(spaces, vehicles, now)
-            presence = self._detector_hits(spaces, vehicles, now, settled_only=False)
-
-        self._apply_hits(spaces, hits, now, presence, claim_after)
-
-        # Occupancy may be settled, but only the detector can see one car lying
-        # across two bays — a per-bay signal reads that as two occupied bays,
-        # exactly like two correctly parked cars. When the classic scorer is
-        # driving, the detector still runs for this, just far less often: a
-        # straddle has to persist well over a minute's worth of frames before it
-        # counts, so checking ten times a second buys nothing.
-        if vehicles is None and (now - self._last_detect) >= DETECT_INTERVAL_SECONDS:
+        # The detector's one job: a vehicle lying across two bays, which a
+        # per-bay comparison reads exactly like two correctly parked vehicles.
+        # A straddle has to persist for seconds before it counts, so checking
+        # every DETECT_INTERVAL_SECONDS rather than every frame loses nothing.
+        if (now - self._last_detect) >= DETECT_INTERVAL_SECONDS:
             self._last_detect = now
             vehicles = self._track(frame, now)
-
-        if vehicles is not None:
             self._check_double_parking(spaces, vehicles, frame, now)
 
     # ── Double parking ────────────────────────────────────────────────────────
@@ -1202,10 +1133,10 @@ class ParkingCameraThread(threading.Thread):
                     self._reported.add(key)
                     self._report_double_parking(key, v, frame, now)
 
-        # A straddled bay is unusable even if the car covers less of it than
-        # OCCUPY_COVERAGE — nobody else can park there. Without this the
-        # partly-covered side kept showing as free and the count overstated
-        # capacity.
+        # A straddled bay is unusable even if its baseline comparison has not
+        # claimed it — the car may cover too little of it to read as changed,
+        # but nobody else can park there. Without this the partly-covered side
+        # kept showing as free and the count overstated capacity.
         for sp in spaces:
             if sp.id not in blocked:
                 continue

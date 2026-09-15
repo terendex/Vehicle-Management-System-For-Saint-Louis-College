@@ -150,6 +150,8 @@
 }
 .pm-guard-detector.on { color: #0F7A5A; }
 .pm-guard-detector.on .cm-dot { background: #1BA968; }
+.pm-guard-detector.warn { color: #8A6B00; }
+.pm-guard-detector.warn .cm-dot { background: #E0A800; }
 
 .pm-guard-override-tag {
   margin: 0 14px 12px;

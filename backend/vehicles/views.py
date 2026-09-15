@@ -235,39 +235,60 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='set-baseline')
     def set_baseline(self, request, pk=None):
-        """Capture the current frame as this zone's empty-lot baseline.
+        """Use this zone's reference image as its empty-lot baseline.
 
-        Taken from the live feed rather than uploaded, because the baseline is
-        only meaningful from the exact camera position the bays were drawn
-        against. Refuses when the camera is not running: a baseline captured
-        from a dead feed is worse than none — it would silently score every bay
-        against a blank frame.
+        The reference image is the picture the bays were drawn on, so it is
+        already from the exact camera position they belong to — and it is a
+        picture the admin has looked at, which the live frame grabbed at the
+        moment of the click was not. That frame is how a tricycle parked in the
+        bay became the bay's idea of "empty": nobody saw it being captured.
 
-        Whoever presses this is responsible for the lot actually being empty. A
-        car sitting in a bay at capture time bakes that car into the bay's
-        'empty' reference, and the bay then reads free while it is occupied.
+        Whoever sets it is still responsible for the reference showing the bays
+        empty. A vehicle in a bay in that picture bakes that vehicle into the
+        bay's 'empty' reference, and the bay then reads free while it is taken.
         """
         import cv2 as _cv2
+        import numpy as _np
         from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
 
         zone = self.get_object()
-        thread = parking_camera.get_thread(zone.id)
-        if thread is None or not thread.running:
+        if not zone.reference_image:
             return Response(
-                {'error': 'Start this zone\'s camera first — the baseline is captured from the live feed.'},
+                {'error': 'This zone has no reference image yet. Capture or upload one '
+                          'with the bays empty, then set it as the baseline.'},
                 status=400)
 
-        frame = thread.get_frame()
-        if frame is None:
-            return Response({'error': 'No frame received from the camera yet. Try again in a moment.'},
+        try:
+            with default_storage.open(zone.reference_image.name, 'rb') as fh:
+                data = fh.read()
+        except Exception:
+            return Response({'error': 'The reference image could not be read. Capture it again.'},
+                            status=400)
+        image = _cv2.imdecode(_np.frombuffer(data, _np.uint8), _cv2.IMREAD_COLOR)
+        if image is None:
+            return Response({'error': 'The reference image is not a readable picture. Capture it again.'},
                             status=400)
 
-        ok, buf = _cv2.imencode('.jpg', frame, [_cv2.IMWRITE_JPEG_QUALITY, 92])
-        if not ok:
-            return Response({'error': 'Could not encode the captured frame.'}, status=500)
+        # The scorer resizes a baseline to the live frame, which is harmless for
+        # a smaller copy of the same view and wrong for any other view: every
+        # bay would be compared against a different patch of ground. Only
+        # checkable while the camera is sending, so a stopped camera is let
+        # through rather than blocking a baseline set before it starts.
+        thread = parking_camera.get_thread(zone.id)
+        frame = thread.get_frame() if thread is not None and thread.running else None
+        if frame is not None:
+            ref_aspect  = image.shape[1] / image.shape[0]
+            live_aspect = frame.shape[1] / frame.shape[0]
+            if abs(ref_aspect - live_aspect) / live_aspect > 0.03:
+                return Response(
+                    {'error': 'The reference image is not the same shape as this camera\'s '
+                              'picture, so it cannot be this camera\'s view. Capture the '
+                              'reference from the live feed, then set it as the baseline.'},
+                    status=400)
 
         zone.baseline_image.save(f'zone_{zone.id}_baseline.jpg',
-                                 ContentFile(buf.tobytes()), save=False)
+                                 ContentFile(data), save=False)
         zone.baseline_captured_at = timezone.now()
         zone.save(update_fields=['baseline_image', 'baseline_captured_at'])
 

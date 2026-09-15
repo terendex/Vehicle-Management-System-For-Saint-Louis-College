@@ -93,43 +93,6 @@ class StillnessTests(SimpleTestCase):
         self.assertAlmostEqual(t.stationary_for(121.0), 0.0)
 
 
-class OccupancyDwellTests(TestCase):
-    """What the dwell gate means for bays."""
-
-    def setUp(self):
-        self.zone = ParkingZone.objects.create(name='Dwell', vehicle_category='car')
-        self.bay = ParkingSpace.objects.create(zone=self.zone, space_number='A1',
-                                               x1=0.10, y1=0.40, x2=0.30, y2=0.70)
-        self.thread = pc.ParkingCameraThread(self.zone.id, 'rtsp://unused')
-        self.inside = det(0.11, 0.42, 0.18, 0.26)
-
-    def _hits_after(self, seconds):
-        now = 100.0
-        vehicles = self.thread._tracker.update([self.inside], now)
-        now += seconds
-        vehicles = self.thread._tracker.update([self.inside], now)
-        return self.thread._detector_hits([self.bay], vehicles, now)
-
-    def test_a_car_that_just_arrived_does_not_claim_the_bay(self):
-        hits = self._hits_after(pc.PARKED_AFTER_SECONDS - 2)
-        self.assertFalse(hits[self.bay.id])
-
-    def test_a_car_that_has_settled_claims_the_bay(self):
-        hits = self._hits_after(pc.PARKED_AFTER_SECONDS + 1)
-        self.assertTrue(hits[self.bay.id])
-
-    def test_a_car_driving_through_never_claims_the_bay(self):
-        """It crosses the bay for several seconds on the way past — long enough
-        for the old four-frame hysteresis to latch it as occupied."""
-        now = 100.0
-        for i in range(30):
-            now += 1.0
-            moving  = det(0.11 + i * 0.04, 0.42, 0.18, 0.26)
-            vehicles = self.thread._tracker.update([moving], now)
-            hits = self.thread._detector_hits([self.bay], vehicles, now)
-            self.assertFalse(hits[self.bay.id])
-
-
 class DwellSettingsTests(TestCase):
     """The thresholds are the admin's, not the code's."""
 
@@ -265,15 +228,14 @@ class OccupancyHysteresisTests(TestCase):
         self.bay.refresh_from_db()
         self.assertTrue(self.bay.is_occupied)
 
-    def _miss_at(self, t, presence=False):
-        self.thread._apply_hits([self.bay], {self.bay.id: False}, now=t,
-                                presence={self.bay.id: presence})
+    def _miss_at(self, t):
+        self.thread._apply_hits([self.bay], {self.bay.id: False}, now=t)
         self.bay.refresh_from_db()
         return self.bay.is_occupied
 
-    def test_a_lost_detection_holds_the_bay_for_the_grace_period(self):
-        """The slow side is deliberate: a car the detector loses for a while
-        must not free its bay."""
+    def test_a_lost_reading_holds_the_bay_for_the_grace_period(self):
+        """The slow side is deliberate: a bay that briefly reads empty — a
+        shadow, someone standing in front — must not free."""
         self._occupy_at(1000.0)
         self.assertTrue(self._miss_at(1001.0))
         self.assertTrue(self._miss_at(1000.0 + pc.OCCUPIED_GRACE_SECONDS - 1))
@@ -283,7 +245,7 @@ class OccupancyHysteresisTests(TestCase):
         """Filled again at +50s, so the minute counts from there — a bay seen
         intermittently stays taken however long the gaps add up to."""
         self._occupy_at(1000.0)
-        self.assertTrue(self._miss_at(1050.0, presence=True))
+        self.assertTrue(self._hit_at(1050.0, 0.0))
         self.assertTrue(self._miss_at(1050.0 + pc.OCCUPIED_GRACE_SECONDS - 1))
         self.assertFalse(self._miss_at(1050.0 + pc.OCCUPIED_GRACE_SECONDS))
 
@@ -299,7 +261,7 @@ class OccupancyHysteresisTests(TestCase):
     def test_a_sighting_while_free_does_not_shorten_a_later_grace(self):
         """A car passing a free bay at t=0 must not leave a stale clock behind
         that frees the bay the instant a guard later marks it taken."""
-        self.assertFalse(self._miss_at(0.0, presence=True))
+        self.assertFalse(self._hit_at(0.0, 0.0))
         self.bay.is_occupied = True
         self.bay.save(update_fields=['is_occupied'])
         self.assertTrue(self._miss_at(500.0))
@@ -327,6 +289,40 @@ class OccupancyHysteresisTests(TestCase):
         for t in (5.0, 6.0, 7.0, 8.0, 9.0):
             self.assertFalse(self._hit_at(t, wait))
         self.assertTrue(self._hit_at(10.0, wait))
+
+
+class BaselineOnlyOccupancyTests(TestCase):
+    """Bays are scored against the baseline or not at all; the detector only
+    ever looks for double parking."""
+
+    def setUp(self):
+        p = patch('django.db.close_old_connections')
+        p.start()
+        self.addCleanup(p.stop)
+        self.zone = ParkingZone.objects.create(name='NoBase', vehicle_category='car')
+        self.bay = ParkingSpace.objects.create(zone=self.zone, space_number='A1',
+                                               x1=0.10, y1=0.40, x2=0.30, y2=0.70)
+        self.thread = pc.ParkingCameraThread(self.zone.id, 'rtsp://unused')
+        import numpy as np
+        self.frame = np.zeros((240, 320, 3), np.uint8)
+
+    def test_a_zone_without_a_baseline_leaves_its_bays_alone(self):
+        """Even with the detector reporting a vehicle squarely in the bay."""
+        parked = [det(0.11, 0.42, 0.18, 0.26)]
+        with patch.object(pc.ParkingCameraThread, '_detect', return_value=parked), \
+             patch.object(pc.ParkingCameraThread, '_set_occupied') as set_occ:
+            for step in range(40):
+                with patch('vehicles.parking_camera.time.monotonic', return_value=100.0 + step):
+                    self.thread._process_frame(self.frame)
+        set_occ.assert_not_called()
+
+    def test_the_detector_still_runs_for_double_parking(self):
+        with patch.object(pc.ParkingCameraThread, '_detect', return_value=[]) as detect, \
+             patch.object(pc.ParkingCameraThread, '_check_double_parking') as check:
+            with patch('vehicles.parking_camera.time.monotonic', return_value=100.0):
+                self.thread._process_frame(self.frame)
+        detect.assert_called_once()
+        check.assert_called_once()
 
 
 class BaselineDefaultTests(TestCase):

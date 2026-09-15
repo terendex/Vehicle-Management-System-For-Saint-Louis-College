@@ -156,3 +156,82 @@ class PreparationTests(TestCase):
         space.save()
         space.refresh_from_db()
         self.assertNotEqual(before, bo.layout_signature([space], 'tok', (H, W)))
+
+
+class SetBaselineFromReferenceTests(TestCase):
+    """The baseline button copies the reference image — the picture the bays
+    were drawn on — rather than grabbing whatever the live feed shows."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from django.test import override_settings
+        from rest_framework.test import APIClient
+        from accounts.models import User
+
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media, ignore_errors=True)
+        storage = override_settings(
+            MEDIA_ROOT=media,
+            STORAGES={
+                'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+                'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+            })
+        storage.enable()
+        self.addCleanup(storage.disable)
+
+        self.admin = User.objects.create_user(
+            email='baselineadmin@slc.edu.ph', full_name='Baseline Admin',
+            password='pw', role='admin', is_staff=True, is_superuser=True)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+        self.zone = ParkingZone.objects.create(name='Ref', vehicle_category='car')
+
+    def _set_reference(self, frame):
+        from django.core.files.base import ContentFile
+        ok, buf = cv2.imencode('.jpg', frame)
+        self.zone.reference_image.save('ref.jpg', ContentFile(buf.tobytes()))
+
+    def _post(self):
+        return self.client.post(f'/api/vehicles/parking-zones/{self.zone.id}/set-baseline/')
+
+    def test_the_reference_image_becomes_the_baseline(self):
+        self._set_reference(empty_lot())
+        res = self._post()
+        self.assertEqual(res.status_code, 200, res.content)
+        self.zone.refresh_from_db()
+        self.assertTrue(self.zone.baseline_image)
+        self.assertIsNotNone(self.zone.baseline_captured_at)
+        with self.zone.baseline_image.open('rb') as b, self.zone.reference_image.open('rb') as r:
+            self.assertEqual(b.read(), r.read())
+
+    def test_refused_without_a_reference_image(self):
+        res = self._post()
+        self.assertEqual(res.status_code, 400)
+        self.zone.refresh_from_db()
+        self.assertFalse(self.zone.baseline_image)
+
+    def test_refused_when_the_reference_is_not_this_cameras_shape(self):
+        from unittest.mock import MagicMock, patch
+        self._set_reference(empty_lot())                        # 320x240, 4:3
+        thread = MagicMock(running=True)
+        thread.get_frame.return_value = np.zeros((360, 640, 3), np.uint8)   # 16:9
+        with patch('vehicles.views.parking_camera.get_thread', return_value=thread):
+            res = self._post()
+        self.assertEqual(res.status_code, 400)
+        self.zone.refresh_from_db()
+        self.assertFalse(self.zone.baseline_image)
+
+    def test_a_running_camera_needs_no_frame_grab(self):
+        """Works the same with the camera running, as long as the shapes agree —
+        and the live frame is never what gets stored."""
+        from unittest.mock import MagicMock, patch
+        self._set_reference(empty_lot())
+        thread = MagicMock(running=True)
+        thread.get_frame.return_value = np.zeros((480, 640, 3), np.uint8)   # 4:3
+        with patch('vehicles.views.parking_camera.get_thread', return_value=thread):
+            res = self._post()
+        self.assertEqual(res.status_code, 200, res.content)
+        self.zone.refresh_from_db()
+        with self.zone.baseline_image.open('rb') as b, self.zone.reference_image.open('rb') as r:
+            self.assertEqual(b.read(), r.read())
