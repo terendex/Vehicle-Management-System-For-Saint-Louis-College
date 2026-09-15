@@ -38,9 +38,9 @@ export const zoneApi = {
   // `camera` is the Device Management camera id (or null). A zone created
   // without one has no feed to draw against and no detector to run, so the
   // caller should pass the camera the admin is actually looking at.
-  create: async ({ name, vehicle_category, camera = null }) => {
+  create: async ({ name, vehicle_category, camera = null, lens_index = 0 }) => {
     const { data } = await api.post('/vehicles/parking-zones/', {
-      name, vehicle_category, camera,
+      name, vehicle_category, camera, lens_index,
     })
     return data
   },

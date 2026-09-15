@@ -52,6 +52,21 @@ function hitTest(pt, s) {
   return pt.x >= s.x1 && pt.x <= s.x2 && pt.y >= s.y1 && pt.y <= s.y2
 }
 
+// The server's own reason, when it gave one. A bare "please try again" hides
+// the difference between a rejected camera, a lapsed session and a server
+// that never answered — and trying again fixes none of them.
+function apiErrorMessage(err, fallback) {
+  if (!err?.response) return `${fallback} The server could not be reached.`
+  const data = err.response.data
+  if (typeof data?.detail === 'string') return data.detail
+  if (typeof data?.error === 'string') return data.error
+  if (data && typeof data === 'object') {
+    const first = Object.values(data).flat()[0]
+    if (typeof first === 'string') return first
+  }
+  return `${fallback} (HTTP ${err.response.status})`
+}
+
 function autoLabel(list, cat) {
   const pre  = cat === 'motorcycle' ? 'M' : 'C'
   const nums = list.map(s => parseInt(s.space_number.replace(/\D/g, ''), 10)).filter(n => !isNaN(n))
@@ -422,9 +437,9 @@ export default function ParkingManagement({ embedded = false }) {
       setShowNew(false)
       setNewZone({ name: '', vehicle_category: 'motorcycle', camera: '', lens_index: 0 })
       setMode('edit')
-    } catch {
+    } catch (err) {
       setShowNew(false)
-      setResultModal({ type: 'error', message: 'Failed to create zone. Please try again.' })
+      setResultModal({ type: 'error', message: apiErrorMessage(err, 'Failed to create zone.') })
     } finally { setAddingZone(false) }
   }
 
