@@ -44,6 +44,31 @@ def plate_label(plate_number) -> str:
     return 'Control Number' if is_control_number(plate_number) else 'Plate Number'
 
 
+def vehicle_identifier(registration) -> str:
+    """The identifier a vehicle is actually known by at the gate.
+
+    `plate_number` is blank on a car still carrying a conduction sticker (it is
+    filled by the one-time plate swap when the real plate arrives), so reading it
+    alone yields '' for exactly those owners. An e-bike's FM- control number
+    already lives in `plate_number` and needs no case of its own.
+    """
+    return ((registration.plate_number or '').strip()
+            or (registration.conduction_number or '').strip())
+
+
+def gate_qr_payload(registration) -> str:
+    """The gate QR payload, or '' when the record has nothing to identify it by.
+
+    Parsed by `plateFromVehicleQr()` in SecurityEntryManagement.jsx and mirrored
+    by `vehicleQrPayload()` in frontend/src/utils/plateFormat.js; the shape must
+    stay `VEHICLE:{identifier}|ID:{registration id}`. A payload built with an
+    empty identifier (`VEHICLE:|ID:n`) scans perfectly and then fails at the gate
+    as "Unrecognized QR", so it is refused here instead.
+    """
+    identifier = vehicle_identifier(registration)
+    return f'VEHICLE:{identifier}|ID:{registration.id}' if identifier else ''
+
+
 def format_control_number(n: int) -> str:
     # Three digits minimum; FM-1000 follows FM-999 rather than wrapping.
     return f'{PREFIX}{n:03d}'

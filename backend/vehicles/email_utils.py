@@ -468,11 +468,17 @@ def _plate_label(registration):
 
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
-    # scanner parses `VEHICLE:{plate}|ID:{n}` (see SecurityEntryManagement.jsx).
-    qr_data = f"VEHICLE:{registration.plate_number}|ID:{registration.id}"
-    qr_png = _generate_qr_png(qr_data)
+    # scanner parses `VEHICLE:{identifier}|ID:{n}` (see SecurityEntryManagement.jsx).
+    # Built through the shared helper so a car still on a conduction sticker
+    # (blank plate_number) is emailed a QR the gate can actually resolve.
+    from .control_numbers import gate_qr_payload
+    qr_data = gate_qr_payload(registration)
+    # No identifier on the record means no QR a gate could resolve. Encoding the
+    # empty payload anyway would send a code that scans cleanly and is then
+    # refused at the gate, so the QR is left out of the mail entirely.
+    qr_png = _generate_qr_png(qr_data) if qr_data else None
     qr_src = (_qr_public_url(registration, qr_png)
-              or f"data:image/png;base64,{base64.b64encode(qr_png).decode()}")
+              or f"data:image/png;base64,{base64.b64encode(qr_png).decode()}") if qr_png else ''
 
     # Determine system-assigned registration ID
     system_id = esc_or_dash(registration.system_student_id or registration.system_employee_id)
@@ -539,7 +545,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                   f'this password the first time you sign in.</div>',
                 bg=TINT_BG, border=BORDER_FIRM)
             # Then the QR — the thing actually held up at the gate.
-            + f'<tr><td class="sh-pad" style="padding:0 32px 18px;">'
+            + (f'<tr><td class="sh-pad" style="padding:0 32px 18px;">'
               f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
               f'style="width:100%;border-collapse:collapse;background:{PANEL_BG};'
               f'border:1px solid {BORDER};border-radius:10px;">'
@@ -551,7 +557,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
               f'border:1px solid {BORDER};border-radius:8px;padding:8px;" />'
               f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:10px;">'
               f'Not showing? The same QR is attached to this email, and is always on your '
-              f'portal dashboard.</div></td></tr></table></td></tr>'
+              f'portal dashboard.</div></td></tr></table></td></tr>' if qr_png else '')
             + _section('Your IDs', _split('Portal Account ID', portal_id_display,
                                           'System Registration ID', system_id))
             + _section('Registration', _kv(
@@ -602,8 +608,9 @@ def send_acceptance_email(registration, temp_password, user_code=None):
     # default and strip data: URIs outright, so the inline copy above cannot be
     # relied on — but an attachment always arrives, and the owner can save it to
     # their phone to show at the gate.
-    msg.attach(f'qr-{registration.plate_number or registration.pk}.png',
-               qr_png, 'image/png')
+    if qr_png:
+        msg.attach(f'qr-{registration.plate_number or registration.conduction_number or registration.pk}.png',
+                   qr_png, 'image/png')
 
     # The confirmation PDF rides with the fee, not with the approval. An
     # application approved before its Official Receipt is in (see

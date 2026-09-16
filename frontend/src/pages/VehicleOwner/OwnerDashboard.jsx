@@ -24,7 +24,7 @@ import '../../components/RegistrationDetails/detailFields.css'
 import { getNotices } from '../../api/vehicles'
 import './OwnerDashboard.css'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
-import { isControlNumber } from '../../utils/plateFormat'
+import { isControlNumber, vehicleQrPayload } from '../../utils/plateFormat'
 
 /* What each schedule code admits, spelled out — a bare 'ANY' told the owner
    nothing, and "any day" would overstate it (the campus is closed on Sunday). */
@@ -441,8 +441,10 @@ export default function OwnerDashboard() {
 
   const systemId = reg?.system_student_id || reg?.system_employee_id || '—'
   // An e-bike's FM- control number lives in plate_number, so its QR is the same
-  // VEHICLE:{plate}|ID:{id} shape the guard scanner already reads.
-  const qrPayload = reg ? `VEHICLE:${reg.plate_number}|ID:${reg.id}` : ''
+  // VEHICLE:{identifier}|ID:{id} shape the guard scanner already reads. An owner
+  // still on a conduction sticker has no plate_number yet, so the payload is
+  // built from whichever identifier the record actually carries.
+  const qrPayload = vehicleQrPayload(reg)
   const hasControlNumber = isControlNumber(reg?.plate_number)
   const strength  = pwStrength(pwForm.new)
 
@@ -909,6 +911,16 @@ export default function OwnerDashboard() {
                 <div className="od-card od-qr-card">
                   <div className="od-card-head"><ShieldCheck size={16} /> Vehicle Access QR Code</div>
                   <p className="od-qr-hint">Present this code to security personnel upon entry.</p>
+                  {/* No identifier on file means no QR a gate could resolve. Said
+                      plainly, because a QR rendered from an empty payload looks
+                      perfectly scannable and only fails at the gate. */}
+                  {!qrPayload ? (
+                    <p className="od-qr-hint">
+                      Your record has no plate or conduction number on file yet, so no gate QR can be
+                      issued. Please contact the CDSO office.
+                    </p>
+                  ) : (
+                  <>
                   <button
                     type="button"
                     className="od-qr-display od-qr-display--btn"
@@ -935,6 +947,8 @@ export default function OwnerDashboard() {
                   >
                     {qrCopied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy QR Data</>}
                   </button>
+                  </>
+                  )}
                 </div>
 
                 <div className="od-card od-status-card">

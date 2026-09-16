@@ -8,7 +8,7 @@ import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, C
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { TableLoaderRow } from '../../components/TableLoader'
-import { plateLabel } from '../../utils/plateFormat'
+import { plateLabel, vehicleIdentifier, vehicleQrPayload } from '../../utils/plateFormat'
 import './VehicleRegistration.css'
 
 // "Any Day" reads as Sunday included; the campus is closed then, so the ANY
@@ -220,12 +220,23 @@ export default function VehicleRegistration() {
 
   const handleViewVehicleQR = () => {
     if (!selectedReg) return
-    const qrData = `VEHICLE:${selectedReg.plate_number}|ID:${selectedReg.id}`
+    // Built from whichever identifier the record carries: a car still on a
+    // conduction sticker has no plate_number, and a QR encoding an empty one
+    // reaches the gate as "Unrecognized QR".
+    const qrData = vehicleQrPayload(selectedReg)
+    if (!qrData) {
+      notify.error(
+        'This registration has no plate or conduction number on file, so there is nothing for a ' +
+        'gate QR to identify the vehicle by.',
+        { title: 'No QR to show' },
+      )
+      return
+    }
     setQrDisplayData({
       type: 'vehicle',
       payload: qrData,
       title: 'Vehicle Access QR Code',
-      subtitle: `${selectedReg.full_name} — ${selectedReg.plate_number}`,
+      subtitle: `${selectedReg.full_name} — ${vehicleIdentifier(selectedReg)}`,
     })
     setIsQRModalOpen(true)
   }

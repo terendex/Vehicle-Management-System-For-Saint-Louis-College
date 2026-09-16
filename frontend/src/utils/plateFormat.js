@@ -63,3 +63,25 @@ export function isControlNumber(raw) {
 export function plateLabel(raw) {
   return isControlNumber(raw) ? 'Control Number' : 'Plate Number'
 }
+
+// The identifier a vehicle is actually known by at the gate. A brand-new car is
+// registered on a conduction sticker and its `plate_number` stays empty until
+// the plate arrives (see the one-time plate swap), so reading `plate_number`
+// alone yields '' for exactly those owners. An e-bike's FM- control number
+// already lives in plate_number, so it needs no case of its own here.
+export function vehicleIdentifier(reg) {
+  return (reg?.plate_number || reg?.conduction_number || '').trim()
+}
+
+// The gate QR payload. Parsed by plateFromVehicleQr() in
+// SecurityEntryManagement.jsx and mirrored by
+// backend/vehicles/control_numbers.py gate_qr_payload(); the shape must stay
+// `VEHICLE:{identifier}|ID:{registration id}`.
+//
+// Returns '' when there is no identifier at all, so a caller renders no QR
+// rather than one encoding `VEHICLE:|ID:n` — which carries nothing to look the
+// vehicle up by and makes the guard's scanner answer "Unrecognized QR".
+export function vehicleQrPayload(reg) {
+  const identifier = vehicleIdentifier(reg)
+  return identifier && reg?.id ? `VEHICLE:${identifier}|ID:${reg.id}` : ''
+}
