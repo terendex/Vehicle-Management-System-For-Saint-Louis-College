@@ -314,3 +314,77 @@ class TexturedGroundTests(TestCase):
             frame = np.clip(gravel_lot(11).astype(np.int16) + shift, 0, 255).astype(np.uint8)
             self.assertFalse(self._score(frame)['occupied'],
                              f'a {shift:+d} brightness shift flipped a gravel bay')
+
+
+class MeasuredCampusBayTests(TestCase):
+    """The vote rule against readings taken off the live campus camera.
+
+    Zone 28 is one dual-lens unit watching two motorcycle bays: M01 on gravel,
+    M02 on bare dirt. Both were scored wrong at once, and the readings say why —
+    the edge signal put them 0.007 apart with the *empty* bay reading as the
+    bigger change, while the mean-absolute-difference put them 49 apart the
+    right way round. Nothing here is synthetic; these are the numbers the
+    running server reported for those two bays.
+    """
+
+    # (edge_delta, hist_corr, mad), read off the two bays at two times. The
+    # later pair is the harder one: by then the ground had darkened and the two
+    # histograms had converged on the same value, leaving mad alone to tell a
+    # parked motorcycle from bare dirt.
+    M01_WITH_MOTORCYCLE = (-0.0385, 0.6126, 65.82)
+    M02_EMPTY           = (-0.0452, 0.7340, 16.76)
+    M01_WITH_MOTORCYCLE_LATER = (-0.0405, 0.626, 67.04)
+    M02_EMPTY_LATER           = (-0.0514, 0.626, 18.96)
+
+    def _occupied(self, reading):
+        return bo.score_votes(*reading) >= bo.VOTES_REQUIRED
+
+    def test_a_bay_with_a_motorcycle_in_it_reads_taken(self):
+        self.assertTrue(self._occupied(self.M01_WITH_MOTORCYCLE))
+        self.assertTrue(self._occupied(self.M01_WITH_MOTORCYCLE_LATER))
+
+    def test_an_empty_bay_reads_free(self):
+        self.assertFalse(self._occupied(self.M02_EMPTY))
+        self.assertFalse(self._occupied(self.M02_EMPTY_LATER))
+
+    def test_an_empty_bay_whose_ground_changed_is_still_free(self):
+        """The later empty reading trips *both* corroborating signals — the
+        histogram has drifted below its threshold and the edges past theirs —
+        and must still fall short, because the bay holds nothing.
+        """
+        edge_delta, hist_corr, mad = self.M02_EMPTY_LATER
+        self.assertLess(hist_corr, bo.HIST_CORR_THR)
+        self.assertGreaterEqual(abs(edge_delta), bo.EDGE_DELTA_THR)
+        self.assertFalse(self._occupied(self.M02_EMPTY_LATER))
+
+    def test_the_two_bays_are_indistinguishable_but_for_the_mean(self):
+        """Same histogram, and the empty bay changed more by edges."""
+        self.assertAlmostEqual(self.M01_WITH_MOTORCYCLE_LATER[1],
+                               self.M02_EMPTY_LATER[1], places=3)
+        self.assertLess(abs(self.M01_WITH_MOTORCYCLE_LATER[0]),
+                        abs(self.M02_EMPTY_LATER[0]))
+
+    def test_the_edge_signal_cannot_separate_these_two_bays(self):
+        """Why edges stopped being decisive, asserted rather than remembered.
+
+        The occupied bay's edge change is *smaller* than the empty one's, so any
+        rule that lets this signal settle the verdict gets one of them wrong.
+        """
+        occupied_edge = abs(self.M01_WITH_MOTORCYCLE[0])
+        empty_edge    = abs(self.M02_EMPTY[0])
+        self.assertLess(occupied_edge, empty_edge)
+
+    def test_the_tonal_gap_is_what_separates_them(self):
+        """And what the rule leans on instead: 65.8 against 16.8."""
+        self.assertGreaterEqual(self.M01_WITH_MOTORCYCLE[2], bo.MAD_THR)
+        self.assertLess(self.M02_EMPTY[2], bo.MAD_THR)
+
+    def test_no_single_signal_can_claim_a_bay(self):
+        """A decisive tonal change scores twice, so this is worth pinning."""
+        self.assertLess(bo.score_votes(0.0, 1.0, 999.0), bo.VOTES_REQUIRED)
+        self.assertLess(bo.score_votes(9.9, 1.0, 0.0), bo.VOTES_REQUIRED)
+
+    def test_histogram_and_mean_drifting_together_still_fall_short(self):
+        """The lighting case the weighting was invented for: both tonal signals
+        move, but not far enough to be a vehicle."""
+        self.assertLess(bo.score_votes(0.0, 0.5, 20.0), bo.VOTES_REQUIRED)

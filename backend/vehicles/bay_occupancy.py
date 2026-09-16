@@ -8,24 +8,27 @@ arithmetic on a crop.
 
 Three signals, because no single one survives a campus lot all day:
 
+  mean abs diff  How far the bay's pixels have moved from the baseline's, on
+                 average. Blunt, and the one that actually answers the question:
+                 on the real bays it read 67 with a motorcycle parked and 19
+                 empty, while the other two read the same on both. It counts
+                 double.
+  histogram      Correlation against the baseline crop. Falls when something
+                 with a different tonal distribution is parked there — but also
+                 when the ground itself changes colour, which is why it only
+                 corroborates.
   edge density   How much fine detail the bay holds, against what it held empty.
-                 On asphalt — flat and nearly edge-free in bright sun and shade
-                 alike — a vehicle adds panel lines, glass, wheels and shadow.
-                 On gravel or leaf litter the ground is the detailed thing and a
+                 On asphalt a vehicle adds panel lines, glass and shadow; on
+                 gravel or leaf litter the ground is the detailed thing and a
                  vehicle's smooth bodywork covers it, so the density falls
-                 instead. Either direction is the bay ceasing to look like its
-                 empty self; it is the reading a lighting change cannot fake, so
-                 it carries the most weight.
-  histogram      Correlation against the baseline crop. Drops sharply when
-                 something with a different tonal distribution is parked there.
-  mean abs diff  Blunt but decisive when a dark car sits on light asphalt.
+                 instead. Either direction counts, but weakly: measured on a real
+                 camera the *empty* bay showed the larger change.
 
-The vote is weighted, and the weighting is the whole design. A uniform lighting
-change moves the histogram AND the mean while leaving edges untouched, so a
-plain two-of-three vote calls a passing cloud a parked car — the two fragile
-signals simply outvote the robust one. Edges therefore count double and three
-points are required: lighting alone scores two and loses, while a real vehicle
-brings edges plus at least one other signal and scores three.
+The vote is weighted, and the weighting is the whole design. Three points are
+required, the decisive signal scores two and the two corroborating ones score
+one each. So nothing claims a bay by itself, and — the case this arithmetic
+exists for — an empty bay whose ground has merely changed, where the histogram
+and the edges both drift, reaches two and loses.
 
 On top of that, both tonal signals are illumination-compensated: the frame's
 global brightness shift against the baseline is subtracted before the bay is
@@ -56,35 +59,48 @@ log = logging.getLogger(__name__)
 
 # Change in edge-pixel density against the empty baseline, either way.
 #
-# It was a *rise* only, which silently made cluttered ground undetectable. The
-# signal is mandatory (see VOTES_REQUIRED), and a bay floored with gravel, leaf
-# litter or rubble is already edge-dense when empty — a vehicle parked on it
-# covers that texture with smooth bodywork and drives the density *down*. A real
-# motorcycle bay measured 0.30 empty and 0.08 with the bike in it: a change of
-# -0.23, six times this threshold, scored as no evidence at all. The bay could
-# not be claimed by any combination of the other signals, so it read free with a
-# vehicle plainly sitting in it.
+# Two corrections live here. It was a *rise* only, which cannot describe a bay
+# floored with gravel or leaf litter: that ground is edge-dense when empty, and
+# a vehicle parked on it covers the texture with smooth bodywork and drives the
+# density down. And it used to count double, which made it decisive.
 #
-# Magnitude is what matters: the bay no longer looks like its empty self. The
-# two tonal signals still decide *with* it, and neither a brightening nor a
-# darkening can reach the total alone (the lighting tests pin that down).
+# It is neither reliable nor decisive. Measured on the real motorcycle bays,
+# with one bay holding a bike and the other holding nothing:
+#
+#     M01, motorcycle parked : edge -0.0405   hist 0.626   mad 67.0
+#     M02, empty             : edge -0.0514   hist 0.626   mad 19.0
+#
+# The histograms are identical and the *empty* bay shows the larger edge change.
+# No threshold on either can tell these two apart; only the mean absolute
+# difference does, and by a factor of three. So edges are corroboration now —
+# one point, never enough on their own.
 EDGE_DELTA_THR = 0.04
+EDGE_VOTE_WEIGHT = 1
 
 # Histogram correlation with the baseline crop, below which the bay is
-# considered changed. 1.0 is identical.
+# considered changed. 1.0 is identical. Corroboration, like edges: the readings
+# above are the same on a taken bay and an empty one.
 HIST_CORR_THR = 0.70
 
-# Mean absolute greyscale difference from the baseline, 0-255. Measured after
-# illumination compensation, so this is a local change, not a global one.
-MAD_THR = 14.0
+# Mean absolute greyscale difference from the baseline, 0-255, and the signal
+# that actually answers the question — so it is the one that counts double.
+#
+# Measured after illumination compensation, so it is a local change and not the
+# weather: the frame's global brightness shift is subtracted before it is taken.
+# The threshold sits in the gap the real bays showed, 19 empty against 67 taken.
+# It was 14.0, which every damp patch and shifting shadow cleared — that, plus
+# the double weight then sitting on edges, is what let an empty bay read taken.
+#
+# Deliberately far above what a compensated lighting change leaves behind: a
+# cloud leaves single digits, not forties (the lighting tests hold that line).
+MAD_THR = 40.0
+MAD_VOTE_WEIGHT = 2
 
-# Edges count double: they are the one signal a lighting change cannot fake, and
-# without the weighting the two tonal signals outvote them (a uniform brightness
-# shift scored 2/3 and read as a parked car).
-EDGE_VOTE_WEIGHT = 2
-
-# Points required. Reachable only as edges + at least one tonal signal; the two
-# tonal signals together fall one short.
+# Points required. No signal claims a bay alone — the decisive one scores 2 and
+# still needs corroboration — and the two corroborating signals together score 2
+# and cannot claim one either. That last pairing is the case this arithmetic
+# exists for: an empty bay whose ground has changed colour, where the histogram
+# and the edges both drift but the bay plainly holds nothing.
 VOTES_REQUIRED = 3
 
 CANNY_LO, CANNY_HI = 60, 160
@@ -233,6 +249,19 @@ def prepare_zone(baseline_bgr, spaces, shape, baseline_token='') -> PreparedZone
                         base_mean=float(np.mean(base_gray)))
 
 
+def score_votes(edge_delta: float, hist_corr: float, mad: float) -> int:
+    """Points for one bay's three readings — the whole verdict, in one place.
+
+    Split out of `evaluate` so the rule can be checked against signals measured
+    off a real camera. Reproducing a given trio of readings from a synthetic
+    image is guesswork; asserting the arithmetic on the numbers a real bay
+    actually produced is not.
+    """
+    return ((MAD_VOTE_WEIGHT if mad >= MAD_THR else 0)
+            + (1 if hist_corr < HIST_CORR_THR else 0)
+            + (EDGE_VOTE_WEIGHT if abs(edge_delta) >= EDGE_DELTA_THR else 0))
+
+
 def evaluate(prepared: PreparedZone, frame_bgr) -> dict:
     """Score every prepared bay against one live frame.
 
@@ -270,9 +299,7 @@ def evaluate(prepared: PreparedZone, frame_bgr) -> dict:
         mad          = float(cv2.mean(cv2.absdiff(compensated, bay.base_gray),
                                       mask=bay.mask)[0])
 
-        votes = ((EDGE_VOTE_WEIGHT if abs(edge_delta) >= EDGE_DELTA_THR else 0)
-                 + (1 if hist_corr < HIST_CORR_THR else 0)
-                 + (1 if mad >= MAD_THR else 0))
+        votes = score_votes(edge_delta, hist_corr, mad)
 
         results[bay.space_id] = {
             'occupied':   votes >= VOTES_REQUIRED,
