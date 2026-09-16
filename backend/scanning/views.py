@@ -981,12 +981,14 @@ def _slip_from_request(request, any_copy=False):
     parsed = slips.parse_code(code)
     if not parsed:
         return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier, event or no-plate slip.'}, status=400)
-    kind, pk, serial = parsed
-    obj = slips.find(kind, pk)
+    # `extra` is the code's third part: a visitor slip's serial, an event pass's
+    # organizer plate, '' for the rest.
+    kind, pk, extra = parsed
+    obj = slips.find(kind, pk, extra)
     if not obj:
         return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
     if isinstance(obj, VisitorPass):
-        error = _spent_visitor_slip(obj) or (None if any_copy else _replaced_visitor_slip(obj, serial))
+        error = _spent_visitor_slip(obj) or (None if any_copy else _replaced_visitor_slip(obj, extra))
         if error:
             return None, error
     return obj, None

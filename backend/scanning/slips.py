@@ -27,6 +27,7 @@ SUPPLIER_PREFIX      = 'SLC-SUPPLIER:'
 SUPPLIER_PASS_PREFIX = 'SLC-SUPPLIER-PASS:'
 NOPLATE_PREFIX       = 'SLC-NOPLATE:'
 EVENT_PREFIX         = 'SLC-EVENT:'
+EVENT_PASS_PREFIX    = 'SLC-EVENT-PASS:'
 
 KEY = True   # marks an important row, see the module docstring
 
@@ -35,20 +36,31 @@ ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
 
 
 def parse_code(code):
-    """('visitor' | 'supplier' | 'supplierpass' | 'noplate' | 'event', pk,
-    serial) for a slip code, else None. Only a visitor slip carries a serial —
-    SLC-VISITOR:{id}-{serial}; it is '' everywhere else, and on a visitor slip
-    printed before serials existed."""
+    """('visitor' | 'supplier' | 'supplierpass' | 'noplate' | 'event' |
+    'eventpass', pk, extra) for a slip code, else None.
+
+    `extra` is the third part of the code, and only two kinds carry one: a
+    visitor slip's serial (SLC-VISITOR:{id}-{serial}) and an event pass's
+    organizer identifier (SLC-EVENT-PASS:{event id}:{identifier}). It is ''
+    everywhere else, and on a visitor slip printed before serials existed.
+    """
     code = (code or '').strip().upper()
     for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
                          (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate'),
-                         (EVENT_PREFIX, 'event')):
+                         (EVENT_PASS_PREFIX, 'eventpass'), (EVENT_PREFIX, 'event')):
         if code.startswith(prefix):
-            body, serial = code[len(prefix):], ''
+            body, extra = code[len(prefix):], ''
             if kind == 'visitor' and '-' in body:
-                body, serial = body.split('-', 1)
+                body, extra = body.split('-', 1)
+            elif kind == 'eventpass':
+                # An event pass names a plate, not a row of its own — an event's
+                # organizer plates are a list of strings, so the pass is the
+                # event and the identifier together.
+                body, _, extra = body.partition(':')
+                if not extra:
+                    return None
             try:
-                return kind, int(body), serial
+                return kind, int(body), extra
             except ValueError:
                 return None
     return None
@@ -59,8 +71,23 @@ def new_slip_token():
     return secrets.token_hex(4).upper()
 
 
-def find(kind, pk):
-    """The model row behind a slip, or None."""
+class EventPass:
+    """A standing pass for one organizer plate on one event.
+
+    Backed by no row of its own: an event's organizer plates are a list of
+    strings on the event (`Event.organizer_plates`), not records, so the pass
+    is that pairing rather than something to look up. Everything else the slip
+    needs comes off the event.
+    """
+
+    def __init__(self, event, plate_number):
+        self.event = event
+        self.plate_number = plate_number
+
+
+def find(kind, pk, extra=''):
+    """The model row behind a slip, or None. `extra` is parse_code's third
+    part — only an event pass uses it, to name which organizer plate."""
     if kind == 'visitor':
         return VisitorPass.objects.select_related('office', 'issued_by', 'vehicle').filter(pk=pk).first()
     if kind == 'noplate':
@@ -82,6 +109,15 @@ def find(kind, pk):
         return (AccessLog.objects.select_related('scanned_by', 'event')
                 .filter(pk=pk, status=AccessLog.Status.AUTHORIZED,
                         entrant_category=AccessLog.Category.EVENT).first())
+    if kind == 'eventpass':
+        # The identifier is compared in the form the event stores and the gate
+        # reads, so a pass printed for “ABC 1234” still opens as ABC1234.
+        from vehicles.models import Event, canonical_identifier
+        ident = canonical_identifier(extra)
+        event = Event.objects.filter(pk=pk, archived=False).first()
+        if event and ident and ident in (event.organizer_plates or []):
+            return EventPass(event, ident)
+        return None
     return None
 
 
@@ -297,12 +333,58 @@ def supplier_pass_slip(plate):
     }
 
 
+def event_pass_slip(pass_):
+    """A standing pass for one organizer plate, printed from Events management
+    before the event and kept in the vehicle.
+
+    Like a supplier pass it belongs to no single visit, and its QR carries the
+    plate in the same VEHICLE: form a registered vehicle's QR pass uses — so
+    scanning it at the gate runs the ordinary plate check, which is already
+    what admits an organizer: `organizer_event_for()` matches the plate against
+    the event's list. The first scan logs the entry and the next the exit, and
+    the slip for that visit is the EVENT SLIP the entry itself creates.
+
+    The event's window end is the pass's expiry, since that is when the list
+    stops admitting the vehicle.
+    """
+    event, plate = pass_.event, pass_.plate_number
+    return {
+        'kind':             'eventpass',
+        'id':               event.pk,
+        'code':             f'{EVENT_PASS_PREFIX}{event.pk}:{plate}',
+        'qr':               f'VEHICLE:{plate}|EVENT:{event.pk}',
+        'reference':        f'EVP-{event.pk}',
+        'title':            'EVENT PASS',
+        'headline':         plate,
+        'plate_number':     plate,
+        'name':             event.name,
+        'state':            'active' if event.is_under_way() else 'inactive',
+        'entered_at':       None,
+        'expires_at':       _iso(event_end(event)),
+        'exited_at':        None,
+        'printed_at':       None,
+        'minutes_inside':   0,
+        'overstay_minutes': 0,
+        'sections': [
+            [['Event', event.name, KEY],
+             ['Date', f"{event.date.strftime('%b')} {event.date.day}, {event.date.year}"],
+             ['Time', event.time_display, KEY]],
+            [['Organizer', plate, KEY],
+             ['Printed', _when(timezone.now())]],
+        ],
+        # Each line fits the 48mm roll without wrapping.
+        'footer': ['SCAN QR AT THE GATE', 'ON ENTRY AND ON EXIT', 'KEEP THIS PASS IN VEHICLE'],
+    }
+
+
 def slip_data(obj):
     from vehicles.models import SupplierPlate
     if isinstance(obj, VisitorPass):
         return visitor_slip(obj)
     if isinstance(obj, SupplierPlate):
         return supplier_pass_slip(obj)
+    if isinstance(obj, EventPass):
+        return event_pass_slip(obj)
     if is_event_entry(obj):
         return event_slip(obj)
     return noplate_slip(obj) if obj.is_unrecognized else supplier_slip(obj)

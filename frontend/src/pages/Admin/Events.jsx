@@ -4,11 +4,15 @@ import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
   ParkingCircle, Tag, Check, Archive, CalendarClock, Clock,
+  Printer, Monitor,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
+import { lookupSlip, printSlipOnServer } from '../../api/scanning'
+import { printSlipInBrowser } from '../../utils/slipPrint'
 import { zoneApi } from '../../api/parking'
 import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
 import './Events.css'
@@ -227,6 +231,120 @@ function AddEventModal({ onClose, onCreated }) {
   )
 }
 
+// ── Print Event Pass modal ────────────────────────────────────────────
+// A standing pass for one organizer plate, printed before the event and kept
+// in the vehicle. Its QR carries the plate (VEHICLE:{plate}|EVENT:{id}), so the
+// guard scans it at the gate like a registered vehicle's QR: the first scan
+// records the entry, the next the exit, and the event's organizer list is what
+// admits it. The slip comes from the server (scanning/slips.py) so the preview,
+// the thermal print and the browser print all say the same thing.
+function PrintPassModal({ event, plate, onClose }) {
+  const [slip, setSlip]   = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy]   = useState('')   // 'thermal' | 'browser' | ''
+
+  useEffect(() => {
+    let cancelled = false
+    lookupSlip(`SLC-EVENT-PASS:${event.id}:${plate}`)
+      .then(({ data }) => { if (!cancelled) setSlip(data) })
+      .catch(err => { if (!cancelled) setError(err?.response?.data?.error || 'Could not load the pass.') })
+    return () => { cancelled = true }
+  }, [event.id, plate])
+
+  const asking = useRef(false)   // a double-click must not confirm once and print twice
+
+  const printThermal = async () => {
+    if (asking.current) return
+    asking.current = true
+    try {
+      const go = await notify.confirm({
+        title: 'Print Event Pass?',
+        message: `Print the Event Pass for ${plate} (${event.name}) on the thermal printer?`,
+        confirmLabel: 'Print',
+      })
+      if (!go) return
+    } finally { asking.current = false }
+    setBusy('thermal')
+    try {
+      await printSlipOnServer(slip.code)
+      onClose()
+      await notify.success(`Event Pass for ${plate} printed on the thermal printer.`, { title: 'Pass printed' })
+    } catch (err) {
+      const noPrinter = err?.response?.status === 503
+      await notify.error(
+        noPrinter
+          ? 'This server has no thermal printer connected. Use “Print from This Computer” instead.'
+          : (err?.response?.data?.error || 'The pass did not print — the printer could not be reached.'),
+        { title: 'Pass not printed' },
+      )
+    } finally { setBusy('') }
+  }
+
+  const printBrowser = async () => {
+    setBusy('browser')
+    const opened = printSlipInBrowser(slip)
+    setBusy('')
+    if (!opened) {
+      await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
+        { title: 'Pass not printed' })
+    }
+  }
+
+  return (
+    <div className="ev-overlay" onClick={onClose}>
+      <div className="ev-modal ev-modal--print" onClick={e => e.stopPropagation()}>
+        <div className="ev-modal-head">
+          <h2 className="ev-modal-title">Print Event Pass</h2>
+          <button className="ev-modal-close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="ev-modal-form">
+          {error ? (
+            <p className="ev-modal-body" style={{ color: '#C62828' }}>{error}</p>
+          ) : !slip ? (
+            <div className="ev-loading"><Loader2 size={22} className="ev-spinner" /><span>Loading pass…</span></div>
+          ) : (
+            <>
+              {/* The gate admits an organizer only while the event is under way,
+                  so a pass printed ahead of time is paper that does not open the
+                  gate yet. Said here rather than discovered at the gate. */}
+              {slip.state !== 'active' && (
+                <p className="ev-pass-warn">
+                  <AlertTriangle size={14} /> This event is not under way right now. The pass will print, but
+                  the gate admits this plate as an organizer only during the event’s date and time.
+                </p>
+              )}
+              <div className="ev-pass-preview" aria-label="Pass preview">
+                <div className="ev-pass-title">{slip.title}</div>
+                <div className="ev-pass-plate">{slip.headline}</div>
+                {slip.sections.flat().map(([label, value, key]) => (
+                  <div key={label} className={`ev-pass-row${key ? ' ev-pass-row--key' : ''}`}>
+                    <span>{label}:</span><span>{value}</span>
+                  </div>
+                ))}
+                <div className="ev-pass-qr"><QRCodeSVG value={slip.qr || slip.code} size={116} level="M" /></div>
+                {(slip.footer || []).map(line => <div key={line} className="ev-pass-foot">{line}</div>)}
+              </div>
+              <p className="ev-field-hint" style={{ margin: 0 }}>
+                The guard scans this QR at the gate — first scan records the entry, the next records the exit.
+              </p>
+            </>
+          )}
+          <div className="ev-modal-actions">
+            <button type="button" className="ev-btn ev-btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="ev-btn ev-btn-ghost" onClick={printBrowser} disabled={!slip || !!busy}>
+              <Monitor size={14} /> Print from This Computer
+            </button>
+            <button type="button" className="ev-btn ev-btn-primary" onClick={printThermal} disabled={!slip || !!busy}>
+              {busy === 'thermal' ? <Loader2 size={14} className="ev-spinner" /> : <Printer size={14} />}
+              {busy === 'thermal' ? 'Printing…' : 'Print on Thermal Printer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Single event card ─────────────────────────────────────────────────
 function EventCard({ event, onUpdated, onDeleted }) {
   const [expanded, setExpanded]         = useState(false)
@@ -245,6 +363,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
     parking_share: event.parking_share || 'none',
   })
   const [schedSaving, setSchedSaving]   = useState(false)
+  const [printPlate, setPrintPlate]     = useState(null)
   const schedDirty =
     sched.start_time !== (event.start_time || '') ||
     sched.end_time !== (event.end_time || '') ||
@@ -555,12 +674,28 @@ function EventCard({ event, onUpdated, onDeleted }) {
               {localPlates.map(p => (
                 <span key={p} className="ev-plate-tag">
                   {p}
-                  <button onClick={() => removePlate(p)} disabled={saving}><X size={11} /></button>
+                  <button className="ev-plate-print" onClick={() => setPrintPlate(p)}
+                    title={`Print Event Pass for ${p}`} aria-label={`Print Event Pass for ${p}`}>
+                    <Printer size={12} /> Print Pass
+                  </button>
+                  <button onClick={() => removePlate(p)} disabled={saving}
+                    title={`Remove ${p}`} aria-label={`Remove ${p}`}>
+                    <X size={11} />
+                  </button>
                 </span>
               ))}
             </div>
           )}
+          {localPlates.length > 0 && (
+            <span className="ev-field-hint">
+              A pass is the organizer’s paper copy — the gate admits these plates whether or not one was printed.
+            </span>
+          )}
         </div>
+      )}
+
+      {printPlate && (
+        <PrintPassModal event={event} plate={printPlate} onClose={() => setPrintPlate(null)} />
       )}
 
       {confirmDel && (

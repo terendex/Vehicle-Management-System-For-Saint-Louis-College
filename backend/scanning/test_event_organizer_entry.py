@@ -249,3 +249,62 @@ class OrganizerEntryTests(TestCase):
             end_time=(now - timedelta(minutes=20)).time().replace(microsecond=0))
         looked = self.client.get(SLIP, {'code': slip['code']}).data
         self.assertGreaterEqual(looked['overstay_minutes'], 19)
+
+
+class EventPassTests(TestCase):
+    """The standing pass printed per organizer plate from Events management.
+
+    Unlike the event slip (which an entry creates), the pass exists before
+    anyone drives up. It is backed by no row of its own — an event's organizer
+    plates are a list of strings — so it is addressed by event and identifier.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email='event-admin@slc.edu.ph', full_name='EVENT ADMIN',
+            password='SecurePassword123!', role='admin')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+    def _pass(self, event, plate):
+        return self.client.get(SLIP, {'code': f'SLC-EVENT-PASS:{event.pk}:{plate}'})
+
+    def test_a_listed_plate_has_a_printable_pass(self):
+        event = _event()
+        slip = self._pass(event, 'ORG1234').data
+        self.assertEqual(slip['kind'], 'eventpass')
+        self.assertEqual(slip['title'], 'EVENT PASS')
+        self.assertEqual(slip['headline'], 'ORG1234')
+        self.assertEqual(slip['code'], f'SLC-EVENT-PASS:{event.pk}:ORG1234')
+        self.assertIn(['Event', 'FOUNDATION DAY', True], slip['sections'][0])
+
+    def test_the_pass_qr_is_the_plate_so_the_gate_scanner_already_reads_it(self):
+        # The guard page parses everything before the '|' as the plate and runs
+        # the ordinary check — which is what admits an organizer.
+        event = _event()
+        slip = self._pass(event, 'ORG1234').data
+        self.assertEqual(slip['qr'], f'VEHICLE:ORG1234|EVENT:{event.pk}')
+        self.assertEqual(slip['qr'][len('VEHICLE:'):].split('|')[0], 'ORG1234')
+
+    def test_the_pass_opens_however_the_plate_was_typed(self):
+        event = _event(organizer_plates=['FM-007'])
+        self.assertEqual(self._pass(event, 'FM007').data['headline'], 'FM-007')
+        self.assertEqual(self._pass(event, 'fm-007').data['headline'], 'FM-007')
+
+    def test_a_plate_not_on_the_list_has_no_pass(self):
+        event = _event()
+        self.assertEqual(self._pass(event, 'NOTLISTED1').status_code, 404)
+
+    def test_a_pass_code_without_a_plate_is_not_a_slip_code(self):
+        event = _event()
+        self.assertEqual(self.client.get(SLIP, {'code': f'SLC-EVENT-PASS:{event.pk}'}).status_code, 400)
+
+    def test_the_event_slip_code_still_parses_beside_the_pass_code(self):
+        # SLC-EVENT-PASS: must not be swallowed by the SLC-EVENT: prefix.
+        from scanning.slips import parse_code
+        self.assertEqual(parse_code('SLC-EVENT:55'), ('event', 55, ''))
+        self.assertEqual(parse_code('SLC-EVENT-PASS:55:ORG1234'), ('eventpass', 55, 'ORG1234'))
+
+    def test_an_archived_event_has_no_pass(self):
+        event = _event(archived=True)
+        self.assertEqual(self._pass(event, 'ORG1234').status_code, 404)
