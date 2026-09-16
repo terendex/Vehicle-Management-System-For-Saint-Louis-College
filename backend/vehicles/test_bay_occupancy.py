@@ -39,6 +39,34 @@ def park_car(frame, x1, y1, x2, y2):
     return out
 
 
+
+def gravel_lot(seed=7):
+    """Ground that is itself detailed: gravel, leaf litter, scattered rubble.
+
+    The opposite of `empty_lot` and the case the campus motorcycle bay actually
+    sits on. Empty, it is edge-dense — so a vehicle parked on it *removes*
+    edges instead of adding them.
+    """
+    rng = np.random.RandomState(seed)
+    frame = np.full((H, W, 3), 120, dtype=np.uint8)
+    noise = rng.randint(-40, 41, (H, W, 3), dtype=np.int16)
+    frame = np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    for _ in range(450):
+        x, y = rng.randint(0, W), rng.randint(0, H)
+        cv2.circle(frame, (x, y), rng.randint(1, 4),
+                   (int(rng.randint(40, 210)),) * 3, -1)
+    return frame
+
+
+def park_bike(frame, x1, y1, x2, y2):
+    """A scooter head-on: one smooth dark shape, no panel lines to add edges."""
+    out = frame.copy()
+    cv2.rectangle(out, (x1, y1), (x2, y2), (38, 40, 44), -1)
+    cv2.ellipse(out, ((x1 + x2) // 2, (y1 + y2) // 2),
+                ((x2 - x1) // 3, (y2 - y1) // 3), 0, 0, 360, (60, 62, 68), -1)
+    return out
+
+
 class ScorerTests(TestCase):
     def setUp(self):
         self.zone = ParkingZone.objects.create(name='Classic', vehicle_category='car')
@@ -235,3 +263,54 @@ class SetBaselineFromReferenceTests(TestCase):
         self.zone.refresh_from_db()
         with self.zone.baseline_image.open('rb') as b, self.zone.reference_image.open('rb') as r:
             self.assertEqual(b.read(), r.read())
+
+
+class TexturedGroundTests(TestCase):
+    """Bays whose empty ground is busier than the vehicle that parks on it.
+
+    The scorer was written against asphalt, where a vehicle can only add detail.
+    On gravel the arithmetic inverts, and because the edge signal is mandatory
+    (two tonal votes fall one short of VOTES_REQUIRED) getting its direction
+    wrong did not merely weaken the reading — it made the bay unclaimable.
+    """
+
+    def setUp(self):
+        self.zone = ParkingZone.objects.create(name='Gravel', vehicle_category='motorcycle')
+        self.bay = ParkingSpace.objects.create(
+            zone=self.zone, space_number='M01',
+            x1=0.10, y1=0.20, x2=0.45, y2=0.75)
+        self.prepared = bo.prepare_zone(gravel_lot(), [self.bay], (H, W), 'tok')
+
+    def _score(self, frame):
+        return bo.evaluate(self.prepared, frame)[self.bay.id]
+
+    def test_empty_textured_bay_reads_free(self):
+        self.assertFalse(self._score(gravel_lot(11))['occupied'])
+
+    def test_a_bike_on_gravel_reads_occupied(self):
+        """The reported case: green bay, motorcycle plainly parked in it."""
+        result = self._score(park_bike(gravel_lot(11), 40, 55, 135, 175))
+        self.assertTrue(result['occupied'])
+
+    def test_the_vehicle_removes_edges_rather_than_adding_them(self):
+        """Pins the direction, not just the verdict.
+
+        If this ever reads positive the synthetic ground has stopped standing in
+        for gravel, and `test_a_bike_on_gravel_reads_occupied` would start
+        passing for the asphalt reason instead of the one it was written for.
+        """
+        result = self._score(park_bike(gravel_lot(11), 40, 55, 135, 175))
+        self.assertLess(result['edge_delta'], 0)
+        self.assertGreaterEqual(abs(result['edge_delta']), bo.EDGE_DELTA_THR)
+
+    def test_lighting_change_on_gravel_still_does_not_flip_a_bay(self):
+        """Counting a drop as evidence must not reopen the lighting hole.
+
+        Edges are nearly illumination-invariant, so a brightness shift moves
+        this signal very little in either direction — which is what keeps the
+        magnitude test honest.
+        """
+        for shift in (28, -26):
+            frame = np.clip(gravel_lot(11).astype(np.int16) + shift, 0, 255).astype(np.uint8)
+            self.assertFalse(self._score(frame)['occupied'],
+                             f'a {shift:+d} brightness shift flipped a gravel bay')

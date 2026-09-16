@@ -8,10 +8,14 @@ arithmetic on a crop.
 
 Three signals, because no single one survives a campus lot all day:
 
-  edge density   Empty asphalt is flat and nearly edge-free in bright sun and in
-                 shade alike. A vehicle brings panel lines, glass, wheels and
-                 shadow. This is the signal that survives lighting change, so it
-                 carries the most weight.
+  edge density   How much fine detail the bay holds, against what it held empty.
+                 On asphalt — flat and nearly edge-free in bright sun and shade
+                 alike — a vehicle adds panel lines, glass, wheels and shadow.
+                 On gravel or leaf litter the ground is the detailed thing and a
+                 vehicle's smooth bodywork covers it, so the density falls
+                 instead. Either direction is the bay ceasing to look like its
+                 empty self; it is the reading a lighting change cannot fake, so
+                 it carries the most weight.
   histogram      Correlation against the baseline crop. Drops sharply when
                  something with a different tonal distribution is parked there.
   mean abs diff  Blunt but decisive when a dark car sits on light asphalt.
@@ -50,7 +54,20 @@ log = logging.getLogger(__name__)
 # Starting points, not truths. Every zone response carries the raw signals so
 # these can be tuned against a real camera instead of guessed at twice.
 
-# Rise in edge-pixel density over the empty baseline.
+# Change in edge-pixel density against the empty baseline, either way.
+#
+# It was a *rise* only, which silently made cluttered ground undetectable. The
+# signal is mandatory (see VOTES_REQUIRED), and a bay floored with gravel, leaf
+# litter or rubble is already edge-dense when empty — a vehicle parked on it
+# covers that texture with smooth bodywork and drives the density *down*. A real
+# motorcycle bay measured 0.30 empty and 0.08 with the bike in it: a change of
+# -0.23, six times this threshold, scored as no evidence at all. The bay could
+# not be claimed by any combination of the other signals, so it read free with a
+# vehicle plainly sitting in it.
+#
+# Magnitude is what matters: the bay no longer looks like its empty self. The
+# two tonal signals still decide *with* it, and neither a brightening nor a
+# darkening can reach the total alone (the lighting tests pin that down).
 EDGE_DELTA_THR = 0.04
 
 # Histogram correlation with the baseline crop, below which the bay is
@@ -253,7 +270,7 @@ def evaluate(prepared: PreparedZone, frame_bgr) -> dict:
         mad          = float(cv2.mean(cv2.absdiff(compensated, bay.base_gray),
                                       mask=bay.mask)[0])
 
-        votes = ((EDGE_VOTE_WEIGHT if edge_delta >= EDGE_DELTA_THR else 0)
+        votes = ((EDGE_VOTE_WEIGHT if abs(edge_delta) >= EDGE_DELTA_THR else 0)
                  + (1 if hist_corr < HIST_CORR_THR else 0)
                  + (1 if mad >= MAD_THR else 0))
 
