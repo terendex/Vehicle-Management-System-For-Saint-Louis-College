@@ -3,7 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, RefreshCw,
   Shield, AlertTriangle, X, CheckCircle2, LayoutGrid,
-  Camera, VideoOff, Maximize2, Minimize2, CalendarDays,
+  Camera, VideoOff, Maximize2, Minimize2, CalendarDays, Aperture,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -170,6 +170,9 @@ export default function SecurityParkingView() {
   const [detections,    setDetections]    = useState(null)
   const [zones,         setZones]         = useState([])
   const [selId,         setSelId]         = useState(null)
+  // Which view of a multi-lens camera to show. null follows the selected zone,
+  // which is the right answer whenever the zone covers the lens the guard wants.
+  const [lensSel,       setLensSel]       = useState(null)
   const [loading,       setLoading]       = useState(true)
   const [showOverride,  setShowOverride]  = useState(false)
   const [showViolation, setShowViolation] = useState(false)
@@ -347,10 +350,19 @@ export default function SecurityParkingView() {
   // the picture actually arriving. The bays are only drawn over a live picture,
   // so there is no still to measure instead.
   const lensCount  = zoneCam ? (paneCounts[zoneCam.id] ?? 1) : 1
-  // Read-only: the zone already knows which view it covers, so there is nothing
-  // to ask the guard. Bay geometry stays full-frame — the lens is a viewport,
-  // applied by narrowing the SVG viewBox, never by rewriting a coordinate.
-  const lensIdx    = lensCount > 1 ? (selZone?.lens_index ?? 0) : 0
+  // The zone's own lens is the default, since that is the view its bays were
+  // drawn against. It is no longer the only view on offer: a dual-lens unit
+  // watches two places, and when only one of them has a zone the other half of
+  // the picture was unreachable here — the guard could not look at it at all.
+  // So the zone picks the lens and the guard may look away from it.
+  // Bay geometry stays full-frame either way — the lens is a viewport, applied
+  // by narrowing the SVG viewBox, never by rewriting a coordinate.
+  const zoneLens   = selZone?.lens_index ?? 0
+  const lensIdx    = lensCount > 1 ? Math.min(lensSel ?? zoneLens, lensCount - 1) : 0
+
+  // A newly picked zone brings its own lens back into view: an explicit lens
+  // choice was made about the zone the guard was looking at, not the next one.
+  useEffect(() => { setLensSel(null) }, [selId])
 
   // Slots belong to one view of the camera, same filter the admin editor
   // applies. The viewBox already clips anything outside the band, but a bay
@@ -489,6 +501,35 @@ export default function SecurityParkingView() {
                             <span className={`cm-dot ${FEED_DOT[st]}`} />
                             {dev.name}
                             {!zonesHere.length && <span className="cm-pick-sub">No zone</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+                {/* One chip per view of a multi-lens unit. The zone's own lens is
+                    marked, since that is the one its bays were drawn against and
+                    the only one whose bays are drawn here; the others are the
+                    plain picture, which is what the guard came to look at. */}
+                {lensCount > 1 && (
+                  <>
+                    <span className="cm-toolbar-label pm-guard-cams-label"><Aperture size={12} /> Lens</span>
+                    <div className="cm-chips">
+                      {Array.from({ length: lensCount }, (_, i) => {
+                        const isZoneLens = i === zoneLens
+                        return (
+                          <button
+                            key={`lens-${i}`}
+                            type="button"
+                            className={`cm-chip${i === lensIdx ? ' active' : ''}`}
+                            onClick={() => setLensSel(i)}
+                            aria-pressed={i === lensIdx}
+                            title={isZoneLens
+                              ? `Lens ${i + 1} — the view ${selZone?.name || 'this zone'} is drawn against`
+                              : `Lens ${i + 1} — live picture, no bays drawn on this view`}
+                          >
+                            <Aperture size={13} /> Lens {i + 1}
+                            {!isZoneLens && <span className="cm-pick-sub">No bays</span>}
                           </button>
                         )
                       })}

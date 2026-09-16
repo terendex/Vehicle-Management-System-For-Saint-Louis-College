@@ -818,12 +818,13 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
 
   // An admitted supplier or event organizer leaves with a slip, like a visitor
   // on a pass. It prints as soon as the result shows; the guard only acts if
-  // it did not. Not when a supplier came in on their Supplier Pass — they
-  // already carry one.
+  // it did not. Not when they arrived on a standing pass they already hold —
+  // a Supplier Pass or an Event Pass — since that is the paper this slip would
+  // duplicate. The guard's button is still there if they want a copy.
   const supplierSlip = result.supplier_slip || result.event_slip
   const isEventSlip  = !!result.event_slip
   const slipName     = isEventSlip ? 'Event Slip' : 'Supplier Slip'
-  const autoPrint = !!supplierSlip && !result._fromSupplierPass
+  const autoPrint = !!supplierSlip && !result._fromStandingPass
   const [slipPrint, setSlipPrint] = useState(() => (
     !supplierSlip ? null
       : autoPrintedSlips.has(supplierSlip.code) ? { state: 'printed' }
@@ -1278,7 +1279,7 @@ export default function SecurityEntryManagement() {
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
   // inside logs the exit. Returns the response data so callers can react.
-  const runPlateCheck = async (plate, { fromSupplierPass = false } = {}) => {
+  const runPlateCheck = async (plate, { fromStandingPass = false } = {}) => {
     // Conduction numbers get through too. ManualEntryView has accepted them
     // since it was written — it resolves the identifier before it validates the
     // format — but this check ran first and answered "invalid plate" without
@@ -1298,9 +1299,9 @@ export default function SecurityEntryManagement() {
       // the plate, the server's message and the owner, so a second bare
       // "Entry approved" alert on top of it would only be one more thing to
       // click past. Failures that never reach a dialog still alert below.
-      // A supplier who scanned their standing pass already holds paper, so
-      // the entry slip waits for the guard's button instead of printing.
-      addToQueue(fromSupplierPass ? { ...res.data, _fromSupplierPass: true } : res.data)
+      // A supplier or organizer who scanned their standing pass already holds
+      // paper, so the entry slip waits for the guard's button instead of printing.
+      addToQueue(fromStandingPass ? { ...res.data, _fromStandingPass: true } : res.data)
       // The check action doubles as the exit action once a vehicle is inside
       if (res.data.status === 'exited') refreshAll()
       // Previously-scanned re-checks are informational — card only, kept out of
@@ -1386,11 +1387,14 @@ export default function SecurityEntryManagement() {
     if (!s.startsWith('VEHICLE:')) return ''
     return s.slice('VEHICLE:'.length).split('|')[0].trim()
   }
-  const isSupplierPassQr = (raw) => /\|SUPPLIER:/i.test(raw || '')
+  // A standing pass the driver keeps in the vehicle — a Supplier Pass or an
+  // Event Pass. Both scan as an ordinary plate check; the tag only says the
+  // driver already holds paper, so no entry slip is printed on top of it.
+  const isStandingPassQr = (raw) => /\|(SUPPLIER|EVENT):/i.test(raw || '')
 
   // Camera scanner read a QR. Route by payload type:
   //  • SLC-VISITOR / SLC-SUPPLIER / SLC-EVENT / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
-  //  • VEHICLE:{plate}|ID:{n}, VEHICLE:{plate}|SUPPLIER:{n} → plate entry / exit (rules applied)
+  //  • VEHICLE:{plate}|ID:{n}, |SUPPLIER:{n}, |EVENT:{n} → plate entry / exit (rules applied)
   const handleQrDetected = async (data) => {
     const upper = (data || '').trim().toUpperCase()
 
@@ -1405,7 +1409,7 @@ export default function SecurityEntryManagement() {
     const plate = plateFromVehicleQr(upper)
     if (plate) {
       setExitScanBusy(true)
-      const res = await runPlateCheck(plate, { fromSupplierPass: isSupplierPassQr(upper) })
+      const res = await runPlateCheck(plate, { fromStandingPass: isStandingPassQr(upper) })
       setExitScanBusy(false)
       if (res) setShowExitScanner(false)
       return
@@ -1445,7 +1449,7 @@ export default function SecurityEntryManagement() {
       return
     }
 
-    const res = await runPlateCheck(qrPlate || raw, { fromSupplierPass: !!qrPlate && isSupplierPassQr(raw) })
+    const res = await runPlateCheck(qrPlate || raw, { fromStandingPass: !!qrPlate && isStandingPassQr(raw) })
     if (res?.status === 'exited') setPlateInput('')
   }
 
