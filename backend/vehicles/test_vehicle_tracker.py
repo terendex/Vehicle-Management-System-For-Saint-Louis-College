@@ -242,7 +242,7 @@ class OccupancyHysteresisTests(TestCase):
         self.assertFalse(self._miss_at(1000.0 + pc.OCCUPIED_GRACE_SECONDS))
 
     def test_each_sighting_restarts_the_grace_period(self):
-        """Filled again at +50s, so the minute counts from there — a bay seen
+        """Filled again at +50s, so the grace counts from there — a bay seen
         intermittently stays taken however long the gaps add up to."""
         self._occupy_at(1000.0)
         self.assertTrue(self._hit_at(1050.0, 0.0))
@@ -273,22 +273,25 @@ class OccupancyHysteresisTests(TestCase):
         self.bay.refresh_from_db()
         return self.bay.is_occupied
 
-    def test_baseline_claims_only_after_five_unbroken_seconds(self):
+    def test_baseline_claims_only_after_the_claim_seconds(self):
         wait = pc.BASELINE_CLAIM_SECONDS
-        for t in (0.0, 1.0, 2.0, 3.0, wait - 0.5):
-            self.assertFalse(self._hit_at(t, wait))
+        step = wait / 5
+        for i in range(5):
+            self.assertFalse(self._hit_at(i * step, wait))
         self.assertTrue(self._hit_at(wait, wait))
 
     def test_a_break_restarts_the_baseline_claim_clock(self):
         """Someone walking through the bay twice is two short changes, not one
         long one."""
         wait = pc.BASELINE_CLAIM_SECONDS
-        for t in (0.0, 1.0, 2.0, 3.0, 4.0):
-            self._hit_at(t, wait)
-        self.assertFalse(self._miss_at(4.5))
-        for t in (5.0, 6.0, 7.0, 8.0, 9.0):
-            self.assertFalse(self._hit_at(t, wait))
-        self.assertTrue(self._hit_at(10.0, wait))
+        step = wait / 5
+        for i in range(5):
+            self._hit_at(i * step, wait)
+        self.assertFalse(self._miss_at(4.5 * step))
+        restart = 5 * step
+        for i in range(5):
+            self.assertFalse(self._hit_at(restart + i * step, wait))
+        self.assertTrue(self._hit_at(restart + wait, wait))
 
 
 class BaselineOnlyOccupancyTests(TestCase):
@@ -323,6 +326,31 @@ class BaselineOnlyOccupancyTests(TestCase):
                 self.thread._process_frame(self.frame)
         detect.assert_called_once()
         check.assert_called_once()
+
+    def test_a_new_claim_is_checked_for_double_parking_at_once(self):
+        """The detector just ran, so the interval alone would skip this frame —
+        but a bay was claimed on it, and the arrival is checked straight away."""
+        self.thread._last_detect = 100.0
+        with patch.object(pc.ParkingCameraThread, '_classic_hits',
+                          return_value={self.bay.id: True}), \
+             patch.object(pc.ParkingCameraThread, '_apply_hits',
+                          return_value={self.bay.id}), \
+             patch.object(pc.ParkingCameraThread, '_detect', return_value=[]) as detect, \
+             patch.object(pc.ParkingCameraThread, '_check_double_parking') as check:
+            with patch('vehicles.parking_camera.time.monotonic', return_value=100.5):
+                self.thread._process_frame(self.frame)
+        detect.assert_called_once()
+        check.assert_called_once()
+
+    def test_no_claim_waits_for_the_detect_interval(self):
+        self.thread._last_detect = 100.0
+        with patch.object(pc.ParkingCameraThread, '_classic_hits',
+                          return_value={self.bay.id: True}), \
+             patch.object(pc.ParkingCameraThread, '_apply_hits', return_value=set()), \
+             patch.object(pc.ParkingCameraThread, '_detect', return_value=[]) as detect:
+            with patch('vehicles.parking_camera.time.monotonic', return_value=100.5):
+                self.thread._process_frame(self.frame)
+        detect.assert_not_called()
 
 
 class BaselineDefaultTests(TestCase):

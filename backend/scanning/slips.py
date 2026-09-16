@@ -161,6 +161,14 @@ def _minutes(a, b):
     return max(0, int((b - a).total_seconds() // 60))
 
 
+def _duration(minutes):
+    """'45 min', '2 hr', '1 hr 30 min' — visitor passes can run for hours."""
+    hours, mins = divmod(int(minutes or 0), 60)
+    if not hours:
+        return f'{mins} min'
+    return f'{hours} hr {mins} min' if mins else f'{hours} hr'
+
+
 def visitor_slip(pass_):
     now = timezone.now()
     end = pass_.exited_at or now
@@ -192,7 +200,7 @@ def visitor_slip(pass_):
             [['Visitor', pass_.visitor_name or 'N/A', KEY],
              ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
              ['Purpose', pass_.purpose or 'N/A'],
-             ['Duration', f'{pass_.allowed_duration} min']],
+             ['Duration', _duration(pass_.allowed_duration)]],
             issued,
         ],
     }

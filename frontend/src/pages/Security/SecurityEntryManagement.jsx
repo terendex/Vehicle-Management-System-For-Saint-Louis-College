@@ -125,12 +125,30 @@ function saveCachedPasses(passes) {
   } catch { /* ignore */ }
 }
 
+// Longest visitor pass a guard can issue at once: a full day.
+const MAX_PASS_MINUTES = 24 * 60
+
+// "45 min", "2 hr", "1 hr 30 min" — passes can now run for hours.
+function fmtMinutes(total) {
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (!h) return `${m} min`
+  return m ? `${h} hr ${m} min` : `${h} hr`
+}
+
+// "45m", "1h 30m" — the compact form for the pass list.
+function fmtShort(total) {
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  return h ? `${h}h ${m}m` : `${m}m`
+}
+
 // Time-left / overstay info for an active visitor pass
 function passTimeInfo(p) {
   if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
   const diffMin = Math.round((new Date(p.expires_at).getTime() - Date.now()) / 60000)
-  if (diffMin >= 0) return { label: `${diffMin}m left`, overdue: false, soon: diffMin <= 10 }
-  return { label: `OVERSTAY +${-diffMin}m`, overdue: true, soon: false }
+  if (diffMin >= 0) return { label: `${fmtShort(diffMin)} left`, overdue: false, soon: diffMin <= 10 }
+  return { label: `OVERSTAY +${fmtShort(-diffMin)}`, overdue: true, soon: false }
 }
 
 
@@ -148,7 +166,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   const [visitorName, setVisitorName] = useState('')
   const [officeId, setOfficeId] = useState('')
   const [purpose, setPurpose]   = useState('')
-  const [duration, setDuration] = useState('15')  // typeable string; default 15 min
+  // Typeable strings; the pass defaults to 0 hr 15 min.
+  const [hours, setHours]       = useState('0')
+  const [minutes, setMinutes]   = useState('15')
   const [loading, setLoading]   = useState(false)
   // A pass that was created but whose slip did not print (printer offline, out
   // of paper…). The pass already exists, so the modal switches to retrying the
@@ -159,7 +179,14 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   // confirm the same promise, so a second submit would create a second pass.
   const submitting = useRef(false)
 
-  const durationNum = Math.max(1, Math.min(480, parseInt(duration, 10) || 15))
+  const typedMinutes = (parseInt(hours, 10) || 0) * 60 + (parseInt(minutes, 10) || 0)
+  const durationNum  = Math.min(MAX_PASS_MINUTES, typedMinutes || 15)
+  // Re-split the clamped total so the fields always show what will be issued
+  // (e.g. 90 typed minutes become 1 hr 30 min).
+  const normalizeDuration = () => {
+    setHours(String(Math.floor(durationNum / 60)))
+    setMinutes(String(durationNum % 60))
+  }
 
   // Auto-log the visitor's entry as soon as the slip is printed — no separate
   // manual confirmation step.
@@ -167,7 +194,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
     const printed = how === 'printer' ? 'slip printed' : 'slip sent to the print dialog'
     try {
       await confirmVisitorSlipPrinted(pass.id)
-      toast.success(`Visitor pass issued for ${plate} — ${printed} and entry logged, valid ${durationNum} min.`,
+      toast.success(`Visitor pass issued for ${plate} — ${printed} and entry logged, valid ${fmtMinutes(durationNum)}.`,
         { title: 'Visitor slip printed' })
     } catch {
       toast.success(`Visitor pass issued for ${plate} — ${printed}.`, { title: 'Visitor slip printed' })
@@ -229,7 +256,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
       if (await notify.validation(problems, { title: 'Pass not issued' })) return
       if (!(await notify.confirm({
         title: 'Create visitor pass?',
-        message: `Issue a ${durationNum}-minute visitor pass to ${visitorName.trim()} (${plate}) and print the slip on the thermal printer?`,
+        message: `Issue a ${fmtMinutes(durationNum)} visitor pass to ${visitorName.trim()} (${plate}) and print the slip on the thermal printer?`,
         description: "The visitor's entry is logged once the slip prints.",
         confirmLabel: 'Create & Print',
       }))) return
@@ -319,13 +346,25 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
                 onChange={(e) => setPurpose(e.target.value)} required />
             </div>
             <div className="em-field">
-              <label className="em-label">Allowed Duration (minutes)</label>
-              <input className="em-input" type="text" inputMode="numeric" value={duration}
-                placeholder="15"
-                onChange={(e) => setDuration(e.target.value.replace(/\D/g, '').slice(0, 3))}
-                onBlur={() => setDuration(String(durationNum))} />
+              <label className="em-label">Allowed Duration</label>
+              <div className="em-duration">
+                <label className="em-duration-part">
+                  <input className="em-input" type="text" inputMode="numeric" value={hours}
+                    placeholder="0" aria-label="Hours"
+                    onChange={(e) => setHours(e.target.value.replace(/\D/g, '').slice(0, 2))}
+                    onBlur={normalizeDuration} />
+                  <span>hr</span>
+                </label>
+                <label className="em-duration-part">
+                  <input className="em-input" type="text" inputMode="numeric" value={minutes}
+                    placeholder="15" aria-label="Minutes"
+                    onChange={(e) => setMinutes(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                    onBlur={normalizeDuration} />
+                  <span>min</span>
+                </label>
+              </div>
               <span style={{ fontSize: 11, color: '#64839C', marginTop: 4, display: 'block' }}>
-                Defaults to 15 minutes. Guards can extend an active pass by +30 min anytime.
+                Defaults to 15 minutes, up to 24 hours. Guards can extend an active pass by +30 min anytime.
               </span>
             </div>
           </div>
@@ -1227,7 +1266,7 @@ export default function SecurityEntryManagement() {
         if (p.expires_at && new Date(p.expires_at).getTime() < Date.now()
             && !overstayToasted.current.has(p.id)) {
           overstayToasted.current.add(p.id)
-          toast.warning(`Visitor overstay: ${p.plate_number} exceeded the allowed ${p.allowed_duration} min.`, { duration: 8000 })
+          toast.warning(`Visitor overstay: ${p.plate_number} exceeded the allowed ${fmtMinutes(p.allowed_duration)}.`, { duration: 8000 })
         }
       })
     }).catch(() => {})

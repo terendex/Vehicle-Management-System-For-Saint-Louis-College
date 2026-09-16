@@ -917,7 +917,8 @@ class VisitorPassView(APIView):
             office = OfficeModel.objects.filter(pk=office_id).first()
 
         try:
-            allowed_duration = max(1, int(request.data.get('allowed_duration', 60)))
+            # Hours and minutes on the form, sent as a total; at most a day.
+            allowed_duration = min(24 * 60, max(1, int(request.data.get('allowed_duration', 60))))
         except (TypeError, ValueError):
             allowed_duration = 60
 

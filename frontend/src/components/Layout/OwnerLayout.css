@@ -226,8 +226,39 @@
 
 /* --- Mobile --- */
 @media (max-width: 640px) {
+  /* Two rows on a phone. Sharing one row with the avatar and three buttons
+     squeezed the school name and tagline into a narrow column seven lines
+     tall; the lockup now gets the full width and the controls sit below it. */
+  .owner-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .owner-header .header-logo-group {
+    flex: 1 1 100%;
+  }
+
   .owner-header .header-actions {
+    flex: 1 1 100%;
     gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #EEF4F9;
+  }
+
+  /* The second row has room for the name again; it takes what the buttons
+     leave and ellipsizes past that. */
+  .owner-identity {
+    flex: 1 1 auto;
+    padding-right: 0;
+    border-right: none;
+  }
+
+  .owner-identity-text {
+    display: flex;
+  }
+
+  .owner-identity-name {
+    max-width: 100%;
   }
 
   .owner-layout .logout-btn span {

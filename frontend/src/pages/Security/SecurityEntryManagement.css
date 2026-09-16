@@ -433,3 +433,18 @@
   line-height: 1.5;
   color: #3E5B72;
 }
+
+/* Visitor pass duration: hours and minutes side by side. */
+.em-duration {
+  display: flex;
+  gap: 10px;
+}
+.em-duration-part {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #3E5B72;
+}
+.em-duration-part .em-input { min-width: 0; }
