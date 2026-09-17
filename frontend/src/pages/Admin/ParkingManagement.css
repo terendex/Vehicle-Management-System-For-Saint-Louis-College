@@ -672,20 +672,23 @@
 }
 .pm-popover-input:focus { border-color: #03396C; }
 
-.pm-popover-del {
+.pm-popover-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   border: none;
-  background: #FCEDED;
-  color: #C62828;
   cursor: pointer;
   transition: background 0.15s;
 }
-.pm-popover-del:hover { background: #F3C0C0; }
+.pm-popover-btn--ok  { background: #E3F5EC; color: #13804F; }
+.pm-popover-btn--ok:hover  { background: #BFE7D2; }
+.pm-popover-btn--dup { background: #EAF1F8; color: #03396C; }
+.pm-popover-btn--dup:hover { background: #D3E1EC; }
+.pm-popover-btn--del { background: #FCEDED; color: #C62828; }
+.pm-popover-btn--del:hover { background: #F3C0C0; }
 
 /* ── Legend ── */
 .pm-legend {

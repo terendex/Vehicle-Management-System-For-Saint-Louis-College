@@ -67,6 +67,27 @@ function apiErrorMessage(err, fallback) {
   return `${fallback} (HTTP ${err.response.status})`
 }
 
+// A bay as its outline: the polygon when it has one, otherwise the rectangle's
+// four corners (clockwise from top-left, so a free-transformed box keeps a
+// sensible winding).
+function shapePoints(s) {
+  if (s.points && s.points.length >= 3) return s.points.map(p => [p[0], p[1]])
+  return [[s.x1, s.y1], [s.x2, s.y1], [s.x2, s.y2], [s.x1, s.y2]]
+}
+
+const clamp01 = (v) => Math.max(0, Math.min(1, v))
+
+// The bounding box is what the detector scores against and what labels centre
+// on, so it is always recomputed from the outline rather than edited alongside.
+function withPoints(s, pts) {
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+  return {
+    ...s,
+    points: pts,
+    x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
+  }
+}
+
 function autoLabel(list, cat) {
   const pre  = cat === 'motorcycle' ? 'M' : 'C'
   const nums = list.map(s => parseInt(s.space_number.replace(/\D/g, ''), 10)).filter(n => !isNaN(n))
@@ -108,6 +129,9 @@ export default function ParkingManagement({ embedded = false }) {
   const [assigning,    setAssigning]    = useState(false)
   const [capturing,    setCapturing]    = useState(false)
   const [baselineSaving, setBaselineSaving] = useState(false)
+  // Zones whose reference image was replaced without updating the baseline in
+  // this session — the bays are still scored against the older picture.
+  const [baselineStaleFor, setBaselineStaleFor] = useState({})
 
   const { cameras: allCameras, syncCameras: syncPkCameras,
           registerCanvas: registerPkCanvas, paneCounts: livePaneCounts } = useCameraContext()
@@ -178,6 +202,12 @@ export default function ParkingManagement({ embedded = false }) {
   const rbRef       = useRef(null)
   const draftsRef   = useRef([])
   const camCanvasRefs = useRef({})
+  // Free transform of the selected bay: { kind: 'move'|'vertex', id, index,
+  // start, orig }. A ref, not state — it changes on every mouse move and only
+  // the drafts it rewrites need to re-render.
+  const xformRef    = useRef(null)
+  // The click that ends a transform must not also place a pen point.
+  const justXformed = useRef(false)
 
   useEffect(() => { draftsRef.current = drafts }, [drafts])
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
@@ -187,6 +217,9 @@ export default function ParkingManagement({ embedded = false }) {
   const hasReference = !!selZone?.reference_image
   const bayCount     = selZone?.spaces?.length ?? 0
   const hasBaseline  = !!selZone?.has_baseline
+  const baselineStale = hasBaseline && !!baselineStaleFor[selZone?.id]
+  // The first unfinished step, so exactly one button reads as "do this next".
+  const nextStep = !hasReference ? 1 : bayCount === 0 ? 2 : (!hasBaseline || baselineStale) ? 3 : 0
   // Scoped to the zone that actually failed, so selecting another zone shows
   // its own image rather than inheriting the previous one's error.
   const imgFailed = !!selZone && imgFailedFor === selZone.id
@@ -397,14 +430,27 @@ export default function ParkingManagement({ embedded = false }) {
     setPenCursor(null)
   }, [mode, selId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Escape cancels an in-progress pen shape
+  // Escape cancels an in-progress pen shape, then lets go of the selected slot.
+  // Delete / Backspace removes the selected slot — except while its label is
+  // being typed, where those keys belong to the text.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape' && tool === 'pen' && penPoints.length > 0) setPenPoints([])
+      if (e.key === 'Escape') {
+        if (tool === 'pen' && penPoints.length > 0) setPenPoints([])
+        else if (selDraft) setSelDraft(null)
+        return
+      }
+      if (mode !== 'edit' || !selDraft) return
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName ?? '')
+      if (!typing && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault()
+        setDrafts(p => p.filter(s => s._id !== selDraft))
+        setSelDraft(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tool, penPoints])
+  }, [tool, penPoints, mode, selDraft])
 
   // ── Zone CRUD ───────────────────────────────────────────────────
   // A zone is born attached to a camera, defaulting to the one on screen. It
@@ -519,36 +565,62 @@ export default function ParkingManagement({ embedded = false }) {
     if (z) await offerBaseline(z)
   }
 
-  // The baseline is a copy of the reference image, so a new reference image
-  // leaves the zone scoring against the old picture until it is set again.
-  // Asking right here closes that gap at the one moment the admin is looking at
-  // the new picture and can say whether its bays are empty.
+  // The baseline is a copy of the reference image, and it only means something
+  // once there are bays to score against it. So the question "are the bays in
+  // this picture empty?" is asked at the one point everything is in place:
+  // after a capture when slots are already saved, or after the first Save
+  // Layout otherwise. Asking straight after the first capture, with nothing
+  // drawn yet, was a question about bays that did not exist.
   const offerBaseline = async (z) => {
-    const yes = await notify.confirm({
-      title: 'Reference image saved',
-      message: z.has_baseline
-        ? 'Update the empty baseline to this picture as well?'
-        : 'Use this picture as the empty baseline and start monitoring the bays?',
-      description: 'Only if every bay in the picture is empty. Anything parked in a bay now '
-        + 'would be treated as empty, and that bay would read Free while it is taken.',
-      confirmLabel: 'Yes, the bays are empty',
-      cancelLabel: 'Not now',
-    })
-    if (yes) await handleSetBaseline()
+    const saved = z.spaces?.length ?? 0
+    if (saved === 0) {
+      // Nothing to monitor yet — the question comes back after Save Layout.
+      if (z.has_baseline) setBaselineStaleFor(m => ({ ...m, [z.id]: true }))
+      toast.success('Reference image saved. Next: draw the parking slots, then Save Layout.')
+      return
+    }
+    await confirmStartMonitoring(z, { afterCapture: true })
   }
 
-  const handleSetBaseline = async () => {
-    if (!selId) return
+  // One confirmation, then the baseline. Used by the capture/upload prompt,
+  // Save Layout, the setup checklist and the live-view banner alike, so the
+  // "only if the bays are empty" warning is never skipped.
+  const confirmStartMonitoring = async (z, { afterCapture = false, afterSave = false } = {}) => {
+    const refresh = z.has_baseline
+    const yes = await notify.confirm({
+      title: afterCapture ? 'Reference image saved'
+        : afterSave ? 'Layout saved'
+        : refresh ? 'Update the empty baseline' : 'Start monitoring',
+      message: refresh
+        ? 'Update the empty baseline to the current reference image?'
+        : `Are all ${z.spaces?.length ?? ''} slots empty in the reference image? `
+          + 'If so, monitoring starts now.',
+      description: 'Only if every bay in the picture is empty. Anything parked in a bay in that '
+        + 'picture would be treated as empty, and that bay would read Free while it is taken. '
+        + 'If a bay is taken, capture a new reference when the lot is clear.',
+      confirmLabel: refresh ? 'Yes, update it' : 'Yes — start monitoring',
+      cancelLabel: 'Not now',
+    })
+    if (yes) return handleSetBaseline(z.id)
+    if (refresh) setBaselineStaleFor(m => ({ ...m, [z.id]: true }))
+    return false
+  }
+
+  const handleSetBaseline = async (zoneId = selId) => {
+    if (!zoneId) return false
     setBaselineSaving(true)
     try {
-      const z = await zoneApi.setBaseline(selId)
+      const z = await zoneApi.setBaseline(zoneId)
       setZones(p => p.map(x => x.id === z.id ? { ...x, ...z } : x))
-      toast.success(`Baseline set. Bays in ${z.name} are now monitored.`)
+      setBaselineStaleFor(m => ({ ...m, [z.id]: false }))
+      toast.success(`Monitoring started. Bays in ${z.name} are now watched.`)
+      return true
     } catch (err) {
       setResultModal({
         type: 'error',
         message: err?.response?.data?.error || 'Failed to set the baseline.',
       })
+      return false
     } finally { setBaselineSaving(false) }
   }
 
@@ -573,10 +645,89 @@ export default function ParkingManagement({ embedded = false }) {
     const pt = toFullFrame(svgPt(e, svgEl.current))
     dragStart.current = pt
     dragging.current  = false
+    // preventDefault above keeps the label input from blurring, so its
+    // pending text is committed here instead of lost.
+    commitLabel()
     setSelDraft(null)
   }
 
+  // ── Free transform (selected bay) ───────────────────────────────
+  // Drag the body to move it, a corner to reshape it freely (Shift keeps a
+  // box rectangular), an edge midpoint to add a corner, double-click a corner
+  // to remove it.
+  const startXform = (e, kind, s, index = 0) => {
+    if (mode !== 'edit' || e.button !== 0) return
+    if (tool === 'pen' && penPoints.length > 0) return   // tracing a new shape over it
+    e.preventDefault()
+    e.stopPropagation()
+    let orig = s
+    if (kind === 'insert') {
+      const pts = shapePoints(s)
+      const a = pts[index], b = pts[(index + 1) % pts.length]
+      pts.splice(index + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2])
+      orig = withPoints(s, pts)
+      setDrafts(p => p.map(d => d._id === s._id ? orig : d))
+      kind = 'vertex'
+      index = index + 1
+    }
+    xformRef.current = {
+      kind, index, id: s._id, orig,
+      start: toFullFrame(svgPt(e, svgEl.current)),
+    }
+  }
+
+  const applyXform = (e) => {
+    const xf = xformRef.current
+    const pt = toFullFrame(svgPt(e, svgEl.current))
+    const { orig } = xf
+    let next
+    if (xf.kind === 'move') {
+      const dx = Math.max(-orig.x1, Math.min(1 - orig.x2, pt.x - xf.start.x))
+      const dy = Math.max(-orig.y1, Math.min(1 - orig.y2, pt.y - xf.start.y))
+      next = {
+        ...orig,
+        x1: orig.x1 + dx, x2: orig.x2 + dx, y1: orig.y1 + dy, y2: orig.y2 + dy,
+        points: orig.points ? orig.points.map(([x, y]) => [x + dx, y + dy]) : orig.points,
+      }
+    } else if (e.shiftKey && !(orig.points && orig.points.length >= 3)) {
+      // Rectangular resize: the dragged corner moves, the opposite one stays.
+      const opp = shapePoints(orig)[(xf.index + 2) % 4]
+      next = {
+        ...orig,
+        x1: Math.min(opp[0], pt.x), x2: Math.max(opp[0], pt.x),
+        y1: Math.min(opp[1], pt.y), y2: Math.max(opp[1], pt.y),
+      }
+    } else {
+      const pts = shapePoints(orig)
+      pts[xf.index] = [clamp01(pt.x), clamp01(pt.y)]
+      next = withPoints(orig, pts)
+    }
+    setDrafts(p => p.map(d => d._id === xf.id ? next : d))
+  }
+
+  const endXform = () => {
+    if (!xformRef.current) return
+    xformRef.current = null
+    justXformed.current = true
+    setTimeout(() => { justXformed.current = false }, 0)
+  }
+
+  // A drag that leaves the picture still has to end.
+  useEffect(() => {
+    window.addEventListener('mouseup', endXform)
+    return () => window.removeEventListener('mouseup', endXform)
+  }, [])
+
+  const removeVertex = (e, s, index) => {
+    e.stopPropagation()
+    const pts = shapePoints(s)
+    if (pts.length <= 3) return
+    pts.splice(index, 1)
+    setDrafts(p => p.map(d => d._id === s._id ? withPoints(s, pts) : d))
+  }
+
   const onMouseMove = (e) => {
+    if (xformRef.current) { applyXform(e); return }
     if (mode === 'edit' && tool === 'pen') {
       if (penPoints.length > 0) setPenCursor(toFullFrame(svgPt(e, svgEl.current)))
       return
@@ -659,7 +810,7 @@ export default function ParkingManagement({ embedded = false }) {
   }
 
   const onSvgClick = (e) => {
-    if (needsLensChoice) return
+    if (needsLensChoice || justXformed.current) return
     if (mode !== 'edit' || tool !== 'pen') return
     const pt = toFullFrame(svgPt(e, svgEl.current))
     if (penPoints.length >= 3 && Math.hypot(pt.x - penPoints[0].x, pt.y - penPoints[0].y) < 0.02) {
@@ -681,6 +832,33 @@ export default function ParkingManagement({ embedded = false }) {
     setSelDraft(null)
   }
 
+  // ✓ — keep the slot as it is (label included) and put the handles away.
+  const acceptSelDraft = () => {
+    commitLabel()
+    setSelDraft(null)
+  }
+
+  // A copy beside the original, for rows of same-sized bays.
+  const duplicateSelDraft = () => {
+    const src = draftsRef.current.find(s => s._id === selDraft)
+    if (!src) return
+    commitLabel()
+    const dx = src.x2 + 0.01 + (src.x2 - src.x1) <= 1 ? (src.x2 - src.x1) + 0.01 : 0
+    const dy = dx ? 0 : Math.min(0.03, 1 - src.y2)
+    const id    = tid()
+    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
+    setDrafts(p => [...p, {
+      ...src,
+      _id: id, id: null,
+      space_number: label,
+      x1: src.x1 + dx, x2: src.x2 + dx, y1: src.y1 + dy, y2: src.y2 + dy,
+      points: src.points ? src.points.map(([x, y]) => [x + dx, y + dy]) : null,
+      is_occupied: false, occupied_by: '',
+    }])
+    setSelDraft(id)
+    setDraftLabel(label)
+  }
+
   // ── Save layout ─────────────────────────────────────────────────
   const saveLayout = async () => {
     if (!selId) return
@@ -694,6 +872,19 @@ export default function ParkingManagement({ embedded = false }) {
       const saved   = await zoneApi.saveLayout(selId, payload)
       setZones(p => p.map(z => z.id === selId ? { ...z, spaces: saved } : z))
       setDrafts(saved.map(s => ({ ...s, _id: s.id })))
+      setSelDraft(null)
+      setSaving(false)
+      // The layout is the last piece: with a reference image and slots in
+      // place, finish setup here instead of sending the admin to a checklist.
+      const z = { ...selZone, spaces: saved }
+      if (saved.length > 0 && hasReference && (!hasBaseline || baselineStale)) {
+        await confirmStartMonitoring(z, { afterSave: true })
+      } else if (saved.length > 0 && !hasReference) {
+        toast.success('Layout saved. Capture a reference image with the lot empty to start monitoring.')
+        return   // stay in the editor — the capture button lives here
+      } else {
+        toast.success('Layout saved.')
+      }
       setMode('live')
     } catch { setResultModal({ type: 'error', message: 'Failed to save layout. Please try again.' }) }
     finally { setSaving(false) }
@@ -741,6 +932,12 @@ export default function ParkingManagement({ embedded = false }) {
     ? allSpaces.filter(s => (s.lens_index ?? 0) === lensIdx)
     : allSpaces
   const selDraftSp  = drafts.find(s => s._id === selDraft)
+  // Outline of the selected slot for the transform handles, when it is on
+  // the view being shown.
+  const selPts      = mode === 'edit' && selDraftSp && spaceList.some(s => s._id === selDraftSp._id)
+    ? shapePoints(selDraftSp) : null
+  const handleR     = 0.009
+  const handleRy    = handleR / lensCount
   const liveSpaces  = selZone?.spaces ?? []
   // Free / Parked / Capacity cover every zone of this vehicle category, from
   // the bays the cameras read as taken. On Campus is the gate ledger — vehicles
@@ -1061,18 +1258,35 @@ export default function ParkingManagement({ embedded = false }) {
             {/* The bays on this feed are not being watched, and the colours
                 would otherwise sit there looking like a reading. One click
                 takes the admin to the checklist that says what is missing. */}
-            {mode === 'live' && selZone.camera != null && !hasBaseline && (
+            {mode === 'live' && selZone.camera != null && nextStep !== 0 && (
               <div className="pm-draw-warn">
                 <AlertTriangle size={15} />
                 <span>
-                  <strong>Bays in {selZone.name} are not monitored yet.</strong>{' '}
-                  {hasReference
-                    ? 'Set its empty baseline to start.'
-                    : 'Capture a reference image with the bays empty, draw the slots, then set it as the baseline.'}
+                  <strong>
+                    {baselineStale
+                      ? `Bays in ${selZone.name} are scored against an older picture.`
+                      : `Bays in ${selZone.name} are not monitored yet.`}
+                  </strong>{' '}
+                  {nextStep === 1 && 'Next: capture a reference image with the lot empty.'}
+                  {nextStep === 2 && 'Next: draw the parking slots on the reference image.'}
+                  {nextStep === 3 && (baselineStale
+                    ? 'The reference image changed — update the baseline.'
+                    : `${bayCount} slot${bayCount === 1 ? '' : 's'} ready — one click to start.`)}
                 </span>
-                <button className="pm-btn pm-btn--outline" onClick={() => setMode('edit')}>
-                  <ListChecks size={13} /> Finish Setup
-                </button>
+                {nextStep === 3 ? (
+                  <button
+                    className="pm-btn pm-btn--primary"
+                    onClick={() => confirmStartMonitoring(selZone)}
+                    disabled={baselineSaving}
+                  >
+                    {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <CheckCircle2 size={13} />}
+                    {baselineStale ? 'Update Baseline' : 'Start Monitoring'}
+                  </button>
+                ) : (
+                  <button className="pm-btn pm-btn--outline" onClick={() => setMode('edit')}>
+                    <ListChecks size={13} /> {nextStep === 1 ? 'Capture Reference' : 'Draw Slots'}
+                  </button>
+                )}
               </div>
             )}
 
@@ -1274,11 +1488,16 @@ export default function ParkingManagement({ embedded = false }) {
                   return (
                     <g
                       key={id}
-                      onClick={() => mode === 'live'
-                        ? onSpaceClick(s)
-                        : (setSelDraft(id), setDraftLabel(s.space_number))
-                      }
-                      style={{ cursor: 'pointer' }}
+                      onMouseDown={sel && mode === 'edit' ? e => startXform(e, 'move', s) : undefined}
+                      onClick={e => {
+                        if (mode === 'live') { onSpaceClick(s); return }
+                        // Selecting a slot is not a pen point — unless a shape
+                        // is already being traced over it.
+                        if (tool === 'pen' && penPoints.length > 0) return
+                        e.stopPropagation()
+                        if (!sel) { commitLabel(); setSelDraft(id); setDraftLabel(s.space_number) }
+                      }}
+                      style={{ cursor: sel && mode === 'edit' ? 'move' : 'pointer' }}
                     >
                       {s.points && s.points.length >= 3 ? (
                         <polygon
@@ -1320,6 +1539,49 @@ export default function ParkingManagement({ embedded = false }) {
                     </g>
                   )
                 })}
+
+                {/* Free-transform handles for the selected slot. The viewBox
+                    stretches y by lensCount on a split camera, so handles are
+                    ellipses squashed by the same factor to stay round. */}
+                {selPts && (
+                  <g>
+                    {selPts.map((a, i) => {
+                      const b = selPts[(i + 1) % selPts.length]
+                      return (
+                        <ellipse
+                          key={`mid-${i}`}
+                          cx={(a[0] + b[0]) / 2} cy={(a[1] + b[1]) / 2}
+                          rx={handleR * 0.6} ry={handleRy * 0.6}
+                          fill="#03396C" stroke="#fff" strokeWidth={0.0015}
+                          opacity={0.75}
+                          style={{ cursor: 'copy' }}
+                          onMouseDown={e => startXform(e, 'insert', selDraftSp, i)}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <title>Drag to add a corner</title>
+                        </ellipse>
+                      )
+                    })}
+                    {selPts.map((p, i) => (
+                      <ellipse
+                        key={`v-${i}`}
+                        cx={p[0]} cy={p[1]}
+                        rx={handleR} ry={handleRy}
+                        fill="#F6CE11" stroke="#03396C" strokeWidth={0.002}
+                        style={{ cursor: 'grab' }}
+                        onMouseDown={e => startXform(e, 'vertex', selDraftSp, i)}
+                        onClick={e => e.stopPropagation()}
+                        onDoubleClick={e => removeVertex(e, selDraftSp, i)}
+                      >
+                        <title>
+                          {selPts.length > 3
+                            ? 'Drag to reshape (Shift keeps a box rectangular) · double-click to remove this corner'
+                            : 'Drag to reshape'}
+                        </title>
+                      </ellipse>
+                    ))}
+                  </g>
+                )}
 
                 {/* Rubber band (edit mode) */}
                 {rubberBand && (() => {
@@ -1388,7 +1650,8 @@ export default function ParkingManagement({ embedded = false }) {
                   className="pm-popover"
                   style={{
                     left: `${(selDraftSp.x1 + selDraftSp.x2) / 2 * 100}%`,
-                    top:  `${selDraftSp.y1 * 100}%`,
+                    // Full-frame y mapped into the lens band on screen.
+                    top:  `${(selDraftSp.y1 * lensCount - lensIdx) * 100}%`,
                   }}
                   onMouseDown={e => e.stopPropagation()}
                 >
@@ -1397,11 +1660,17 @@ export default function ParkingManagement({ embedded = false }) {
                     value={draftLabel}
                     onChange={e => setDraftLabel(e.target.value)}
                     onBlur={commitLabel}
-                    onKeyDown={e => { if (e.key === 'Enter') commitLabel() }}
+                    onKeyDown={e => { if (e.key === 'Enter') acceptSelDraft() }}
                     maxLength={10} autoFocus
                   />
-                  <button className="pm-popover-del" onClick={deleteSelDraft} title="Delete space">
-                    <Trash2 size={13} />
+                  <button className="pm-popover-btn pm-popover-btn--ok" onClick={acceptSelDraft} title="Keep this slot (Enter)">
+                    <Check size={14} />
+                  </button>
+                  <button className="pm-popover-btn pm-popover-btn--dup" onClick={duplicateSelDraft} title="Duplicate this slot">
+                    <Plus size={14} />
+                  </button>
+                  <button className="pm-popover-btn pm-popover-btn--del" onClick={deleteSelDraft} title="Remove this slot (Delete)">
+                    <X size={14} />
                   </button>
                 </div>
               )}
@@ -1458,9 +1727,11 @@ export default function ParkingManagement({ embedded = false }) {
               <span className="pm-legend-note">
                 {mode === 'live'
                   ? 'Click a space to toggle manually · auto-refreshes every 8 s'
-                  : tool === 'pen'
-                    ? 'Click to trace a freeform shape · click a space to rename or delete'
-                    : 'Click-drag to draw · click a box to rename or delete'}
+                  : selDraftSp
+                    ? 'Drag the slot to move · drag a yellow corner to reshape (Shift = keep box) · blue dot adds a corner · ✓ keep · ✗ / Delete remove'
+                    : tool === 'pen'
+                      ? 'Click to trace a freeform shape · click a slot to edit it'
+                      : 'Click-drag to draw · click a slot to move, reshape, or remove it'}
               </span>
             </div>
           </div>
@@ -1558,7 +1829,7 @@ export default function ParkingManagement({ embedded = false }) {
                       </p>
                       {parkingCams.length > 0 && (
                         <button
-                          className={`pm-btn ${hasReference ? 'pm-btn--outline' : 'pm-btn--primary'} pm-setup-btn`}
+                          className={`pm-btn ${nextStep === 1 ? 'pm-btn--primary' : 'pm-btn--outline'} pm-setup-btn`}
                           onClick={handleCapture}
                           disabled={capturing || !pkActiveCam?.streamConnected}
                           title={pkActiveCam?.streamConnected ? '' : 'Waiting for the live feed to connect…'}
@@ -1577,33 +1848,47 @@ export default function ParkingManagement({ embedded = false }) {
                       <p className="pm-setup-desc">
                         {bayCount > 0
                           ? `${bayCount} slot${bayCount === 1 ? '' : 's'} saved.`
-                          : 'Draw each bay on the picture with Box or Pen, then press Save Layout.'}
+                          : drafts.length > 0
+                            ? `${drafts.length} slot${drafts.length === 1 ? '' : 's'} drawn — press Save Layout to keep them.`
+                            : 'Draw each bay on the picture with Box or Pen, then press Save Layout.'}
                       </p>
+                      {bayCount === 0 && drafts.length > 0 && (
+                        <button
+                          className="pm-btn pm-btn--primary pm-setup-btn"
+                          onClick={saveLayout}
+                          disabled={saving}
+                        >
+                          {saving ? <Loader2 size={13} className="pm-spin" /> : <Save size={13} />} Save Layout
+                        </button>
+                      )}
                     </div>
                   </li>
 
-                  <li className={`pm-setup-step${hasBaseline ? ' pm-setup-step--done' : ''}`}>
-                    <span className="pm-setup-mark">{hasBaseline ? <Check size={11} /> : 3}</span>
+                  <li className={`pm-setup-step${hasBaseline && !baselineStale ? ' pm-setup-step--done' : ''}`}>
+                    <span className="pm-setup-mark">{hasBaseline && !baselineStale ? <Check size={11} /> : 3}</span>
                     <div className="pm-setup-body">
-                      <p className="pm-setup-title">Empty baseline</p>
+                      <p className="pm-setup-title">Start monitoring</p>
                       <p className="pm-setup-desc">
-                        {hasBaseline
-                          ? `Set ${selZone.baseline_captured_at
-                              ? new Date(selZone.baseline_captured_at).toLocaleString()
-                              : ''}. A bay turns Occupied once it looks different from this for 5 seconds.`
-                          : hasReference
-                            ? 'Copies the reference image as each bay’s empty picture. The bays are not monitored until this is set.'
-                            : 'Needs a reference image first.'}
+                        {baselineStale
+                          ? 'The reference image changed since the baseline was set, so bays are still compared with the old picture.'
+                          : hasBaseline
+                            ? `Monitoring since ${selZone.baseline_captured_at
+                                ? new Date(selZone.baseline_captured_at).toLocaleString()
+                                : 'setup'}. A bay turns Occupied once it looks different from the empty picture for 5 seconds.`
+                            : nextStep === 3
+                              ? 'Confirms the reference image shows every bay empty and starts watching them.'
+                              : 'Available once the reference image and slots are saved — you will be asked then.'}
                       </p>
-                      <button
-                        className={`pm-btn ${hasBaseline || !hasReference ? 'pm-btn--outline' : 'pm-btn--primary'} pm-setup-btn`}
-                        onClick={handleSetBaseline}
-                        disabled={baselineSaving || !hasReference}
-                        title={hasReference ? '' : 'Capture or upload a reference image first'}
-                      >
-                        {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <CheckCircle2 size={13} />}
-                        {hasBaseline ? 'Set Again from Reference Image' : 'Use Reference Image as Baseline'}
-                      </button>
+                      {(nextStep === 3 || hasBaseline) && (
+                        <button
+                          className={`pm-btn ${nextStep === 3 ? 'pm-btn--primary' : 'pm-btn--outline'} pm-setup-btn`}
+                          onClick={() => confirmStartMonitoring(selZone)}
+                          disabled={baselineSaving}
+                        >
+                          {baselineSaving ? <Loader2 size={13} className="pm-spin" /> : <CheckCircle2 size={13} />}
+                          {baselineStale ? 'Update Baseline' : hasBaseline ? 'Reset Baseline' : 'Start Monitoring'}
+                        </button>
+                      )}
                     </div>
                   </li>
                 </ol>
