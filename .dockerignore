@@ -70,6 +70,10 @@ plate_db.dump
 *.sqlite3
 *.db
 
+# ── Archive (see REMOVED.md) ─────────────────────────────────────────────────
+# Files archived in the 2026-09 cleanup; never needed inside the container.
+_removed/
+
 # ── Docs ─────────────────────────────────────────────────────────────────────
 *.md
 !backend/scanning/ml/README.md

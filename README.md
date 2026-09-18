@@ -75,9 +75,8 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │       ├── SecurityLayout.jsx
 │   │   │       └── OwnerLayout.jsx
 │   │   ├── hooks/
-│   │   │   ├── useScanStream.js       # Webcam → WS → 60fps canvas (live scan)
-│   │   │   ├── useRtspStream.js       # Single RTSP camera → WS → 60fps canvas
-│   │   │   └── useMultiRtspStream.js  # Multiple RTSP cameras, one WS per camera
+│   │   │   ├── useFullscreen.js       # Fullscreen one camera feed without remounting it
+│   │   │   └── useGates.js            # Gate list from System Settings, cached for every screen
 │   │   ├── pages/
 │   │   │   ├── Login/
 │   │   │   │   └── LoginPage.jsx
@@ -87,15 +86,12 @@ Vehicle-Management-System-For-Saint-Louis-College/
 │   │   │   │   ├── AdminDashboard.jsx
 │   │   │   │   ├── VehicleRegistration.jsx
 │   │   │   │   ├── UserManagement.jsx
-│   │   │   │   ├── EntryManagement.jsx
 │   │   │   │   ├── ParkingManagement.jsx
 │   │   │   │   ├── DeviceManagement.jsx   # Camera CRUD — add/edit/remove IP cameras
 │   │   │   │   ├── RuleConstraints.jsx
 │   │   │   │   └── AuditLog.jsx
 │   │   │   ├── Security/
-│   │   │   │   ├── SecurityDashboard.jsx
-│   │   │   │   ├── SecurityEntryManagement.jsx
-│   │   │   │   └── SecurityAuditLog.jsx
+│   │   │   │   └── SecurityEntryManagement.jsx
 │   │   │   ├── VehicleOwner/
 │   │   │   │   └── OwnerDashboard.jsx
 │   │   │   └── NotFoundPage.jsx

@@ -20,7 +20,7 @@ picks up the weights automatically once they exist.
 ```
 scanning/ml/
 ├── detection.py           # Runtime: loads both models, detect_plates()
-├── reader.py / ocr.py     # Plate OCR (PaddleOCR)
+├── reader.py              # Plate OCR (PaddleOCR)
 ├── validator.py           # Philippine plate format validation
 ├── class_mapping.py       # Any raw label alias → license_plate | vehicle
 ├── train.py               # Vehicle-model trainer (single class)
