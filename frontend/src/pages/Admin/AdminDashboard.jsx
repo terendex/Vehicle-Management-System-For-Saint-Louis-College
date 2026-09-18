@@ -74,6 +74,10 @@ const CAT = {
 // sit under 3:1 against a white card.
 
 function Breakdown({ slices, total, emptyMessage }) {
+  // Hover shows the slice's share in the ring's hole rather than in a Recharts
+  // tooltip: a 104px chart has no room for a floating box, which landed on top
+  // of the centre total. Hovering a legend row does the same.
+  const [active, setActive] = useState(null)
   const sum = slices.reduce((s, d) => s + d.value, 0)
   const whole = total ?? sum
 
@@ -90,6 +94,7 @@ function Breakdown({ slices, total, emptyMessage }) {
   const ringData = remainder > 0
     ? [...slices, { name: 'Unclassified', value: remainder, color: '#E3ECF4' }]
     : slices
+  const hovered = active != null ? ringData[active] : null
 
   return (
     <div className="ad-breakdown">
@@ -106,22 +111,41 @@ function Breakdown({ slices, total, emptyMessage }) {
             stroke="#fff"
             strokeWidth={2}
             isAnimationActive={false}
+            onMouseEnter={(_, i) => setActive(i)}
+            onMouseLeave={() => setActive(null)}
           >
-            {ringData.map((s, i) => <Cell key={i} fill={s.color} />)}
+            {ringData.map((s, i) => (
+              <Cell
+                key={i}
+                fill={s.color}
+                opacity={active == null || active === i ? 1 : 0.35}
+                style={{ outline: 'none', cursor: 'default', transition: 'opacity 120ms' }}
+              />
+            ))}
           </Pie>
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE}
-            formatter={(val, name) => [`${val} (${pct(val)}%)`, name]}
-          />
         </PieChart>
         <div className="ad-breakdown-center">
-          <span className="ad-breakdown-center-val">{whole}</span>
+          {hovered ? (
+            <>
+              <span className="ad-breakdown-center-val" style={{ color: hovered.color }}>
+                {pct(hovered.value)}%
+              </span>
+              <span className="ad-breakdown-center-sub">{hovered.value} of {whole}</span>
+            </>
+          ) : (
+            <span className="ad-breakdown-center-val">{whole}</span>
+          )}
         </div>
       </div>
 
       <ul className="ad-breakdown-rows">
         {slices.map((s, i) => (
-          <li key={i} className="ad-breakdown-row" title={`${s.name}: ${s.value} (${pct(s.value)}%)`}>
+          <li
+            key={i}
+            className={`ad-breakdown-row${active === i ? ' is-active' : ''}${active != null && active !== i ? ' is-dim' : ''}`}
+            onMouseEnter={() => setActive(i)}
+            onMouseLeave={() => setActive(null)}
+          >
             {s.Icon
               ? <s.Icon size={13} style={{ color: s.color, flexShrink: 0 }} />
               : <span className="ad-breakdown-dot" style={{ background: s.color }} />}

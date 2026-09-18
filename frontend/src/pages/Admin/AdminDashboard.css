@@ -321,6 +321,7 @@
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   pointer-events: none;
@@ -351,6 +352,18 @@
   align-items: center;
   gap: 9px;
   font-size: 13px;
+  transition: opacity 120ms;
+}
+
+.ad-breakdown-row.is-dim { opacity: 0.45; }
+.ad-breakdown-row.is-active .ad-breakdown-name { color: #0B2340; font-weight: 600; }
+
+.ad-breakdown-center-sub {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #7C97AD;
+  white-space: nowrap;
 }
 
 .ad-breakdown-dot {
