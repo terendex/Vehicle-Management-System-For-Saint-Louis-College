@@ -404,12 +404,31 @@ already kept out by the existing `*.md` rule.
 
 ## 6. How the removal was checked
 
-"Before" was recorded on 2026-09-18 at commit `73e71908`. "Actual after" is
-what was measured on the cleaned-up tree — not a prediction.
+"Before" was recorded on 2026-09-18 at commit `73e71908`, just before the
+cleanup. "Actual after" was measured on 2026-09-19 against commit `44a78c14`
+(the commit that made this cleanup) — every value below comes from a real run,
+not a prediction.
 
 | Check | Before | Expected after | Actual after |
 |---|---|---|---|
-| Frontend build output, compared file-by-file by SHA-256 fingerprint | 196 files | byte-identical | **All 196 files byte-identical** (2026-09-18 21:36) |
-| ESLint: files / errors / warnings (files with problems) | 110 / 77 / 10 (37) | 101 / 65 / 8 (30), every remaining file unchanged | **101 / 65 / 8 (30).** Only the 7 archived files left the report; every remaining file's result is unchanged (2026-09-18 21:36) |
-| Brand lockup check (`npm run check:lockups`) | 13 / 13 | 13 / 13 | **13 / 13** (2026-09-18 21:36) |
-| Django tests, `manage.py test --noinput --keepdb`, real clock, started 13:00–14:00 | 1,109 / 1,113 at 19:28 (4 known time-of-day failures) | 1,113 / 1,113 | _Pending — run on 2026-09-19, started between 13:00 and 14:00_ |
+| Frontend build output, compared file-by-file by SHA-256 fingerprint | 196 files | byte-identical | **All 196 files byte-identical** (2026-09-19 13:14) |
+| ESLint: files / errors / warnings (files with problems) | 110 / 77 / 10 (37) | 101 / 65 / 8 (30), every remaining file unchanged | **101 / 65 / 8 (30).** Only the 7 archived files left the report; no remaining file's result changed (2026-09-19 13:14) |
+| Brand lockup check (`npm run check:lockups`) | 13 / 13 | 13 / 13 | **13 / 13** (2026-09-19 13:14) |
+| Django tests, `manage.py test --noinput --keepdb`, real clock, started 13:00–14:00 | 1,109 / 1,113 at 19:28 (4 known time-of-day failures) | 1,113 / 1,113 | **1,111 / 1,113** (full run 2026-09-19, 13:13–14:05). The 2 failures were caused by leftover test data, not by this cleanup — see the note below. After that data was removed, the 7 affected tests all pass (2026-09-19 14:22). |
+
+**About the 2 Django failures.** The failing tests were
+`accounts.tests.NotificationBellTests.test_list_endpoint_returns_unread_count`
+(unread count 4 instead of 1) and `test_mark_all_read` (5 marked read instead of
+2). The tests run against a separate test database that is kept between runs
+(that is what `--keepdb` does). On 2026-09-18 a test run was started through a
+helper script that hid the word `test` from Django's settings, so the app sent
+emails from background threads as it would on a live server. When a send
+failed, the thread saved an "Acknowledgement email failed" notification using
+its own database connection — outside the test's automatic undo — so 3 of those
+rows stayed in the test database (ids 14144, 14297, 14300). The admin
+notification bell counts every unread notification, so these two tests saw 3
+extra. The rows were identified by their timestamps, confirmed to be the only
+leftovers from that run (all 52 timestamp columns in the test database were
+checked), and deleted from the **test database only**. The 7
+`NotificationBellTests` were then re-run and all passed. The live database was
+never involved, and none of the files archived here are used by these tests.
