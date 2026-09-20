@@ -1,44 +1,78 @@
+# =============================================================================
+# WHAT THIS FILE IS FOR
+#
+# Every web address ("endpoint") the vehicles side of the system answers. The
+# browser asks; these classes reply. It is the largest file in the project,
+# and it covers, in order:
+#
+#   1. Vehicles, campus rules, lookup lists, parking zones and bays   <- this part
+#   2. Cameras: registration, remote pan/tilt/zoom, live preview
+#   3. Permission classes and the registration validation helpers
+#   4. Approving, rejecting and walk-in registration
+#   5. The public registration form and payment
+#   6. Owner edits and the CDSO's review of them
+#   7. Parking availability and system settings
+#   8. Events and parking notices
+#   9. Registration periods, suppliers, reports and scheduled visits
+#
+# Two words worth knowing throughout:
+#   "ViewSet"  - one class serving a whole set of related addresses (list one,
+#                fetch one, create, edit, delete), wired up by the router.
+#   "action"   - an extra address bolted onto a ViewSet for something that is
+#                not plain create/read/update/delete, e.g. .../authorize.
+#
+# Permissions are declared per class rather than checked inside each method, so
+# the rule about WHO may do something sits next to the thing itself.
+# =============================================================================
+
 import logging
-import secrets
+import secrets                                  # cryptographically strong randomness for temporary passwords
 import string
 import threading
 import time as _time
 import uuid
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation   # money values, and the error raised by a bad one
 
-import cv2
+import cv2                                      # only for the camera preview endpoints further down
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q, Value
-from django.db.models.functions import Lower, Replace, Upper
-from django.http import StreamingHttpResponse, HttpResponse
+from django.db.models import Count, Q, Value    # Q builds "this OR that" conditions
+from django.db.models.functions import Lower, Replace, Upper   # for case/spacing-insensitive matching in the database
+from django.http import StreamingHttpResponse, HttpResponse    # StreamingHttpResponse feeds the MJPEG preview
 from rest_framework import viewsets, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action    # marks the extra endpoints on a ViewSet
 from rest_framework.response import Response
 
 from rest_framework import status as drf_status
 from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, ReferenceItem, Camera, SystemSettings, ParkingNotice, RegistrationPeriod, Event, ScheduledVisit
-from .models import _normalize_plate
+from .models import _normalize_plate            # the one way a plate is tidied, shared with the models
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
-from . import parking_camera
+from . import parking_camera                    # the background detector threads, one per watched zone
 
 logger = logging.getLogger(__name__)
-from accounts.audit import audit, AuditedViewSetMixin
-from accounts.twofa_api import HasRecentTwoFactor
+from accounts.audit import audit, AuditedViewSetMixin   # records staff actions; the mixin does it for whole ViewSets
+from accounts.twofa_api import HasRecentTwoFactor       # permission: a second factor entered recently
 from time_utils import filter_local_date_range
 from accounts.models import AuditLog
+# NOTE, factually: `from django.utils import timezone` sits at line ~913 rather
+# than here, yet is used from line 292 onwards. That works — module-level
+# imports all run when the file is first loaded, long before any view is
+# called — but it is not where a reader looks for it.
 
+# Vehicles themselves: the list, one vehicle's full profile, and the switch
+# that authorises a vehicle at the gate.
 class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
-    queryset           = Vehicle.objects.select_related('user').all()
-    serializer_class   = VehicleSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    audit_label        = 'Vehicle'
+    queryset           = Vehicle.objects.select_related('user').all()   # fetch each owner in the same query
+    serializer_class   = VehicleSerializer                              # how a vehicle is turned into JSON
+    permission_classes = [permissions.IsAuthenticated]                  # any signed-in role
+    audit_label        = 'Vehicle'                                      # what the mixin calls this in the audit log
 
+    # Flips a vehicle between authorised and not. PATCH .../vehicles/<id>/authorize/
     @action(detail=True, methods=['patch'])
     def authorize(self, request, pk=None):
         vehicle = self.get_object()
-        vehicle.is_authorized = not vehicle.is_authorized
+        vehicle.is_authorized = not vehicle.is_authorized    # a toggle: no separate on/off endpoints
         vehicle.save()
-        audit(request, AuditLog.Action.RECORD_UPDATED,
+        audit(request, AuditLog.Action.RECORD_UPDATED,       # who did this, in the accountability trail
               f"Vehicle {'authorized' if vehicle.is_authorized else 'deauthorized'} | "
               f"Plate: {vehicle.plate_number} | By: {request.user.full_name}")
         return Response({'plate': vehicle.plate_number, 'is_authorized': vehicle.is_authorized})
@@ -58,12 +92,13 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         # Latest accepted registration — FK-linked first, then plate fallback for legacy records
         reg = (
             vehicle.registrations.filter(status='accepted').order_by('-reviewed_at').first()
-            or VehicleRegistration.objects.filter(
+            or VehicleRegistration.objects.filter(       # older rows were never linked to the vehicle
                 plate_number=vehicle.plate_number,
                 status='accepted',
-            ).order_by('-reviewed_at').first()
+            ).order_by('-reviewed_at').first()           # most recently approved wins
         )
 
+        # Split by whether they are settled, so the screen can show open cases first.
         active_violations   = vehicle.violations.filter(is_resolved=False).order_by('-issued_at')
         resolved_violations = vehicle.violations.filter(is_resolved=True).order_by('-issued_at')
 
@@ -74,11 +109,15 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             'resolved_violations': ViolationSerializer(resolved_violations, many=True).data,
         }
 
+    # The profile by row id: GET .../vehicles/<id>/profile/
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
         """Return full vehicle profile: owner, latest registration, active and resolved violations."""
         return Response(self._profile_payload(self.get_object()))
 
+    # The same profile found by plate: GET .../vehicles/by-plate/?plate=ABC123
+    # detail=False because there is no row id in the address yet — the plate is
+    # what we are looking the vehicle up by.
     @action(detail=False, methods=['get'], url_path='by-plate')
     def by_plate(self, request):
         """Same profile, found by plate or conduction number instead of row id.
@@ -93,14 +132,14 @@ class VehicleViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         lot is full of visitors and delivery vehicles. It comes back as
         `found: false` so the caller can say so plainly.
         """
-        identifier = request.query_params.get('plate', '')
-        vehicle = Vehicle.resolve(identifier)
+        identifier = request.query_params.get('plate', '')   # whatever the caller typed or the detector read
+        vehicle = Vehicle.resolve(identifier)                # tries plate, then conduction number
         if vehicle is None:
             return Response({
-                'found': False,
-                'plate': _normalize_plate(identifier),
+                'found': False,                              # a normal answer here, not an error
+                'plate': _normalize_plate(identifier),       # echo it tidied, so the caller can display it
             })
-        return Response({'found': True, **self._profile_payload(vehicle)})
+        return Response({'found': True, **self._profile_payload(vehicle)})   # "**" merges the profile in alongside found
 
 class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     """Campus schedule rules. Read by any signed-in role; changed only by the
@@ -116,24 +155,31 @@ class RuleConstraintViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = RuleConstraint.objects.all()
     serializer_class   = RuleConstraintSerializer
     audit_label        = 'Schedule Rule'
+    # No permission_classes here: the rule depends on the method, so it is
+    # decided in get_permissions() below instead.
 
+    # Reading is open to any signed-in role; changing a rule needs BOTH the
+    # admin role and a recent second factor (see the class docstring for why
+    # neither check alone is enough).
     def get_permissions(self):
-        if self.request.method in permissions.SAFE_METHODS:
+        if self.request.method in permissions.SAFE_METHODS:   # GET, HEAD, OPTIONS: read-only
             return [permissions.IsAuthenticated()]
-        return [IsAdminOrCdso(), HasRecentTwoFactor()]
+        return [IsAdminOrCdso(), HasRecentTwoFactor()]        # both must pass
 
+# The editable drop-down lists: departments and programs.
 class ReferenceItemViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = ReferenceItem.objects.all()
     serializer_class   = ReferenceItemSerializer
     permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Reference Item'
 
+    # Lets the caller ask for one list at a time: ?category=department
     def get_queryset(self):
         qs = super().get_queryset()
         category = self.request.query_params.get('category')
         if category:
             qs = qs.filter(category=category)
-        return qs
+        return qs                                        # no category given: return both lists
 
 class ParkingReadOnlyUnlessAdmin(permissions.BasePermission):
     """Any signed-in role may read parking data; only admin/CDSO may change it.
@@ -156,24 +202,32 @@ class ParkingReadOnlyUnlessAdmin(permissions.BasePermission):
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
-            return False
+            return False                                 # not signed in: nothing at all
         if request.method in permissions.SAFE_METHODS:
-            return True
-        return getattr(request.user, 'role', None) == 'admin'
+            return True                                  # reading is open to every role
+        return getattr(request.user, 'role', None) == 'admin'   # writing is the CDSO's alone
 
 
+# Individual bays. Drawn and edited through the zone's save-layout action
+# below; this ViewSet is what the screens read them back through.
 class ParkingSpaceViewSet(viewsets.ModelViewSet):
     queryset           = ParkingSpace.objects.all()
     serializer_class   = ParkingSpaceSerializer
     permission_classes = [ParkingReadOnlyUnlessAdmin]
 
 
+# A parking area and everything done to it: the bay layout, the empty-lot
+# baseline, the detector that watches it, and the live readouts behind the
+# occupancy figures.
 class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
+    # select_related/prefetch_related fetch the camera and the bays up front,
+    # so listing zones is a couple of queries rather than two per zone.
     queryset           = ParkingZone.objects.select_related('camera').prefetch_related('spaces').all()
     serializer_class   = ParkingZoneSerializer
-    permission_classes = [ParkingReadOnlyUnlessAdmin]
+    permission_classes = [ParkingReadOnlyUnlessAdmin]    # guards read, CDSO edits
     audit_label        = 'Parking Zone'
 
+    # Extra information handed to the serializer for every zone in the response.
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
@@ -184,35 +238,40 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         ctx['category_state'] = category_state()
         return ctx
 
+    # Stores the picture the admin will draw the bays on.
     @action(detail=True, methods=['post'], url_path='upload-image')
     def upload_image(self, request, pk=None):
         zone = self.get_object()
-        img  = request.FILES.get('image')
+        img  = request.FILES.get('image')                # an uploaded file, not JSON
         if not img:
             return Response({'error': 'No image provided.'}, status=400)
         zone.reference_image = img
         zone.save()
         return Response(self.get_serializer(zone).data)
 
+    # Saves the whole bay layout for a zone in one go: the editor sends the
+    # complete set of bays, and this makes the database match it.
     @action(detail=True, methods=['post'], url_path='save-layout')
     def save_layout(self, request, pk=None):
         """Bulk update the parking space layout for this zone."""
         zone        = self.get_object()
         spaces_data = request.data.get('spaces', [])
-        submitted   = {s['space_number'] for s in spaces_data}
+        submitted   = {s['space_number'] for s in spaces_data}   # the bay labels the editor kept
 
         # Remove spaces the admin deleted
-        zone.spaces.exclude(space_number__in=submitted).delete()
+        zone.spaces.exclude(space_number__in=submitted).delete()   # anything not submitted was deleted in the editor
 
         # Update or create each space (preserving is_occupied / occupied_by)
         result = []
         for s in spaces_data:
-            points = s.get('points')
+            points = s.get('points')                     # a freehand polygon, if the pen tool was used
             if points:
+                # Work out the rectangle that encloses the polygon: the box is
+                # what quick lookups compare against, the polygon is the shape.
                 xs, ys = [p[0] for p in points], [p[1] for p in points]
                 bbox = {'x1': min(xs), 'y1': min(ys), 'x2': max(xs), 'y2': max(ys)}
             else:
-                points = None
+                points = None                            # a plain rectangle: no polygon to store
                 bbox = {'x1': s.get('x1'), 'y1': s.get('y1'), 'x2': s.get('x2'), 'y2': s.get('y2')}
 
             # lens_index tags which view of a multi-lens camera the bay is in.
@@ -224,6 +283,9 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             except (TypeError, ValueError):
                 lens_index = 0
 
+            # Match on zone + bay label; update that bay if it exists, create it
+            # otherwise. Only the listed fields are written, so a bay keeps its
+            # current is_occupied / occupied_by while the layout is edited.
             space, _ = ParkingSpace.objects.update_or_create(
                 zone=zone,
                 space_number=s['space_number'],
@@ -231,7 +293,7 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             )
             result.append(space)
 
-        return Response(ParkingSpaceSerializer(result, many=True).data)
+        return Response(ParkingSpaceSerializer(result, many=True).data)   # hand back the saved layout
 
     @action(detail=True, methods=['post'], url_path='set-baseline')
     def set_baseline(self, request, pk=None):
@@ -261,11 +323,11 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 
         try:
             with default_storage.open(zone.reference_image.name, 'rb') as fh:
-                data = fh.read()
+                data = fh.read()                     # the stored picture, as raw bytes
         except Exception:
             return Response({'error': 'The reference image could not be read. Capture it again.'},
                             status=400)
-        image = _cv2.imdecode(_np.frombuffer(data, _np.uint8), _cv2.IMREAD_COLOR)
+        image = _cv2.imdecode(_np.frombuffer(data, _np.uint8), _cv2.IMREAD_COLOR)   # decode to check it is a real picture
         if image is None:
             return Response({'error': 'The reference image is not a readable picture. Capture it again.'},
                             status=400)
@@ -275,21 +337,25 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         # bay would be compared against a different patch of ground. Only
         # checkable while the camera is sending, so a stopped camera is let
         # through rather than blocking a baseline set before it starts.
-        thread = parking_camera.get_thread(zone.id)
+        thread = parking_camera.get_thread(zone.id)      # the detector thread for this zone, if one is running
         frame = thread.get_frame() if thread is not None and thread.running else None
         if frame is not None:
+            # Compare shapes (width ÷ height), not sizes: the same view at a
+            # different resolution is fine, a different view is not.
             ref_aspect  = image.shape[1] / image.shape[0]
             live_aspect = frame.shape[1] / frame.shape[0]
-            if abs(ref_aspect - live_aspect) / live_aspect > 0.03:
+            if abs(ref_aspect - live_aspect) / live_aspect > 0.03:   # more than 3% apart: not the same camera view
                 return Response(
                     {'error': 'The reference image is not the same shape as this camera\'s '
                               'picture, so it cannot be this camera\'s view. Capture the '
                               'reference from the live feed, then set it as the baseline.'},
                     status=400)
 
+        # Store a COPY of the reference as the baseline, so later edits to the
+        # reference picture do not silently change what "empty" means.
         zone.baseline_image.save(f'zone_{zone.id}_baseline.jpg',
-                                 ContentFile(data), save=False)
-        zone.baseline_captured_at = timezone.now()
+                                 ContentFile(data), save=False)   # save=False: write the row once, below
+        zone.baseline_captured_at = timezone.now()       # shown in the admin screen as the baseline's age
         zone.save(update_fields=['baseline_image', 'baseline_captured_at'])
 
         return Response(self.get_serializer(zone).data)
@@ -304,8 +370,8 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         zone = self.get_object()
         thread = parking_camera.get_thread(zone.id)
         if thread is None:
-            return Response({})
-        return Response(thread.get_signals())
+            return Response({})                          # no detector running: nothing to report, not an error
+        return Response(thread.get_signals())            # the per-bay numbers the thresholds are compared against
 
     @action(detail=True, methods=['get'], url_path='tracked-vehicles')
     def tracked_vehicles(self, request, pk=None):
@@ -319,56 +385,63 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         thread = parking_camera.get_thread(zone.id)
         if thread is None:
             return Response([])
-        return Response(thread.get_tracked_vehicles())
+        return Response(thread.get_tracked_vehicles())   # each followed vehicle and how long it has been still
 
+    # Lets an event temporarily declare a different capacity for a zone.
     @action(detail=True, methods=['patch'], url_path='set-capacity')
     def set_capacity(self, request, pk=None):
         """Guard/admin sets (or clears) the event-mode capacity override for a zone."""
         zone = self.get_object()
         value = request.data.get('capacity_override')
         if value is None or str(value).strip() == '':
-            zone.capacity_override = None
+            zone.capacity_override = None                # blank means "back to the real bay count"
         else:
             try:
                 zone.capacity_override = int(value)
                 if zone.capacity_override < 0:
                     return Response({'error': 'Capacity must be a non-negative integer.'}, status=400)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):              # not a number at all
                 return Response({'error': 'Capacity must be a number.'}, status=400)
         zone.save(update_fields=['capacity_override'])
         return Response(self.get_serializer(zone).data)
 
     # ── IP Camera ──────────────────────────────────────────────────────────────
 
+    # Starts this zone's detector by hand. It normally starts itself, so this
+    # is really "resume after someone pressed Stop".
     @action(detail=True, methods=['post'], url_path='start-camera')
     def start_camera(self, request, pk=None):
         zone = self.get_object()
-        if not zone.camera or not zone.camera.rtsp_url:
+        if not zone.camera or not zone.camera.rtsp_url:   # a zone with no camera has nothing to watch with
             return Response({'error': 'No camera assigned to this zone. Assign one from Device Management.'}, status=400)
         # Records the intent as well as acting on it: detection is automatic
         # now (detection_supervisor), so this flag is what a restart reads back.
         if not zone.detection_enabled:
-            zone.detection_enabled = True
+            zone.detection_enabled = True                # remember the intent, so a restart keeps it on
             zone.save(update_fields=['detection_enabled'])
-        parking_camera.start(zone.id, zone.camera.rtsp_url)
+        parking_camera.start(zone.id, zone.camera.rtsp_url)   # and act on it now
         return Response({'status': 'started'})
 
+    # Pauses this zone's detector, and makes the pause stick.
     @action(detail=True, methods=['post'], url_path='stop-camera')
     def stop_camera(self, request, pk=None):
         zone = self.get_object()
         # Must persist, or the supervisor would restart the detector on its next
         # pass and the button would look broken.
         if zone.detection_enabled:
-            zone.detection_enabled = False
+            zone.detection_enabled = False               # without this the supervisor would start it again
             zone.save(update_fields=['detection_enabled'])
         parking_camera.stop(zone.id)
         return Response({'status': 'stopped'})
 
+    # Which zones currently have a detector running. One call for all of them,
+    # because the screen shows a badge per zone.
     @action(detail=False, methods=['get'], url_path='camera-status')
     def camera_status(self, request):
         """Returns {zone_id: is_running} for all zones."""
         return Response(parking_camera.status_dict())
 
+    # The detector's raw boxes, for seeing why a bay reads as it does.
     @action(detail=False, methods=['get'], url_path='detections')
     def detections(self, request):
         """The boxes behind the occupancy verdict, per running zone.
@@ -389,10 +462,12 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         anything attributed to a plate is already recorded as a Violation.
         """
         out = []
-        for zone_id, thread in list(parking_camera.all_threads().items()):
+        for zone_id, thread in list(parking_camera.all_threads().items()):   # list(): threads may start or stop while we read
             try:
-                out.extend(thread.get_alerts())
+                out.extend(thread.get_alerts())          # one zone's alerts added to the combined list
             except Exception:
+                # One unhealthy zone must not blank the alerts for every other
+                # zone, so the failure is logged and the loop carries on.
                 logger.exception("Failed reading alerts for zone %s", zone_id)
         return Response(out)
 
