@@ -479,10 +479,27 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 # camera, but it used to be re-probed on *every* button press — worst case a
 # port scan plus 10 SOAP attempts at a 5s timeout each. Press-and-hold on an
 # arrow key made that cost repeat per request. Discover once, reuse after.
-_PTZ_LOCK  = threading.Lock()
-_PTZ_CACHE: dict = {}
+# =============================================================================
+# MOVING A CAMERA (PAN / TILT / ZOOM)
+#
+# "PTZ" is pan-tilt-zoom: the arrow buttons on the camera screen. There is no
+# single standard that every camera obeys, so this block is mostly about
+# FINDING OUT how to talk to a particular unit, then remembering the answer:
+#
+#   which HTTP port it listens on      (80, 8080, 8000, 8899)
+#   which language it speaks           ONVIF (SOAP/XML) or a vendor CGI URL
+#   which path inside that language    /onvif/PTZ_service, /onvif/ptz, ...
+#   which flavour of password it wants Digest, Basic, or none at all
+#
+# Discovery is expensive — a port scan plus a dozen XML requests — and the
+# answer never changes for a given camera, so it is cached per camera and
+# reused. Everything before CameraViewSet is that machinery.
+# =============================================================================
+_PTZ_LOCK  = threading.Lock()                    # these caches are read from several requests at once
+_PTZ_CACHE: dict = {}                            # camera id → the route that worked last time
 
 
+# Returns the remembered route for this camera, or None if there isn't a usable one.
 def _ptz_cache_get(cam_id, ip):
     with _PTZ_LOCK:
         info = _PTZ_CACHE.get(cam_id)
@@ -490,14 +507,16 @@ def _ptz_cache_get(cam_id, ip):
     return info if info and info.get('ip') == ip else None
 
 
+# Remembers a route that worked.
 def _ptz_cache_set(cam_id, info):
     with _PTZ_LOCK:
         _PTZ_CACHE[cam_id] = info
 
 
+# Forgets it — called when a camera is edited or deleted, or a command fails.
 def _ptz_cache_clear(cam_id):
     with _PTZ_LOCK:
-        _PTZ_CACHE.pop(cam_id, None)
+        _PTZ_CACHE.pop(cam_id, None)             # pop with a default: not being there is fine
 
 
 # Which HTTP auth flavour a camera's web server actually accepts, keyed by
@@ -517,22 +536,27 @@ def _http_auths(username, password, base_url):
     """
     from requests.auth import HTTPDigestAuth
     if not username:
-        return [('none', None)]
-    order = [('digest', HTTPDigestAuth(username, password)),
-             ('basic',  (username, password)),
-             ('none',   None)]
+        return [('none', None)]                  # nothing to authenticate with
+    order = [('digest', HTTPDigestAuth(username, password)),   # ONVIF firmware usually wants this
+             ('basic',  (username, password)),                 # older units accept this
+             ('none',   None)]                                 # and some want no header at all
     with _PTZ_LOCK:
-        won = _AUTH_MODE_CACHE.get(base_url)
+        won = _AUTH_MODE_CACHE.get(base_url)     # which one worked last time for this camera
     if won:
+        # Sort the known-good flavour to the front. False sorts before True, so
+        # the matching entry moves first and the rest keep their order.
         order.sort(key=lambda pair: pair[0] != won)
     return order
 
 
+# Records which password flavour a camera accepted, so the next call starts there.
 def _auth_mode_worked(base_url, mode):
     with _PTZ_LOCK:
         _AUTH_MODE_CACHE[base_url] = mode
 
 
+# "http://1.2.3.4:8080/onvif/ptz" → "http://1.2.3.4:8080": the camera's address
+# without any path, which is what the auth cache is keyed on.
 def _origin(url):
     from urllib.parse import urlsplit
     parts = urlsplit(url)
@@ -546,11 +570,15 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
     camera, skipping the SOAP 1.2 → 1.1 probe.
     """
     import requests as _rq, base64, hashlib, os, datetime
-    nonce_raw = os.urandom(16)
-    nonce_b64 = base64.b64encode(nonce_raw).decode()
-    created   = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # ONVIF's own password scheme (WS-Security): rather than sending the
+    # password, send a one-way hash of (random number + timestamp + password).
+    # The camera knows the password, so it can compute the same hash and
+    # compare — and a recording of the request cannot be replayed later.
+    nonce_raw = os.urandom(16)                   # the random number, 16 bytes
+    nonce_b64 = base64.b64encode(nonce_raw).decode()   # sent in text form
+    created   = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')   # UTC timestamp
     digest    = base64.b64encode(
-        hashlib.sha1(nonce_raw + created.encode() + password.encode()).digest()
+        hashlib.sha1(nonce_raw + created.encode() + password.encode()).digest()   # the hash, as the standard specifies
     ).decode()
     envelope = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -573,24 +601,28 @@ def _ptz_soap(endpoint, body_xml, username, password, content_types=None):
     # The WS-Security header above is only half the story: firmware that wants
     # HTTP Digest never reads it, so every transport auth flavour is tried too.
     origin = _origin(endpoint)
-    auths  = _http_auths(username, password, origin)
-    for ct in (content_types or ['application/soap+xml; charset=utf-8',
-                                 'text/xml; charset=utf-8']):
+    auths  = _http_auths(username, password, origin)   # password flavours to try, best guess first
+    # Two nested attempts: each XML dialect, and within it each password style.
+    for ct in (content_types or ['application/soap+xml; charset=utf-8',   # SOAP 1.2, the modern one
+                                 'text/xml; charset=utf-8']):             # SOAP 1.1, for budget cameras
         for mode, auth in auths:
             try:
                 r = _rq.post(endpoint, data=data,
                              headers={'Content-Type': ct},
-                             timeout=5, auth=auth)
+                             timeout=5, auth=auth)   # 5s: a camera that is slower than this is not usable anyway
                 if r.status_code in (401, 403):
-                    continue
+                    continue                        # wrong password style: try the next one
                 if r.status_code < 500:
-                    _auth_mode_worked(origin, mode)
+                    _auth_mode_worked(origin, mode) # remember what worked, even for a SOAP-level error
                     return r, ct
             except Exception:
-                break
-    raise Exception(f'SOAP request failed for {endpoint}')
+                break                               # connection failed: this dialect is hopeless, try the next
+    raise Exception(f'SOAP request failed for {endpoint}')   # nothing answered
 
 
+# The addresses different firmwares put their ONVIF services on. Tried in turn
+# until one answers; capitalisation varies between vendors, which is why the
+# same word appears more than once.
 MEDIA_PATHS = ['/onvif/media_service', '/onvif/Media', '/onvif/media',
                '/onvif/device_service', '/onvif/']
 PTZ_PATHS   = ['/onvif/PTZ_service', '/onvif/ptz_service', '/onvif/PTZ',
@@ -603,24 +635,28 @@ def _ptz_get_token(base_url, username, password, media_path=None, content_type=N
     Passing a known media_path/content_type turns the probe into one request.
     """
     from xml.etree import ElementTree as ET
+    # A "profile token" names one of the camera's stream profiles; PTZ commands
+    # have to say which profile they apply to. Ask the camera for its profiles
+    # and take the first token in the reply.
     # Try common ONVIF media service paths — cameras vary on capitalisation
-    for path in ([media_path] if media_path else MEDIA_PATHS):
+    for path in ([media_path] if media_path else MEDIA_PATHS):   # one known path, or all candidates
         try:
             resp, ct = _ptz_soap(f'{base_url}{path}',
                                  '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>',
                                  username, password,
                                  [content_type] if content_type else None)
-            for el in ET.fromstring(resp.text).iter():
+            for el in ET.fromstring(resp.text).iter():   # walk every element in the XML reply
                 t = el.get('token')
                 if t:
-                    return t, path, ct
+                    return t, path, ct               # first token wins, plus the route that found it
         except Exception:
-            continue
+            continue                                 # this path did not work; try the next
     if media_path:
-        raise Exception('cached ONVIF media path stopped responding')
-    return 'Profile_1', None, None
+        raise Exception('cached ONVIF media path stopped responding')   # the remembered route has gone stale
+    return 'Profile_1', None, None                   # nothing answered: try the name most firmwares use
 
 
+# Sends one PTZ command, trying each known service path until one accepts it.
 def _ptz_send(base_url, username, password, body_xml, ptz_path=None, content_type=None):
     """Send a PTZ command. Returns (ptz_path, content_type) that worked."""
     for path in ([ptz_path] if ptz_path else PTZ_PATHS):
@@ -628,12 +664,15 @@ def _ptz_send(base_url, username, password, body_xml, ptz_path=None, content_typ
             r, ct = _ptz_soap(f'{base_url}{path}', body_xml, username, password,
                               [content_type] if content_type else None)
             if r.status_code < 400:
-                return path, ct
+                return path, ct                      # accepted: hand back the working route to cache
         except Exception:
             continue
     raise Exception('No PTZ service path responded successfully')
 
 
+# Start moving. "Continuous move" means keep going at this speed until told to
+# stop, which is what an arrow button held down should do. pan/tilt/zoom are
+# -1.0 to 1.0, where the sign is the direction.
 def _ptz_move(base_url, username, password, token, pan, tilt, zoom, **route):
     return _ptz_send(base_url, username, password,
         '<tptz:ContinuousMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
@@ -645,6 +684,7 @@ def _ptz_move(base_url, username, password, token, pan, tilt, zoom, **route):
     )
 
 
+# Stop moving, both the pan/tilt motors and the zoom.
 def _ptz_stop(base_url, username, password, token, **route):
     return _ptz_send(base_url, username, password,
         '<tptz:Stop xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
@@ -654,6 +694,7 @@ def _ptz_stop(base_url, username, password, token, **route):
     )
 
 
+# Return to the position the camera was set up pointing at.
 def _ptz_home(base_url, username, password, token, **route):
     return _ptz_send(base_url, username, password,
         '<tptz:GotoHomePosition xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">'
@@ -677,22 +718,24 @@ def camera_http_credentials(cam):
     """
     from urllib.parse import unquote
 
-    stored  = (getattr(cam, 'password', '') or '').strip()
+    stored  = (getattr(cam, 'password', '') or '').strip()   # the password field admins edit
     url     = (getattr(cam, 'rtsp_url', '') or '')
     url_user = url_pw = ''
+    # Pull any credentials out of the stream address, which looks like
+    # rtsp://user:pass@1.2.3.4:554/stream1
     if '://' in url and '@' in url:
-        rest  = url.split('://', 1)[1]
+        rest  = url.split('://', 1)[1]          # drop the "rtsp://"
         creds = rest.rsplit('@', 1)[0]          # rsplit: passwords may contain '@'
         if ':' in creds:
-            url_user, url_pw = creds.split(':', 1)
+            url_user, url_pw = creds.split(':', 1)   # split once: passwords may contain ':' too
         else:
-            url_user, url_pw = creds, ''
-        url_user, url_pw = unquote(url_user), unquote(url_pw)
+            url_user, url_pw = creds, ''        # a username with no password
+        url_user, url_pw = unquote(url_user), unquote(url_pw)   # undo %40-style URL escaping
 
     if url_user:
-        return url_user, (stored or url_pw)
+        return url_user, (stored or url_pw)     # URL's username, but prefer the password admins maintain
 
-    return (getattr(cam, 'device_id', '') or ''), stored
+    return (getattr(cam, 'device_id', '') or ''), stored   # no URL credentials: fall back to the device id
 
 
 def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None):
@@ -701,6 +744,8 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None
     Returns the index of the URL form that worked so it can be reused.
     """
     import requests as _rq
+    # The same command spelled the way each vendor's firmware expects. An
+    # unknown command falls back to "stop", which is the safe thing to send.
     dahua_code = {
         'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
         'zoom_in': 'ZoomTele', 'zoom_out': 'ZoomWide', 'stop': 'Stop', 'home': 'GotoPreset',
@@ -709,55 +754,63 @@ def _try_cgi_ptz(base_url, username, password, command, speed_int, cgi_form=None
         'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right',
         'zoom_in': 'zoomadd', 'zoom_out': 'zoomdec', 'stop': 'stop', 'home': 'poscall',
     }.get(command, 'stop')
+    # Three URL shapes, covering the common non-ONVIF firmwares.
     forms = [
         f'{base_url}/cgi-bin/ptz.cgi?action=start&channel=1&code={dahua_code}&arg1=0&arg2={speed_int}&arg3=0',
         f'{base_url}/cgi-bin/ptzctrl.cgi?ptzcmd&{hi3510_act}&{speed_int}',
         f'{base_url}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={hi3510_act}&-speed={speed_int}',
     ]
-    candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None
-                  else list(enumerate(forms)))
+    candidates = ([(cgi_form, forms[cgi_form])] if cgi_form is not None   # a known-good form, or
+                  else list(enumerate(forms)))                           # all of them, numbered
     auths = _http_auths(username, password, base_url)
 
-    errors = []
+    errors = []                                      # collected so a failure can say what went wrong
     for idx, url in candidates:
         for mode, auth in auths:
             try:
                 r = _rq.get(url, auth=auth, timeout=3)
                 if r.status_code < 400:
                     _auth_mode_worked(base_url, mode)
-                    return idx
+                    return idx                       # this form works; the caller caches the number
                 if r.status_code in (401, 403):
                     continue          # try the next credential form
                 errors.append(f'{r.status_code}')
-                break
+                break                                # a real refusal: this URL shape is wrong, move on
             except Exception as e:
                 errors.append(str(e))
                 break
     raise Exception('CGI PTZ failed: ' + '; '.join(errors) or 'CGI PTZ failed')
 
 
+# Device Management: adding cameras, checking they answer, and driving them.
 class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     queryset           = Camera.objects.all()
     serializer_class   = CameraSerializer
     permission_classes = [permissions.IsAuthenticated]
     audit_label        = 'Camera'
 
+    # The lowest camera number not already taken, so numbering closes gaps left
+    # by deleted cameras rather than climbing forever.
     def _next_cam_number(self):
-        existing = set(Camera.objects.values_list('cam_number', flat=True))
+        existing = set(Camera.objects.values_list('cam_number', flat=True))   # a set: fast "is it taken?"
         n = 1
         while n in existing:
             n += 1
         return n
 
+    # Adding a camera. Overridden so the number and display name are assigned
+    # here rather than being typed in and possibly duplicated.
     def create(self, request, *args, **kwargs):
         num        = self._next_cam_number()
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        cam = serializer.save(cam_number=num, name=f'Cam {num}')
+        serializer.is_valid(raise_exception=True)    # invalid input answers 400 automatically
+        cam = serializer.save(cam_number=num, name=f'Cam {num}')   # e.g. "Cam 3"
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Camera added | {cam} | IP: {cam.ip} | By: {request.user.full_name}")
         return Response(serializer.data, status=drf_status.HTTP_201_CREATED)
 
+    # Editing a camera: keep the normal behaviour, then forget the remembered
+    # PTZ route, since the address or password may just have changed.
     def perform_update(self, serializer):
         # super() keeps the audit-log entry; we only add cache invalidation.
         # IP/credentials may have changed, so the discovered PTZ route is no
@@ -765,16 +818,20 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         super().perform_update(serializer)
         _ptz_cache_clear(serializer.instance.pk)
 
+    # Deleting a camera: same idea, but the id has to be read BEFORE the delete.
     def perform_destroy(self, instance):
         cam_id = instance.pk          # delete() clears the pk
         super().perform_destroy(instance)
         _ptz_cache_clear(cam_id)
 
+    # Lets the add-camera form show the number and name it is about to get.
     @action(detail=False, methods=['get'], url_path='next-name')
     def next_name(self, request):
         n = self._next_cam_number()
         return Response({'cam_number': n, 'name': f'Cam {n}'})
 
+    # Asks the camera itself which stream address it answers on, so nobody has
+    # to know the vendor's URL format.
     @action(detail=False, methods=['post'], url_path='detect-rtsp')
     def detect_rtsp(self, request):
         """Ask the camera which stream path it answers on.
@@ -786,36 +843,46 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         from . import rtsp_probe
 
         try:
-            channel = int(request.data.get('channel') or 1)
+            channel = int(request.data.get('channel') or 1)   # which lens/channel on a multi-channel unit
         except (TypeError, ValueError):
-            channel = 1
+            channel = 1                              # anything unparseable means the first channel
 
-        result = rtsp_probe.detect(
+        result = rtsp_probe.detect(                  # does the real work: tries known URL shapes
             ip=request.data.get('ip', ''),
             device_id=request.data.get('device_id', ''),
             password=request.data.get('password', ''),
             channel=channel,
         )
+        # NOTE: `status` here is the module imported at line ~984, further down
+        # the file, not the `drf_status` alias used above. Both name the same
+        # thing; module-level imports run at load time, so it resolves.
         return Response(result, status=(status.HTTP_200_OK if result['ok']
                                         else status.HTTP_400_BAD_REQUEST))
 
+    # "Is this camera reachable?" — opens a bare TCP connection to the RTSP
+    # port. It proves the network path without logging in or pulling video.
     @action(detail=True, methods=['post'], url_path='ping')
     def ping(self, request, pk=None):
         import socket
         cam = self.get_object()
         try:
-            with socket.create_connection((cam.ip, 554), timeout=3):
-                return Response({'reachable': True, 'ip': cam.ip})
+            with socket.create_connection((cam.ip, 554), timeout=3):   # 554 is the standard RTSP port
+                return Response({'reachable': True, 'ip': cam.ip})     # connecting is the whole test
         except (socket.timeout, ConnectionRefusedError, OSError):
-            return Response({'reachable': False, 'ip': cam.ip})
+            return Response({'reachable': False, 'ip': cam.ip})        # unreachable is an answer, not an error
 
+    # The arrow buttons. One endpoint for every direction, plus stop and home.
+    #
+    # The shape of this method is: try the remembered route first (fast), and
+    # only if that fails work out a new one (slow), then remember it.
     @action(detail=True, methods=['post'], url_path='ptz')
     def ptz(self, request, pk=None):
         import socket
         cam     = self.get_object()
-        command = (request.data.get('command') or 'stop').strip()
-        speed   = min(max(float(request.data.get('speed', 0.5)), 0.1), 1.0)
+        command = (request.data.get('command') or 'stop').strip()   # default to stop: the harmless command
+        speed   = min(max(float(request.data.get('speed', 0.5)), 0.1), 1.0)   # clamp into 0.1–1.0 whatever was sent
 
+        # Each command as a (pan, tilt, zoom) velocity; the sign is direction.
         vel_map = {
             'up':       ( 0.0,   speed,  0.0),
             'down':     ( 0.0,  -speed,  0.0),
@@ -831,12 +898,14 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
         # otherwise the device ID with no password.
         cam_user, cam_pw = camera_http_credentials(cam)
 
+        # Runs the command one way (ONVIF or CGI) against one address, and
+        # reports back the route that succeeded so it can be cached.
         def _send(base, route):
             """Run `command` against `base`. Returns the route that worked."""
             if route.get('method') == 'cgi':
                 idx = _try_cgi_ptz(base, cam_user, cam_pw, command,
                                    speed_int, route.get('cgi_form'))
-                return {**route, 'method': 'cgi', 'cgi_form': idx}
+                return {**route, 'method': 'cgi', 'cgi_form': idx}   # remember which URL shape worked
 
             token      = route.get('token')
             media_path = route.get('media_path')
@@ -848,7 +917,7 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                 token, media_path, media_ct = _ptz_get_token(
                     base, cam_user, cam_pw, media_path, media_ct,
                 )
-            kw = {'ptz_path': route.get('ptz_path'), 'content_type': route.get('ptz_ct')}
+            kw = {'ptz_path': route.get('ptz_path'), 'content_type': route.get('ptz_ct')}   # pass the known route through
             if command == 'stop':
                 ptz_path, ptz_ct = _ptz_stop(base, cam_user, cam_pw, token, **kw)
             elif command == 'home':
@@ -864,11 +933,11 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                     'ptz_path': ptz_path, 'ptz_ct': ptz_ct}
 
         # ── Fast path: reuse the route discovered on a previous press ──────────
-        cached = _ptz_cache_get(cam.pk, cam.ip)
+        cached = _ptz_cache_get(cam.pk, cam.ip)      # None if never discovered, or the camera moved
         if cached:
             try:
-                route = _send(cached['base'], cached)
-                _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': cached['base']})
+                route = _send(cached['base'], cached)   # one request instead of a probe
+                _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': cached['base']})   # refresh what we learned
                 return Response({'ok': True, 'command': command,
                                  'method': route['method'], 'cached': True})
             except Exception:
@@ -876,57 +945,63 @@ class CameraViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
                 _ptz_cache_clear(cam.pk)
 
         # ── Discovery: probe ports, ONVIF paths, then the CGI fallback ─────────
-        last_err = 'No HTTP port reachable on the camera'
-        for port in [80, 8080, 8000, 8899]:
+        last_err = 'No HTTP port reachable on the camera'   # replaced as soon as anything answers
+        for port in [80, 8080, 8000, 8899]:          # the ports these cameras are usually found on
             try:
                 with socket.create_connection((cam.ip, port), timeout=1.5):
-                    pass
+                    pass                             # opening and closing is the whole test
             except OSError:
-                continue
-            base = f'http://{cam.ip}' if port == 80 else f'http://{cam.ip}:{port}'
+                continue                             # nothing listening here; try the next port
+            base = f'http://{cam.ip}' if port == 80 else f'http://{cam.ip}:{port}'   # port 80 needs no suffix
             # Try ONVIF first, then CGI fallback
             onvif_err = None
             for method in ('onvif', 'cgi'):
                 try:
-                    route = _send(base, {'method': method})
-                    _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': base})
+                    route = _send(base, {'method': method})   # empty route = discover everything
+                    _ptz_cache_set(cam.pk, {**route, 'ip': cam.ip, 'base': base})   # so the next press is fast
                     return Response({'ok': True, 'command': command,
                                      'method': route['method'], 'cached': False})
                 except Exception as exc:
                     if method == 'onvif':
-                        onvif_err = str(exc)
+                        onvif_err = str(exc)         # hold it: the CGI attempt may still succeed
                     else:
-                        last_err = f'onvif: {onvif_err} | cgi: {exc}'
+                        last_err = f'onvif: {onvif_err} | cgi: {exc}'   # both failed; report both reasons
 
         return Response({'ok': False, 'error': f'PTZ unavailable: {last_err}'}, status=400)
 
+    # Lets the caller narrow the camera list, e.g. ?assignment=entry&gate_id=gate1
     def get_queryset(self):
         qs = super().get_queryset()
         assignment = self.request.query_params.get('assignment')
         if assignment:
-            qs = qs.filter(assignment=assignment)
+            qs = qs.filter(assignment=assignment)    # entry cameras or parking cameras
         gate_id = self.request.query_params.get('gate_id')
         if gate_id:
-            qs = qs.filter(gate_id=gate_id)
+            qs = qs.filter(gate_id=gate_id)          # cameras covering one gate
         return qs
 
 
+# Draws a "no picture" image, so the viewer always has something to show
+# rather than a broken image icon.
 def _make_placeholder_jpeg(text: str) -> bytes:
     """Generate a dark grey JPEG with centred status text — sent when no live frame is available."""
     import numpy as np
-    blank = np.full((480, 640, 3), 30, dtype=np.uint8)
-    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-    x = max(0, (640 - tw) // 2)
-    cv2.putText(blank, text, (x, 248), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (160, 160, 160), 2)
-    _, buf = cv2.imencode('.jpg', blank, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    blank = np.full((480, 640, 3), 30, dtype=np.uint8)   # a 640x480 picture filled with near-black
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)   # measure the text first
+    x = max(0, (640 - tw) // 2)                  # centre it horizontally
+    cv2.putText(blank, text, (x, 248), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (160, 160, 160), 2)   # y=248: middle-ish
+    _, buf = cv2.imencode('.jpg', blank, [cv2.IMWRITE_JPEG_QUALITY, 60])   # low quality is plenty for flat grey
     return buf.tobytes()
 
 
+# Wraps one JPEG in the separator an MJPEG stream needs. MJPEG is simply a
+# never-ending HTTP response of JPEGs one after another, which is why a plain
+# <img> tag can display a live feed.
 def _mjpeg_frame(jpeg_bytes: bytes) -> bytes:
     return b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n'
 
 
-import asyncio
+import asyncio                                   # (module-level import, placed here beside its only user)
 
 async def parking_stream_view(request, pk):
     """
@@ -936,27 +1011,30 @@ async def parking_stream_view(request, pk):
     from rest_framework_simplejwt.authentication import JWTAuthentication
     from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
-    token_str = request.GET.get('token', '')
+    token_str = request.GET.get('token', '')     # the token rides in the URL, as the docstring explains
     if not token_str:
-        return HttpResponse(status=401)
+        return HttpResponse(status=401)          # 401: not authenticated
     try:
-        JWTAuthentication().get_validated_token(token_str)
+        JWTAuthentication().get_validated_token(token_str)   # checks signature and expiry
     except (TokenError, InvalidToken):
         return HttpResponse(status=401)
 
-    zone_id = int(pk)
+    zone_id = int(pk)                            # which parking zone's camera to show
 
+    # Rendered once, up front, so the loop below never pays to draw them.
     _connecting = _make_placeholder_jpeg('Connecting to camera...')
     _no_camera  = _make_placeholder_jpeg('Camera not running')
 
+    # Produces frames forever; Django sends each one as it is yielded, which is
+    # what keeps the response open as a live stream.
     async def _generate():
         loop = asyncio.get_event_loop()
         try:
             while True:
-                thread = parking_camera.get_thread(zone_id)
+                thread = parking_camera.get_thread(zone_id)   # the detector thread holding this zone's frames
                 if not thread:
-                    yield _mjpeg_frame(_no_camera)
-                    await asyncio.sleep(0.5)
+                    yield _mjpeg_frame(_no_camera)   # show the placeholder rather than closing the stream
+                    await asyncio.sleep(0.5)         # check again shortly, in case it starts
                     continue
 
                 # get_jpeg() encodes at most once per frame and shares the
@@ -965,17 +1043,19 @@ async def parking_stream_view(request, pk):
                 # a new frame does the encode and must not block the loop.
                 jpeg_bytes = await loop.run_in_executor(None, thread.get_jpeg)
                 if jpeg_bytes is None:
-                    yield _mjpeg_frame(_connecting)
+                    yield _mjpeg_frame(_connecting)  # thread exists but has no picture yet
                     await asyncio.sleep(0.1)
                     continue
 
-                yield _mjpeg_frame(jpeg_bytes)
+                yield _mjpeg_frame(jpeg_bytes)       # a real frame: hand it to the browser
                 await asyncio.sleep(1 / 20)  # cap at 20 fps
         except (asyncio.CancelledError, GeneratorExit):
-            return
+            return                                   # the viewer closed the tab; stop quietly
 
     return StreamingHttpResponse(
         _generate(),
+        # This content type is what tells the browser to keep replacing the
+        # picture as new parts arrive, instead of waiting for the end.
         content_type='multipart/x-mixed-replace; boundary=frame',
     )
 
