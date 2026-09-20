@@ -3600,10 +3600,10 @@ class ParkingNoticeView(APIView):
                 email.attach_alternative(html_msg, 'text/html')
                 email.send(fail_silently=False)
                 email_status = 'sent'
-            except Exception as e:
-                import traceback
-                print(f"[EMAIL ERROR] Parking notice broadcast failed: {e}")
-                traceback.print_exc()
+            except Exception:
+                # Report through the app logger (message + full traceback) so the
+                # failure lands in the configured logs, not only on the console.
+                logger.exception('Parking notice broadcast failed')
                 email_status = 'failed'
 
         data = ParkingNoticeSerializer(notice).data

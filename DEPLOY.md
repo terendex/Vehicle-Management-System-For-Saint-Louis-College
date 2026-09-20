@@ -23,16 +23,17 @@ detection:
   because Railpack defaults to 3.13, and the pinned `paddlepaddle`/`torch`
   wheels are not guaranteed to exist for it.
 - The `install` step installs **CPU-only torch first**, from the PyTorch index,
-  before `backend/requirements.txt`. Order matters: the PyPI default would drag
+  before the root `requirements.txt`. Order matters: the PyPI default would drag
   in ~2.5 GB of CUDA libraries that a Railway container can never use.
 - `buildAptPackages` / `deploy.aptPackages` provide `libgl1`, `libglib2.0-0` and
   `libgomp1`, which OpenCV and the Torch kernels need at build and at runtime.
 - Only the conventional `install` and `build` step names are used, so Railpack's
   own layer wiring applies instead of hand-rolled `inputs`.
-- The root [`requirements.txt`](requirements.txt) exists purely as a detection
-  marker (it just defers to `backend/requirements.txt`). Without a dependency
-  file at the root, the build can fail with *"Railpack could not determine how
-  to build the app"*.
+- The root [`requirements.txt`](requirements.txt) is the canonical pin list:
+  Railpack detects the app from it and installs it directly.
+  `backend/requirements.txt` only redirects to it (`-r ../requirements.txt`).
+  Without a dependency file at the root, the build can fail with *"Railpack
+  could not determine how to build the app"*.
 
 > **Do not move a `Dockerfile` back to the repository root.** Railway currently
 > prefers a root Dockerfile over an explicitly configured `RAILPACK` builder, so
@@ -270,8 +271,8 @@ field — that key is not valid in `railway.json` and is rejected).
 built frontend is present, and `docker-compose.yml` still uses
 `backend/Dockerfile`. Nothing in the existing `npm run dev` + `manage.py
 runserver` workflow changes. Install dependencies from
-`backend/requirements.txt` as before — the root `requirements.txt` is only a
-build-detection marker.
+`backend/requirements.txt` as before — it redirects to the root
+`requirements.txt`, which holds the actual pins.
 
 ## What is verified, and what the first build will tell you
 

@@ -317,6 +317,37 @@ Open a terminal per service in VS Code (`` Ctrl+` `` to open, split icon to add 
 > netstat -ano | findstr :5173    # Vite
 > ```
 
+### One-step alternative on Windows — `dev.ps1`
+
+`dev.ps1` at the repository root runs a read-only health check
+(`python manage.py doctor`: package versions, which database and file storage,
+Redis, ffmpeg, model weights), then opens the backend and the frontend in their
+own windows, with readable logs in `backend/logs/`
+(see `backend/debug_settings.py`).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\dev.ps1                    # background jobs ON (default)
+powershell -ExecutionPolicy Bypass -File .\dev.ps1 -NoBackgroundJobs  # background jobs OFF
+```
+
+> ⚠️ **Background jobs are ON by default** — on a bare `dev.ps1` launch and
+> with the manual `daphne` command below. The backend then runs, by itself,
+> **both** the **daily scheduler** (automatic backup, archiving expired
+> accounts, purging old records) **and parking-camera auto-detection** (which
+> keeps writing bay occupancy), against whatever database `backend/.env`
+> names — normally the shared Neon database.
+>
+> **That is more than the Railway (cloud) server runs.** By default Railway
+> runs only the daily scheduler: camera auto-detection switches itself off
+> there, because the cameras cannot be reached from the cloud. (The campus
+> server, by default, runs both — like a bare `dev.ps1` launch.)
+>
+> `-NoBackgroundJobs` turns **both** off. Use it when debugging so nothing is
+> archived, purged or auto-detected behind your back. `dev.ps1` prints
+> **"Background jobs: ON"** or **"OFF"** as it starts the backend. (For the
+> manual command, the same switches are the environment variables
+> `DISABLE_DAILY_SCHEDULER=1` and `DISABLE_PARKING_AUTODETECT=1`.)
+
 ### Terminal 1 — Backend (Django + Daphne)
 
 ```bash

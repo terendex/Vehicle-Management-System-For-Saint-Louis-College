@@ -380,6 +380,70 @@ positions, and change line 97 back to `├──`.
 
 **To restore:** put the original line back if `ocr.py` returns (2.7).
 
+### 4.3 `backend/vehicles/views.py` — parking-notice email failure (debug prep)
+
+**Why:** when a parking-notice email failed, the error was printed straight to
+the console with `print()` and `traceback.print_exc()`, so it bypassed the
+app's logging and never reached a log file. It now goes through the module's
+existing `logger` (`logger.exception(...)` records the same message plus the
+full traceback).
+
+**Replaced lines** (line numbers as of commit `97a7e99c`):
+
+```
+3603:             except Exception as e:
+3604:                 import traceback
+3605:                 print(f"[EMAIL ERROR] Parking notice broadcast failed: {e}")
+3606:                 traceback.print_exc()
+```
+
+**With:**
+
+```
+            except Exception:
+                # Report through the app logger (message + full traceback) so the
+                # failure lands in the configured logs, not only on the console.
+                logger.exception('Parking notice broadcast failed')
+```
+
+The next line, `email_status = 'failed'`, is unchanged, so the response still
+reports the failure.
+
+**To restore:** put the four original lines back in place of the new ones.
+
+### 4.4 `DEPLOY.md` — which requirements file is the real one (debug prep)
+
+**Why:** three passages said the root `requirements.txt` was only a "detection
+marker" that defers to `backend/requirements.txt`. The reverse is true: the
+root file holds the pins and Railpack installs it directly (`railpack.json`),
+and `backend/requirements.txt` is a one-line redirect (`-r ../requirements.txt`).
+Both Dockerfiles already said so.
+
+**Original lines** (line numbers as of commit `97a7e99c`):
+
+```
+26:   before `backend/requirements.txt`. Order matters: the PyPI default would drag
+```
+
+```
+32: - The root [`requirements.txt`](requirements.txt) exists purely as a detection
+33:   marker (it just defers to `backend/requirements.txt`). Without a dependency
+34:   file at the root, the build can fail with *"Railpack could not determine how
+35:   to build the app"*.
+```
+
+```
+273: `backend/requirements.txt` as before — the root `requirements.txt` is only a
+274: build-detection marker.
+```
+
+**New text:** line 26 now says "before the root `requirements.txt`"; lines 32–35
+became five lines describing the root file as the canonical pin list and
+`backend/requirements.txt` as a redirect; lines 273–274 now say it "redirects to
+the root `requirements.txt`, which holds the actual pins".
+
+**To restore:** paste the original lines back over the new wording.
+
 ---
 
 ## 5. Lines added
@@ -400,23 +464,62 @@ already kept out by the existing `*.md` rule.
 
 **To undo:** delete those lines.
 
+`.gitignore` — two lines added after `backend/*.log` (debug prep):
+
+```
+# Debug logs from backend/debug_settings.py (includes rotated copies like server.log.1)
+backend/logs/
+```
+
+**Why:** `backend/debug_settings.py` writes log files to `backend/logs/` and
+keeps rotated copies named like `server.log.1`, which the existing `*.log` rule
+does not match.
+
+**To undo:** delete those two lines.
+
+`README.md` — a new subsection, "One-step alternative on Windows — `dev.ps1`",
+inserted in "Running the Project" just before "Terminal 1 — Backend (Django +
+Daphne)" (debug prep).
+
+**Why:** it documents the new `dev.ps1` launcher and states plainly that
+background jobs (the daily backup / archive / purge scheduler and parking-camera
+auto-detection) are ON by default — for `dev.ps1` and for the manual `daphne`
+command alike — and how to turn them off (`-NoBackgroundJobs`, or the
+environment variables `DISABLE_DAILY_SCHEDULER=1` and
+`DISABLE_PARKING_AUTODETECT=1`). It also says that this default runs **more**
+than the Railway (cloud) server, which by default runs only the daily scheduler
+(auto-detection switches itself off there — see
+`backend/vehicles/detection_supervisor.py`, `_autodetect_disabled`).
+
+**Wording corrected before commit (2026-09-19).** The first draft of this note
+said background jobs run on a bare launch "exactly as in production", and the
+`dev.ps1` help said a bare launch "behaves like the real server". That was
+wrong for Railway: a bare launch runs both the scheduler **and** camera
+auto-detection, while Railway by default runs only the scheduler. Both texts
+now say so explicitly, and add that the campus server, by default, runs both.
+
+**To undo:** delete that subsection (from its heading down to the blank line
+before "### Terminal 1").
+
 ---
 
 ## 6. How the removal was checked
 
 "Before" was recorded on 2026-09-18 at commit `73e71908`, just before the
-cleanup. "Actual after" was measured on 2026-09-19 against commit `44a78c14`
-(the commit that made this cleanup) — every value below comes from a real run,
-not a prediction.
+cleanup. "Actual after" was measured on the cleaned-up tree: the frontend checks
+on 2026-09-19, and the Django suite finally on 2026-09-20, once this machine had
+been brought in line with the versions production installs (Django 4.2.30; it
+had been running 6.0.5). Every value below comes from a real run, not a
+prediction.
 
 | Check | Before | Expected after | Actual after |
 |---|---|---|---|
 | Frontend build output, compared file-by-file by SHA-256 fingerprint | 196 files | byte-identical | **All 196 files byte-identical** (2026-09-19 13:14) |
 | ESLint: files / errors / warnings (files with problems) | 110 / 77 / 10 (37) | 101 / 65 / 8 (30), every remaining file unchanged | **101 / 65 / 8 (30).** Only the 7 archived files left the report; no remaining file's result changed (2026-09-19 13:14) |
 | Brand lockup check (`npm run check:lockups`) | 13 / 13 | 13 / 13 | **13 / 13** (2026-09-19 13:14) |
-| Django tests, `manage.py test --noinput --keepdb`, real clock, started 13:00–14:00 | 1,109 / 1,113 at 19:28 (4 known time-of-day failures) | 1,113 / 1,113 | **1,111 / 1,113** (full run 2026-09-19, 13:13–14:05). The 2 failures were caused by leftover test data, not by this cleanup — see the note below. After that data was removed, the 7 affected tests all pass (2026-09-19 14:22). |
+| Django tests, `manage.py test --noinput --keepdb`, real clock, started 13:00–14:00 | 1,109 / 1,113 at 19:28 (4 known time-of-day failures) | 1,113 / 1,113 | **1,109 / 1,113** (final run 2026-09-20, 13:02–13:47, on **Django 4.2.30** — the version production installs). The 4 failures are the seeded Monday–Saturday campus rule, and 2026-09-20 was a Sunday; the same 4 pass on the same Django 4.2.30 with the clock set to a Monday. Neither this cleanup nor the version is involved — see the second note below. (An earlier full run, 2026-09-19 13:13–14:05 and still on Django 6.0.5, gave **1,111 / 1,113**; those 2 failures were leftover test data — first note.) |
 
-**About the 2 Django failures.** The failing tests were
+**About the 2 Django failures in the 2026-09-19 run.** The failing tests were
 `accounts.tests.NotificationBellTests.test_list_endpoint_returns_unread_count`
 (unread count 4 instead of 1) and `test_mark_all_read` (5 marked read instead of
 2). The tests run against a separate test database that is kept between runs
@@ -432,3 +535,28 @@ leftovers from that run (all 52 timestamp columns in the test database were
 checked), and deleted from the **test database only**. The 7
 `NotificationBellTests` were then re-run and all passed. The live database was
 never involved, and none of the files archived here are used by these tests.
+
+**About the 4 Django failures in the final 2026-09-20 run.** The failing tests
+were `scanning.tests.EntryLogicTests.test_authorized_employee_allowed`,
+`test_authorized_student_any_schedule_allowed`,
+`test_expired_confiscation_lets_the_owner_back_in`, and
+`scanning.tests.ManualEntryAPITests.test_known_authorized_plate_returns_authorized`.
+Each one checks that a vehicle is allowed in, and each got "not allowed".
+
+The reason is the calendar, not the code. The entry rules that the database
+starts with allow **Monday to Saturday only** — `CAMPUS_DAYS` in
+`backend/vehicles/migrations/0074_seed_missing_rule_constraints.py` has no
+Sunday — and `_is_within_days()` in `backend/scanning/entry_logic.py` compares
+today's weekday against that list. So on a Sunday every student and employee
+entry is refused, at any hour, and 2026-09-20 was a Sunday. The one test in the
+same family that passed is the only one that fixes its own date, to a Monday.
+
+This was proven rather than assumed: with the same code and the same
+Django 4.2.30, and only the weekday changed, the same 4 tests fail when Django's
+clock says Sunday and all 5 pass when it says Monday. So neither this cleanup
+nor the version change is involved.
+
+Practical note for the next person: several tests in this suite depend on the
+clock, which is a pre-existing trait, not something this cleanup introduced. A
+run where all 1,113 should pass has to start on a **weekday** between 13:00 and
+19:00. The hour alone is not enough, as this Sunday run shows.
