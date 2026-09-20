@@ -1082,8 +1082,21 @@ from .email_utils import (send_acceptance_email, send_rejection_email,
                           send_in_background)
 
 
+# =============================================================================
+# WHO MAY DO WHAT
+#
+# A "permission class" answers one yes/no question before a view runs. Listing
+# one in permission_classes is how an endpoint states its own access rule.
+#
+# NOTE, factually (no code changed): IsAdminRole and IsAdminOrCdso have
+# identical bodies — both allow exactly role == 'admin'. The second name is
+# historical: 'admin' IS the CDSO since the separate 'cdso' role was folded
+# into it (migration 0024), so the "or" no longer adds anything.
+# =============================================================================
 class IsAdminRole(permissions.BasePermission):
     def has_permission(self, request, view):
+        # bool(...) because the checks can yield None for an anonymous caller,
+        # and a permission must answer True or False.
         return bool(request.user and request.user.is_authenticated and request.user.role == 'admin')
 
 
@@ -1107,83 +1120,115 @@ class AttributeDoubleParkingView(APIView):
     permission_classes = [IsSecurityRole]
 
     def post(self, request):
-        zone_id   = request.data.get('zone_id')
-        space_ids = request.data.get('space_ids') or []
-        plate     = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
+        zone_id   = request.data.get('zone_id')      # which lot the alert came from
+        space_ids = request.data.get('space_ids') or []   # the bays the car is straddling
+        plate     = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')   # what the guard read off the car
         if not zone_id or not space_ids or not plate:
             return Response({'error': 'zone_id, space_ids and plate_number are required.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        vehicle = Vehicle.resolve(plate)
+        vehicle = Vehicle.resolve(plate)             # plate first, then conduction number
         if vehicle is None:
             return Response({'error': 'No vehicle found for that plate or conduction number.'},
-                            status=status.HTTP_404_NOT_FOUND)
+                            status=status.HTTP_404_NOT_FOUND)   # nothing to attribute the violation to
 
         # Pull the evidence captured when the straddle was detected and clear the alert.
         thread = parking_camera.get_thread(int(zone_id))
+        # pop_alert does both jobs at once: hands back the photo AND removes the
+        # alert, so the card disappears from the guard's screen.
         evidence = thread.pop_alert(space_ids) if thread is not None else None
 
-        from scanning.views import _auto_log_violation
+        from scanning.views import _auto_log_violation   # the shared "raise a violation" helper
         from violations.models import Violation
-        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
+        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'   # attribute it to the guard's gate
         _auto_log_violation(
             vehicle,
-            f"Double parking attributed by guard {request.user.full_name}",
+            f"Double parking attributed by guard {request.user.full_name}",   # names who decided, in the record
             gate_id=gate_id,
             vtype=Violation.Type.DOUBLE_PARKING,
-            evidence_bytes=evidence,
+            evidence_bytes=evidence,                 # the boxed photo taken when it was detected
         )
 
         try:
+            # Tell every open screen at once, so the alert card clears without
+            # anyone refreshing.
             from realtime.broadcast import broadcast_change
             broadcast_change('parkingspace', 'double_parking_attributed', zone_id=int(zone_id))
         except Exception:
-            logger.exception("double-parking attribution broadcast failed")
+            logger.exception("double-parking attribution broadcast failed")   # the violation still stands
 
         return Response({'status': 'attributed',
                          'plate_number': vehicle.plate_number or vehicle.conduction_number or plate})
 
 
+# The CDSO's review queue: the applications waiting for a decision.
 class PendingRegistrationsListView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def get(self, request):
+        # Defaults to pending, but the screen can ask for accepted or rejected
+        # to review what was already decided.
         status_filter = request.query_params.get('status', VehicleRegistration.Status.PENDING)
         # select_related pulls the department in the same SELECT, prefetch_related
         # collects every fetcher's per-student assessments in one more, and the
         # prebuilt block-count map replaces one COUNT per row with one query for
         # the page — together they turn a 3N+1 query pattern into a flat 3.
-        registrations = list(
+        registrations = list(                        # list(): fetch once, then reuse for the block counts below
             VehicleRegistration.objects
             .filter(status=status_filter)
             .select_related('department')
             .prefetch_related('fetcher_assessments')
-            .order_by('-created_at')
+            .order_by('-created_at')                 # newest application first
         )
         return Response(VehicleRegistrationSerializer(
             registrations,
             many=True,
             context={
                 'request': request,
+                # One query for the whole page's violation-block counts, instead
+                # of one per application.
                 'block_counts': VehicleRegistrationSerializer.build_block_counts(registrations),
             },
         ).data)
 
 
+# =============================================================================
+# REGISTRATION HELPERS
+#
+# Everything below here supports the registration endpoints in the next
+# segments. Two themes run through it:
+#
+#   1. One identity, one active pass. A plate, conduction sticker, email,
+#      driver's licence or school ID may belong to at most ONE pending or
+#      accepted registration. The _*_conflict functions each check one of
+#      those, and _registration_conflict runs them in order.
+#
+#   2. Ask the database, not Python. Each check is written so PostgreSQL can
+#      answer it from an index. The long comments record what the earlier
+#      versions did instead — fetching every active registration and comparing
+#      in a loop, which grew slower with every application on file.
+# =============================================================================
+
+# Builds the one-time password a newly approved owner is emailed.
 def _generate_temp_password():
     """Generate a secure temporary password that meets all strength requirements."""
+    # One character guaranteed from each required group, so the result always
+    # satisfies the password rules rather than passing by luck.
     lowercase = secrets.choice(string.ascii_lowercase)
     uppercase = secrets.choice(string.ascii_uppercase)
     digit     = secrets.choice(string.digits)
     special   = secrets.choice('!@#$%^&*()_+-=')
     # Fill remaining 8 chars from full set
     alphabet  = string.ascii_letters + string.digits + '!@#$%^&*()_+-='
-    rest      = [secrets.choice(alphabet) for _ in range(8)]
+    rest      = [secrets.choice(alphabet) for _ in range(8)]   # 12 characters in total
     password_chars = [lowercase, uppercase, digit, special] + rest
+    # Shuffle, or the first four characters would always be in the same order.
+    # SystemRandom, like secrets, draws on the operating system's randomness.
     secrets.SystemRandom().shuffle(password_chars)
     return ''.join(password_chars)
 
 
+# The same tidy-up the models use, kept here so this file can call it directly.
 def _normalize_plate(plate):
     return (plate or '').strip().upper().replace(' ', '')
 
@@ -1205,6 +1250,8 @@ _VEHICLE_TYPE_MAP = {
 }
 
 
+# Anything unrecognised becomes a car, which is the safe default for counting
+# and for the gate: it is the commonest type and takes a full bay.
 def _vehicle_type_for(registration_vehicle_type):
     return _VEHICLE_TYPE_MAP.get(
         (registration_vehicle_type or '').strip().lower(), Vehicle.Type.CAR
@@ -1219,12 +1266,14 @@ def _upsert_vehicle_for_registration(registration, user):
     (e.g. a plate first seen via a visitor pass)."""
     plate      = _normalize_plate(registration.plate_number)
     conduction = _normalize_plate(registration.conduction_number)
-    defaults = {
+    defaults = {                                     # written whether the row is created or adopted
         'vehicle_type':  _vehicle_type_for(registration.vehicle_type),
         'color':         registration.vehicle_color,
-        'is_authorized': True,
-        'user':          user,
+        'is_authorized': True,                       # approval is what authorises the vehicle at the gate
+        'user':          user,                       # and gives it an owner
     }
+    # Match on whichever identifier this registration actually carries, and
+    # write the other one too, so a car that gains a plate loses its sticker.
     if plate:
         defaults['conduction_number'] = conduction  # normally ''
         vehicle_obj, _ = Vehicle.objects.update_or_create(plate_number=plate, defaults=defaults)
@@ -1243,20 +1292,23 @@ def _assign_system_id(registration):
     else shares `system_employee_id` as the non-student slot. Storage is not
     the label, so the fetcher's code lands in that slot carrying SLC-FET-.
     Every reader already falls back across the two columns."""
-    padded_id = str(registration.pk).zfill(6)
+    padded_id = str(registration.pk).zfill(6)        # row number as six digits, e.g. 42 → "000042"
     kind = registration.registrant_type
     if kind == 'student':
         registration.system_student_id = f"SLC-STU-{padded_id}"
         return registration.system_student_id
-    prefix = 'SLC-FET' if kind == 'fetcher' else 'SLC-EMP'
-    registration.system_employee_id = f"{prefix}-{padded_id}"
+    prefix = 'SLC-FET' if kind == 'fetcher' else 'SLC-EMP'   # the prefix carries the meaning...
+    registration.system_employee_id = f"{prefix}-{padded_id}"   # ...even though both share this column
     return registration.system_employee_id
 
 
+# Is this plate already spoken for? Two ways it can be: another live
+# application holds it, or an owned vehicle already carries it.
+# `qs` is the set of active registrations to search, built by the caller.
 def _plate_conflict(plate_number, qs):
     plate_norm = _normalize_plate(plate_number)
     if not plate_norm:
-        return None
+        return None                                  # no plate given (a conduction-only application)
     # Stored plates may vary in spacing/case, so compare normalized values.
     #
     # This normalisation runs in SQL, not Python. It used to pull every active
@@ -1265,9 +1317,9 @@ def _plate_conflict(plate_number, qs):
     # 2,000 rows already cost ~1.1s per call against Neon. The expression index
     # `vehreg_plate_norm` matches this exact expression, so Postgres answers it
     # with an index lookup instead.
-    if qs.exclude(plate_number='').annotate(
-        _plate_norm=Upper(Replace('plate_number', Value(' '), Value('')))
-    ).filter(_plate_norm=plate_norm).exists():
+    if qs.exclude(plate_number='').annotate(         # skip conduction-only rows, whose plate is blank
+        _plate_norm=Upper(Replace('plate_number', Value(' '), Value('')))   # UPPER(plate with spaces removed), computed in SQL
+    ).filter(_plate_norm=plate_norm).exists():       # .exists(): ask "is there one?", do not fetch rows
         return "This plate number already has an active registration."
     # Unowned Vehicle rows are adopted by update_or_create at accept time,
     # so only plates already tied to an account are conflicts.
@@ -1277,11 +1329,12 @@ def _plate_conflict(plate_number, qs):
     # up with an exact match). __iexact wrapped the column in UPPER() and made
     # this a sequential scan of tbl_vehicle on every submission and every
     # keystroke of the availability check, ignoring uniq_vehicle_plate_number.
-    if Vehicle.objects.filter(plate_number=plate_norm, user__isnull=False).exists():
+    if Vehicle.objects.filter(plate_number=plate_norm, user__isnull=False).exists():   # user__isnull=False: only OWNED vehicles
         return "This plate number is already registered to an existing vehicle pass."
-    return None
+    return None                                      # free to use
 
 
+# Same question for the email address, which also becomes the portal login.
 def _email_conflict(email, qs):
     email_norm = (email or '').strip().lower()
     if not email_norm:
@@ -1290,7 +1343,7 @@ def _email_conflict(email, qs):
     # Done in SQL against the `vehreg_email_norm` expression index — the old
     # Python loop fetched every active registration's email per call.
     if qs.exclude(email='').annotate(
-        _email_norm=Lower('email')
+        _email_norm=Lower('email')                   # matches the vehreg_email_norm index
     ).filter(_email_norm=email_norm).exists():
         return "This email address already has an active registration."
     # An email tied to an existing *live* account can't start a new pass. Archived
@@ -1303,7 +1356,7 @@ def _email_conflict(email, qs):
     # into create_user(), where uniq_active_user_email turned it into a 500
     # instead of this readable 400. AcceptRegistrationView used to repeat this
     # very query a second time for the same reason; this one already covers it.
-    if User.objects.filter(email__iexact=email_norm, is_archived=False).exists():
+    if User.objects.filter(email__iexact=email_norm, is_archived=False).exists():   # is_archived=False: expired accounts do not block
         return "This email address is already tied to an existing account."
     return None
 
@@ -1315,16 +1368,18 @@ def _conduction_conflict(conduction_number, qs):
     conduction_number is a new field, always normalized (upper, no spaces) on
     save, so both checks are exact indexed lookups — O(1)-ish, no table scan.
     """
-    norm = _normalize_plate(conduction_number)
+    norm = _normalize_plate(conduction_number)       # conduction numbers are tidied the same way as plates
     if not norm:
         return None
-    if qs.filter(conduction_number=norm).exists():
+    if qs.filter(conduction_number=norm).exists():   # exact match: the column is always stored normalised
         return "This conduction number already has an active registration."
     if Vehicle.objects.filter(conduction_number=norm, user__isnull=False).exists():
         return "This conduction number is already tied to an existing vehicle pass."
     return None
 
 
+# One driver's licence, one active pass: it is the licence holder who is being
+# permitted to drive on campus, whichever vehicle they bring.
 def _license_conflict(drivers_license, qs):
     lic = (drivers_license or '').strip().upper()
     if not lic:
@@ -1337,6 +1392,8 @@ def _license_conflict(drivers_license, qs):
     return None
 
 
+# The school's own ID numbers. Each is only checked for the type it belongs to,
+# so a student ID and an employee ID never collide with each other.
 def _id_conflict(registrant_type, student_id, employee_id, qs):
     # Exact, not __iexact: these are stripped on save and are numeric, so
     # case-folding buys nothing — but it wraps the column in UPPER(), which
@@ -1364,12 +1421,16 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     (pending/accepted) registration.
     Returns an error message string, or None if there is no conflict.
     """
+    # "Active" means pending or accepted: a rejected or expired application
+    # releases its plate, email and IDs for somebody to use again.
     if statuses is None:
         statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
     qs = VehicleRegistration.objects.filter(status__in=statuses)
     if exclude_pk is not None:
-        qs = qs.exclude(pk=exclude_pk)
+        qs = qs.exclude(pk=exclude_pk)               # when editing, a row must not conflict with itself
 
+    # Checked in order, stopping at the first problem, so the applicant is told
+    # one clear reason rather than a list.
     conflict = _plate_conflict(plate_number, qs)
     if conflict:
         return conflict
@@ -1382,7 +1443,7 @@ def _registration_conflict(registrant_type, plate_number, email, student_id, emp
     conflict = _license_conflict(drivers_license, qs)
     if conflict:
         return conflict
-    return _id_conflict(registrant_type, student_id, employee_id, qs)
+    return _id_conflict(registrant_type, student_id, employee_id, qs)   # None here means everything is free
 
 
 def _registration_ban(plate_number, email, student_id, employee_id, conduction_number=''):
@@ -1414,9 +1475,11 @@ def _registration_ban(plate_number, email, student_id, employee_id, conduction_n
         _email_norm=Lower('email'),
     )
 
+    # Build "matches ANY of these identifiers" — the ban follows the person, so
+    # changing car or email address is not a way around it.
     conds = Q()
     if email_norm:
-        conds |= Q(_email_norm=email_norm)
+        conds |= Q(_email_norm=email_norm)           # "|=" adds another OR branch
     if plate_norm:
         conds |= Q(_plate_norm=plate_norm)
     if conduction_norm:
@@ -1426,8 +1489,10 @@ def _registration_ban(plate_number, email, student_id, employee_id, conduction_n
     if employee_id:
         conds |= Q(employee_id=employee_id)
     if not conds:
-        return None
+        return None                                  # nothing identifying was supplied: nothing to match
 
+    # The ban lives on the ACCOUNT; these rows are how we get from an
+    # identifier to the account that used it.
     if qs.filter(conds, user__registration_banned=True).exists():
         return ("This applicant reached the maximum number of traffic violations and is no "
                 "longer eligible to register a vehicle pass. Please contact the CDSO office.")
@@ -1447,17 +1512,18 @@ def _normalize_department(data):
     the label at all, so a walk-in employee's department never reached the row,
     and with it the fee exemption never applied.
     """
-    dept_raw = data.pop('department', None)
+    dept_raw = data.pop('department', None)          # removed: the label is not what the column stores
     if isinstance(dept_raw, list):
-        dept_raw = dept_raw[0] if dept_raw else None
+        dept_raw = dept_raw[0] if dept_raw else None   # form uploads arrive as one-item lists
 
+    # Turn the choices round: label ("Teaching") → stored value ("teaching").
     dept_label_to_value = {
         label: value for value, label in VehicleRegistration.DepartmentType.choices
     }
-    data['department'] = None
-    dept_value = dept_label_to_value.get(dept_raw, '')
+    data['department'] = None                        # the FK to a ReferenceItem row is not set from this form
+    dept_value = dept_label_to_value.get(dept_raw, '')   # '' for a label we do not recognise
     if dept_value:
-        data['department_type'] = dept_value
+        data['department_type'] = dept_value         # the value the fee rules read
     return dept_value
 
 
@@ -1474,7 +1540,7 @@ def _license_db_conflict(drivers_license):
     Returns an error message string, or None.
     """
     if isinstance(drivers_license, list):
-        drivers_license = drivers_license[0] if drivers_license else ''
+        drivers_license = drivers_license[0] if drivers_license else ''   # again, form values may arrive as lists
     # Upper-cased, then matched exactly — save() stores this stripped and
     # upper-cased, so case-folding buys nothing while __iexact wrapped the
     # column in UPPER() and stopped Postgres using
@@ -1507,6 +1573,8 @@ def _validate_authorized_driver(registrant_type, data):
     drivers_license is understood to be the driver's license.
     Returns an error message string, or None if valid.
     """
+    # Reads one form value as tidy text, whether it arrived as a string or a
+    # one-item list.
     def _val(key):
         v = data.get(key, '')
         if isinstance(v, list):
@@ -1514,21 +1582,25 @@ def _validate_authorized_driver(registrant_type, data):
         return (v or '').strip()
 
     if registrant_type != 'student':
-        return None
+        return None                                  # only student applications have this split
 
     level       = _val('student_level')
     driver_name = _val('driver_name')
 
+    # A minor must name an adult driver. Checked here, not only in the browser,
+    # so a direct API call cannot skip it.
     if level in MINOR_STUDENT_LEVELS and not driver_name:
         return ("Junior High and Elementary students are minors and cannot drive. "
                 "An authorized driver (parent/guardian) is required.")
 
+    # If someone else will drive, the record must say who they are to the
+    # student and whose licence is on file.
     if driver_name:
         if not _val('driver_relationship'):
             return "Please specify the authorized driver's relationship to the student."
         if not _val('drivers_license'):
             return "The authorized driver's license number is required."
-    return None
+    return None                                      # valid
 
 
 def _acceptance_email_failed_notice(registration):
@@ -1538,8 +1610,10 @@ def _acceptance_email_failed_notice(registration):
     that the owner never received the credentials to use it.
     """
     from accounts.notifications import notify
-    plate = registration.plate_number or registration.conduction_number or ''
+    plate = registration.plate_number or registration.conduction_number or ''   # name the vehicle however we can
 
+    # Returns the function rather than calling it: the caller decides when to
+    # raise the notice, typically only once the approval itself has committed.
     def _notice():
         notify(
             'registration', 'acceptance_email_failed',
@@ -1564,7 +1638,7 @@ def _pending_email_failed_notice(registration):
     from accounts.notifications import notify
     plate = registration.plate_number or registration.conduction_number or ''
 
-    def _notice():
+    def _notice():                                   # same deferred pattern as above
         notify(
             'registration', 'pending_email_failed',
             f"Acknowledgement email failed — {plate}",
