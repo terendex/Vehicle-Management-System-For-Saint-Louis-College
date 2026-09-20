@@ -689,29 +689,68 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             snapshot_path=snapshot_path or "",
         )
 
+    # =========================================================================
+    # THE ENTRY / EXIT STATE MACHINE
+    #
+    # Everything above this point answers "which plate is it?". This answers
+    # "so what happens?" — and it is the densest logic in the project, because
+    # one plate in front of a camera can mean several different things.
+    #
+    # A vehicle is only ever in one of two states, and the state is not stored
+    # anywhere: it is DERIVED from the access log by _inside_state(), which
+    # looks at the most recent entry/exit rows for that plate.
+    #
+    #   OUTSIDE  → a scan means "asking to come in"  → decide, then log an entry
+    #   INSIDE   → a scan means "leaving"            → log an exit, paired to the entry
+    #
+    # The branches below, in the order they are tried:
+    #
+    #   1. No Vehicle record at all
+    #        a. an event organizer's plate, while the event is on   → admit
+    #        b. a supplier's plate                                  → hand to _check_supplier
+    #        c. Open Campus Mode                                    → admit as "open entry"
+    #        d. otherwise                                           → log "unknown", refuse
+    #   2. 'duplicate'  → the same scan seconds ago; ignore it
+    #   3. 'inside'     → visitor on a pass? the guard handles the exit
+    #                     just entered? stay quiet for the cooldown
+    #                     otherwise                                 → record the EXIT
+    #   4. just exited  → suppress the immediate re-entry
+    #   5. outside      → ask the rules (check_entry), log it, maybe raise a violation
+    #
+    # Each branch returns a dictionary in the same shape, because the browser
+    # renders whatever comes back without knowing which branch produced it.
+    #
+    # This runs in a worker thread (via sync_to_async), which is why it opens
+    # with close_old_connections() and why every import is local.
+    # =========================================================================
     def _check_vehicle(self, plate_number: str, bbox):
         from django.db import close_old_connections
         from vehicles.models import Vehicle, VehicleRegistration, SupplierPlate
         from .models import AccessLog
-        from .entry_logic import check_entry
+        from .entry_logic import check_entry           # the campus rules: may this owner enter now?
         from violations.models import Violation
         from vehicles.serializers import VehicleSerializer
+        # These helpers are shared with the manual (typed) scan path in views.py,
+        # so the camera and a guard typing a plate reach the same decisions.
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
                             _auto_log_violation, _close_active_pass, _gate_label,
                             _check_stay_limit, _log_status, _open_campus_unknown_result,
                             _is_standby_fetcher)
         from .entry_logic import is_open_campus
-        close_old_connections()
+        close_old_connections()                        # worker thread: drop any connection left from a previous task
 
         # Normalize so OCR output matches the stored plate (e.g. "ABC 123" → "ABC123")
         plate_number = plate_number.strip().upper().replace(' ', '')
 
-        vehicle = Vehicle.objects.select_related("user").filter(
+        vehicle = Vehicle.objects.select_related("user").filter(   # fetch the owner in the same query
             plate_number=plate_number
-        ).first()
+        ).first()                                      # None when this plate is not registered
 
-        gate_id = getattr(self, '_gate_id', 'main')
+        gate_id = getattr(self, '_gate_id', 'main')    # which gate this camera belongs to
 
+        # ── BRANCH 1: no Vehicle record for this plate ────────────────────────
+        # Three kinds of vehicle may still be admitted without one, tried in
+        # this order because the earlier reason outranks the later.
         if not vehicle:
             # An organizer's unregistered plate during its event — the same
             # entry/exit and event slip the manual and image scans give. Ahead
@@ -721,16 +760,16 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             event = _event_for_unregistered_plate(plate_number)
             if event:
                 result = _event_plate_result(plate_number, event, gate_id, self._user)
-                result.setdefault("registration", None)
+                result.setdefault("registration", None)   # keep the shape every branch returns
                 result.setdefault("constraint", None)
                 return result
 
             # Supplier vehicles have no Vehicle/owner record — permitted by plate list
             supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
-                plate_number=plate_number, supplier__is_active=True
+                plate_number=plate_number, supplier__is_active=True   # only companies still in service
             ).first()
             if supplier_plate:
-                return self._check_supplier(plate_number, supplier_plate, gate_id)
+                return self._check_supplier(plate_number, supplier_plate, gate_id)   # its own state machine, below
 
             # Open Campus Mode — unregistered plates are admitted with the full
             # entry/exit state machine and shown as "Open Entry".
@@ -740,8 +779,11 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 result.setdefault("has_violations", False)
                 return result
 
+            # Nothing admits this plate. Before logging it as unknown, check we
+            # have not just logged the same thing — a car idling in view would
+            # otherwise write a row every time the hold expires.
             now = timezone.now()
-            cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
+            cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)   # one minute ago
             recent_unknown = AccessLog.objects.filter(
                 plate_number=plate_number,
                 status="unknown",
@@ -759,7 +801,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "has_violations": False,
                     "already_inside": False,
                 }
-            AccessLog.objects.create(
+            AccessLog.objects.create(                  # record that an unknown plate was seen here
                 plate_number=plate_number,
                 status="unknown",
                 gate_id=gate_id,
@@ -770,13 +812,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "allowed":        False,
                 "message":        "Plate not registered.",
                 "constraint":     None,
-                "vehicle":        None,
+                "vehicle":        None,               # there is no vehicle record to describe
                 "registration":   None,
                 "has_violations": False,
             }
 
+        # ── The vehicle IS registered. Where is it now? ───────────────────────
+        # The state is derived from the access log, not stored: 'inside',
+        # 'duplicate' (a scan moments ago) or anything else meaning outside.
+        # last_entry is the entry row an exit would be paired with.
         inside_status, last_entry = _inside_state(plate_number)
 
+        # ── BRANCH 2: the same scan again, within the grace period ────────────
         if inside_status == 'duplicate':
             return {
                 "status":         "duplicate",
@@ -787,6 +834,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": True,
             }
 
+        # ── BRANCH 3: the vehicle is inside, so this scan means "leaving" ─────
         if inside_status == 'inside':
             # The camera never logs a visitor out on its own. It hands the guard
             # the slip, and the guard records the exit (or reprints) from it.
@@ -803,6 +851,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "has_violations": False,
                     "already_inside": True,
                 }
+            # A car that just drove in is still in front of the camera. Without
+            # this window the very next frame would be read as it leaving again.
             seconds_since_entry = (timezone.now() - last_entry.scanned_at).total_seconds()
             if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
                 # Within the 1-minute breathing space — ignore
@@ -814,12 +864,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "has_violations": False,
                     "already_inside": True,
                 }
+            # Recording the exit. Two cameras (or a camera and a guard) can read
+            # the same plate at once, so the entry row is locked first and the
+            # write happens inside a transaction — that is what stops one drive
+            # out producing two exit rows.
             from django.db import transaction as _tx
             exit_log = None
-            with _tx.atomic():
-                locked_entry = AccessLog.objects.select_for_update().filter(
+            with _tx.atomic():                         # all-or-nothing: either the exit is written or nothing is
+                locked_entry = AccessLog.objects.select_for_update().filter(   # hold this row until the block ends
                     pk=last_entry.pk
                 ).first()
+                # Either the entry vanished, or somebody else paired an exit to
+                # it while we waited for the lock. Both mean: already handled.
                 if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
                     return {
                         "status":         "duplicate",
@@ -835,19 +891,22 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     status=AccessLog.Status.EXITED,
                     gate_id=gate_id,
                     scanned_by=self._user,
-                    paired_entry=locked_entry,
+                    paired_entry=locked_entry,         # the link that makes this pair a complete visit
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
-            duration_minutes = int(delta.total_seconds() / 60)
+            duration_minutes = int(delta.total_seconds() / 60)   # how long they were inside, whole minutes
+            # Closing any visitor pass may itself reveal an overstay.
             overstay_minutes = _close_active_pass(
                 plate_number, gate_id,
-                evidence_bytes=getattr(self, '_last_frame_jpeg', None))
+                evidence_bytes=getattr(self, '_last_frame_jpeg', None))   # the live frame becomes the violation's photo
+            # Drop-and-go fetchers have a maximum stay; standby fetchers are
+            # allowed to wait, so they are excluded from the check.
             if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
-                overstay_minutes = max(overstay_minutes, _check_stay_limit(
+                overstay_minutes = max(overstay_minutes, _check_stay_limit(   # keep whichever overstay is larger
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id,
                     evidence_bytes=getattr(self, '_last_frame_jpeg', None)))
-            overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""
-            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""   # only mentioned when it happened
+            owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'   # the vehicle may have lost its owner
             return {
                 "status":           "exited",
                 "allowed":          False,
@@ -859,6 +918,9 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "overstay_minutes": overstay_minutes,
             }
 
+        # ── BRANCH 4: it just left, and is still in view ──────────────────────
+        # The mirror image of the entry window above: without it, a car driving
+        # away would immediately be read as arriving again.
         if _in_exit_cooldown(plate_number):
             return {
                 "status":         "duplicate",
@@ -869,12 +931,15 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": False,
             }
 
+        # ── BRANCH 5: the vehicle is outside, so this is a request to enter ───
+        # Everything up to here was about timing and state; this is where the
+        # campus rules finally get asked (see scanning/entry_logic.py).
         entry = check_entry(vehicle)
 
         # UI-only statuses (e.g. 'no_pass', 'open_entry') aren't valid AccessLog
         # statuses — store those rows as authorized/denied per the decision while
         # the client still sees the real status
-        log_status = _log_status(entry)
+        log_status = _log_status(entry)                # the value that is valid to STORE, which may differ from what is shown
 
         # Authorized entries are deduped by the grace-period / entry-window checks
         # above; denied/violation statuses get a 1-minute DB-backed cooldown so a
@@ -882,7 +947,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         if not entry["allowed"]:
             now = timezone.now()
             cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
-            recent_same = AccessLog.objects.filter(
+            recent_same = AccessLog.objects.filter(    # was this same refusal logged in the last minute?
                 plate_number=plate_number,
                 status=log_status,
                 scanned_at__gte=cutoff,
@@ -898,16 +963,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "already_inside": False,
                 }
 
-        has_violations = Violation.objects.filter(
+        has_violations = Violation.objects.filter(     # so the guard's screen can flag a vehicle with open cases
             vehicle=vehicle, is_resolved=False
         ).exists()
-        already_inside = _already_inside(plate_number)
+        already_inside = _already_inside(plate_number)  # shown to the guard; does not change the decision here
 
+        # The scan is recorded whatever was decided: refusals matter as much as
+        # entries, and this row is what the next scan's state is derived from.
         AccessLog.objects.create(
             plate_number=plate_number,
             vehicle=vehicle,
             status=log_status,
-            denied_reason="" if entry["allowed"] else entry["message"],
+            denied_reason="" if entry["allowed"] else entry["message"],   # only a refusal carries a reason
             gate_id=gate_id,
             scanned_by=self._user,
         )
@@ -918,24 +985,25 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             try:
                 _auto_log_violation(
                     vehicle, entry["message"], gate_id,
-                    evidence_bytes=getattr(self, '_last_frame_jpeg', None),
+                    evidence_bytes=getattr(self, '_last_frame_jpeg', None),   # attach the frame as evidence
                     entry_status=entry["status"])
             except Exception:
-                pass
+                pass                                   # a violation that cannot be raised must not lose the scan record
 
         # Fetch registration details for non-visitor plates
+        # This is for the guard's screen only — the decision is already made.
         registration_data = None
         owner_type = vehicle.user.owner_type if vehicle.user else None
-        if owner_type and owner_type != 'visitor':
+        if owner_type and owner_type != 'visitor':     # visitors have a pass, not a registration
             try:
                 reg = (
-                    vehicle.registrations.filter(
+                    vehicle.registrations.filter(      # preferred: a registration linked to this vehicle
                         status='accepted'
                     ).order_by('-reviewed_at').first()
-                    or VehicleRegistration.objects.filter(
+                    or VehicleRegistration.objects.filter(   # fallback: one matching the plate but never linked
                         plate_number=vehicle.plate_number,
                         status='accepted',
-                    ).order_by('-reviewed_at').first()
+                    ).order_by('-reviewed_at').first()       # most recently approved wins
                 )
                 if reg:
                     registration_data = {
@@ -950,19 +1018,22 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                         'reviewed_at':     reg.reviewed_at.isoformat() if reg.reviewed_at else None,
                     }
             except Exception:
-                pass
+                pass                                   # extra detail is a nicety; never fail the scan over it
 
+        # A registered vehicle may ALSO be listed as an event organizer, which
+        # the guard's screen shows as a badge.
         try:
             from .entry_logic import get_organizer_event, vehicle_identifiers
-            organizer_event = get_organizer_event(*vehicle_identifiers(vehicle, plate_number))
+            organizer_event = get_organizer_event(*vehicle_identifiers(vehicle, plate_number))   # match by plate, conduction or typed text
         except Exception:
-            organizer_event = None
+            organizer_event = None                     # same reasoning: decoration must not break the decision
 
+        # The single shape every branch of this method returns.
         return {
-            "status":          entry["status"],
-            "allowed":         entry["allowed"],
-            "message":         entry["message"],
-            "constraint":      entry.get("constraint"),
+            "status":          entry["status"],        # what to show ('authorized', 'wrong_day', ...)
+            "allowed":         entry["allowed"],       # whether the barrier should open
+            "message":         entry["message"],       # the sentence the guard reads
+            "constraint":      entry.get("constraint"),  # which rule decided it, when one did
             "vehicle":         VehicleSerializer(vehicle).data,
             "registration":    registration_data,
             "has_violations":  has_violations,
@@ -970,6 +1041,11 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "organizer_event": organizer_event,
         }
 
+    # The same state machine as _check_vehicle, for a plate on a supplier's
+    # roster. It is separate because a supplier has no account and no
+    # registration: permission comes from the company being active, and the
+    # only rule that can refuse is the supplier delivery window. The shape of
+    # the returned dictionary matches, plus is_supplier/supplier_name.
     def _check_supplier(self, plate_number: str, supplier_plate, gate_id: str):
         """Entry/exit state machine for supplier plates (auto-permitted, no owner account).
         Mirrors the supplier branch of ManualEntryView so camera and manual paths agree."""
@@ -978,9 +1054,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from .views import (_inside_state, _in_exit_cooldown, _gate_label,
                             _check_stay_limit, _supplier_rule_denial)
 
-        supplier_name = supplier_plate.supplier.company_name
-        inside_status, last_entry = _inside_state(plate_number)
+        supplier_name = supplier_plate.supplier.company_name   # named in every message the guard sees
+        inside_status, last_entry = _inside_state(plate_number)   # same derived state as for a registered vehicle
 
+        # Same first branch: the identical scan moments ago.
         if inside_status == 'duplicate':
             return {
                 "status":         "duplicate",
@@ -994,9 +1071,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": True,
             }
 
+        # Inside → this scan is the truck leaving.
         if inside_status == 'inside':
             seconds_since_entry = (timezone.now() - last_entry.scanned_at).total_seconds()
-            if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:
+            if seconds_since_entry < CAMERA_ENTRY_COOLDOWN_SECONDS:   # still the arrival, seen again
                 return {
                     "status":         "already_inside",
                     "allowed":        False,
@@ -1008,6 +1086,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "has_violations": False,
                     "already_inside": True,
                 }
+            # Same locking as the registered-vehicle exit: one drive out must
+            # not produce two exit rows.
             with _tx.atomic():
                 locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
                 if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
@@ -1031,6 +1111,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 )
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)
+            # Suppliers have their own maximum stay; None is passed where a
+            # Vehicle would go, because a supplier plate has no vehicle record.
             overstay_minutes = _check_stay_limit(
                 plate_number, None, 'supplier', duration_minutes, gate_id,
                 evidence_bytes=getattr(self, '_last_frame_jpeg', None))
@@ -1062,6 +1144,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": False,
             }
 
+        # Outside → a request to come in. The only rule that can refuse a
+        # supplier is the delivery window; returns a sentence, or nothing.
         deny_msg = _supplier_rule_denial()
         if deny_msg:
             # DB-backed dedup so an idling supplier truck doesn't flood the log
@@ -1071,7 +1155,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 plate_number=plate_number, status=AccessLog.Status.DENIED,
                 scanned_at__gte=cutoff, scanned_at__lte=now,
             ).exists()
-            if not recent_denied:
+            if not recent_denied:                      # log the refusal once per minute, then just answer
                 AccessLog.objects.create(
                     plate_number=plate_number, status=AccessLog.Status.DENIED,
                     denied_reason=deny_msg, gate_id=gate_id, scanned_by=self._user,
@@ -1088,6 +1172,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 "already_inside": False,
             }
 
+        # Permitted: record the entry. This row is what a later scan will read
+        # as "inside", and what the exit will be paired to.
         entry_log = AccessLog.objects.create(
             plate_number=plate_number,
             status=AccessLog.Status.AUTHORIZED,
@@ -1097,7 +1183,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         from .entry_logic import is_open_campus
         from .slips import supplier_slip
-        open_campus = is_open_campus()
+        open_campus = is_open_campus()                 # only changes the wording and the status shown
         return {
             "status":         "open_entry" if open_campus else "authorized",
             "allowed":        True,
@@ -1113,22 +1199,36 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "already_inside": False,
         }
 
+    # Keeps a note of what this scan read, as material for improving the plate
+    # model later.
+    #
+    # NOTE, factually (no code changed): the two values written here are not
+    # among the ones MLTrainingSample declares. Its STATUS_CHOICES are
+    # unlabeled / auto_labeled / verified / rejected, and its SOURCE_CHOICES are
+    # scan / manual / imported — so "auto" and "stream" match neither, and a
+    # screen filtering on the declared values will not show these rows. Django
+    # only enforces `choices` in form validation, not in .create() or in the
+    # database, so the row still saves. The `image` field is also left unset
+    # (raw_bytes is accepted but never used), so these rows carry no picture.
+    # Compare scanning/ml/collector.py, which writes samples with an image.
     def _record_ml_sample(self, raw_bytes, results):
         from django.db import close_old_connections
         from .models import MLTrainingSample
-        close_old_connections()
+        close_old_connections()                        # worker thread: start from a fresh connection
         try:
-            plates = [r["plate_number"] for r in results if r.get("plate_number")]
+            plates = [r["plate_number"] for r in results if r.get("plate_number")]   # the plates this scan decided
             MLTrainingSample.objects.create(
-                plate_number=";".join(plates) if plates else "",
+                plate_number=";".join(plates) if plates else "",   # several plates in one row, separated by ";"
                 status="auto",
                 source="stream",
             )
         except Exception as exc:
-            logger.warning("ML sample failed: %s", exc)
+            logger.warning("ML sample failed: %s", exc)   # training material is optional; never fail a scan for it
 
     # ── auth ──────────────────────────────────────────────────────────────────
 
+    # Turns the token from the connection URL into the signed-in user, or None.
+    # Called by connect() before anything else is set up.
     @staticmethod
     async def _get_user_from_token(token_key):
         from django.contrib.auth import get_user_model
@@ -1139,10 +1239,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         try:
             # Validates signature, expiry, and token type using simplejwt + SECRET_KEY
             validated = await sync_to_async(JWTAuthentication().get_validated_token)(token_key)
-            user_id = validated["user_id"]
-            return await sync_to_async(User.objects.get)(pk=user_id)
+            user_id = validated["user_id"]             # the account id carried inside the token
+            return await sync_to_async(User.objects.get)(pk=user_id)   # database lookup, wrapped for async code
         except (TokenError, InvalidToken, User.DoesNotExist, Exception):
-            return None
+            return None                                # any failure means "not authenticated"; connect() then closes the socket
 
 
 # ── Shared RTSP stream worker ──────────────────────────────────────────────────
