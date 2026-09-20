@@ -1272,21 +1272,40 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 # received image's naturalWidth.
 def _fit_for_wire(frm):
     import cv2
-    from vehicles.ffmpeg_capture import MAX_PIPE_PIXELS
+    from vehicles.ffmpeg_capture import MAX_PIPE_PIXELS   # the pixel budget both backends share
 
     h, w = frm.shape[:2]
     if w * h <= MAX_PIPE_PIXELS:
-        return frm
+        return frm                                   # already small enough: send it untouched
+    # Shrink by area, not by width: the square root gives the factor to apply to
+    # BOTH sides so that width x height lands on the budget.
     scale = (MAX_PIPE_PIXELS / float(w * h)) ** 0.5
     return cv2.resize(frm, (max(1, int(w * scale)), max(1, int(h * scale))),
-                      interpolation=cv2.INTER_AREA)
+                      interpolation=cv2.INTER_AREA)   # INTER_AREA is the right filter for shrinking
 
 
+# =============================================================================
+# ONE CAMERA, MANY VIEWERS
+#
+# An IP camera will only tolerate so many simultaneous connections, and each one
+# costs bandwidth. So the server opens a camera ONCE, in a background thread,
+# and every browser watching it subscribes to that one worker.
+#
+#   _StreamWorker    owns the connection to one camera and pushes frames out
+#   _STREAM_POOL     url → worker, so the second viewer reuses the first's
+#   _acquire_worker  get-or-create + subscribe, as one atomic step
+#
+# The worker runs in a plain thread while the consumers are asynchronous, which
+# is why frames are handed over through per-subscriber queues and
+# loop.call_soon_threadsafe: that is the safe way to cross from a thread into an
+# event loop. The long comments already in this class record the failures each
+# rule was written for; they are worth reading before changing any of it.
+# =============================================================================
 class _StreamWorker:
     """Manages a single RTSP capture thread shared across multiple consumers."""
 
     FRAME_INTERVAL = 1.0 / 20   # 20 fps cap for network/CPU budget
-    MAX_RETRIES    = 5
+    MAX_RETRIES    = 5          # give up after this many failed reconnects in a row
 
     # Reconnect backoff, doubling from RETRY_DELAY up to RETRY_DELAY_CAP.
     #
@@ -1312,31 +1331,36 @@ class _StreamWorker:
     # a second. Anything past this is not a slow camera, it is a dead one.
     STALE_FRAME_SECONDS = 8.0
 
+    # Sets up the bookkeeping for one camera. No connection is opened until
+    # somebody subscribes.
     def __init__(self, rtsp_url: str):
-        self.rtsp_url   = rtsp_url
+        self.rtsp_url   = rtsp_url                   # which camera this worker owns
         # The subscriber dict IS the reference count. A separate counter drifted
         # out of step with it — an unsubscribe for an sid that had already been
         # replaced decremented the count for a subscriber that was still there.
-        self._subs: dict[str, tuple['asyncio.Queue', 'asyncio.AbstractEventLoop']] = {}
-        self._lock      = threading.Lock()
-        self._thread: threading.Thread | None = None
+        self._subs: dict[str, tuple['asyncio.Queue', 'asyncio.AbstractEventLoop']] = {}   # subscriber id → (queue, its event loop)
+        self._lock      = threading.Lock()           # guards _subs and _thread across threads
+        self._thread: threading.Thread | None = None   # the capture thread, while one is running
         # One Event per thread generation, never reused: clearing a shared Event
         # let a new subscriber re-arm a thread that an outgoing one was stopping.
         self._stop      = threading.Event()
 
+    # Is there a live capture thread right now? Read into a local first, because
+    # another thread may clear self._thread between the two uses.
     def is_running(self) -> bool:
         t = self._thread
         return t is not None and t.is_alive()
 
+    # Adds one viewer and guarantees a thread is feeding it.
     def subscribe(self, sid: str, loop: 'asyncio.AbstractEventLoop') -> 'asyncio.Queue':
         """Register a consumer and guarantee a capture thread is running for it.
 
         Call through _acquire_worker, which holds the pool lock across
         get-or-create + subscribe.
         """
-        q: asyncio.Queue = asyncio.Queue(maxsize=3)
+        q: asyncio.Queue = asyncio.Queue(maxsize=3)   # short queue: a slow viewer drops frames rather than lagging further behind
         with self._lock:
-            self._subs[sid] = (q, loop)
+            self._subs[sid] = (q, loop)              # from here the worker will push frames to this queue
             # Start a thread whenever there is not a live one — not merely for
             # the first subscriber. A worker whose thread had already exited
             # (retries exhausted, or a stop that raced with this subscribe) was
@@ -1344,13 +1368,14 @@ class _StreamWorker:
             # waited on a queue nothing would ever push to: a black feed, no
             # error, forever.
             if not self.is_running():
-                self._stop = threading.Event()
+                self._stop = threading.Event()       # a fresh stop signal for this thread generation
                 self._thread = threading.Thread(
-                    target=self._run, args=(self._stop,), daemon=True,
-                    name=f'rtsp-worker-{sid[:6]}')
+                    target=self._run, args=(self._stop,), daemon=True,   # daemon: never blocks server shutdown
+                    name=f'rtsp-worker-{sid[:6]}')   # a recognisable name in thread dumps
                 self._thread.start()
-        return q
+        return q                                     # the caller waits on this queue for frames
 
+    # Removes one viewer, and stops the camera when the last one leaves.
     def unsubscribe(self, sid: str):
         # Pool lock first, matching _acquire_worker's order, so a subscribe
         # cannot slip in between "last subscriber left" and the worker leaving
@@ -1359,46 +1384,63 @@ class _StreamWorker:
         # moment after opening.
         with _STREAM_POOL_LOCK:
             with self._lock:
-                self._subs.pop(sid, None)
+                self._subs.pop(sid, None)            # this viewer is gone
                 if self._subs:
-                    return
-                self._stop.set()
+                    return                           # others are still watching: leave the camera open
+                self._stop.set()                     # nobody left: tell the thread to finish
                 self._thread = None
-            if _STREAM_POOL.get(self.rtsp_url) is self:
+            if _STREAM_POOL.get(self.rtsp_url) is self:   # only evict ourselves, never a newer worker
                 del _STREAM_POOL[self.rtsp_url]
 
+    # Hands one message to every subscriber. Called from the capture thread, so
+    # each queue is touched on its own event loop rather than directly.
     def _push(self, msg: dict):
         with self._lock:
-            items = list(self._subs.values())
+            items = list(self._subs.values())        # copy under the lock; deliver outside it
         for q, loop in items:
-            def _put(q=q, msg=msg):
+            def _put(q=q, msg=msg):                  # default args bind this iteration's values
                 try:
                     q.put_nowait(msg)
                 except asyncio.QueueFull:
+                    # This viewer is behind. Drop their oldest frame and keep the
+                    # newest: for live video, being current beats being complete.
                     try:  q.get_nowait()
                     except Exception: pass
                     try:  q.put_nowait(msg)
                     except Exception: pass
-            loop.call_soon_threadsafe(_put)
+            loop.call_soon_threadsafe(_put)          # the only safe way to touch a queue from another thread
 
+    # Waiting time before reconnect attempt number `retry`: 2s, 4s, 8s… capped.
     @classmethod
     def _backoff(cls, retry: int) -> float:
         """Seconds to wait before reconnect attempt number `retry` (0-based)."""
-        return min(cls.RETRY_DELAY * (2 ** retry), cls.RETRY_DELAY_CAP)
+        return min(cls.RETRY_DELAY * (2 ** retry), cls.RETRY_DELAY_CAP)   # double each time, never past the cap
 
+    # The capture thread. Its life is one outer loop of "connect, stream until
+    # something breaks, back off, try again", and inside each successful
+    # connection two threads cooperate:
+    #
+    #   the drain thread  pulls frames off the camera as fast as they arrive and
+    #                     keeps only the newest one, so the camera never stalls
+    #                     waiting for us
+    #   this loop         encodes that newest frame at a fixed 20 per second and
+    #                     pushes it to the viewers
+    #
+    # Splitting them is what keeps a slow encode from backing up the camera, and
+    # what makes it possible to tell a live picture from a frozen one.
     def _run(self, stop: threading.Event):
         # `stop` is this generation's Event, passed in rather than read off self:
         # a later subscribe swaps self._stop for a fresh one, and an older thread
         # reading self._stop would then never see its own stop signal.
         import cv2, base64 as _b64, time as _t
-        retry = 0
+        retry = 0                                    # consecutive failed connection attempts
         while not stop.is_set() and retry <= self.MAX_RETRIES:
             self._push({'type': 'status', 'connected': False,
                         'message': f'Connecting… (attempt {retry+1}/{self.MAX_RETRIES+1})'})
 
-            cap = RtspStreamConsumer._open_cap(self.rtsp_url)
+            cap = RtspStreamConsumer._open_cap(self.rtsp_url)   # OpenCV first, system FFmpeg as fallback
             if not cap or not cap.isOpened():
-                if cap: cap.release()
+                if cap: cap.release()                # always hand the handle back, even a useless one
                 delay = self._backoff(retry)
                 retry += 1
                 # Interruptible: a subscriber leaving should not wait out a
@@ -1407,26 +1449,28 @@ class _StreamWorker:
                     break
                 continue
 
-            retry = 0
+            retry = 0                                # connected: forget the failure count
             self._push({'type': 'status', 'connected': True, 'message': 'Stream connected.'})
             logger.info('[StreamWorker] Opened %s', self.rtsp_url)
 
             # Drain thread so grab() never blocks the broadcast loop
+            # 'at' is when the newest frame arrived and 'seq' counts them, which
+            # is how the loop below tells fresh from frozen and new from repeat.
             latest       = {'data': None, 'ok': False, 'at': _t.monotonic(), 'seq': 0}
-            drain_stop   = threading.Event()
-            cap_released = threading.Event()
+            drain_stop   = threading.Event()         # tells the drain thread to finish
+            cap_released = threading.Event()         # the drain thread sets this once it has released the camera
 
             def _drain():
-                errs, grabs = 0, 0
+                errs, grabs = 0, 0                   # consecutive failures, and total frames taken
                 try:
                     while not drain_stop.is_set():
                         try:
-                            if not cap.grab():
+                            if not cap.grab():       # fetch a frame without decoding it yet
                                 errs += 1
-                                if errs > 20: latest['ok'] = False; break
-                                _t.sleep(0.02); continue
-                            errs = 0; grabs += 1
-                            ok, frm = cap.retrieve()
+                                if errs > 20: latest['ok'] = False; break   # 20 in a row: the camera is gone
+                                _t.sleep(0.02); continue                    # brief pause, then try again
+                            errs = 0; grabs += 1     # a good grab resets the failure run
+                            ok, frm = cap.retrieve() # now decode the grabbed frame
                             if ok and frm is not None:
                                 # `at` and `seq` are what let the broadcast loop
                                 # tell a live picture from a frozen one. Without
@@ -1441,6 +1485,8 @@ class _StreamWorker:
                             if errs > 20: break
                             _t.sleep(0.02)
                 finally:
+                    # Whatever happened, give the camera back and say so — the
+                    # loop below waits on this before reconnecting.
                     try: cap.release()
                     except Exception: pass
                     cap_released.set()
@@ -1449,10 +1495,10 @@ class _StreamWorker:
             dt.start()
 
             # Wait up to 15 s for the first frame
-            for _ in range(300):
+            for _ in range(300):                     # 300 x 0.05s = 15 seconds
                 if latest['ok'] or cap_released.is_set(): break
                 _t.sleep(0.05)
-            else:
+            else:                                    # for/else: runs only if the loop was never broken out of
                 self._push({'type': 'status', 'connected': False,
                             'message': 'Stream timed out (no frames received).'})
                 drain_stop.set()
@@ -1467,11 +1513,13 @@ class _StreamWorker:
                     break
                 continue
 
+            # Streaming. Each pass sends at most one frame, then sleeps just
+            # long enough to hold the 20-per-second pace.
             try:
-                sent_seq = 0
+                sent_seq = 0                         # the sequence number of the last frame sent
                 while not stop.is_set() and not cap_released.is_set():
-                    t0 = _t.monotonic()
-                    frm = latest['data']
+                    t0 = _t.monotonic()              # start of this pass, for the pacing at the end
+                    frm = latest['data']             # the newest frame the drain thread has
                     if not latest['ok'] or frm is None:
                         self._push({'type': 'status', 'connected': False,
                                     'message': 'Stream dropped. Reconnecting…'})
@@ -1492,19 +1540,20 @@ class _StreamWorker:
                     # Only encode what is actually new. Re-encoding an unchanged
                     # frame burns JPEG cycles per viewer to transmit a picture
                     # they already have.
-                    if latest['seq'] != sent_seq:
+                    if latest['seq'] != sent_seq:    # a different frame from the one last sent
                         sent_seq = latest['seq']
-                        ok, buf = cv2.imencode('.jpg', _fit_for_wire(frm),
+                        ok, buf = cv2.imencode('.jpg', _fit_for_wire(frm),   # shrink if needed, then compress
                                                [cv2.IMWRITE_JPEG_QUALITY, 85])
                         if ok:
                             self._push({'type': 'frame',
-                                        'image_b64': _b64.b64encode(buf.tobytes()).decode()})
-                    wait = self.FRAME_INTERVAL - (_t.monotonic() - t0)
-                    if wait > 0: _t.sleep(wait)
+                                        'image_b64': _b64.b64encode(buf.tobytes()).decode()})   # JPEG → text for the socket
+                    wait = self.FRAME_INTERVAL - (_t.monotonic() - t0)   # time left in this frame's slot
+                    if wait > 0: _t.sleep(wait)      # sleep only the remainder, so slow encodes do not compound
             finally:
-                drain_stop.set()
-                cap_released.wait(35)
+                drain_stop.set()                     # stop the drain thread...
+                cap_released.wait(35)                # ...and wait for it to release the camera before reconnecting
 
+        # Out of the outer loop: either stopped on purpose, or out of retries.
         if retry > self.MAX_RETRIES:
             self._push({'type': 'error',
                         'message': 'Cannot connect to RTSP stream. If the camera '
@@ -1527,10 +1576,12 @@ class _StreamWorker:
         logger.info('[StreamWorker] Stopped for %s', self.rtsp_url)
 
 
-_STREAM_POOL: dict[str, _StreamWorker] = {}
-_STREAM_POOL_LOCK = threading.Lock()
+_STREAM_POOL: dict[str, _StreamWorker] = {}   # rtsp url → the one worker for that camera
+_STREAM_POOL_LOCK = threading.Lock()          # always taken BEFORE a worker's own lock (see unsubscribe)
 
 
+# The only correct way to join a camera: look up or create the worker and
+# subscribe to it without letting go of the pool lock in between.
 def _acquire_worker(rtsp_url: str, sid: str, loop: 'asyncio.AbstractEventLoop'):
     """Get-or-create the worker for this URL and subscribe to it in one step.
 
@@ -1540,10 +1591,10 @@ def _acquire_worker(rtsp_url: str, sid: str, loop: 'asyncio.AbstractEventLoop'):
     holding a worker nobody was feeding and nobody would ever restart.
     """
     with _STREAM_POOL_LOCK:
-        worker = _STREAM_POOL.get(rtsp_url)
+        worker = _STREAM_POOL.get(rtsp_url)          # is someone already watching this camera?
         if worker is None:
-            worker = _STREAM_POOL[rtsp_url] = _StreamWorker(rtsp_url)
-        q = worker.subscribe(sid, loop)
+            worker = _STREAM_POOL[rtsp_url] = _StreamWorker(rtsp_url)   # first viewer: create the worker
+        q = worker.subscribe(sid, loop)              # subscribing also starts the thread if needed
     return worker, q
 
 
@@ -1572,9 +1623,12 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
+    # One browser joining a camera feed. Unlike ScanLiveConsumer, this one does
+    # not receive frames — it fetches them from the shared worker and forwards
+    # them, and only runs detection when the viewer asked for it.
     async def connect(self):
         qs = self.scope["query_string"].decode()
-        token_key = (
+        token_key = (                                # same URL-token scheme as the scanning consumer
             qs.split("token=")[-1].split("&")[0]
             if "token=" in qs
             else None
@@ -1582,7 +1636,7 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         if not token_key:
             await self.close(code=4001, reason="Authentication required")
             return
-        self._user = await ScanLiveConsumer._get_user_from_token(token_key)
+        self._user = await ScanLiveConsumer._get_user_from_token(token_key)   # reuse the same lookup
         if self._user is None:
             await self.close(code=4001, reason="Invalid token")
             return
@@ -1590,18 +1644,20 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         # detect=1 in the query string enables plate-scan ML.
         # Omit or set detect=0 for view-only connections (Device Management,
         # Operations Center) so they never run detection or OCR.
-        self._scan_enabled = "detect=1" in qs
+        self._scan_enabled = "detect=1" in qs        # view-only tabs cost no detection or OCR at all
 
         # Shared scan state (mirrors ScanLiveConsumer.__init__ block)
+        # The same fields, because the scanning helpers borrowed at the bottom
+        # of this class expect to find them.
         self._tracker               = ProximityTracker()
         self._frame_counter         = 0
         self._pending_ocr: dict     = {}
         self._ocr_state: dict       = {}
         self._announced: dict       = {}  # plate → decided_at last sent to this client
         self._detection_in_progress = False
-        self._last_img_w            = 1280
+        self._last_img_w            = 1280           # a sensible guess until the first frame is measured
         self._last_img_h            = 720
-        self._stream_task           = None
+        self._stream_task           = None           # the task pumping frames from the worker
         self._detect_tasks: set     = set()   # tracked so we can cancel on disconnect
         try:
             from vehicles.models import SystemSettings
@@ -1634,6 +1690,8 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         add_ml_status_listener(_ml_status_listener)  # immediately delivers current status
         await self.send_json({"type": "connected", "message": "RTSP consumer ready."})
 
+    # Leaving: drop the ML listener and stop the stream, which also
+    # unsubscribes from the shared worker (see _consume_stream's finally).
     async def disconnect(self, code):
         logger.info("[RTSP] Disconnect code=%s", code)
         from .ml.detection import remove_ml_status_listener
@@ -1643,24 +1701,28 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     # ── receive ────────────────────────────────────────────────────────────────
 
+    # This consumer takes commands rather than frames: "start" (watch this
+    # camera) and "stop".
     async def receive_json(self, content: dict):
         msg_type = content.get("type", "")
 
         if msg_type == "start":
             rtsp_url = content.get("rtsp_url", "").strip()
-            if not rtsp_url or not rtsp_url.lower().startswith("rtsp://"):
+            if not rtsp_url or not rtsp_url.lower().startswith("rtsp://"):   # refuse anything that is not a camera URL
                 await self.send_json({"type": "error", "message": "Invalid or missing RTSP URL."})
                 return
             if content.get("gate_id"):
-                self._gate_id = _resolve_gate(content["gate_id"], self._user)
-            await self._cancel_stream()
+                self._gate_id = _resolve_gate(content["gate_id"], self._user)   # a camera's own gate overrides the guard's
+            await self._cancel_stream()              # switching cameras: stop the previous one first
             # Reset tracker state for fresh stream
+            # Track ids and plate votes describe the old camera's scene; carrying
+            # them over would attach one camera's readings to another's cars.
             self._tracker       = ProximityTracker()
             self._ocr_state     = {}
             self._pending_ocr   = {}
             self._announced     = {}
             self._frame_counter = 0
-            self._stream_task   = asyncio.create_task(self._consume_stream(rtsp_url))
+            self._stream_task   = asyncio.create_task(self._consume_stream(rtsp_url))   # runs until cancelled
 
         elif msg_type == "stop":
             await self._cancel_stream()
@@ -1668,50 +1730,53 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     # ── stream management ──────────────────────────────────────────────────────
 
+    # Stops everything this consumer started: the detection tasks first, then
+    # the frame pump.
     async def _cancel_stream(self):
         # Cancel all in-flight detection/OCR tasks first so they don't keep
         # logging after the stream stops (executor threads finish on their own
         # but the async wrappers — and their log calls — are stopped here).
-        for t in list(getattr(self, '_detect_tasks', ())):
+        for t in list(getattr(self, '_detect_tasks', ())):   # list(): cancelling removes entries from the set
             t.cancel()
         self._detect_tasks = set()
 
         if self._stream_task and not self._stream_task.done():
             self._stream_task.cancel()
             try:
-                await self._stream_task
+                await self._stream_task              # wait for it to actually finish unwinding
             except asyncio.CancelledError:
-                pass
+                pass                                 # expected: we are the ones who cancelled it
         self._stream_task = None
 
     async def _consume_stream(self, rtsp_url: str):
         """Subscribe to the shared _StreamWorker for this URL and process frames."""
         import base64 as _b64
-        worker, q = _acquire_worker(rtsp_url, self._worker_sid, self._loop)
+        worker, q = _acquire_worker(rtsp_url, self._worker_sid, self._loop)   # join the camera; q is our private queue
         # Track whether we've told the frontend the stream is connected.
         # A late-joining subscriber won't receive the worker's initial status
         # broadcast, so we synthesise it on the first frame we see.
         sent_connected = False
         try:
+            # Forward whatever the worker publishes until this task is cancelled.
             while True:
                 try:
-                    msg = await asyncio.wait_for(q.get(), timeout=45.0)
+                    msg = await asyncio.wait_for(q.get(), timeout=45.0)   # wake up if nothing arrives for 45s
                 except asyncio.TimeoutError:
                     # Nothing at all for 45 s. If the capture thread is gone,
                     # waiting longer cannot help — report it instead of holding
                     # a black canvas open in silence, which is how a dead worker
                     # used to present itself.
-                    if not worker.is_running():
+                    if not worker.is_running():          # the capture thread has given up
                         await self.send_json({
                             "type": "error",
                             "message": "The camera stream stopped and could not be restarted.",
                         })
-                        await self.close()
+                        await self.close()               # close the socket so the browser reconnects
                         return
-                    logger.warning("[RTSP] No frames for 45 s — still waiting")
+                    logger.warning("[RTSP] No frames for 45 s — still waiting")   # thread alive: keep waiting
                     continue
 
-                msg_type = msg.get("type")
+                msg_type = msg.get("type")               # the worker sends 'frame', 'status' or 'error'
 
                 if msg_type == "frame":
                     if not sent_connected:
@@ -1722,18 +1787,20 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                             "message": "Stream connected.",
                         })
                         sent_connected = True
-                    await self.send_json({"type": "frame", "image_b64": msg["image_b64"]})
+                    await self.send_json({"type": "frame", "image_b64": msg["image_b64"]})   # the picture, unchanged
+                    # Scan only if this viewer asked for it and the previous
+                    # detection has finished — otherwise just show the video.
                     if self._scan_enabled and not self._detection_in_progress:
                         self._detection_in_progress = True
-                        jpeg_bytes = _b64.b64decode(msg["image_b64"])
+                        jpeg_bytes = _b64.b64decode(msg["image_b64"])   # back to raw bytes for the detector
                         task = asyncio.create_task(self._detect_and_scan(jpeg_bytes))
-                        self._detect_tasks.add(task)
-                        task.add_done_callback(self._detect_tasks.discard)
+                        self._detect_tasks.add(task)                   # remembered so disconnect can cancel it
+                        task.add_done_callback(self._detect_tasks.discard)   # and forgotten once it finishes
 
                 elif msg_type == "status":
-                    await self.send_json(msg)
+                    await self.send_json(msg)                          # pass connection news straight through
                     if msg.get("connected"):
-                        sent_connected = True
+                        sent_connected = True                          # no need to synthesise it later
 
                 elif msg_type == "error":
                     await self.send_json(msg)
@@ -1743,27 +1810,30 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                     return
 
         except asyncio.CancelledError:
-            raise
+            raise                                    # cancellation is normal here; let it propagate
         finally:
-            worker.unsubscribe(self._worker_sid)
+            worker.unsubscribe(self._worker_sid)     # always leave the camera, however this ended
 
     # ── detection + scan pipeline ──────────────────────────────────────────────
 
+    # The same pipeline as ScanLiveConsumer.receive_json, for one frame that
+    # came from an IP camera rather than the browser: detect, track, queue OCR,
+    # and let the shared presence code decide whether anything is announced.
     async def _detect_and_scan(self, jpeg_bytes: bytes):
         # Keep the latest frame — attached as evidence when a scan auto-issues a violation
         self._last_frame_jpeg = jpeg_bytes
         loop = asyncio.get_running_loop()
         try:
-            detections = await loop.run_in_executor(None, self._run_detection, jpeg_bytes)
+            detections = await loop.run_in_executor(None, self._run_detection, jpeg_bytes)   # heavy work off the event loop
         except Exception as exc:
             logger.error("[RTSP] Detection error: %s", exc)
-            detections = []
+            detections = []                          # a failed frame is treated as an empty one
         finally:
-            self._detection_in_progress = False
+            self._detection_in_progress = False      # release the guard so the next frame may be scanned
 
         now            = timezone.now()
-        tracker_output = self._tracker.update(detections, img_w=self._last_img_w)
-        det_by_idx     = {i: d for i, d in enumerate(detections)}
+        tracker_output = self._tracker.update(detections, img_w=self._last_img_w)   # boxes → stable track ids
+        det_by_idx     = {i: d for i, d in enumerate(detections)}   # so a track can find its detection again
 
         # Evict OCR state for tracks the tracker has expired — prevents unbounded growth
         active_ids = set(self._tracker.tracks.keys())
@@ -1772,11 +1842,12 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 self._ocr_state.pop(stale_id, None)
                 self._pending_ocr.pop(stale_id, None)
 
-        active_tracks      = []
-        tracks_needing_ocr = []
-        tracks_to_reverify = []
+        active_tracks      = []                      # what the browser draws
+        tracks_needing_ocr = []                      # plates not read yet
+        tracks_to_reverify = []                      # locked plates due a quiet re-check
         now_ts             = time.time()
 
+        # Same sorting as the scanning consumer: read new plates, re-check old ones.
         for t_out in tracker_output:
             track_id      = t_out["track_id"]
             bbox          = t_out["bbox"]
@@ -1819,22 +1890,24 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
                 "detection_conf": det.get("confidence", 0.0) if det else 0.0,
             })
 
-        await self.send_json({
+        await self.send_json({                       # overlay first, so boxes keep pace with the video
             "type":     "tracks",
             "tracks":   active_tracks,
             "frame_id": self._frame_counter,
         })
 
         if tracks_needing_ocr:
-            asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
+            asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))      # borrowed from ScanLiveConsumer
         if tracks_to_reverify:
             asyncio.create_task(self._reverify_locked_tracks(tracks_to_reverify))
 
         if any(t.get("plate_text") for t in active_tracks):
-            await self._process_scan_results(active_tracks, now)
+            await self._process_scan_results(active_tracks, now)   # keeps known plates "present", re-deciding when held long enough
 
     # ── sync helpers ───────────────────────────────────────────────────────────
 
+    # Opens the camera. A static method because _StreamWorker calls it without
+    # having a consumer instance — and because the tests replace it wholesale.
     @staticmethod
     def _open_cap(rtsp_url: str):
         """Open the stream with whichever backend can decode this camera.
@@ -1857,23 +1930,32 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
         return open_capture(rtsp_url)
 
+    # Compresses one frame to JPEG bytes.
+    #
+    # NOTE, factually (no code changed): nothing calls this. The worker encodes
+    # inline in _run() instead, with quality 85 and after _fit_for_wire has
+    # capped the size, whereas this uses quality 70 and no size cap. Searched
+    # across the backend: the only occurrence of the name is this definition.
     @staticmethod
     def _encode_frame(frame) -> "bytes | None":
         import cv2
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        return buf.tobytes() if ok else None
+        return buf.tobytes() if ok else None         # None signals "could not encode"
 
+    # Detection for an IP-camera frame. Differs from the scanning consumer's
+    # version in one way: it splits a multi-lens frame into its separate views
+    # first (see the note below).
     def _run_detection(self, jpeg_bytes: bytes) -> list:
         import cv2
         import numpy as np
         nparr = np.frombuffer(jpeg_bytes, np.uint8)
         img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
-            return []
+            return []                                # undecodable frame: nothing detected
 
-        self._frame_counter += 1
+        self._frame_counter += 1                     # labels the overlay message for this frame
         h, w = img.shape[:2]
-        self._last_img_w = w
+        self._last_img_w = w                         # remembered so boxes can be sent as fractions
         self._last_img_h = h
 
         plate_tracks = [t for t in self._tracker.tracks.values()
@@ -1886,13 +1968,14 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
         # are unaffected. Only this RTSP path splits; ScanLiveConsumer's frames
         # come from a phone or webcam, where "taller than wide" means someone
         # is holding the thing upright, not that there are two pictures in it.
-        detections = detect_across_lenses(img, detect_plates,
+        detections = detect_across_lenses(img, detect_plates,          # run the detector once per lens view
                                           try_rotation=not all_plates_locked)
 
         out = []
         for i, det in enumerate(detections):
             bb = det["bbox"]
             out.append({
+                # Fractions of the frame back into pixels, as the tracker expects.
                 "bbox": {
                     "x":      int(bb["x"]      * w),
                     "y":      int(bb["y"]      * h),
@@ -1910,6 +1993,12 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
 
     # Reuse async/sync helpers from ScanLiveConsumer (method assignment works in Python 3
     # because unbound functions become properly-bound methods when accessed on an instance)
+    #
+    # In other words: the OCR voting, the presence registry and the whole
+    # entry/exit state machine are shared outright, not copied. Whichever
+    # consumer a frame arrives through, a plate is decided by the same code —
+    # which is why this class sets up the same attribute names in connect().
+    # Anything changed in those methods changes both paths at once.
     _run_ocr_for_tracks    = ScanLiveConsumer._run_ocr_for_tracks
     _reverify_locked_tracks = ScanLiveConsumer._reverify_locked_tracks
     _finalize_plate        = ScanLiveConsumer._finalize_plate
