@@ -1,29 +1,64 @@
-import logging
-import base64
-import time
-import threading
+# =============================================================================
+# WHAT THIS FILE IS FOR
+#
+# The live camera pipeline. Two long-lived connections live here, both of them
+# "consumers" — the Channels word for code that stays connected to a browser
+# over a WebSocket instead of answering one request and stopping:
+#
+#   ScanLiveConsumer   (top half)    the gate. The browser sends camera frames;
+#                                    this finds plates, reads them, decides
+#                                    whether the vehicle may enter, and sends
+#                                    the answer back.
+#   _StreamWorker + RtspStreamConsumer (bottom half)
+#                                    the IP-camera viewer: one worker thread per
+#                                    camera, fanning its frames out to every
+#                                    browser watching that camera.
+#
+# The hard part of the top half is not the reading; it is deciding WHEN to act.
+# A camera sends many frames a second, and the same car sits in view for a long
+# time, so the same plate is read over and over. Three mechanisms keep that from
+# turning into a flood of database rows and gate decisions:
+#
+#   1. Tracks.    The tracker gives each vehicle/plate box a track_id that
+#                 persists across frames, so repeated reads of one car can be
+#                 gathered together instead of treated as new cars.
+#   2. Voting.    Each track accumulates OCR reads, weighted by confidence,
+#                 until one text wins and the track "locks".
+#   3. Presence.  A locked plate's decision is remembered process-wide for a
+#                 cooldown, so the gate decides once, not once per frame.
+#
+# Read the file in that order: lifecycle (connect/disconnect), frame intake
+# (receive_json), detection, OCR, then the presence machinery.
+# =============================================================================
+
+import logging                                  # server-side diagnostic messages
+import base64                                   # browser frames arrive as base64 text
+import time                                     # monotonic-ish wall time for cooldowns and FPS
+import threading                                # the presence registry is shared across threads
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
-import asyncio
-from asgiref.sync import sync_to_async
+import asyncio                                  # this file is asynchronous: many sockets, one thread
+from asgiref.sync import sync_to_async          # lets async code call ordinary (blocking) database code
 from django.utils import timezone
 from django.conf import settings
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer   # base class for a JSON WebSocket endpoint
 
-from .gate_frames import set_latest_gate_frame
-from .ml.detection import detect_plates, is_gpu_available
+from .gate_frames import set_latest_gate_frame  # publishes the newest frame per gate, for evidence photos
+from .ml.detection import detect_plates, is_gpu_available   # the vehicle/plate detector
 from vehicles.lens_layout import detect_across_lenses
 from .ml.database import save_record as db_save_record
-from .ml.proximity_tracker import ProximityTracker
-from .ml.reader import _ocr_crop
-from .ml.validator import is_valid_ph_plate
+from .ml.proximity_tracker import ProximityTracker          # keeps one identity per vehicle across frames
+from .ml.reader import _ocr_crop                            # reads the characters off a cropped plate
+from .ml.validator import is_valid_ph_plate                 # "does this look like a real PH plate?"
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_DIR = "snapshots"
+SNAPSHOT_DIR = "snapshots"                      # sub-folder of MEDIA_ROOT where plate crops are written
 
 
+# Works out which gate a scan should be filed under. Getting this wrong sends
+# the record to a gate nobody looks at, so both sources are tried in order.
 def _resolve_gate(raw, user) -> str:
     """Decide which gate a scan belongs to.
 
@@ -31,17 +66,19 @@ def _resolve_gate(raw, user) -> str:
     scanning guard's own gate_assignment so the scan still lands in that gate's
     log instead of the orphan 'main' bucket (which shows in no gate's view).
     """
-    gid = (raw or '').strip()
+    gid = (raw or '').strip()                   # what the camera/browser said, if anything
     if gid and gid != 'main':
-        return gid
-    return getattr(user, 'gate_assignment', None) or 'main'
+        return gid                              # an explicit gate always wins
+    return getattr(user, 'gate_assignment', None) or 'main'   # else the guard's posted gate; 'main' is the last resort
 
-FRAME_RATE_LIMIT_MS = 100
+FRAME_RATE_LIMIT_MS = 100                       # process at most one frame per 100ms (~10 per second)
 _DEFAULT_DEDUP_SECONDS = 5  # fallback used if DB is unavailable at connect time
 CAMERA_ENTRY_COOLDOWN_SECONDS = 60  # breathing space: camera won't exit a vehicle within this window after entry
 NEGATIVE_SCAN_COOLDOWN_SECONDS = 60  # unregistered & denied/violation plates: same plate re-logged at most once per minute (DB-backed, survives reconnects)
 
 # Per-track OCR accumulation settings
+# These three decide when a track stops guessing and commits to a plate: a
+# single confident read, or enough weaker reads agreeing.
 _OCR_LOCK_CONF    = 0.50   # lock immediately if any single read reaches this
 _OCR_MIN_CONF     = 0.08   # minimum confidence to count a read — low to handle noisy vehicle crops
 _OCR_MAX_ATTEMPTS = 15     # more attempts before force-locking, helps accumulate votes
@@ -68,26 +105,30 @@ _REVERIFY_STRONG_CONF = 0.60  # a single read at this confidence switches immedi
 _PLATE_PRESENCE: dict[str, dict] = {}
 # plates whose decision is currently being computed — prevents duplicate DB writes
 _PLATES_IN_FLIGHT: set[str] = set()
-_PRESENCE_LOCK = threading.Lock()
+_PRESENCE_LOCK = threading.Lock()   # both dictionaries above are shared, so every read/write takes this lock
 
 
+# The gate itself: one of these exists per connected browser tab showing a
+# camera. Frames come in, decisions go out.
 class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
+    # Runs once when a browser connects: check who they are, work out the gate,
+    # and set up the per-connection state the frame loop will use.
     async def connect(self):
         logger.info("[WS] Connection attempt from %s", self.scope.get("REMOTE_ADDR", "unknown"))
-        qs = self.scope["query_string"].decode()
-        token_key = (
+        qs = self.scope["query_string"].decode()     # the ?token=...&gate=... part of the URL
+        token_key = (                                # a WebSocket cannot send an auth header, so the token rides in the URL
             qs.split("token=")[-1].split("&")[0]
             if "token=" in qs
             else None
         )
         if not token_key:
             logger.warning("[WS] No token provided")
-            await self.close(code=4001, reason="Authentication required")
+            await self.close(code=4001, reason="Authentication required")   # 4001: this app's "not signed in"
             return
-        self._user = await self._get_user_from_token(token_key)
+        self._user = await self._get_user_from_token(token_key)   # look the token up in the database
         if self._user is None:
             logger.warning("[WS] Invalid token")
             await self.close(code=4001, reason="Invalid token")
@@ -97,68 +138,76 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         raw_gate = ''
         for part in qs.split('&'):
             if part.startswith('gate='):
-                raw_gate = part[5:]
+                raw_gate = part[5:]                  # everything after "gate="
                 break
-        self._gate_id = _resolve_gate(raw_gate, self._user)
+        self._gate_id = _resolve_gate(raw_gate, self._user)   # camera's gate, else the guard's own
 
-        self._tracker = ProximityTracker()
-        self._frame_counter = 0
-        self._pending_ocr: dict[int, bool] = {}
+        self._tracker = ProximityTracker()           # one tracker per connection: identities are per camera view
+        self._frame_counter = 0                      # only used to label frames sent back to the browser
+        self._pending_ocr: dict[int, bool] = {}      # tracks whose plate is being read right now, so it is not read twice
         # track_id → {votes, attempts, locked}
         self._ocr_state: dict[int, dict] = {}
 
         # plate → decided_at of the presence decision this client last received
         self._announced: dict[str, float] = {}
 
-        self._fps = 0.0
+        self._fps = 0.0                              # frames per second, shown in the browser overlay
         self._fps_counter = 0
         self._fps_start: float | None = None
-        self._last_process_time: float = 0.0
-        self._detection_in_progress = False
-        self._loop = asyncio.get_running_loop()
+        self._last_process_time: float = 0.0         # when the last frame was processed, for the rate limit
+        self._detection_in_progress = False          # true while the detector is busy; extra frames are dropped
+        self._loop = asyncio.get_running_loop()      # kept so background threads can hand work back to this connection
 
         try:
             from vehicles.models import SystemSettings
-            cfg = await sync_to_async(SystemSettings.get)()
-            self._dedup_seconds = cfg.scan_dedup_seconds
+            cfg = await sync_to_async(SystemSettings.get)()   # database call, so it has to be wrapped for async code
+            self._dedup_seconds = cfg.scan_dedup_seconds      # how long a plate counts as "still in view"
         except Exception:
-            self._dedup_seconds = _DEFAULT_DEDUP_SECONDS
+            self._dedup_seconds = _DEFAULT_DEDUP_SECONDS      # settings unreachable: carry on with the fallback
 
-        await self.accept()
+        await self.accept()                          # from here on the browser may send frames
         logger.info("[WS] Connection accepted for user: %s", self._user)
         await self.send_json({"type": "connected", "message": "Stream ready.", "gpu": is_gpu_available()})
 
+        # Loading the detector takes a while on first use, so the browser is
+        # told what the model is doing ("loading", "ready") rather than facing a
+        # silent pause. The listener is called from the detector's own thread,
+        # which is why it hands the message back to this connection's loop.
         from .ml.detection import add_ml_status_listener
         _loop = self._loop
         async def _send_ml_status(stage, message):
             try:
                 await self.send_json({"type": "ml_status", "stage": stage, "message": message})
             except Exception:
-                pass
+                pass                                 # the browser may have gone; a status note is not worth an error
         def _ml_status_listener(stage, message):
-            asyncio.run_coroutine_threadsafe(_send_ml_status(stage, message), _loop)
-        self._ml_status_listener = _ml_status_listener
+            asyncio.run_coroutine_threadsafe(_send_ml_status(stage, message), _loop)   # thread → event loop
+        self._ml_status_listener = _ml_status_listener   # remembered so disconnect() can remove it
         add_ml_status_listener(_ml_status_listener)
 
+    # Runs when the browser goes away. The listener must be removed or the
+    # detector keeps a reference to a dead connection.
     async def disconnect(self, code):
         logger.info("[WS] Disconnecting with code %s", code)
         from .ml.detection import remove_ml_status_listener
-        if hasattr(self, '_ml_status_listener'):
+        if hasattr(self, '_ml_status_listener'):     # connect() may have failed before setting it
             remove_ml_status_listener(self._ml_status_listener)
 
     # ── frame receive ──────────────────────────────────────────────────────────
 
+    # The main loop: one camera frame in, tracked boxes out, and OCR or a gate
+    # decision started when there is something worth deciding.
     async def receive_json(self, content):
         if content.get("type") != "frame":
-            return
+            return                                   # other message types are not this consumer's business
         image_b64 = content.get("image_b64", "")
         if not image_b64:
-            return
+            return                                   # an empty frame: nothing to look at
 
         try:
-            image_bytes = base64.b64decode(image_b64)
+            image_bytes = base64.b64decode(image_b64)    # text back into the raw JPEG bytes
         except Exception as exc:
-            await self.send_json({"type": "error", "message": str(exc)})
+            await self.send_json({"type": "error", "message": str(exc)})   # malformed frame: tell the browser, stay connected
             return
 
         # Keep the latest frame — attached as evidence when a scan auto-issues a violation
@@ -169,90 +218,100 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         set_latest_gate_frame(getattr(self, '_gate_id', 'main'), image_bytes)
 
         # FPS accounting
+        # Measured over every 10 frames rather than each one, so the number the
+        # guard sees does not jitter.
         self._frame_counter += 1
         self._fps_counter += 1
         now_ts = time.time()
         if self._fps_start is None or self._fps_counter >= 10:
             if self._fps_start:
-                self._fps = 10.0 / (now_ts - self._fps_start)
+                self._fps = 10.0 / (now_ts - self._fps_start)   # 10 frames divided by how long they took
             self._fps_start = now_ts
             self._fps_counter = 0
 
         # Rate-limit: drop frames that arrive faster than FRAME_RATE_LIMIT_MS
         current_ms = now_ts * 1000
         if current_ms - self._last_process_time < FRAME_RATE_LIMIT_MS:
-            return
+            return                                   # too soon: skip this frame entirely
         self._last_process_time = current_ms
 
         # Guard: don't queue another detection while the previous one is running
         if self._detection_in_progress:
-            return
+            return                                   # the detector is still busy; dropping a frame is better than a backlog
         self._detection_in_progress = True
 
         loop = asyncio.get_running_loop()
         try:
+            # Detection is heavy and blocking, so it runs in a worker thread —
+            # otherwise it would freeze every other connection this process serves.
             detections = await loop.run_in_executor(None, self._run_detection, image_bytes)
         except Exception as exc:
             logger.error("[WS] Detection error: %s", exc)
-            detections = []
+            detections = []                          # treat a failed frame as "nothing seen" and keep going
         finally:
-            self._detection_in_progress = False
+            self._detection_in_progress = False      # always release the guard, success or not
 
         now = timezone.now()
-        tracker_output = self._tracker.update(detections, img_w=getattr(self, "_last_img_w", 640))
-        det_by_idx = {i: d for i, d in enumerate(detections)}
+        tracker_output = self._tracker.update(detections, img_w=getattr(self, "_last_img_w", 640))   # boxes → stable track ids
+        det_by_idx = {i: d for i, d in enumerate(detections)}   # so a track can find the detection it came from
 
         # Evict OCR state for tracks the tracker has expired — prevents unbounded growth
         active_ids = set(self._tracker.tracks.keys())
-        for stale_id in list(self._ocr_state.keys()):
+        for stale_id in list(self._ocr_state.keys()):    # list(): the dictionary is edited inside the loop
             if stale_id not in active_ids:
                 self._ocr_state.pop(stale_id, None)
                 self._pending_ocr.pop(stale_id, None)
 
-        active_tracks = []
-        tracks_needing_ocr = []
-        tracks_to_reverify = []
+        active_tracks = []                           # what the browser will draw
+        tracks_needing_ocr = []                      # plates not yet read
+        tracks_to_reverify = []                      # plates already locked, due a quiet re-check
 
+        # Sort every tracked box into those three buckets.
         for t_out in tracker_output:
             track_id    = t_out["track_id"]
             bbox        = t_out["bbox"]
-            x, y, bw, bh = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+            x, y, bw, bh = bbox["x"], bbox["y"], bbox["width"], bbox["height"]   # pixel box: left, top, width, height
 
-            class_name   = t_out.get("class_name", "")
+            class_name   = t_out.get("class_name", "")     # "license_plate" or a vehicle class
             vehicle_type = t_out.get("vehicle_type")
-            plate_text   = t_out.get("plate_text", "")
+            plate_text   = t_out.get("plate_text", "")     # filled once the track locks
             ocr_done     = t_out.get("ocr_done", False)
 
-            d_idx = t_out.get("detection_index")
+            d_idx = t_out.get("detection_index")           # which detection this track matched this frame
             det   = det_by_idx.get(d_idx) if d_idx is not None else None
 
             if (det and det.get("class_name") == "license_plate"
-                    and det.get("crop") is not None):
+                    and det.get("crop") is not None):      # only a plate crop can be read
                 if not ocr_done:
-                    tracks_needing_ocr.append(
+                    tracks_needing_ocr.append(             # never read: queue a first read
                         (track_id, det["crop"], det.get("aspect_ratio", 1.0))
                     )
                 else:
                     st = self._ocr_state.get(track_id)
                     if (st and st.get("locked")
-                            and now_ts - st.get("verify_at", 0.0) >= _OCR_REVERIFY_SECONDS):
+                            and now_ts - st.get("verify_at", 0.0) >= _OCR_REVERIFY_SECONDS):   # due another look
                         st["verify_at"] = now_ts  # claim before queueing
                         tracks_to_reverify.append(
                             (track_id, det["crop"], det.get("aspect_ratio", 1.0))
                         )
 
-            w_img = getattr(self, "_last_img_w", 640)
+            w_img = getattr(self, "_last_img_w", 640)     # frame size, set by _run_detection
             h_img = getattr(self, "_last_img_h", 480)
             active_tracks.append({
                 "track_id":      track_id,
                 "plate_text":    plate_text,
                 "vehicle_type":  vehicle_type,
                 "class_name":    class_name,
+                # Box as fractions of the frame (0-1), so the browser can draw it
+                # at whatever size it displays the video; max(...,1) avoids a
+                # divide-by-zero if the size is somehow unknown.
                 "bbox":          [x / max(w_img, 1), y / max(h_img, 1),
                                   (x + bw) / max(w_img, 1), (y + bh) / max(h_img, 1)],
                 "detection_conf": det.get("confidence", 0.0) if det else 0.0,
             })
 
+        # Send the boxes straight away, so the overlay keeps up with the video
+        # even while the slower OCR and gate work is still running.
         await self.send_json({
             "type":     "tracks",
             "tracks":   active_tracks,
@@ -260,6 +319,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "fps":      round(self._fps, 1),
         })
 
+        # Start the slow work in the background: create_task() means this frame
+        # is finished with now, and the next one is not held up.
         if tracks_needing_ocr:
             asyncio.create_task(self._run_ocr_for_tracks(tracks_needing_ocr))
         if tracks_to_reverify:
@@ -272,16 +333,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     # ── detection (sync, runs in executor) ────────────────────────────────────
 
+    # Finds plates and vehicles in one frame. Ordinary blocking code: it is
+    # called through run_in_executor, so it runs in a worker thread.
     def _run_detection(self, image_bytes: bytes) -> list[dict]:
-        import cv2
+        import cv2                                   # imported here to keep start-up light
         import numpy as np
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        nparr = np.frombuffer(image_bytes, np.uint8)     # JPEG bytes as a number array
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)      # decode into an actual image
         if img is None:
-            return []
+            return []                                # not a readable image: nothing detected
 
-        h, w = img.shape[:2]
-        self._last_img_w = w
+        h, w = img.shape[:2]                         # height and width in pixels
+        self._last_img_w = w                         # remembered so boxes can be turned into fractions
         self._last_img_h = h
 
         # Skip rotation passes only when every *plate-class* track is already locked.
@@ -290,12 +353,16 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         plate_tracks = [t for t in self._tracker.tracks.values()
                         if t.class_name == "license_plate"]
         all_plates_locked = bool(plate_tracks) and all(t.ocr_done for t in plate_tracks)
+        # Rotation passes cost time, so they are skipped only when every plate
+        # on screen is already read.
         detections = detect_plates(img, try_rotation=not all_plates_locked)
 
         result = []
         for i, det in enumerate(detections):
             bbox = det["bbox"]
             result.append({
+                # The detector returns fractions of the frame; convert to pixels,
+                # which is what the tracker compares boxes in.
                 "bbox": {
                     "x":      int(bbox["x"] * w),
                     "y":      int(bbox["y"] * h),
@@ -313,24 +380,26 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
     # ── OCR (async task per track, with confidence accumulation) ──────────────
 
+    # Reads the plate text for tracks that do not have one yet, gathering votes
+    # across frames until one reading wins and the track locks.
     async def _run_ocr_for_tracks(self, tracks_to_process: list):
         loop = asyncio.get_running_loop()
 
         for track_id, crop, aspect in tracks_to_process:
             if track_id in self._pending_ocr:
-                continue
+                continue                             # a read for this track is already running
 
             state = self._ocr_state.get(track_id)
             if state and state["locked"]:
-                continue
+                continue                             # already decided; re-verification handles it from here
 
-            self._pending_ocr[track_id] = True
+            self._pending_ocr[track_id] = True       # claim this track
             try:
-                plate_text, conf = await loop.run_in_executor(None, _ocr_crop, crop, aspect)
+                plate_text, conf = await loop.run_in_executor(None, _ocr_crop, crop, aspect)   # reading is blocking too
                 if conf is None:
-                    conf = 0.0
+                    conf = 0.0                       # treat "no confidence given" as none at all
 
-                state = self._ocr_state.setdefault(track_id, {
+                state = self._ocr_state.setdefault(track_id, {   # first read for this track creates its record
                     "votes": {}, "attempts": 0, "locked": False,
                 })
                 state["attempts"] += 1
@@ -338,21 +407,21 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 if not plate_text or conf < _OCR_MIN_CONF:
                     # Low-quality read — force-lock if we've hit the attempt limit
                     if state["attempts"] >= _OCR_MAX_ATTEMPTS and state["votes"]:
-                        best = max(state["votes"], key=state["votes"].get)
+                        best = max(state["votes"], key=state["votes"].get)   # the text with the most weight so far
                         state["locked"] = True
-                        state["verify_at"] = time.time()
+                        state["verify_at"] = time.time()   # start the re-verification clock
                         self._tracker.set_plate_text(track_id, best)
                         logger.info("[WS] Max attempts (no lock) track %d → %s", track_id, best)
-                        await self._finalize_plate(track_id, best, 0.0)
-                    continue
+                        await self._finalize_plate(track_id, best, 0.0)   # decide the gate on the best guess
+                    continue                         # nothing usable this time; wait for another frame
 
                 # Accumulate confidence-weighted votes across reads.
                 # Reads matching a valid PH plate format get triple weight so a
                 # correct read outvotes garbled partials when the track locks.
                 normalized = plate_text.strip().upper().replace(' ', '')
-                weight = conf * (3.0 if is_valid_ph_plate(normalized) else 1.0)
-                state["votes"][plate_text] = state["votes"].get(plate_text, 0.0) + weight
-                best = max(state["votes"], key=state["votes"].get)
+                weight = conf * (3.0 if is_valid_ph_plate(normalized) else 1.0)   # plausible plates count triple
+                state["votes"][plate_text] = state["votes"].get(plate_text, 0.0) + weight   # add this vote to the tally
+                best = max(state["votes"], key=state["votes"].get)   # whichever text leads right now
 
                 # Always push the current best to the overlay immediately
                 await self.send_json({
@@ -365,22 +434,24 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
                 # Lock when confident or attempts exhausted
                 if conf >= _OCR_LOCK_CONF or state["attempts"] >= _OCR_MAX_ATTEMPTS:
-                    state["locked"] = True
-                    state["verify_at"] = time.time()
-                    self._tracker.set_plate_text(track_id, best)
+                    state["locked"] = True           # stop reading this track...
+                    state["verify_at"] = time.time() # ...but start the quiet re-check clock
+                    self._tracker.set_plate_text(track_id, best)   # the track now carries the plate
                     logger.info("[WS] Locked track %d → %s (conf=%.2f, attempts=%d)",
                                 track_id, best, conf, state["attempts"])
-                    await self._finalize_plate(track_id, best, conf)
+                    await self._finalize_plate(track_id, best, conf)   # now the gate can decide
 
             except Exception as exc:
-                logger.warning("[OCR] Failed for track %d: %s", track_id, exc)
+                logger.warning("[OCR] Failed for track %d: %s", track_id, exc)   # one bad read must not kill the loop
             finally:
-                self._pending_ocr.pop(track_id, None)
+                self._pending_ocr.pop(track_id, None)   # always release the claim
 
+    # Takes a newly locked plate through the gate decision and tells this
+    # browser the outcome, exactly once.
     async def _finalize_plate(self, track_id: int, plate_text: str, conf: float):
         """Process a freshly locked plate and broadcast the decision once."""
         result = await self._handle_plate_sighting(track_id, plate_text, 0.0, conf, None)
-        if result:
+        if result:                                   # None means "already decided and announced"
             await self.send_json({"type": "result", "results": [result]})
 
     # ── locked-plate re-verification ───────────────────────────────────────────
@@ -400,18 +471,18 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         for track_id, crop, aspect in tracks_to_verify:
             if track_id in self._pending_ocr:
-                continue
+                continue                             # a read is already in flight for this track
             state = self._ocr_state.get(track_id)
             track = self._tracker.get_track(track_id)
             if not state or not state.get("locked") or track is None:
-                continue
+                continue                             # the track went away, or was never locked
 
             self._pending_ocr[track_id] = True
             try:
                 plate_text, conf = await loop.run_in_executor(None, _ocr_crop, crop, aspect)
                 conf = conf or 0.0
-                plate_norm = (plate_text or "").strip().upper().replace(" ", "")
-                current    = (track.plate_text or "").strip().upper().replace(" ", "")
+                plate_norm = (plate_text or "").strip().upper().replace(" ", "")   # what was just read
+                current    = (track.plate_text or "").strip().upper().replace(" ", "")   # what the track holds
 
                 if not plate_norm or conf < _OCR_MIN_CONF:
                     continue  # unreadable frame — keep the current lock
@@ -424,25 +495,28 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 if not is_valid_ph_plate(plate_norm):
                     continue
 
+                # A different, plausible plate: count how many times it has been
+                # read before believing it over the locked one.
                 reads = state.setdefault("switch_reads", {})
                 if len(reads) > 5:
                     reads = state["switch_reads"] = {}  # noisy garbage — start over
                 reads[plate_norm] = reads.get(plate_norm, 0) + 1
 
+                # Switch on one strong read, or two agreeing ordinary ones.
                 if conf >= _REVERIFY_STRONG_CONF or reads[plate_norm] >= 2:
-                    state["switch_reads"] = {}
-                    state["votes"] = {plate_norm: conf}
+                    state["switch_reads"] = {}       # candidate accepted; clear the tally
+                    state["votes"] = {plate_norm: conf}   # the new text starts as the only vote
                     state["verify_at"] = time.time()
-                    self._tracker.set_plate_text(track_id, plate_norm)
+                    self._tracker.set_plate_text(track_id, plate_norm)   # the track now means a different car
                     logger.info("[WS] Re-verify: track %d plate %s -> %s (conf=%.2f)",
                                 track_id, current or "?", plate_norm, conf)
                     await self.send_json({
                         "type": "ocr_update", "track_id": track_id, "plate_text": plate_norm,
                     })
-                    await self._finalize_plate(track_id, plate_norm, conf)
+                    await self._finalize_plate(track_id, plate_norm, conf)   # decide the gate for the new plate
                 else:
                     # One differing read — re-check shortly to confirm or dismiss
-                    state["verify_at"] = time.time() - (_OCR_REVERIFY_SECONDS - 2.0)
+                    state["verify_at"] = time.time() - (_OCR_REVERIFY_SECONDS - 2.0)   # backdate the clock: due again in ~2s
             except Exception as exc:
                 logger.warning("[OCR] Re-verify failed for track %d: %s", track_id, exc)
             finally:
@@ -473,34 +547,38 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         now_ts = time.time()
         needs_decision = False
+        # Everything inside this lock is about the SHARED registry, so decisions
+        # are made once per plate even with several cameras connected.
         with _PRESENCE_LOCK:
-            entry = _PLATE_PRESENCE.get(plate)
+            entry = _PLATE_PRESENCE.get(plate)       # what we already know about this plate, if anything
             in_view = entry is not None and (now_ts - entry["last_seen"]) < self._dedup_seconds
             if in_view:
                 entry["last_seen"] = now_ts   # sliding window — still in view
-            hold_expired = (
+            hold_expired = (                         # has the decision been held long enough to redo?
                 entry is None
                 or (now_ts - entry["decided_at"]) >= self._result_hold_seconds(entry["result"])
             )
+            # Decide again when the car is newly here, or the hold ran out —
+            # unless another task is already deciding this very plate.
             if (not in_view or hold_expired) and plate not in _PLATES_IN_FLIGHT:
-                _PLATES_IN_FLIGHT.add(plate)
+                _PLATES_IN_FLIGHT.add(plate)         # claim it, so no duplicate database writes
                 needs_decision = True
 
         if needs_decision:
             try:
-                await sync_to_async(self._save_to_db)(
+                await sync_to_async(self._save_to_db)(   # keep the raw reading for diagnosis
                     track_id, plate, det_conf, ocr_conf, bbox, None
                 )
-                enriched = await sync_to_async(
+                enriched = await sync_to_async(          # the actual gate decision (entry/exit, rules, violations)
                     self._check_vehicle, thread_sensitive=True
                 )(plate, bbox)
                 enriched["plate_number"] = plate
                 ts = time.time()
                 with _PRESENCE_LOCK:
-                    _PLATE_PRESENCE[plate] = {
+                    _PLATE_PRESENCE[plate] = {           # publish it, so every camera holds the same answer
                         "result": enriched, "decided_at": ts, "last_seen": ts,
                     }
-                await sync_to_async(self._record_ml_sample)(None, [enriched])
+                await sync_to_async(self._record_ml_sample)(None, [enriched])   # keep the image for future training
                 logger.info("[WS] Plate %s decided → %s", plate, enriched.get("status"))
             except Exception as exc:
                 logger.error("[WS] Scan processing failed for %s: %s", plate, exc)
@@ -508,30 +586,33 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                 ts = time.time()
                 with _PRESENCE_LOCK:
                     _PLATE_PRESENCE[plate] = {
-                        "result": {"plate_number": plate, "error": True},
+                        "result": {"plate_number": plate, "error": True},   # marked as an error, so it is never announced
                         "decided_at": ts, "last_seen": ts,
                     }
             finally:
                 with _PRESENCE_LOCK:
-                    _PLATES_IN_FLIGHT.discard(plate)
-                self._evict_presence()
+                    _PLATES_IN_FLIGHT.discard(plate)     # release the claim whatever happened
+                self._evict_presence()                   # keep the shared registry from growing forever
 
+        # Decide what, if anything, to tell THIS browser.
         with _PRESENCE_LOCK:
             entry = _PLATE_PRESENCE.get(plate)
         if not entry or entry["result"].get("error"):
-            return None
+            return None                                  # nothing usable to announce
         if (time.time() - entry["last_seen"]) >= self._dedup_seconds:
             return None   # stale decision awaiting replacement — don't announce it
         if self._announced.get(plate) == entry["decided_at"]:
             return None   # this client already received this decision
-        self._announced[plate] = entry["decided_at"]
+        self._announced[plate] = entry["decided_at"]     # remember what was sent, so it is sent once
         return entry["result"]
 
     # ── process tracks that already have plate text ────────────────────────────
 
+    # Runs each frame for tracks that already carry a plate, which is what keeps
+    # a waiting vehicle "present" and re-decided when its hold expires.
     async def _process_scan_results(self, tracks_list: list[dict], now):
         results = []
-        processed_ids: set[int] = set()
+        processed_ids: set[int] = set()              # one sighting per track per frame
 
         for track_data in tracks_list:
             track_id     = track_data["track_id"]
@@ -539,24 +620,26 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             det_conf     = track_data.get("detection_conf", 0.0)
 
             if not plate_number.strip() or track_id in processed_ids:
-                continue
+                continue                             # no plate yet, or this track was handled already
             processed_ids.add(track_id)
 
-            bbox = {
+            bbox = {                                 # rebuild the box as a dictionary for the decision code
                 "x": track_data["bbox"][0], "y": track_data["bbox"][1],
                 "width": track_data["bbox"][2], "height": track_data["bbox"][3],
             }
             result = await self._handle_plate_sighting(
                 track_id, plate_number, det_conf, 0.0, bbox
             )
-            if result:
-                results.append({**result, "bbox": bbox})
+            if result:                               # None when there is nothing new to announce
+                results.append({**result, "bbox": bbox})   # attach the box so the browser can point at the car
 
         if results:
-            await self.send_json({"type": "result", "results": results})
+            await self.send_json({"type": "result", "results": results})   # one message for all of them
 
     # ── presence maintenance ───────────────────────────────────────────────────
 
+    # How long to sit on a decision before working it out again. The answer
+    # depends on what was decided, which is why it is not a single constant.
     def _result_hold_seconds(self, result: dict) -> float:
         """How long a decision is held before the plate is re-evaluated in view."""
         status = result.get("status")
@@ -566,33 +649,37 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             return CAMERA_ENTRY_COOLDOWN_SECONDS  # breathing space before state can flip
         return NEGATIVE_SCAN_COOLDOWN_SECONDS     # unknown / denied / wrong_day etc.
 
+    # Housekeeping: the shared registry would otherwise keep every plate ever
+    # seen for as long as the server runs.
     def _evict_presence(self):
         """Drop plates not seen for 2× the dedup window to bound memory."""
-        cutoff = time.time() - self._dedup_seconds * 2
+        cutoff = time.time() - self._dedup_seconds * 2   # anything older than this is long gone
         with _PRESENCE_LOCK:
-            for p in [p for p, e in _PLATE_PRESENCE.items() if e["last_seen"] < cutoff]:
+            for p in [p for p, e in _PLATE_PRESENCE.items() if e["last_seen"] < cutoff]:   # list first: cannot delete while looping
                 del _PLATE_PRESENCE[p]
-            alive = set(_PLATE_PRESENCE)
+            alive = set(_PLATE_PRESENCE)                  # what remains
         for p in [p for p in self._announced if p not in alive]:
-            del self._announced[p]
+            del self._announced[p]                        # forget what was announced for plates no longer tracked
 
     # ── sync helpers (run in executor / sync_to_async) ─────────────────────────
 
+    # Writes a cropped plate image to disk and returns the path to store.
     def _save_snapshot(self, track_id: int, crop) -> str:
         import cv2
         from pathlib import Path
         snapshot_dir = Path(settings.MEDIA_ROOT) / SNAPSHOT_DIR
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"plate_{track_id}_{int(datetime.now().timestamp())}.jpg"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)   # create the folder the first time
+        filename = f"plate_{track_id}_{int(datetime.now().timestamp())}.jpg"   # track + timestamp keeps names unique
         path = snapshot_dir / filename
         cv2.imwrite(str(path), crop)
-        return f"{SNAPSHOT_DIR}/{filename}"
+        return f"{SNAPSHOT_DIR}/{filename}"          # a path relative to the media folder, not an absolute one
 
+    # Records the raw reading (not the gate decision) for later diagnosis.
     def _save_to_db(self, track_id: int, plate_number: str, det_conf: float,
                     ocr_conf: float, bbox: dict, snapshot_path: str | None):
         from django.db import close_old_connections
         from .models import PlateRecognitionRecord
-        close_old_connections()
+        close_old_connections()                      # this runs in a worker thread: drop any stale connection first
         PlateRecognitionRecord.objects.create(
             track_id=track_id,
             plate_text=plate_number,
