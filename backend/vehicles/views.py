@@ -1669,7 +1669,7 @@ class RegistrationPdfView(APIView):
         from registration_pdf import (registration_confirmation_pdf,
                                       registration_pdf_filename)
 
-        registration = get_object_or_404(VehicleRegistration, pk=pk)
+        registration = get_object_or_404(VehicleRegistration, pk=pk)   # 404 rather than a crash for a bad id
         # The document states the registration is approved, so an application
         # still under review has no printable confirmation — printing one would
         # put a pass in someone's hands that the CDSO has not granted.
@@ -1679,23 +1679,48 @@ class RegistrationPdfView(APIView):
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
 
-        pdf = registration_confirmation_pdf(registration, include_documents=True)
-        audit(request, AuditLog.Action.RECORD_CREATED,
+        pdf = registration_confirmation_pdf(registration, include_documents=True)   # the filed copy includes the scans
+        audit(request, AuditLog.Action.RECORD_CREATED,     # printing a pass document is itself worth recording
               f"Registration PDF printed | REG-{registration.id:06d} "
               f"({registration.plate_number}) | For: {registration.full_name}")
 
         resp = HttpResponse(pdf, content_type='application/pdf')
-        resp['Content-Disposition'] = (
+        resp['Content-Disposition'] = (                    # "attachment" makes the browser download it
             f'attachment; filename="{registration_pdf_filename(registration)}"'
         )
         return resp
 
 
+# =============================================================================
+# APPROVING AN APPLICATION
+#
+# This is where an application becomes a vehicle pass, and it is the most
+# consequential endpoint in the file: one POST creates a portal account, issues
+# a temporary password, authorises a vehicle at the gate and emails credentials
+# to a real person.
+#
+# It reads as a sequence of gates, each of which can refuse, followed by one
+# all-or-nothing write:
+#
+#   1. Is it still pending?                      (nothing to approve twice)
+#   2. Does any identifier now clash?            (plate, email, licence, IDs)
+#   3. Has the applicant been banned since?      (re-checked, not trusted from submission)
+#   4. Payment: exempt, receipted, or approved unpaid with a stated reason
+#   5. Is the plate flagged from a 3rd offence?  (CDSO must acknowledge)
+#   6. Campus-day overrides, and whether they exceed the normal allowance
+#   7. ── transaction ── account + vehicle + system ID + the registration row
+#   8. After it commits: email the owner, in the background
+#
+# Step 7 is one transaction for a reason recorded in the comment there; step 8
+# is deliberately outside it.
+# =============================================================================
 class AcceptRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def post(self, request, pk):
         registration = get_object_or_404(VehicleRegistration, pk=pk)
+        # Only a pending application can be approved: this also makes a
+        # double-click harmless, since the second one finds it already accepted.
         if registration.status != VehicleRegistration.Status.PENDING:
             return Response({"error": "Only pending registrations can be accepted."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1713,8 +1738,10 @@ class AcceptRegistrationView(APIView):
             # it out meant the one identifier a plate-less registration actually
             # has went unchecked at approval time.
             conduction_number=registration.conduction_number,
+            # Only ACCEPTED rows count here, not other pendings: two people may
+            # both have applied, and approving one of them is how that is settled.
             statuses=[VehicleRegistration.Status.ACCEPTED],
-            exclude_pk=registration.pk,
+            exclude_pk=registration.pk,              # never conflict with itself
         )
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
@@ -1741,8 +1768,8 @@ class AcceptRegistrationView(APIView):
         # counter for somebody who brought the paper instead counts just the
         # same. The request value wins over the stored one so CDSO can correct a
         # typo it spots against the uploaded image.
-        exempt    = registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT
-        or_number = (request.data.get('or_number') or '').strip() or (registration.or_number or '').strip()
+        exempt    = registration.payment_status == VehicleRegistration.PaymentStatus.EXEMPT   # nothing was owed
+        or_number = (request.data.get('or_number') or '').strip() or (registration.or_number or '').strip()   # typed now, else what is on file
 
         if exempt:
             # Nothing was owed, so there is no receipt to demand. Requiring one
@@ -1755,9 +1782,9 @@ class AcceptRegistrationView(APIView):
         # Approving with no receipt at all is allowed, but never silently: the
         # reason is stored on the registration so a pass issued against an
         # unsettled fee always carries its own justification.
-        unpaid        = not exempt and not or_number
+        unpaid        = not exempt and not or_number   # owed, but no receipt on file
         unpaid_reason = (request.data.get('unpaid_accept_reason') or '').strip()
-        if unpaid and not unpaid_reason:
+        if unpaid and not unpaid_reason:             # approving anyway requires saying why
             return Response(
                 {"error": "unpaid_acceptance_requires_reason",
                  "detail": f"{registration.full_name} has not submitted an Official Receipt. "
@@ -1772,8 +1799,10 @@ class AcceptRegistrationView(APIView):
         from violations.models import Violation
         blocks = Violation.registration_block_for_plate(registration.plate_number)
         block_count = blocks.count()
+        # A "soft" block: the first attempt is refused with the details, and the
+        # page re-sends with acknowledge_block once the reviewer has read them.
         if block_count and not request.data.get('acknowledge_block'):
-            latest = blocks.first()
+            latest = blocks.first()                  # newest first, per that method's ordering
             return Response({
                 "error": "registration_blocked",
                 "detail": (
@@ -1791,13 +1820,15 @@ class AcceptRegistrationView(APIView):
 
         # Admin may override campus_days (free day picker) and/or schedule group
         campus_days_override = request.data.get('campus_days', None)  # list or None
-        schedule_override    = request.data.get('schedule', '').strip()
-        special_case_reason  = request.data.get('special_case_reason', '').strip()
+        schedule_override    = request.data.get('schedule', '').strip()   # or a whole rotation instead
+        special_case_reason  = request.data.get('special_case_reason', '').strip()   # required past the allowance
 
         # Early validation: up to 3 campus days is the normal allowance — granting
         # more than 3 makes it a special case that requires a reason.
         if campus_days_override is not None and isinstance(campus_days_override, list):
-            _cleaned_check, _ = clean_campus_days(campus_days_override)
+            _cleaned_check, _ = clean_campus_days(campus_days_override)   # drop anything that is not a campus day
+            # Checked BEFORE the transaction, so the reviewer is told what is
+            # missing without anything having been created.
             if len(_cleaned_check) > MAX_CAMPUS_DAYS and not special_case_reason:
                 return Response(
                     {"error": f"A reason is required when granting more than "
@@ -1812,22 +1843,22 @@ class AcceptRegistrationView(APIView):
         # registration stayed pending and every retry was rejected with "already
         # tied to an existing account". The acceptance email is deliberately sent
         # after this block commits, never inside it.
-        with transaction.atomic():
+        with transaction.atomic():                   # everything inside either all happens, or none of it does
             # Create user with a secure temporary password
-            temp_password = _generate_temp_password()
-            owner_type  = {
-                'student':  User.OwnerType.STUDENT,
+            temp_password = _generate_temp_password()   # emailed once; the owner must change it at first login
+            owner_type  = {                          # the registrant type becomes the account's owner type,
+                'student':  User.OwnerType.STUDENT,  # which is what the gate rules are chosen by
                 'employee': User.OwnerType.EMPLOYEE,
                 'fetcher':  User.OwnerType.FETCHER,
             }.get(registration.registrant_type, User.OwnerType.EMPLOYEE)
-            schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')
+            schedule    = registration.schedule or ('MWF' if registration.registrant_type == 'student' else 'ANY')   # a sensible default per type
             campus_days = registration.campus_days or []
             user = User.objects.create_user(
-                email=registration.email,
+                email=registration.email,            # the email on the form becomes the portal login
                 full_name=registration.full_name,
                 password=temp_password,
                 role='vehicle_owner',
-                must_change_password=True,
+                must_change_password=True,           # forces a change at first sign-in
                 owner_type=owner_type,
                 schedule=schedule,
                 campus_days=campus_days,
@@ -1839,7 +1870,7 @@ class AcceptRegistrationView(APIView):
             if block_count:
                 try:
                     AuditLog.objects.create(
-                        actor=request.user,
+                        actor=request.user,          # the named officer who overrode the flag
                         action=AuditLog.Action.USER_CREATED,
                         target_user=user,
                         details=(
@@ -1849,14 +1880,14 @@ class AcceptRegistrationView(APIView):
                         ),
                     )
                 except Exception:
-                    pass
+                    pass                             # never fail the approval over its own audit note
 
             # Create or update Vehicle linked directly to User, keyed on the
             # registration's plate or conduction number (brand-new car).
-            vehicle_obj = _upsert_vehicle_for_registration(registration, user)
+            vehicle_obj = _upsert_vehicle_for_registration(registration, user)   # this is what authorises it at the gate
 
             # Auto-generate unique system ID
-            _assign_system_id(registration)
+            _assign_system_id(registration)          # sets the field; the save() below writes it
 
             registration.or_number = or_number
             if unpaid:
@@ -1871,18 +1902,18 @@ class AcceptRegistrationView(APIView):
                 # proof, so it is recorded the same way; only the receipt image
                 # is missing.
                 registration.payment_status = VehicleRegistration.PaymentStatus.PAID
-                registration.amount_paid    = registration.pass_fee()
+                registration.amount_paid    = registration.pass_fee()   # snapshot today's fee, not a live lookup
                 registration.paid_at        = timezone.now()
             registration.user = user        # direct FK to account
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
 
             # Apply campus_days / schedule overrides
             if campus_days_override is not None and isinstance(campus_days_override, list):
-                cleaned, _ = clean_campus_days(campus_days_override)
+                cleaned, _ = clean_campus_days(campus_days_override)   # cleaned again: this is the value being stored
 
                 # More than the allowance is a special case (validated above)
                 if len(cleaned) > MAX_CAMPUS_DAYS:
-                    registration.is_special_case     = True
+                    registration.is_special_case     = True   # marks it as exceptional on every later screen
                     registration.special_case_reason = special_case_reason
 
                 registration.campus_days = cleaned
@@ -1890,13 +1921,14 @@ class AcceptRegistrationView(APIView):
                 # rule the public form uses (see vehicles/campus_days.py).
                 registration.schedule = schedule_group(cleaned)
             elif schedule_override:
-                registration.schedule = schedule_override
-            registration.status = VehicleRegistration.Status.ACCEPTED
+                registration.schedule = schedule_override   # a rotation was chosen instead of specific days
+            registration.status = VehicleRegistration.Status.ACCEPTED   # the moment it becomes a pass
             registration.reviewed_at = timezone.now()
             registration.save()
 
             # Sync final campus_days / schedule onto the user account so entry_logic
             # can check actual days rather than a fixed MWF/TTHF group.
+            # This is the copy the GATE reads, so the two must not drift apart.
             user.campus_days = registration.campus_days or []
             user.schedule    = registration.schedule or user.schedule
             user.save(update_fields=['campus_days', 'schedule'])
@@ -1908,17 +1940,18 @@ class AcceptRegistrationView(APIView):
             # issued without a receipt. This is the permanent record of that
             # decision, so it says which of the two reasons applied.
             if exempt:
-                or_note = 'OR: n/a (fee exempt)'
+                or_note = 'OR: n/a (fee exempt)'     # nothing was ever owed
             elif unpaid:
-                or_note = f'OR: none — approved unpaid: {unpaid_reason}'
+                or_note = f'OR: none — approved unpaid: {unpaid_reason}'   # owed, issued anyway, and why
             else:
-                or_note = f'OR: {or_number}'
+                or_note = f'OR: {or_number}'         # paid, with the receipt number
             audit(request, AuditLog.Action.RECORD_UPDATED,
                   f"Registration accepted | Plate: {registration.plate_number} | "
                   f"Applicant: {registration.full_name} ({registration.registrant_type}) | "
                   f"{or_note} | By: {request.user.full_name}",
                   target_user=user)
-        system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id
+        # ── Past this line the transaction has committed: the pass exists. ──
+        system_id = registration.system_student_id if registration.registrant_type == 'student' else registration.system_employee_id   # the two-column fallback
 
         # Acceptance mail with the QR code and credentials, handed to a background
         # thread. The transaction above has already committed, so this was never
@@ -1926,13 +1959,13 @@ class AcceptRegistrationView(APIView):
         # server. A failed send raises an admin notification instead of the
         # response field the CDSO page used to warn from.
         send_in_background(
-            send_acceptance_email, registration, temp_password, user.user_code,
-            on_failure=_acceptance_email_failed_notice(registration),
+            send_acceptance_email, registration, temp_password, user.user_code,   # the credentials the owner needs
+            on_failure=_acceptance_email_failed_notice(registration),   # a bell notice if it never arrives
         )
 
         return Response({
             "message": "Registration accepted and user created.",
-            "email_status": 'queued',
+            "email_status": 'queued',                # "queued", not "sent": the send has not happened yet
             "account": {
                 "user_code": user.user_code,
                 "system_id": system_id,
@@ -1962,6 +1995,9 @@ class AcceptRegistrationView(APIView):
         })
 
 
+# Turning an application down. Much simpler than approval: nothing is created,
+# and rejecting also releases the plate, email and IDs for a fresh attempt,
+# because the conflict checks only count pending and accepted rows.
 class RejectRegistrationView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -1971,6 +2007,8 @@ class RejectRegistrationView(APIView):
             return Response({"error": "Only pending registrations can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
 
         reason = request.data.get('reason')
+        # Required: the applicant is emailed this, and without it they have
+        # nothing to correct before applying again.
         if not reason:
             return Response({"error": "Rejection reason is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1984,6 +2022,8 @@ class RejectRegistrationView(APIView):
               f"Applicant: {registration.full_name} | Reason: {reason} | By: {request.user.full_name}")
 
         # Send rejection email
+        # Sent inline rather than in the background, so the reviewer is told
+        # straight away whether the applicant actually heard about it.
         try:
             send_rejection_email(registration, reason)
             email_status = 'sent'
@@ -2002,6 +2042,10 @@ class RejectRegistrationView(APIView):
 # CDSO Walk-in Direct Registration (auto-accepts)
 # ──────────────────────────────────────────────
 
+# The counter version of the whole flow: someone walks in, and the CDSO fills
+# the form in for them. It is submission and approval in one request, so it
+# repeats the same checks as the public form AND the approval path, then ends
+# with the same transaction: registration + account + vehicle together.
 class CdsoDirectRegisterView(APIView):
     """
     CDSO registers a walk-in applicant directly.
@@ -2011,10 +2055,10 @@ class CdsoDirectRegisterView(APIView):
 
     def post(self, request):
         registrant_type = request.data.get('registrant_type', '')
-        if registrant_type not in ('student', 'employee', 'fetcher'):
+        if registrant_type not in ('student', 'employee', 'fetcher'):   # visitors use a gate pass, not a registration
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = dict(request.data)
+        data = dict(request.data)                    # a copy, because _normalize_department edits it in place
 
         # Resolved before the receipt check, not after: Cleaning and Services
         # staff pay nothing, so there is no Official Receipt to demand from them.
@@ -2025,8 +2069,10 @@ class CdsoDirectRegisterView(APIView):
 
         or_number = request.data.get('or_number', '').strip()
         if exempt:
-            or_number = ''
+            or_number = ''                           # nothing to pay, so nothing to record
         else:
+            # Unlike the online path, a walk-in cannot be approved unpaid: the
+            # applicant is at the counter with the receipt in hand.
             if not or_number:
                 return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
             if not or_number.isdigit() or len(or_number) > 7:
@@ -2035,14 +2081,14 @@ class CdsoDirectRegisterView(APIView):
         # E-bikes get a system-issued control number, never a typed identifier.
         ebike = is_ebike(request.data.get('vehicle_type'))
         if ebike:
-            data['plate_number'] = ''
+            data['plate_number'] = ''                # cleared here; allocated inside the transaction below
             data['conduction_number'] = ''
 
         # 1:1 guard — plate, email and student/employee ID must not already have an active
         # registration (also blocks an email already tied to an existing account)
         conflict = _registration_conflict(
             registrant_type,
-            '' if ebike else request.data.get('plate_number', ''),
+            '' if ebike else request.data.get('plate_number', ''),   # an e-bike has no plate to clash with yet
             request.data.get('email', ''),
             request.data.get('student_id', ''),
             request.data.get('employee_id', ''),
@@ -2051,11 +2097,11 @@ class CdsoDirectRegisterView(APIView):
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
 
-        driver_error = _validate_authorized_driver(registrant_type, request.data)
+        driver_error = _validate_authorized_driver(registrant_type, request.data)   # the minor-driver rule
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
 
-        license_error = _license_db_conflict(request.data.get('drivers_license', ''))
+        license_error = _license_db_conflict(request.data.get('drivers_license', ''))   # belt-and-braces before saving
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2065,9 +2111,12 @@ class CdsoDirectRegisterView(APIView):
         # supplied campus_days without a schedule got the blanket 'MWF' default
         # no matter which days those actually were.
         if registrant_type in ('employee', 'fetcher'):
-            data['campus_days'] = []
-            data['schedule'] = 'ANY'
+            data['campus_days'] = []                 # staff and fetchers are not tied to specific days...
+            data['schedule'] = 'ANY'                 # ...so any campus day is allowed
         else:
+            # Students pick days. clean_campus_days hands back what it accepted
+            # and what it refused, so an unrecognised day is named in the error
+            # rather than silently dropped.
             campus_days, rejected = clean_campus_days(data.get('campus_days', []))
             if rejected:
                 return Response(
@@ -2079,22 +2128,25 @@ class CdsoDirectRegisterView(APIView):
                 return Response({"error": "Students must have at least one campus day."},
                                 status=status.HTTP_400_BAD_REQUEST)
             data['campus_days'] = campus_days
-            data['schedule'] = schedule_group(campus_days)
+            data['schedule'] = schedule_group(campus_days)   # derive the rotation from the days, never trust a sent one
 
-        serializer = VehicleRegistrationSerializer(data=data)
+        serializer = VehicleRegistrationSerializer(data=data)   # field-level validation of the whole form
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)   # per-field messages for the form
 
         # Same all-or-nothing rule as AcceptRegistrationView: the registration,
         # the account and the vehicle are created together or not at all, so a
         # failure half-way cannot strand an account holding the walk-in's email.
         with transaction.atomic():
+            # The control number is allocated inside the transaction, so a
+            # failure later does not burn a number. It is stored IN plate_number
+            # so the gate and QR code keep working unchanged.
             identity = {'plate_number': allocate_control_number()} if ebike else {}
             registration = serializer.save(
                 **identity,
                 registrant_type=registrant_type,
-                source=VehicleRegistration.Source.DIRECT,
-                status=VehicleRegistration.Status.ACCEPTED,
+                source=VehicleRegistration.Source.DIRECT,   # marks it as a counter registration
+                status=VehicleRegistration.Status.ACCEPTED, # approved on the spot: no pending step
                 or_number=or_number,
                 reviewed_at=timezone.now(),
                 # A walk-in is registered at the counter with the receipt in
@@ -2110,6 +2162,8 @@ class CdsoDirectRegisterView(APIView):
             )
 
             # Build user profile fields
+            # From here the steps mirror AcceptRegistrationView exactly: account,
+            # vehicle, system ID, then link them onto the registration row.
             temp_password = _generate_temp_password()
             owner_type  = {
                 'student':  User.OwnerType.STUDENT,
@@ -2132,12 +2186,12 @@ class CdsoDirectRegisterView(APIView):
                 # so nothing is carried onto the account either.
             )
 
-            vehicle_obj = _upsert_vehicle_for_registration(registration, user)
+            vehicle_obj = _upsert_vehicle_for_registration(registration, user)   # authorises it at the gate
 
             _assign_system_id(registration)
             registration.user = user
             registration.vehicle = vehicle_obj  # 1:1 link registration → vehicle
-            registration.save()
+            registration.save()                 # one save for the system ID and both links
             # user.user_code is already populated in memory — see the note in
             # AcceptRegistrationView.
         system_id = registration.system_student_id if registrant_type == 'student' else registration.system_employee_id
@@ -2152,6 +2206,8 @@ class CdsoDirectRegisterView(APIView):
 
         return Response({
             "message": "Walk-in registered and account created.",
+            # Fewer fields than the approval response: the counter screen prints
+            # a slip from these, rather than filling in an account modal.
             "email_status": email_status,
             "account": {
                 "user_code":       user.user_code,
