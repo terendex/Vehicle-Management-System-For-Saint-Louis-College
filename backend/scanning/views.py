@@ -575,17 +575,22 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
     return overstay                              # returned regardless, so the guard is told about the overstay even if logging it failed
 
 
+# Today's open visitor pass for a plate. A lookup only — see the docstring for
+# why finding one never closes it.
 def _active_visitor_pass(plate_number: str):
     """Today's ACTIVE visitor pass for this plate, or None. A plate check on one
     never logs the visitor out: it returns the slip, and the guard records the
     exit from it (SlipExitView) — whether they scanned the QR or typed it."""
     return VisitorPass.objects.filter(
         plate_number=plate_number,
-        valid_date=timezone.localdate(),
-        status=VisitorPass.Status.ACTIVE,
-    ).order_by('-entered_at').first()
+        valid_date=timezone.localdate(),         # a pass is good for one day only
+        status=VisitorPass.Status.ACTIVE,        # not one already exited or expired
+    ).order_by('-entered_at').first()            # the newest, for a visitor who came twice in a day
 
 
+# The exit half: closes the pass and reports how long they overstayed. Called
+# from the guard's exit paths — see the note in ScanView about which paths do
+# NOT call it.
 def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None) -> int:
     """
     Mark today's ACTIVE visitor pass for this plate as exited — called from every
@@ -593,17 +598,24 @@ def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None
     open after the visitor leaves. Returns overstay in minutes (0 if none).
     An overstay also auto-issues a 'time_exceed' violation (once per day).
     """
-    now = timezone.now()
+    now = timezone.now()                         # read once, so the close and the overstay maths use the same instant
+    # The same query _active_visitor_pass runs, repeated rather than called —
+    # note the two can drift if either is edited alone.
     pass_ = VisitorPass.objects.filter(
         plate_number=plate_number,
         valid_date=timezone.localdate(),
         status=VisitorPass.Status.ACTIVE,
     ).order_by('-entered_at').first()
     if not pass_:
-        return 0
+        return 0                                 # no open pass: this exit is not a visitor's, and 0 means "nothing to report"
+    # Closed FIRST, before any overstay work. A failure while issuing the
+    # violation below must not leave the pass open — a stuck ACTIVE pass would
+    # keep the visitor counted as on campus indefinitely.
     pass_.status = VisitorPass.Status.EXITED
     pass_.exited_at = now
     pass_.save(update_fields=['status', 'exited_at'])
+    # expires_at is entry time plus the allowance, and is nullable — a pass
+    # issued with no time limit simply cannot be overstayed.
     if pass_.expires_at and now > pass_.expires_at:
         overstay = int((now - pass_.expires_at).total_seconds() / 60)
         try:
@@ -615,11 +627,14 @@ def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None
                 evidence_bytes=evidence_bytes,
             )
         except Exception:
+            # Same rule as everywhere on this path: the visitor is leaving, and
+            # a failure to record the overstay must not hold them at the gate.
             pass
-        return overstay
-    return 0
+        return overstay                          # reported even if the violation could not be written
+    return 0                                     # left on time
 
 
+# The camera frame that came with this request, read WITHOUT consuming it.
 def _request_image_bytes(request):
     """Bytes of the frame the guard's device posted with this scan, or None.
 
@@ -627,19 +642,24 @@ def _request_image_bytes(request):
     snapshot, and consuming the stream without rewinding leaves whichever
     consumer runs second with an empty file.
     """
+    # getattr first: a JSON request has no FILES at all, and this helper is
+    # called from paths that may or may not be multipart.
     f = getattr(request, 'FILES', None) and request.FILES.get('image')
     if not f:
         return None
     try:
-        pos = f.tell()
+        pos = f.tell()                           # remember where the other reader left off
         f.seek(0)
         data = f.read()
-        f.seek(pos)
-        return data or None
+        f.seek(pos)                              # and put it back — this is the "non-destructive" part of the docstring
+        return data or None                      # an empty upload reads as no evidence rather than as b''
     except Exception:
-        return None
+        return None                              # evidence is a nicety; never let it break the scan
 
 
+# Issues a violation from the gate, with no human deciding to. Everything here
+# is about NOT issuing too many: one car in front of a camera generates scans
+# continuously, and each one would otherwise be another offence.
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
                         evidence_bytes=None, entry_status: str = ''):
     """
@@ -662,10 +682,10 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     # rather than that an unregistered car showed up.
     if not vtype and entry_status == 'confiscated':
         vtype = Violation.Type.CONFISCATED_ACTIVITY
-    vtype = vtype or Violation.Type.UNAUTHORIZED_ENTRY
+    vtype = vtype or Violation.Type.UNAUTHORIZED_ENTRY   # the catch-all when the caller named no type
 
-    _day_start, _day_end = day_range(timezone.localdate())
-    owner = vehicle.user
+    _day_start, _day_end = day_range(timezone.localdate())   # the cap below is per CALENDAR DAY, campus-local
+    owner = vehicle.user                         # None for a gate-created vehicle with no account behind it
 
     # ── One auto-logged offence per ACCOUNT per calendar day ─────────────────
     # The cap used to be per vehicle AND per type, which was right while each
@@ -677,17 +697,22 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     #
     # One strike per day per account. A second incident tomorrow still counts.
     if owner is not None:
+        # Any ladder-bearing type at all, not just this one — that is the whole
+        # point of the block comment above. One strike per account per day.
         if Violation.objects.filter(
             owner=owner,
             violation_type__in=NEW_STYLE_TYPES,
             issued_at__gte=_day_start,
             issued_at__lt=_day_end,
         ).exists():
-            return
+            return                               # already struck today; this scan adds nothing
     else:
         # No account behind the plate (gate-issued vehicle) — fall back to the
         # per-vehicle, per-type cap, which is all that can be keyed on.
         dedup_types = [vtype]
+        # Rows written before the type was renamed still count as the same
+        # offence, so a plate is not struck twice for one thing across the
+        # rename boundary.
         if vtype == Violation.Type.UNAUTHORIZED_ENTRY:
             dedup_types.append(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
         if Violation.objects.filter(
@@ -698,18 +723,18 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         ).exists():
             return
 
-    offense_num  = Violation.compute_offense_number(owner)
+    offense_num  = Violation.compute_offense_number(owner)   # which strike this is for the ACCOUNT, not the vehicle
     violation = Violation.objects.create(
         vehicle              = vehicle,
         owner                = owner,
         violation_type       = vtype,
         notes                = f'Auto-logged at gate: {message}',
         offense_number       = offense_num,
-        status               = Violation.Status.WARNING,
+        status               = Violation.Status.WARNING,   # issued, not yet acted on by the CDSO
         # Only the 3rd strike holds registration.
         registration_blocked = offense_num >= 3,
         is_released          = True,  # visible to the owner immediately
-        on_duty_guard        = active_guard_for_gate(gate_id),
+        on_duty_guard        = active_guard_for_gate(gate_id),   # who was on the gate, so the record is attributable even though no human issued it
     )
     # Last resort: no frame was handed in, so take the newest one the gate
     # camera has. A violation with no photo is one nobody can contest or
@@ -717,20 +742,22 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     if not evidence_bytes:
         try:
             from .gate_frames import latest_jpeg_for_gate
-            evidence_bytes = latest_jpeg_for_gate(gate_id)
+            evidence_bytes = latest_jpeg_for_gate(gate_id)   # whatever that gate's camera has most recently held
         except Exception:
-            evidence_bytes = None
+            evidence_bytes = None                # still better to issue the violation with no photo than not at all
 
     # Attach the camera frame as evidence (shown in admin table + owner email)
     if evidence_bytes:
         try:
             from django.core.files.base import ContentFile
             violation.evidence.save(
+                # Plate plus a unix timestamp, so two violations for the same
+                # car on the same day cannot overwrite each other's evidence.
                 f"auto_{vehicle.plate_number}_{int(timezone.now().timestamp())}.jpg",
                 ContentFile(evidence_bytes), save=True,
             )
         except Exception:
-            pass
+            pass                                 # storage (R2) being unreachable must not undo the violation itself
     # Impose the ladder, then tell the owner. Both are best-effort: the
     # violation itself is already recorded and must not be rolled back by a
     # mail server being down.
@@ -742,24 +769,47 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         logger.exception('Could not apply penalty for violation %s', violation.pk)
 
 
+# The camera's endpoint: one frame in, a decision per plate out.
+#
+# The order of the questions is the whole design. A plate is looked at like
+# this, and the FIRST match wins:
+#
+#   1. Is the text even a plate?          → unreadable, logged, next
+#   2. Is there a Vehicle record?         → the registered path (bottom half)
+#   3. No record. Is it on an event?      → admitted under the event
+#   4. Is it on the supplier roster?      → the supplier path
+#   5. Is Open Campus Mode on?            → admitted as an open entry
+#   6. Otherwise                          → "Plate not registered"
+#
+# Events outrank suppliers deliberately (see _event_for_unregistered_plate),
+# and Open Campus is asked last so that a plate with a real reason to be here
+# is admitted for that reason rather than as an anonymous open entry.
+#
+# Each of paths 3, 4 and 5 then runs the same four-step state machine — the
+# duplicate / inside / cooldown / entry sequence from the top of the file. The
+# supplier one and the registered one are written out inline below; the other
+# two live in the helpers above.
 class ScanView(APIView):
-    parser_classes     = [MultiPartParser]
-    permission_classes = [permissions.IsAuthenticated]
+    parser_classes     = [MultiPartParser]   # a frame is posted as a file, so this endpoint is multipart only
+    permission_classes = [permissions.IsAuthenticated]   # the camera client signs in as a guard account
 
     def post(self, request):
         file = request.FILES.get('image')
         if not file:
             return Response({'error': 'No image provided'}, status=400)
 
-        raw_bytes = file.read()
-        plates = read_plate(raw_bytes)
+        raw_bytes = file.read()                  # read once; everything below works from these bytes
+        plates = read_plate(raw_bytes)           # detection + OCR — may return several plates from one frame
         # Reuse the detections/OCR just computed — record_scan would otherwise
         # run the entire pipeline a second time on the same bytes.
         ml_sample = record_scan(raw_bytes, results=plates)
 
-        results = []
+        results = []                             # one entry per plate found, in the order they were detected
 
         if not plates:
+            # Logged even though nothing was read. A frame the camera could not
+            # make sense of is itself worth recording — a gate that suddenly
+            # produces only unreadable rows is a gate with a problem.
             AccessLog.objects.create(plate_number='', status='unreadable', scanned_by=request.user)
             return Response({
                 'status': 'unreadable',
@@ -772,13 +822,21 @@ class ScanView(APIView):
         # back to the scanning guard's own gate so the scan lands in that gate's
         # log rather than the orphan 'main' bucket (visible in no gate's view).
         gate_id = (request.data.get('gate_id') or request.query_params.get('gate_id') or '').strip()
+        # 'main' is treated as "not supplied", not as a real gate: it is the
+        # model's default, so a client that simply never set one would
+        # otherwise pin every scan to the orphan bucket.
         if not gate_id or gate_id == 'main':
             gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
 
+        # One frame can contain several vehicles, and each is decided
+        # independently — one plate being unreadable does not stop the others.
         for plate_info in plates:
             plate = plate_info["plate_text"]
-            bbox = plate_info["bbox"]
+            bbox = plate_info["bbox"]            # where in the frame, so the guard page can draw the box
 
+            # Step 1. OCR returns text; this asks whether the text is shaped
+            # like a Philippine plate at all. Without it, a road sign or a
+            # sticker read off the back of a van would be looked up as a plate.
             if not is_valid_ph_plate(plate):
                 AccessLog.objects.create(plate_number=plate, status=AccessLog.Status.UNREADABLE, gate_id=gate_id, scanned_by=request.user)
                 results.append({
@@ -791,9 +849,12 @@ class ScanView(APIView):
                 })
                 continue
 
+            # Step 2. Plate first, then conduction number, both normalised.
+            # Matches ANY Vehicle row — including the unowned ones the gate
+            # creates for visitors and suppliers, not just registered cars.
             vehicle = Vehicle.resolve(plate)
 
-            if not vehicle:
+            if not vehicle:                      # ── no record: steps 3 to 6 ──
                 # An organizer list outranks the supplier roster while its
                 # event is on — see _event_for_unregistered_plate.
                 event = _event_for_unregistered_plate(plate)
@@ -807,12 +868,15 @@ class ScanView(APIView):
                     })
                     continue
 
+                # Step 4. Only an ACTIVE supplier's plates count, so
+                # deactivating a company stops its vehicles at the gate without
+                # anyone editing the plate list.
                 supplier_plate = SupplierPlate.objects.select_related('supplier').filter(
                     plate_number=plate, supplier__is_active=True
                 ).first()
 
                 if not supplier_plate:
-                    if is_open_campus():
+                    if is_open_campus():         # step 5, asked only once every specific reason has failed
                         r = _open_campus_unknown_result(plate, gate_id, request.user)
                         results.append({
                             **r,
@@ -831,6 +895,10 @@ class ScanView(APIView):
                     })
                     continue
 
+                # ── the supplier state machine, written out inline ──
+                # The same four steps as _open_campus_unknown_result and
+                # _event_plate_result, with the company's name in every message
+                # and a rule check before the entry.
                 supplier_name = supplier_plate.supplier.company_name
                 inside_status, last_entry = _inside_state(plate)
 
@@ -848,9 +916,13 @@ class ScanView(APIView):
                     })
                     continue
 
+                # Note: no ENTRY_BREATHING_SECONDS check on this path, unlike
+                # the open-campus and event helpers — a supplier scanned again
+                # at any point past the 3-second grace window is treated as
+                # leaving. Stated as found; nothing changed here.
                 if inside_status == 'inside':
                     from django.db import transaction as _tx
-                    with _tx.atomic():
+                    with _tx.atomic():           # locked for the same reason as in the helpers: two scans must not write two exits
                         locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
                         if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
                             results.append({'plate_number': plate, 'status': 'duplicate', 'allowed': False,
@@ -889,6 +961,9 @@ class ScanView(APIView):
                     })
                     continue
 
+                # Asked only now, at the point of ENTRY. A supplier already
+                # inside when their allowed hours end must still be able to
+                # drive out, which is why the exit branch above never asks.
                 deny_msg = _supplier_rule_denial()
                 if deny_msg:
                     AccessLog.objects.create(
@@ -911,6 +986,9 @@ class ScanView(APIView):
                     plate_number=plate, status=AccessLog.Status.AUTHORIZED,
                     gate_id=gate_id, scanned_by=request.user,
                 )
+                # Only changes the WORDING, not the outcome: the supplier was
+                # admitted on their own roster either way. It tells the guard
+                # which rule let them in, which matters when hours are off.
                 open_campus = is_open_campus()
                 from .slips import supplier_slip
                 results.append({
@@ -928,6 +1006,12 @@ class ScanView(APIView):
                 })
                 continue
 
+            # ── the registered-vehicle path ──
+            # Third and last copy of the state machine. It differs from the
+            # three above in one way that matters: the entry branch at the
+            # bottom asks entry_logic whether this vehicle may come in at all,
+            # where the others already know the answer from the roster or the
+            # mode that got them here.
             inside_status, last_entry = _inside_state(plate)
 
             if inside_status == 'duplicate':
@@ -967,7 +1051,15 @@ class ScanView(APIView):
                 delta = exit_log.scanned_at - last_entry.scanned_at
                 duration_minutes = int(delta.total_seconds() / 60)
 
-                owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+                # Note, factually: this exit records the row and pairs it, but
+                # does not call _close_active_pass or _check_stay_limit. The
+                # guard's exit paths (ExitLogView, ManualEntryView,
+                # UnrecognizedExitView) call both. A visitor's plate DOES reach
+                # this branch — VisitorPass.vehicle is a real Vehicle row and
+                # Vehicle.resolve matches unowned rows — so a visitor whose
+                # exit is caught by the camera leaves their pass ACTIVE and
+                # their overstay unchecked. Recorded, not changed.
+                owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'   # 'Unknown' for a gate-created row with no account
 
                 resp = {
                     'plate_number':    plate,
@@ -1001,25 +1093,34 @@ class ScanView(APIView):
                 results.append(resp)
                 continue
 
+            # The actual decision, and the only place in this method that
+            # asks for one: day, hours, confiscation, registration status. This
+            # file records what entry_logic decides; it does not decide.
             entry = check_entry(vehicle)
-            has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
-            already_inside = _already_inside(plate)
+            has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()   # shown as a flag to the guard; does not itself refuse entry
+            already_inside = _already_inside(plate)   # re-asked as a plain boolean for the response body
 
+            # Written whatever the decision was. A refusal is as much a part
+            # of the gate's record as an admission — more so, since it is the
+            # one somebody will later ask about.
             AccessLog.objects.create(
                 plate_number  = plate,
                 vehicle       = vehicle,
-                status        = _log_status(entry),
-                denied_reason = '' if entry['allowed'] else entry['message'],
+                status        = _log_status(entry),   # the screen status mapped onto a storable one
+                denied_reason = '' if entry['allowed'] else entry['message'],   # the sentence the guard was shown, kept verbatim
                 gate_id       = gate_id,
                 scanned_by    = request.user,
-                snapshot      = request.FILES.get('image'),
+                snapshot      = request.FILES.get('image'),   # the frame itself, attached to the row
             )
 
             # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
+            # Refused AND at fault. The two excluded statuses are the ones
+            # where refusal is simply the process working: a visitor who has
+            # not been issued a pass yet has done nothing wrong.
             if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
                 _auto_log_violation(vehicle, entry['message'], gate_id,
-                                    evidence_bytes=_request_image_bytes(request),
-                                    entry_status=entry['status'])
+                                    evidence_bytes=_request_image_bytes(request),   # read non-destructively: the snapshot above uses the same upload
+                                    entry_status=entry['status'])   # lets the helper tell "confiscated" apart from ordinary refusal
 
             resp = {
                 'plate_number':    plate,
@@ -1033,11 +1134,17 @@ class ScanView(APIView):
                 'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate)),
                 'bbox':            bbox,
             }
+            # Attached only when the ML pipeline actually recorded a sample,
+            # so the guard page can offer "was this read correctly?" against a
+            # row that exists to be corrected.
             if ml_sample:
                 resp['sample_id'] = ml_sample['sample_id']
                 resp['ml_confidence'] = ml_sample['confidence']
             results.append(resp)
 
+        # Always 200, always a list. A frame with one readable and one
+        # unreadable plate is a partial success, not an error, and the caller
+        # reads each result's own status rather than the HTTP code.
         return Response({'results': results})
 
 
