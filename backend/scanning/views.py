@@ -2678,6 +2678,43 @@ class TestRtspView(APIView):
 
 # ─── Dual-Gate System Views ───────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────
+# The guard types a plate
+# ──────────────────────────────────────────────
+#
+# ManualEntryView is ScanView with a keyboard instead of a camera, and ONE
+# check action that means different things depending on where the vehicle is.
+# The guard presses the same button whether the car is arriving or leaving;
+# this method works out which.
+#
+# The precedence chain is the same as ScanView's — registered vehicle, then
+# event, then supplier, then open campus, then unknown — and each unregistered
+# branch runs the same duplicate / inside / cooldown / entry machine. Read
+# ScanView first if you have not; the differences are what matter here:
+#
+#   * FORMAT CHECK IS CONDITIONAL. A typed identifier may be a conduction
+#     number or an event-listed sticker, neither of which is a plate shape, so
+#     the check is skipped when the identifier resolves to something real.
+#     ScanView never needs this: a camera only ever produces plate text.
+#
+#   * VISITORS ARE INTERCEPTED, NOT TOGGLED. If a typed plate belongs to a
+#     visitor who is inside on an active pass, this view returns their SLIP
+#     and refuses to record an exit. The guard closes the visit from the slip
+#     instead, so a pass only ever changes status on purpose. ScanView has no
+#     such interception — which is what makes the gap noted there a departure
+#     from the intent stated right here, rather than a mere omission.
+#
+#   * EVERY BRANCH RETURNS. ScanView loops over plates and appends to a list;
+#     this handles exactly one identifier, so each outcome is a return.
+#
+# The state transitions, in the order they are tested:
+#
+#     duplicate  (<3s since entry)   → ignore, say so
+#     inside + visitor pass          → show the slip, change nothing
+#     inside  (<60s since entry)     → too soon; tell the guard when to retry
+#     inside  (>60s since entry)     → RECORD THE EXIT
+#     outside + in cooldown (<60s)   → suppress; tell the guard how long
+#     outside                        → ask entry_logic, then admit or refuse
 class ManualEntryView(APIView):
     """Guard manually types a plate number — no image scan required."""
     permission_classes = [permissions.IsAuthenticated]
@@ -2687,6 +2724,8 @@ class ManualEntryView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        # The guard's own posting only — no client-supplied gate_id is accepted
+        # here, unlike ScanView, where a camera legitimately declares its gate.
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         # A guard may type a conduction number for a brand-new car, which is not a
         # valid PH plate — accept it when it resolves to a registered vehicle, but
@@ -2695,11 +2734,18 @@ class ManualEntryView(APIView):
         # An organizer list may name a brand-new car by its conduction sticker,
         # which is no plate shape — so a listed identifier is let through the
         # format check the same way a registered one is.
+        # Short-circuited: the event lookup is skipped entirely for a plate
+        # that already resolved, since a registered vehicle keeps its own rules
+        # and only carries the organizer label.
         event = None if vehicle else _event_for_unregistered_plate(plate_number)
+        # The format check runs LAST and only when nothing recognised the
+        # identifier. Order matters: checking first would reject a valid
+        # conduction number before anything had a chance to resolve it, and
+        # checking never would let free-text typos through as unknown plates.
         if not vehicle and not event and not is_valid_ph_plate(plate_number):
             return Response({'error': 'Invalid plate format. Enter a valid Philippine plate or conduction number.'}, status=400)
 
-        if not vehicle:
+        if not vehicle:                      # ── unregistered: event, then supplier, then open campus, then unknown ──
             # An organizer list outranks the supplier roster while its event
             # is on — see _event_for_unregistered_plate.
             if event:
@@ -2711,9 +2757,12 @@ class ManualEntryView(APIView):
             ).first()
 
             if not supplier_plate:
-                if is_open_campus():
+                if is_open_campus():             # asked last, so a plate with a real reason to be here is admitted for THAT reason
                     r = _open_campus_unknown_result(plate_number, gate_id, request.user)
                     return Response({**r, 'plate_number': plate_number, 'gate_id': gate_id})
+                # Logged even though nobody was admitted. A plate the guard
+                # typed and the system did not know is exactly the thing
+                # somebody asks about later.
                 AccessLog.objects.create(
                     plate_number=plate_number,
                     status=AccessLog.Status.UNKNOWN,
@@ -2728,10 +2777,14 @@ class ManualEntryView(APIView):
                     'gate_id':      gate_id,
                 })
 
+            # ── the supplier machine, typed-plate edition ──
+            # Note this version DOES apply ENTRY_BREATHING_SECONDS, where
+            # ScanView's supplier branch does not — the two are otherwise the
+            # same sequence.
             supplier_name = supplier_plate.supplier.company_name
             inside_status, last_entry = _inside_state(plate_number)
 
-            if inside_status == 'duplicate':
+            if inside_status == 'duplicate':     # <3s: the guard double-pressed
                 return Response({
                     'plate_number':   plate_number,
                     'status':         'duplicate',
@@ -2783,7 +2836,11 @@ class ManualEntryView(APIView):
                         paired_entry=locked_entry,
                     )
                 duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
+                # vehicle=None: a supplier plate usually has no Vehicle row, and
+                # _check_stay_limit makes an unowned one if a violation is due.
                 overstay_minutes = _check_stay_limit(plate_number, None, 'supplier', duration_minutes, gate_id)
+                # Folded into the message as well as returned as a number —
+                # the guard reads the sentence, the screen reads the field.
                 overstay_note = f' Overstayed by {overstay_minutes} min — violation issued.' if overstay_minutes else ''
                 return Response({
                     'plate_number':      plate_number,
@@ -2798,6 +2855,8 @@ class ManualEntryView(APIView):
                     'gate_id':           gate_id,
                 })
 
+            # Outside — but possibly only just. The remaining-seconds form,
+            # so the guard is told when to try again rather than just refused.
             cooldown_left = _exit_cooldown_remaining(plate_number)
             if cooldown_left:
                 return Response({
@@ -2812,6 +2871,8 @@ class ManualEntryView(APIView):
                     'gate_id':             gate_id,
                 })
 
+            # Asked only at ENTRY, never on the exit branch above: a supplier
+            # already inside when their hours end must still be able to leave.
             deny_msg = _supplier_rule_denial()
             if deny_msg:
                 AccessLog.objects.create(
@@ -2847,6 +2908,10 @@ class ManualEntryView(APIView):
                 'gate_id':       gate_id,
             })
 
+        # ── the registered-vehicle machine ──
+        # Everything from here down handles a plate that resolved to a Vehicle
+        # row. One _inside_state call decides which of the five outcomes below
+        # this check action means.
         inside_status, last_entry = _inside_state(plate_number)
 
         # A visitor inside on an active pass is NOT logged out by a re-check.
@@ -2854,12 +2919,23 @@ class ManualEntryView(APIView):
         # the guard records the exit (or reprints) from there, so the slip's
         # status only ever changes on purpose. Ahead of the duplicate check:
         # looking a slip up is harmless however soon after entry it happens.
+        # Both states, not just 'inside': the comment above explains why —
+        # pulling up a slip is harmless however soon after entry it happens,
+        # so this is checked before the duplicate guard rather than after it.
+        #
+        # This interception is the reason a visitor's pass can only be closed
+        # deliberately, from the slip. It is also why the _close_active_pass
+        # call further down this method can never find a pass to close: any
+        # plate that has one has already returned here.
         if inside_status in ('inside', 'duplicate'):
             visitor_pass = _active_visitor_pass(plate_number)
             if visitor_pass:
                 from .slips import visitor_slip
                 return Response({
                     'plate_number':   plate_number,
+                    # Its own status, not 'already_inside': the guard page
+                    # branches on this to render the slip with its Record Exit
+                    # and Reprint buttons rather than a plain refusal.
                     'status':         'visitor_pass_required',
                     'allowed':        False,
                     'message':        'Visitor is inside on an active pass.',
@@ -2869,6 +2945,8 @@ class ManualEntryView(APIView):
                     'slip':           visitor_slip(visitor_pass),
                 })
 
+        # Reached only for a non-visitor: the guard pressed check twice within
+        # the 3-second grace window, so the second press is ignored.
         if inside_status == 'duplicate':
             return Response({
                 'plate_number':   plate_number,
@@ -2880,11 +2958,16 @@ class ManualEntryView(APIView):
                 'gate_id':        gate_id,
             })
 
-        if inside_status == 'inside':
+        if inside_status == 'inside':            # in, and past the grace window: this press means either "too soon" or "exit"
             # Single check action toggles state like the camera: within the
             # breathing window a re-check is informational; past it, it records the exit
             seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+            # Resolved once, up here, because both branches below put it in
+            # their message. 'Unknown' covers a gate-created row with no owner.
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'
+            # THE transition that matters: under a minute this is
+            # informational, over it the same press records the exit. Without
+            # the gap, a guard confirming an entry would immediately undo it.
             if seconds_inside < ENTRY_BREATHING_SECONDS:
                 window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
                 return Response({
@@ -2898,11 +2981,17 @@ class ManualEntryView(APIView):
                     'retry_after_seconds': window_left,
                     'gate_id':             gate_id,
                 })
+            # Past the window: record the exit. Locked because the camera can
+            # reach the same entry row at the same moment — two exits against
+            # one entry would corrupt the occupancy count permanently.
             from django.db import transaction as _tx
             with _tx.atomic():
                 locked_entry = AccessLog.objects.select_for_update().filter(
                     pk=last_entry.pk
                 ).first()
+                # Re-asked while holding the lock. If the camera got here
+                # first, its exit already exists and this one must not write a
+                # second — reported as a duplicate, which is what it is.
                 if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
                     return Response({
                         'plate_number':   plate_number,
@@ -2922,7 +3011,16 @@ class ManualEntryView(APIView):
                     paired_entry=locked_entry,
                 )
             duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
+            # Note, factually: this can only ever return 0. The visitor-pass
+            # interception near the top of the registered path returns before
+            # here for any plate holding an active pass, so by this line there
+            # is nothing left for it to close. Harmless as written — defensive
+            # rather than wrong — but it does mean this path's apparent
+            # pass-closing is not what keeps visitor passes correct; the
+            # interception is. Recorded, not changed: this pass comments code.
             overstay_minutes = _close_active_pass(plate_number, gate_id)
+            # Drop & Go fetchers only — standby fetchers are allowed to wait
+            # inside, so the max-stay rule does not apply to them.
             if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
@@ -2939,6 +3037,8 @@ class ManualEntryView(APIView):
                 'gate_id':         gate_id,
             })
 
+        # Outside, but it may have left within the last minute — without this
+        # a guard checking a car that just drove out would log it back in.
         cooldown_left = _exit_cooldown_remaining(plate_number)
         if cooldown_left:
             return Response({
@@ -2952,8 +3052,13 @@ class ManualEntryView(APIView):
                 'gate_id':             gate_id,
             })
 
+        # ── genuinely outside: this press is an ENTRY ──
+        # The only place in this method that asks whether the vehicle MAY come
+        # in. Every branch above knew the answer already, from where it got
+        # there; this one has to ask entry_logic for the day, the hours, the
+        # confiscation state and the registration.
         entry = check_entry(vehicle)
-        has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()
+        has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()   # shown to the guard as a flag; does not itself refuse entry
 
         # UI-only statuses (e.g. 'no_pass', 'open_entry') aren't valid AccessLog statuses
         AccessLog.objects.create(
@@ -2966,8 +3071,14 @@ class ManualEntryView(APIView):
         )
 
         # 'no_pass'/'unknown' mean a visitor awaiting a pass — not a violation
+        # Refused AND at fault. The two exclusions are the cases where being
+        # turned away is the process working: a visitor waiting on a pass has
+        # done nothing wrong.
         if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
             _auto_log_violation(vehicle, entry['message'], gate_id,
+                                    # Typed entries rarely carry a frame, so
+                                    # this is usually None and the helper falls
+                                    # back to the gate camera's latest.
                                     evidence_bytes=_request_image_bytes(request),
                                     entry_status=entry['status'])
 
@@ -2979,7 +3090,10 @@ class ManualEntryView(APIView):
             'constraint':      entry.get('constraint'),
             'vehicle':         VehicleSerializer(vehicle).data,
             'has_violations':  has_violations,
-            'already_inside':  False,
+            'already_inside':  False,            # by definition on this branch: the vehicle was outside a moment ago
+            # The organizer label a REGISTERED owner carries — distinct from
+            # the unregistered event path above, which admits a plate UNDER an
+            # event. This one only marks who they are.
             'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate_number)),
             'gate_id':         gate_id,
         })
