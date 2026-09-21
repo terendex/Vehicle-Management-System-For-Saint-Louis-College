@@ -1982,6 +1982,19 @@ def _end_sessions(user):
 #  Guard QR Login & Shift Management
 # ──────────────────────────────────────────────
 
+# ──────────────────────────────────────────────
+#  Guard sign-in at the gate, and the notification bell
+# ──────────────────────────────────────────────
+#
+# THIS is the live guard sign-in. Two paths reach it — badge and credentials —
+# and they do the same three things in the same order: identify the guard,
+# settle on a gate, then open a shift and persist that gate on the profile.
+# That last write is what every later scan depends on.
+#
+# Worth knowing before reading: scanning/views.py defines its own QRLoginView,
+# which is NOT routed — scanning/urls.py imports THIS class and routes it.
+# config/urls.py routes it again at /api/auth/qr-login/. The dead twin has
+# drifted and is the less careful of the two; it is marked as such over there.
 class QRLoginView(APIView):
     """Guard scans their QR badge — clocks out previous shift, creates new shift, issues JWT."""
     permission_classes = [permissions.AllowAny]
@@ -1997,6 +2010,12 @@ class QRLoginView(APIView):
         if not token_str:
             return Response({'error': 'qr_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # is_active is IN the lookup here, where the credential path below
+        # checks it separately after the password. The difference is
+        # deliberate: a badge scan proves nothing on its own, so a disabled
+        # guard must not learn that their account merely got switched off.
+        # ValueError is caught because qr_token is a UUID column and a
+        # malformed string raises rather than simply not matching.
         try:
             guard = User.objects.get(qr_token=token_str, role='security', is_active=True)
         except (User.DoesNotExist, ValueError):
@@ -2012,7 +2031,13 @@ class QRLoginView(APIView):
 
         from scanning.models import Gate, open_shift_for
         valid_gates = Gate.active_ids()
+        # What they picked, else where they were last posted. Both are then
+        # re-checked below, so a stale gate_assignment pointing at a gate since
+        # retired cannot be inherited.
         gate = gate_param if gate_param in valid_gates else guard.gate_assignment
+        # Refused rather than defaulted to 'main'. A guard signed in to no real
+        # gate would tag every scan of their shift to the orphan bucket, and
+        # the fault would only surface later, in reports nobody is watching.
         if not gate or gate not in valid_gates:
             return Response(
                 {'error': 'Gate selection required. Please choose a gate before scanning.'},
@@ -2030,9 +2055,14 @@ class QRLoginView(APIView):
 
         # Closes both the guard being relieved here AND this guard's own stale
         # session at another gate — see scanning.models.open_shift_for.
+        # Opens the new shift and closes what it displaces. Called AFTER the
+        # gate is settled and persisted, so the shift and the profile agree.
         shift, displaced = open_shift_for(guard, gate)
         refresh = RefreshToken.for_user(guard)
 
+        # Note: no AuditLog row on this path, where the credential path below
+        # writes one. Stated as found; the GuardShift is itself a record of the
+        # sign-in, but it is not in the audit trail. Recorded, not changed.
         return Response({
             'access':  str(refresh.access_token),
             'refresh': str(refresh),
@@ -2072,14 +2102,23 @@ class GuardCredentialLoginView(APIView):
         if not email or not password:
             return Response({'error': 'Email and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # role= in the lookup, so a non-guard account gets the same answer as
+        # a non-existent one and cannot discover that this endpoint is not for
+        # them. is_archived is excluded here; is_active is checked further down.
         try:
             guard = User.objects.get(email__iexact=email, role='security', is_archived=False)
         except User.DoesNotExist:
+            # Word-for-word identical to the password failure below, so the two
+            # cannot be told apart — no address enumeration.
             return Response({'error': 'Incorrect email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not guard.check_password(password):
             return Response({'error': 'Incorrect email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
+        # Only AFTER the password is proven does the message become specific.
+        # A guard who knows their own password has earned a real explanation;
+        # somebody guessing addresses has not. This is why is_active is not in
+        # the lookup above, unlike the badge path.
         if not guard.is_active:
             return Response(
                 {'error': 'Your account has been disabled. Please contact the administrator.'},
@@ -2109,6 +2148,9 @@ class GuardCredentialLoginView(APIView):
         shift, displaced = open_shift_for(guard, gate)
         refresh = RefreshToken.for_user(guard)
 
+        # Written directly, not via log_action, and correctly: log_action reads
+        # its actor from request.user, which is anonymous on a login endpoint.
+        # The gate is in the details, so the trail says where the shift began.
         AuditLog.objects.create(
             actor=guard,
             action=AuditLog.Action.GUARD_LOGIN,
@@ -2146,18 +2188,30 @@ class GuardQrAvailabilityView(APIView):
 
     def get(self, request):
         email = (request.query_params.get('email') or '').strip()
+        # must_change_password=False is the whole condition being asked about:
+        # QR sign-in is passwordless, so it stays shut until the guard has
+        # proven themselves once with credentials and replaced the temporary
+        # password they were issued.
         qs = User.objects.filter(role='security', is_active=True, must_change_password=False)
         if email:
             qs = qs.filter(email__iexact=email)
+        # .exists(), returning a bare boolean — deliberately. On a public
+        # endpoint, a count or a name would be more than the gate page needs
+        # and more than a stranger should get.
         return Response({'qr_available': qs.exists()})
 
 
+# Issues the LIVE badge credential. Its dead counterpart, GuardQrCodeView
+# further up this file, hands out a different secret on looser terms — see the
+# note above that class before touching either.
 class GuardQRView(APIView):
     """Admin only: return a guard's QR token for badge printing."""
     permission_classes = [IsAdminRole]
 
     def get(self, request, pk):
-        guard = get_object_or_404(User, pk=pk, role='security')
+        guard = get_object_or_404(User, pk=pk, role='security')   # role= in the lookup: an admin cannot print a badge for a non-guard
+        # The same gate GuardQrAvailabilityView reports on: no badge exists to
+        # print until the guard has completed a credentials login.
         if guard.must_change_password:
             return Response(
                 {'detail': 'QR badge is locked — this guard must log in with their credentials and change their temporary password first.'},
@@ -2170,6 +2224,9 @@ class GuardQRView(APIView):
         })
 
 
+# The admin notification bell. Three endpoints, all admin-only: read the
+# feed, mark items read, clear them. Each write broadcasts so other open tabs
+# update without polling.
 class NotificationListView(APIView):
     """Admin/CDSO: notification-bell feed with unread count."""
     permission_classes = [IsAdminOrCdso]
@@ -2179,9 +2236,12 @@ class NotificationListView(APIView):
         if request.query_params.get('unread_only') in ('1', 'true'):
             qs = qs.filter(is_read=False)
         try:
-            limit = min(int(request.query_params.get('limit', 30)), 100)
+            limit = min(int(request.query_params.get('limit', 30)), 100)   # capped: the bell is a feed, not an export
         except (TypeError, ValueError):
-            limit = 30
+            limit = 30                       # unparseable falls back rather than refusing the bell
+        # Counted separately from the page above, and NOT filtered by
+        # unread_only — the badge has to say how many are unread in total, not
+        # how many happen to be on this page.
         unread_count = Notification.objects.filter(is_read=False).count()
         return Response({
             'results':      NotificationSerializer(qs[:limit], many=True).data,
@@ -2195,21 +2255,29 @@ class NotificationMarkReadView(APIView):
 
     def post(self, request):
         if request.data.get('all'):
-            qs = Notification.objects.filter(is_read=False)
+            qs = Notification.objects.filter(is_read=False)   # already-read rows are excluded, so `updated` below counts real changes
         else:
             ids = request.data.get('ids') or []
+            # isinstance as well as emptiness: this is JSON, so a string or a
+            # dict could arrive and would otherwise reach pk__in as something
+            # the ORM cannot use.
             if not isinstance(ids, list) or not ids:
                 return Response({'error': 'Provide "ids" (list) or "all": true.'}, status=400)
             qs = Notification.objects.filter(pk__in=ids, is_read=False)
-        updated = qs.update(is_read=True)
+        updated = qs.update(is_read=True)    # one statement for the whole set, rather than a save per row
         # queryset.update() skips post_save, so tell open pages explicitly
+        #
+        # Only when something actually changed — a no-op mark-read must not
+        # make every open tab refetch. Swallowed because the realtime layer is
+        # a convenience: the rows are already updated, and a failed broadcast
+        # costs a stale badge until the next load, not correctness.
         if updated:
             try:
                 from realtime.broadcast import broadcast_change
                 broadcast_change('notification', 'updated')
             except Exception:
                 pass
-        return Response({'updated': updated})
+        return Response({'updated': updated})   # the count, so the caller can reconcile its own optimistic state
 
 
 class NotificationClearView(APIView):
@@ -2218,9 +2286,14 @@ class NotificationClearView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def post(self, request):
+        # Defaults to EVERYTHING: `read_only` narrows it, and its absence
+        # means clear the lot, unread items included.
         qs = Notification.objects.all()
         if request.data.get('read_only'):
             qs = qs.filter(is_read=True)
+        # A real delete. Unlike the audit log, notifications are a transient
+        # feed rather than a record — what they were about is still recorded
+        # wherever it actually happened.
         deleted, _ = qs.delete()
         if deleted:
             try:
