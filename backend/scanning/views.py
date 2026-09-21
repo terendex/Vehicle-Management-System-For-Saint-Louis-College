@@ -1149,6 +1149,25 @@ class ScanView(APIView):
 
 
 
+# ──────────────────────────────────────────────
+# Visitor passes and printed slips
+# ──────────────────────────────────────────────
+#
+# A visitor has no registration, so a paper slip stands in for one. The life of
+# a visit is:
+#
+#   1. guard issues the pass          VisitorPassView          (no entry logged yet)
+#   2. the slip is printed            VisitorPassPrintedView   (NOW the entry is logged)
+#   3. ... the visit ...
+#   4. the slip's QR is scanned       SlipExitView / VisitorQrExitView
+#
+# Step 2 is the unusual one: issuing a pass does not put anybody on campus. A
+# slip that never printed means a visitor who never got in, and the AccessLog
+# says so.
+#
+# A visitor's paper is reprintable, and every print draws a NEW serial that
+# retires the older copies — so an old slip someone kept cannot be used to
+# walk a second car out. _slip_from_request is where that is enforced.
 class VisitorPassView(APIView):
     """Guard issues a visitor pass at the gate."""
     permission_classes = [permissions.IsAuthenticated]
@@ -1158,10 +1177,16 @@ class VisitorPassView(APIView):
         Create a visitor pass and return its data for thermal printing.
         Accepts plate_number directly; finds or creates the Vehicle record.
         """
+        # Normalised inline here rather than through canonical_identifier, so
+        # a visitor plate is stored the same shape the gate compares against.
         plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        # A pass needs a Vehicle to hang off, so one is made if the plate is
+        # unknown. Unowned and unauthorized: it carries the visit, it does not
+        # grant anything. (This row is why a visitor's plate later resolves on
+        # the registered path in ScanView — see the note there.)
         vehicle, vehicle_created = Vehicle.objects.get_or_create(
             plate_number=plate_number,
             defaults={'vehicle_type': 'car', 'is_authorized': False},
@@ -1183,14 +1208,20 @@ class VisitorPassView(APIView):
 
         try:
             # Hours and minutes on the form, sent as a total; at most a day.
+            # Clamped at both ends: 0 or a negative would expire the pass the
+            # instant it was issued, and more than a day is not a visit.
             allowed_duration = min(24 * 60, max(1, int(request.data.get('allowed_duration', 60))))
         except (TypeError, ValueError):
-            allowed_duration = 60
+            allowed_duration = 60                # unparseable falls back to an hour rather than refusing the visitor
 
         # Upper-cased like every other name the system stores.
+        # split()/join() collapses runs of whitespace as well as trimming, so
+        # a name typed with stray spaces is stored tidily. Truncated to the
+        # column's length rather than rejected — a long name is not a reason to
+        # turn somebody away at the gate.
         visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
 
-        now = timezone.now()
+        now = timezone.now()                     # one instant for both entered_at and expires_at, so the window is exact
         pass_ = VisitorPass.objects.create(
             vehicle=vehicle,
             plate_number=plate_number,
@@ -1198,9 +1229,9 @@ class VisitorPassView(APIView):
             office=office,
             purpose=request.data.get('purpose', ''),
             issued_by=request.user,
-            valid_date=timezone.localdate(),
-            allowed_duration=allowed_duration,
-            expires_at=now + timedelta(minutes=allowed_duration),
+            valid_date=timezone.localdate(),     # campus-local: a pass belongs to one calendar day here
+            allowed_duration=allowed_duration,   # kept alongside expires_at so the slip can say "60 min" not just a time
+            expires_at=now + timedelta(minutes=allowed_duration),   # what the overstay checks compare against
         )
 
         # NOTE: the visitor's entry is NOT logged here. The AccessLog entry is
@@ -1227,12 +1258,18 @@ class VisitorPassView(APIView):
 
     def get(self, request):
         """List today's visitor passes."""
+        # Today only — a pass is a one-day thing, and the guard screen is about
+        # who is here now, not a history. The three relations are all rendered
+        # per row, so they are joined rather than fetched one query at a time.
         passes = VisitorPass.objects.filter(
             valid_date=timezone.localdate()
         ).select_related('vehicle', 'office', 'issued_by')
         return Response(VisitorPassSerializer(passes, many=True).data)
 
 
+# Every slip endpoint starts here: turn a scanned QR into the row it names, or
+# into the refusal the guard should be shown. The two visitor-specific refusals
+# below are what stop an old piece of paper being reused.
 def _slip_from_request(request, any_copy=False):
     """(model row, None) for the slip named by `code` in the query or body, or
     (None, error Response).
@@ -1243,21 +1280,27 @@ def _slip_from_request(request, any_copy=False):
     opens and exits nothing. Printing passes `any_copy`, since a print makes a
     new copy that retires all the others anyway."""
     from . import slips
-    code = request.query_params.get('code') or request.data.get('code')
+    code = request.query_params.get('code') or request.data.get('code')   # query for the GET lookup, body for the POSTs
     parsed = slips.parse_code(code)
-    if not parsed:
+    if not parsed:                               # not one of our codes at all — a random QR, or a typo
         return None, Response({'error': 'Not a slip QR. Scan a visitor, supplier, event or no-plate slip.'}, status=400)
     # `extra` is the code's third part: a visitor slip's serial, an event pass's
     # organizer plate, '' for the rest.
     kind, pk, extra = parsed
-    obj = slips.find(kind, pk, extra)
+    obj = slips.find(kind, pk, extra)            # the row itself: a VisitorPass, a SupplierPlate, or an AccessLog entry
     if not obj:
         return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
+    # Only visitor slips carry these two rules. A supplier's QR is on a
+    # standing pass, not on one visit, so neither "spent" nor "replaced"
+    # applies to it.
     if isinstance(obj, VisitorPass):
+        # Order matters: "already exited" is the more useful thing to say, so
+        # it is checked before the serial. `any_copy` skips only the serial
+        # check — a spent pass is refused even to the printer.
         error = _spent_visitor_slip(obj) or (None if any_copy else _replaced_visitor_slip(obj, extra))
         if error:
             return None, error
-    return obj, None
+    return obj, None                             # (row, None) on success — callers read `obj, error = ...` and return error first
 
 
 def _spent_visitor_slip(obj):
@@ -1267,13 +1310,16 @@ def _spent_visitor_slip(obj):
     again — a returning visitor is issued a new pass."""
     from .slips import slip_data, _when
     if not isinstance(obj, VisitorPass) or obj.status == VisitorPass.Status.ACTIVE:
-        return None
+        return None                              # not a visitor slip, or still a live one: nothing to refuse
     if obj.status == VisitorPass.Status.EXITED:
         error = (f'This visitor slip is no longer valid — {obj.plate_number} already exited on '
                  f'{_when(obj.exited_at)}. A returning visitor needs a new visitor pass.')
     else:
         error = (f'This visitor slip is no longer valid — the pass for {obj.plate_number} is '
                  f'{obj.get_status_display().lower()}. A returning visitor needs a new visitor pass.')
+    # 409, not 404: the slip is real, it has simply been used. The slip data
+    # IS included here — the guard is holding this paper and needs to see whose
+    # visit it was and when it ended.
     return Response({'error': error, 'reason': 'slip_used', 'slip': slip_data(obj)}, status=409)
 
 
@@ -1282,7 +1328,9 @@ def _replaced_visitor_slip(pass_, serial):
     The slip itself is left out of the response: it would hand whoever holds
     the old paper the current code."""
     if serial == pass_.slip_token:
-        return None
+        return None                              # this IS the newest copy
+    # No 'slip' key in this response, unlike the one above — see the docstring.
+    # Returning it would hand the holder of the retired paper the live code.
     return Response({
         'error': (f'This visitor slip is no longer valid — a newer copy was printed for '
                   f'{pass_.plate_number} (VP-{pass_.pk}). Only the latest printed slip can be used. '
@@ -1326,29 +1374,48 @@ class SlipPrintView(APIView):
         from .slip_printer import SlipPrinterError, print_slip
         from .slips import new_slip_token, slip_data
 
+        # any_copy=True: printing is exactly the operation that retires the
+        # older copies, so refusing an older one here would make a torn slip
+        # unreplaceable.
         obj, error = _slip_from_request(request, any_copy=True)
         if error:
             return error
         is_visitor = isinstance(obj, VisitorPass)
         if is_visitor:
-            obj.slip_token = new_slip_token()
-        slip = slip_data(obj)
+            obj.slip_token = new_slip_token()    # drawn on the object only — NOT saved yet, which is the point of keep_serial below
+        slip = slip_data(obj)                    # built from the object, so it carries the new serial into the QR
 
+        # Called only once the slip has actually gone somewhere. Until then the
+        # stored serial is the previous one, so a print that fails leaves the
+        # copy in the visitor's hand still working.
         def keep_serial():
             if is_visitor:
+                # .update(), not .save(): writes the one column without
+                # touching anything else that may have changed on the row.
                 VisitorPass.objects.filter(pk=obj.pk).update(slip_token=obj.slip_token)
 
+        # The guard chose the browser dialog. The serial IS kept: the slip is
+        # about to be printed by the browser, so this copy becomes the live one.
         if request.data.get('target') == 'browser':
             keep_serial()
             return Response({'printed': False, 'reason': 'browser', 'slip': slip})
+        # Accepts any of the three spellings a form or a client might send.
         reprint = str(request.data.get('reprint', '')).lower() in ('1', 'true', 'yes')
         try:
             printer = print_slip(slip, reprint=reprint)
         except SlipPrinterError as exc:
+            # 502 and NO keep_serial: nothing came out, so the previous copy
+            # must remain the valid one.
             return Response({'printed': False, 'error': f'The slip did not print: {exc}.'}, status=502)
         keep_serial()
+        # 503 means this server has no printer at all — the cloud half. The
+        # frontend reads it as "fall back to the browser dialog", which is why
+        # the serial was kept just above: the slip is still going to print.
         if not printer:
             return Response({'printed': False, 'reason': 'no_printer', 'slip': slip}, status=503)
+        # Only a REPRINT is audited. A first print is part of issuing the pass
+        # and is already on the record; a second one means a slip was lost or
+        # torn, and that is what somebody might later ask about.
         if reprint:
             _audit_slip_reprint(request, slip)
         return Response({'printed': True, 'printer': printer, 'slip': slip})
@@ -1387,13 +1454,20 @@ class SlipExitView(APIView):
     def post(self, request):
         from .slips import slip_data
 
+        # No any_copy here, unlike printing: recording an exit from a retired
+        # copy is exactly what the serial check exists to stop.
         obj, error = _slip_from_request(request)
         if error:
             return error
+        # The same three-step gate resolution used throughout: what the client
+        # said, else the guard's own posting, else the orphan bucket.
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
         from vehicles.models import SupplierPlate
+        # A supplier's QR is on a standing pass, not on one visit, so there is
+        # no single exit it could close. Refused with an explanation rather
+        # than silently doing nothing.
         if isinstance(obj, SupplierPlate):
             return Response({'error': 'A supplier pass is not one visit — scan its QR at the gate '
                                       'and the plate check records the exit.',
@@ -1401,6 +1475,10 @@ class SlipExitView(APIView):
         if isinstance(obj, VisitorPass):   # spent / replaced copies never get here
             duration, overstay = _record_visitor_exit(request, obj, gate_id)
         else:
+            # The other three kinds are all AccessLog entry rows, so
+            # "already out" is asked of the pairing rather than of a status.
+            # A visitor pass answers the same question through its own status,
+            # which _spent_visitor_slip checked further up.
             if AccessLog.objects.filter(paired_entry=obj).exists():
                 return Response({'error': 'This vehicle has already been logged out.',
                                  'slip': slip_data(obj)}, status=409)
@@ -1411,6 +1489,8 @@ class SlipExitView(APIView):
                 duration, overstay = _record_noplate_exit(request, obj, gate_id)[0], 0
             else:
                 duration, overstay = _record_supplier_exit(request, obj, gate_id)
+        # Re-read before serialising: the recorders above wrote status and
+        # timestamps, and the slip returned to the guard has to show them.
         obj.refresh_from_db()
         return Response({'slip': slip_data(obj), 'duration_minutes': duration, 'overstay_minutes': overstay})
 
@@ -1423,15 +1503,19 @@ class VisitorPassPrintedView(APIView):
 
     def post(self, request, pk):
         pass_ = get_object_or_404(VisitorPass, pk=pk)
+        # printed_at doubles as the idempotency guard: a browser that retries
+        # the confirmation must not log the visitor in twice.
         if pass_.printed_at:
             return Response(VisitorPassSerializer(pass_).data)
 
         pass_.printed_at = timezone.now()
-        pass_.save(update_fields=['printed_at'])
+        pass_.save(update_fields=['printed_at'])   # stamped BEFORE the entry row, so a failure below cannot double-log on a retry
 
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
+        # THE visitor's entry. Nothing before this point put them on campus —
+        # see the class docstring. This is the row a later exit has to pair to.
         AccessLog.objects.create(
             plate_number=pass_.plate_number,
             vehicle=pass_.vehicle,
@@ -1448,14 +1532,30 @@ class VisitorPassPrintedView(APIView):
         return Response(VisitorPassSerializer(pass_).data)
 
 
+# The one place a visitor's exit is recorded — every visitor exit path routes
+# through here (SlipExitView, ExitScanView, VisitorQrExitView).
 def _record_visitor_exit(request, pass_, gate_id):
     """Shared exit logic for slip exits (QR scan or looked-up slip). Marks the pass exited, logs the
     exit AccessLog, and issues an overstay violation when applicable."""
-    now = timezone.now()
+    now = timezone.now()                         # one instant for the close, the duration and the overstay
     pass_.status    = VisitorPass.Status.EXITED
     pass_.exited_at = now
     pass_.save(update_fields=['status', 'exited_at'])
 
+    # Note, factually: this exit row is created with NO paired_entry, and
+    # _pair_entry_exit is not called — unlike _record_supplier_exit and
+    # _record_event_exit just below, which both pass paired_entry=entry.
+    #
+    # The occupancy ledger decides who is still on campus by excluding entries
+    # whose pk appears as a paired_entry_id (scanning/occupancy.py), so the
+    # visitor's AUTHORIZED row from VisitorPassPrintedView stays unclosed and
+    # they keep counting as inside. They drop out after STALE_ENTRY_HOURS (12),
+    # and are then reported in `stale_excluded` — the figure the admin screen
+    # presents as exit scans a gate MISSED.
+    #
+    # This is the mirror of the gap noted in ScanView: there the camera closes
+    # the pairing but not the pass, here the slip closes the pass but not the
+    # pairing. Recorded, not changed: this pass comments code.
     AccessLog.objects.create(
         vehicle=pass_.vehicle,
         plate_number=pass_.plate_number,
@@ -1464,9 +1564,11 @@ def _record_visitor_exit(request, pass_, gate_id):
         scanned_by=request.user,
     )
 
+    # Measured from the PASS, not from the AccessLog rows — the visitor's
+    # clock started when the pass was issued.
     duration_minutes = int((now - pass_.entered_at).total_seconds() / 60)
     overstay_minutes = (int((now - pass_.expires_at).total_seconds() / 60)
-                        if pass_.expires_at and now > pass_.expires_at else 0)
+                        if pass_.expires_at and now > pass_.expires_at else 0)   # 0 when on time, or when the pass had no limit
     if overstay_minutes:
         try:
             _auto_log_violation(
@@ -1497,10 +1599,10 @@ def _record_supplier_exit(request, entry, gate_id):
     from .slips import supplier_plate_for
     exit_log = AccessLog.objects.create(
         plate_number=entry.plate_number, status=AccessLog.Status.EXITED,
-        gate_id=gate_id, scanned_by=request.user, paired_entry=entry,
+        gate_id=gate_id, scanned_by=request.user, paired_entry=entry,   # paired here, which is what closes the visit in the occupancy ledger
     )
-    duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
-    overstay = _check_stay_limit(entry.plate_number, None, 'supplier', duration, gate_id) or 0
+    duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)   # from the rows themselves, both auto-stamped
+    overstay = _check_stay_limit(entry.plate_number, None, 'supplier', duration, gate_id) or 0   # `or 0` so None becomes a number the audit line can test
     roster = supplier_plate_for(entry)
     _audit(
         request, AuditLog.Action.RECORD_UPDATED,
@@ -1524,9 +1626,11 @@ def _record_event_exit(request, entry, gate_id):
         event=entry.event, entrant_category=AccessLog.Category.EVENT,
     )
     duration = int((exit_log.scanned_at - entry.scanned_at).total_seconds() / 60)
+    # No _check_stay_limit here, unlike the supplier exit — deliberately, per
+    # the docstring: staying past the end is reported but never fined.
     ends = event_end(entry.event)
     overstay = (int((exit_log.scanned_at - ends).total_seconds() // 60)
-                if ends and exit_log.scanned_at > ends else 0)
+                if ends and exit_log.scanned_at > ends else 0)   # None `ends` means an all-day event, which cannot be overstayed
     _audit(
         request, AuditLog.Action.RECORD_UPDATED,
         f"Event organizer exited (slip) | Ref: EV-{entry.pk} | Plate: {entry.plate_number} | "
@@ -1561,12 +1665,16 @@ class ExitScanView(APIView):
     def post(self, request, pk):
         pass_ = get_object_or_404(VisitorPass, pk=pk)
 
+        # Guards the double-scan: a pass already closed cannot be closed again.
         if pass_.status != VisitorPass.Status.ACTIVE:
             return Response(
                 {'error': f'Pass is already marked as {pass_.status}.'},
                 status=400,
             )
 
+        # Note: no fallback to the guard's own gate_assignment here, unlike
+        # every other exit path in this file — an unspecified gate lands on
+        # 'main'. Stated as found.
         gate_id = request.data.get('gate_id', 'main')
         _record_visitor_exit(request, pass_, gate_id)
         return Response(VisitorPassSerializer(pass_).data)
@@ -1581,6 +1689,8 @@ class VisitorQrExitView(APIView):
     def post(self, request):
         from .slips import parse_code
         qr_data = (request.data.get('qr_data') or '').strip()
+        # Checked before parsing so a supplier's or an event's QR gets a clear
+        # "not a visitor slip" rather than a confusing not-found.
         if not qr_data.upper().startswith('SLC-VISITOR:'):
             return Response({'error': 'Not a visitor slip QR.'}, status=400)
         parsed = parse_code(qr_data)
@@ -1593,6 +1703,8 @@ class VisitorQrExitView(APIView):
             return Response({'error': 'Visitor pass not found.'}, status=404)
         if pass_.status != VisitorPass.Status.ACTIVE:
             return Response({'error': f'Pass is already marked as {pass_.status}.'}, status=400)
+        # The serial check, applied here by hand because this view parses the
+        # QR itself rather than going through _slip_from_request.
         replaced = _replaced_visitor_slip(pass_, serial)
         if replaced:
             return replaced
