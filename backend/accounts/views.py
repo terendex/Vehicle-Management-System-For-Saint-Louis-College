@@ -378,6 +378,18 @@ class DashboardStatsView(APIView):
     """Return dashboard stats. Admin gets full overview; security gets personal scan stats."""
     permission_classes = [permissions.IsAuthenticated]
 
+    # One endpoint, two completely different answers, chosen by role below.
+    #
+    # Read this method as a performance exercise as much as a reporting one.
+    # The admin branch answers roughly forty separate questions, and at ~40ms
+    # per round trip to Neon a naive version would take seconds. Almost every
+    # block is therefore ONE aggregate using Count(filter=...) instead of a
+    # series of .count() calls, and the comments below mark where that matters.
+    #
+    # Note, factually: the `else` branch is labelled 'security', but it is
+    # reached by ANY non-admin role. A vehicle owner calling this gets
+    # role='security' and their own (empty) scan figures rather than an error.
+    # Recorded, not changed: this pass comments code.
     def get(self, request):
         from django.db.models import Count
         from django.utils import timezone
@@ -385,7 +397,7 @@ class DashboardStatsView(APIView):
         from scanning.models import AccessLog
 
         user = request.user
-        today = timezone.localdate()
+        today = timezone.localdate()         # campus-local, so "today" means today here
         week_ago = today - timedelta(days=7)
         # Half-open UTC bounds so the timestamp indexes are usable — a
         # `__date` lookup would force a per-row timezone conversion instead.
@@ -401,6 +413,9 @@ class DashboardStatsView(APIView):
             # instead of a series of separate .count() calls.
             from django.db.models import Q
 
+            # Eleven figures from one table in one statement. Written out as
+            # eleven .count() calls this block alone would have been eleven
+            # round trips before the page could render.
             u_agg = User.objects.aggregate(
                 total=Count('id'),
                 security=Count('id', filter=Q(role='security')),
@@ -418,6 +433,8 @@ class DashboardStatsView(APIView):
                 own_fetcher=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='fetcher')),
                 own_visitor=Count('id', filter=Q(role='vehicle_owner', is_active=True, owner_type='visitor')),
             )
+            # The names below are unpacked purely for readability further down;
+            # nothing else happens here.
             total_users         = u_agg['total']
             security_count      = u_agg['security']
             vehicle_owner_count = u_agg['owners']
@@ -441,6 +458,9 @@ class DashboardStatsView(APIView):
             )
             total_vehicles        = v_agg['total']
             authorized_vehicles   = v_agg['authorized']
+            # Subtracted rather than counted: two halves derived from one total
+            # always sum to it, where a third COUNT could disagree with the
+            # other two if a row changed between queries.
             unauthorized_vehicles = total_vehicles - authorized_vehicles
 
             # Vehicle-type breakdown for the vehicle-types chart.
@@ -455,7 +475,12 @@ class DashboardStatsView(APIView):
             # once and the slices always add up to `total`.
             vehicles_by_type = {}
             for row in Vehicle.objects.values('vehicle_type').annotate(count=Count('id')):
+                # Two fallbacks: `or ''` for a NULL column, then `or 'unknown'`
+                # for one that is blank or only whitespace. Everything lands in
+                # a named bucket, which is what makes the slices sum to total.
                 key = (row['vehicle_type'] or '').strip().lower() or 'unknown'
+                # Accumulated with += rather than assigned, because "Motorcycle"
+                # and "motorcycle" both fold onto the same key here.
                 vehicles_by_type[key] = vehicles_by_type.get(key, 0) + row['count']
 
             # Suppliers are their own model (not User owners) but form a registered
@@ -471,9 +496,12 @@ class DashboardStatsView(APIView):
                                                     scanned_at__lt=today_end)
                                             .values('status').annotate(count=Count('id'))
             }
+            # Every figure below is derived from that one dict, so the parts
+            # cannot disagree with the whole. .get(..., 0) throughout because a
+            # status with no rows today simply does not appear in the result.
             today_scans      = sum(today_by_status.values())
             authorized_today = today_by_status.get('authorized', 0)
-            denied_today     = today_by_status.get('denied', 0) + today_by_status.get('wrong_day', 0)
+            denied_today     = today_by_status.get('denied', 0) + today_by_status.get('wrong_day', 0)   # a wrong-day refusal is still a refusal
             unknown_today    = today_by_status.get('unknown', 0)
 
             # Week total + today's visitor-pass entries in a single pass.
@@ -487,10 +515,14 @@ class DashboardStatsView(APIView):
             )
             week_scans       = al_agg['week']
             visitor_today    = al_agg['visitor_today']
+            # Subtracted, so the two always add up to authorized_today rather
+            # than being two counts that might drift apart.
             registered_today = authorized_today - visitor_today
 
             # Day distribution: authorized entries per weekday (Mon–Sat)
             # Django ExtractWeekDay: 1=Sunday, 2=Monday, …, 7=Saturday
+            # Sunday (1) is deliberately absent: the campus is closed, so it
+            # is not a bar on the chart rather than a bar reading zero.
             DAY_MAP = {2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu', 6: 'Fri', 7: 'Sat'}
             day_rows = (
                 AccessLog.objects
@@ -501,10 +533,18 @@ class DashboardStatsView(APIView):
                 .annotate(count=Count('id'))
             )
             day_dist_map = {row['wd']: row['count'] for row in day_rows}
+            # Built by walking DAY_MAP rather than the rows, so a weekday with
+            # no scans still appears as a zero bar instead of a gap in the chart.
             day_distribution = [
                 {'day': DAY_MAP[wd], 'count': day_dist_map.get(wd, 0)}
                 for wd in sorted(DAY_MAP.keys())
             ]
+            # Note, factually: this sums the Mon–Sat rows only, because the
+            # query above filtered to DAY_MAP's weekdays. `week_scans` a few
+            # lines up counts EVERY day. On a campus closed Sunday the two
+            # normally agree, but they are not the same measure — anything
+            # scanned on a Sunday is in `week` and not in `authorized_week`.
+            # Recorded, not changed.
             authorized_week = sum(day_dist_map.values())
 
             # Registration totals + per-day load (Mon–Sat) in ONE query. This
@@ -512,14 +552,22 @@ class DashboardStatsView(APIView):
             from vehicles.views import SCHEDULE_SLOT_LIMIT
             WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
             _ACC, _PEN = VehicleRegistration.Status.ACCEPTED, VehicleRegistration.Status.PENDING
+            # The aggregate is BUILT rather than written out: three status
+            # totals plus two per weekday, so fifteen figures from one
+            # statement where this once ran twelve separate counts.
             _reg_expr = {
                 'pending':  Count('id', filter=Q(status=_PEN)),
                 'accepted': Count('id', filter=Q(status=_ACC)),
                 'rejected': Count('id', filter=Q(status=VehicleRegistration.Status.REJECTED)),
             }
             for _i, _day in enumerate(WEEK_DAYS):
+                # Keyed by INDEX (d0_acc, d1_acc…), not by day name: aggregate
+                # aliases must be valid identifiers and must not collide with a
+                # model field, and an index is guaranteed to be both.
                 _reg_expr[f'd{_i}_acc'] = Count('id', filter=Q(campus_days__contains=[_day], status=_ACC))
                 _reg_expr[f'd{_i}_pen'] = Count('id', filter=Q(campus_days__contains=[_day], status=_PEN))
+            # campus_days is JSON; `__contains` is answered by the GIN index on
+            # that column (see the VehicleRegistration Meta).
             reg_agg = VehicleRegistration.objects.aggregate(**_reg_expr)
 
             pending_registrations  = reg_agg['pending']
@@ -527,9 +575,11 @@ class DashboardStatsView(APIView):
             rejected_registrations = reg_agg['rejected']
             day_registrations = [
                 {
-                    'day':      _day,
+                    'day':      _day,            # the name goes out here; the index was only an alias
                     'accepted': reg_agg[f'd{_i}_acc'],
                     'pending':  reg_agg[f'd{_i}_pen'],
+                    # Sent with every row so the chart draws its capacity line
+                    # from the same constant the submit handler enforces.
                     'capacity': SCHEDULE_SLOT_LIMIT,
                 }
                 for _i, _day in enumerate(WEEK_DAYS)
@@ -545,19 +595,28 @@ class DashboardStatsView(APIView):
             open_violations = viol_agg['open']
             fee_imposed     = viol_agg['fee']
             active_passes   = VisitorPass.objects.filter(
-                valid_date=today, status=VisitorPass.Status.ACTIVE
+                valid_date=today, status=VisitorPass.Status.ACTIVE   # today's, and not yet exited
             ).count()
 
             # Violation breakdown by type (last 30 days) for the violations trend chart
             month_ago = today - timedelta(days=30)
+            # Note, factually: this uses `issued_at__date__gte`, the exact
+            # lookup the comment at the top of this method says is avoided
+            # because it forces a per-row timezone conversion and stops the
+            # timestamp index being used. Everything else here takes half-open
+            # bounds from day_range()/day_start(); this one query does not.
+            # Recorded, not changed: this pass comments code.
             violations_by_type = {
                 row['violation_type']: row['count']
                 for row in Violation.objects.filter(issued_at__date__gte=month_ago)
                                             .values('violation_type').annotate(count=Count('id'))
             }
 
+            # Two separate lists rather than one mixed feed: the dashboard
+            # shows staff activity and guard activity side by side, and they
+            # answer different questions.
             recent_admin_logs    = AuditLog.objects.select_related('actor', 'target_user').filter(
-                actor__role='admin'
+                actor__role='admin'          # both relations are rendered per row, so they are joined in
             ).order_by('-created_at')[:10]
             recent_security_logs = AuditLog.objects.select_related('actor', 'target_user').filter(
                 actor__role='security'
@@ -582,6 +641,9 @@ class DashboardStatsView(APIView):
                     'pending':  pending_registrations,
                     'accepted': accepted_registrations,
                     'rejected': rejected_registrations,
+                    # Summed from the three above rather than counted, so the
+                    # total can never disagree with the parts on the screen.
+                    # Note this means EXPIRED registrations are not included.
                     'total':    pending_registrations + accepted_registrations + rejected_registrations,
                 },
                 'owners': {
@@ -624,6 +686,10 @@ class DashboardStatsView(APIView):
                 },
             }
         else:
+            # Every non-admin role, not just guards — see the note at the top
+            # of this method. Scoped to `scanned_by=user` throughout, so this
+            # branch can only ever report the caller's own work.
+            #
             # All five figures in one pass instead of five round-trips.
             from django.db.models import Q
             my_agg = AccessLog.objects.filter(scanned_by=user).aggregate(
@@ -650,9 +716,11 @@ class DashboardStatsView(APIView):
                 .order_by('-scanned_at')[:10]
             )
 
+            # Imported here, shadowing the AuditLogSerializer-era import at
+            # the top of the file — a different serializer for a different model.
             from scanning.serializers import AccessLogSerializer
             data = {
-                'role': 'security',
+                'role': 'security',          # what the frontend switches its layout on
                 'scans': {
                     'today':            my_scans_today,
                     'week':             my_scans_week,
