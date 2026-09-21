@@ -1,3 +1,30 @@
+// =============================================================================
+// EVERY CAMERA FEED IN THE APP — one provider, one socket per camera.
+//
+// A page does not open a camera. It registers a <canvas> and this provider
+// paints into it, which is the whole architecture in one sentence. That
+// indirection is deliberate: feeds have to survive a page navigating away and
+// back, and reconnecting an RTSP camera is slow (and on the campus unit,
+// actively harmful).
+//
+// Three loops run per camera, and keeping them separate is what makes it work:
+//
+//   1. the SOCKET     receives base64 JPEGs and detection boxes, pushes them
+//                     into refs. Never touches the DOM.
+//   2. the DECODE     turns the newest JPEG into an Image. At most ONE in
+//                     flight per camera; a frame arriving mid-decode replaces
+//                     the queued one rather than joining a backlog.
+//   3. the rAF DRAW   paints whatever the refs currently hold, at screen rate,
+//                     independently of how fast frames arrive.
+//
+// Almost all the state lives in refs rather than React state, because a
+// 30-fps feed re-rendering the tree 30 times a second would be unusable. The
+// two exceptions are marked where they are declared.
+//
+// The comments already in this file record the bugs that shaped it — a frozen
+// tab, a hammered camera, a cropped dual-lens view. They are worth reading as
+// history, not decoration.
+// =============================================================================
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { toast } from '../components/Feedback/notify'
 import { WS_BASE } from '../api/wsBase'
@@ -14,6 +41,9 @@ const TRACK_COLORS = {
   _default:      '#F6CE11',
 }
 const VEHICLE_TYPE_LABELS = { motorcycle: 'Motorcycle' }
+// Smoothing factor for box movement: each frame the drawn box moves a quarter
+// of the way to where detection says it is. Low enough to hide jitter between
+// detections, high enough not to lag visibly behind a moving vehicle.
 const LERP = 0.25
 
 // Canvas key for "draw the entire frame", as opposed to a numbered slice of it.
@@ -37,7 +67,12 @@ const FULL_FRAME = 'full'
 const MIN_HALF_ASPECT = 1.6
 
 function lensCount(w, h) {
+  // A landscape or square frame is never a vertical stack, so it is answered
+  // without arithmetic — and the guard also covers a frame whose dimensions
+  // are not known yet (0), where dividing would give a nonsense ratio.
   if (!w || !h || h <= w) return 1
+  // The test is on ONE HALF's aspect: if slicing the frame in two would give
+  // two ordinary 16:9-ish pictures, it is a stack.
   return w / (h / 2) >= MIN_HALF_ASPECT ? 2 : 1
 }
 
@@ -52,15 +87,20 @@ function trackColor(t) {
   return TRACK_COLORS[t.vehicle_type] ?? TRACK_COLORS[t.class_name] ?? TRACK_COLORS._default
 }
 
+// Module-scope counter for camera ids. Pre-increment, so ids start at 1 and 0
+// is never handed out — which matters because these are used in truthiness
+// tests around the maps below.
 let _seq = 0
 const genId = () => ++_seq
 
 const CameraContext = createContext(null)
 
 export function CameraProvider({ children }) {
-  const [cameras, setCameras] = useState([])
-  const [results, setResults] = useState([])
-  const [flash,   setFlash]   = useState(false)
+  // The three pieces of genuine React state. Everything else is a ref, for
+  // the reason in the file header.
+  const [cameras, setCameras] = useState([])    // the roster pages render
+  const [results, setResults] = useState([])    // scan outcomes, which the UI lists
+  const [flash,   setFlash]   = useState(false) // the brief visual confirmation of a scan
 
   // camId → how many views are packed into one frame (1 for an ordinary
   // camera, 2 for a dual-lens unit). State, not a ref, because pages render a
@@ -68,8 +108,12 @@ export function CameraProvider({ children }) {
   const [paneCounts, setPaneCounts] = useState({})
 
   // Mutable refs — never cause re-renders, survive page navigation
+  // Sixteen ref maps, all keyed by camId. They are separate maps rather than
+  // one object-per-camera because each is written by a different loop — the
+  // socket writes frames, the draw loop writes smoothing, the reconnect logic
+  // writes timers — and splitting them keeps those writes from colliding.
   const wsMap     = useRef({})
-  const canvasMap = useRef({})
+  const canvasMap = useRef({})   // id → { paneKey → <canvas> }; a camera may have several
   const frameMap  = useRef({})   // id → the newest *decoded* frame, safe to draw
   const decodeMap = useRef({})   // id → bool: a decode is in flight for this camera
   const queuedMap = useRef({})   // id → newest base64 arrived while decoding
@@ -92,6 +136,11 @@ export function CameraProvider({ children }) {
   const camerasRef = useRef([])
 
   // Ref that always holds the latest _connect function (needed for self-referential reconnect)
+  // LOAD-BEARING, and ESLint flags it ("Cannot access refs during render").
+  // scheduleReconnect is defined above _connect and has to call it; wiring
+  // them directly would make two useCallbacks depend on each other. Do NOT
+  // "fix" the lint error by removing this indirection — doing so reintroduces
+  // the cycle and breaks reconnection.
   const connectRef = useRef(null)
 
   // ── Frame intake ─────────────────────────────────────────────────────────
@@ -111,6 +160,7 @@ export function CameraProvider({ children }) {
   // thousands of Image decodes it will never show. A frame that arrives mid
   // decode replaces the queued one rather than joining a backlog: for a live
   // feed only the newest picture is worth anything.
+  // THE DECODE LOOP. Called by the socket for every frame that arrives.
   const acceptFrame = useCallback((camId, b64) => {
     // `start` recurses instead of acceptFrame calling itself: a useCallback
     // const cannot reference its own binding from inside its initialiser.
@@ -131,16 +181,18 @@ export function CameraProvider({ children }) {
         frameMap.current[camId] = img
         done()
       }
+      // A corrupt frame is dropped silently and the queue keeps moving. Without
+      // this the decode flag would stay true forever and the feed would stop.
       img.onerror = done
-      img.src = `data:image/jpeg;base64,${payload}`
+      img.src = `data:image/jpeg;base64,${payload}`   // assigning src is what starts the decode
     }
 
     if (decodeMap.current[camId]) {
       queuedMap.current[camId] = b64        // newest wins; older one is dropped
       return
     }
-    start(b64)
-  }, [])
+    start(b64)                              // nothing decoding: begin immediately
+  }, [])                                    // empty deps: the function closes over refs only, so it never needs rebuilding
 
   // ── Canvas registration (pages call this on mount/unmount) ───────────────
   // A camera may need more than one canvas. A dual-lens unit sends both of its
@@ -153,19 +205,27 @@ export function CameraProvider({ children }) {
   // cropped every other page in the app to the top half of a dual-lens feed,
   // hiding the second view on screens that only ever register one canvas.
   const registerCanvas = useCallback((camId, el, pane) => {
+    // `pane == null` catches both undefined and null — the two ways a caller
+    // can decline to pick a slice. String() because object keys are strings
+    // anyway, and being explicit stops 0 and '0' being different entries.
     const key = pane == null ? FULL_FRAME : String(pane)
-    const panes = canvasMap.current[camId] ?? (canvasMap.current[camId] = {})
+    const panes = canvasMap.current[camId] ?? (canvasMap.current[camId] = {})   // create-on-first-use, in one expression
     if (el) {
-      panes[key] = el
+      panes[key] = el                       // React passes the node on mount...
     } else {
-      delete panes[key]
+      delete panes[key]                     // ...and null on unmount
+      // Prune the empty parent too, so the draw loop's "any canvas?" test is a
+      // simple key check rather than a walk.
       if (Object.keys(panes).length === 0) delete canvasMap.current[camId]
     }
   }, [])
 
   // ── 60-fps render loop (keeps running even when canvas is unregistered) ──
+  // THE DRAW LOOP. One per camera, started on connect and never stopped while
+  // the camera exists — it keeps running with no canvas registered, drawing
+  // nothing, so navigating back to a page resumes instantly.
   const startRenderLoop = useCallback((camId) => {
-    if (rafMap.current[camId]) return
+    if (rafMap.current[camId]) return        // already looping; a second loop would double the paint rate
     if (!trackMap.current[camId]) trackMap.current[camId] = new Map()
     if (!smoothMap.current[camId]) smoothMap.current[camId] = new Map()
 
@@ -189,6 +249,9 @@ export function CameraProvider({ children }) {
       }
 
       const img   = frameMap.current[camId]
+      // All three checks: the Image may be absent, still decoding, or decoded
+      // but empty. naturalWidth is the one that catches a failed decode that
+      // nonetheless set `complete`.
       const ready = Boolean(img && img.complete && img.naturalWidth > 0)
 
       // How many pictures are inside this one frame — see lensCount above.
@@ -198,6 +261,8 @@ export function CameraProvider({ children }) {
         setPaneCounts(prev => ({ ...prev, [camId]: count }))
       }
 
+      // Fallbacks so a camera that has not delivered a frame yet still gets a
+      // sensibly-sized black canvas rather than a 0x0 one.
       const fw = img?.naturalWidth  || 1280           // full frame, both views
       const fh = img?.naturalHeight || 720
       // Floored: a canvas height attribute is an integer, and letting the
@@ -207,6 +272,9 @@ export function CameraProvider({ children }) {
       const targets = trackMap.current[camId]  || new Map()
       const smooth  = smoothMap.current[camId] || new Map()
 
+      // Drop smoothing state for tracks detection has stopped reporting.
+      // Without this the map grows for the life of the page — every vehicle
+      // that has ever passed the camera would keep an entry.
       for (const tid of smooth.keys()) if (!targets.has(tid)) smooth.delete(tid)
 
       // Smoothing is advanced once per frame, in full-frame pixels, before any
@@ -215,6 +283,8 @@ export function CameraProvider({ children }) {
       for (const [tid, track] of targets) {
         const tx1 = track.bbox[0] * fw, ty1 = track.bbox[1] * fh
         const tx2 = track.bbox[2] * fw, ty2 = track.bbox[3] * fh
+        // A brand-new track starts AT its target rather than at zero —
+        // otherwise every box would fly in from the top-left corner.
         if (!smooth.has(tid)) smooth.set(tid, { x1: tx1, y1: ty1, x2: tx2, y2: ty2 })
         const s = smooth.get(tid)
         s.x1 += (tx1 - s.x1) * LERP; s.y1 += (ty1 - s.y1) * LERP
@@ -225,10 +295,16 @@ export function CameraProvider({ children }) {
         // A viewport that asked for the whole frame gets it, stacked views and
         // all — only the ones that named a pane are cropped to it.
         const whole = key === FULL_FRAME
+        // Clamped: a page may register pane 1 on a camera that turns out to
+        // be single-lens, and without this it would slice past the bottom of
+        // the frame and draw nothing.
         const pane  = whole ? 0 : Math.min(Number(key), count - 1)
         const ch    = whole ? fh : sh                  // this canvas's height
         const sy    = whole ? 0  : pane * sh           // top of this view
 
+        // Guarded because ASSIGNING canvas.width clears the canvas, even to
+        // the same value — doing it unconditionally would blank the picture
+        // every frame and produce a flicker.
         if (canvas.width !== fw) canvas.width  = fw
         if (canvas.height !== ch) canvas.height = ch
 
@@ -240,13 +316,16 @@ export function CameraProvider({ children }) {
         ctx.clearRect(0, 0, fw, ch)
 
         if (ready) {
+          // The nine-argument form: take the slice starting at sy from the
+          // source, draw it filling the destination. This is where a stacked
+          // dual-lens frame becomes two separate pictures.
           ctx.drawImage(img, 0, sy, fw, ch, 0, 0, fw, ch)
         } else {
-          ctx.fillStyle = '#04121F'
+          ctx.fillStyle = '#04121F'            // the dark placeholder, so a connecting feed reads as "not yet" rather than broken
           ctx.fillRect(0, 0, fw, ch)
         }
 
-        if (targets.size === 0) continue
+        if (targets.size === 0) continue       // nothing detected: skip the overlay setup entirely
 
         ctx.font = "12px 'Courier New', monospace"
         ctx.textBaseline = 'top'
@@ -259,23 +338,34 @@ export function CameraProvider({ children }) {
           // Track coordinates are relative to the whole frame; shift them into
           // this view and skip anything belonging to the other one.
           const py = s.y1 - sy, ph = s.y2 - s.y1
+          // Entirely above or entirely below this pane — it belongs to the
+          // other view. Both ends are tested so a box straddling the seam is
+          // still drawn (clipped) on both.
           if (py + ph <= 0 || py >= ch) continue
 
           const px = s.x1, pw = s.x2 - s.x1
           const color = trackColor(track)
 
           ctx.strokeStyle = color
+          // Vehicles get a thicker dashed box, plates a thin solid one — so
+          // the two kinds of detection are distinguishable at a glance even
+          // where they overlap.
           ctx.lineWidth   = track.vehicle_type ? 3 : 2
           ctx.setLineDash(track.vehicle_type ? [8, 4] : [])
           ctx.strokeRect(px, py, pw, ph)
-          ctx.setLineDash([])
+          ctx.setLineDash([])                  // reset immediately: the dash pattern is context-wide and would leak to the next box
 
           const PAD = 6, TH = 21
           const labelText = track.vehicle_type
             ? (VEHICLE_TYPE_LABELS[track.vehicle_type] ?? track.vehicle_type)
             : `${track.plate_text || `T#${tid}`}${track.detection_conf ? ` ${(track.detection_conf * 100).toFixed(0)}%` : ''}`
 
+          // Measured, not guessed: the label box has to fit its text, and the
+          // text is a plate number of unpredictable length.
           const tw = ctx.measureText(labelText).width + PAD * 2
+          // Three fills in order — dark plate, coloured spine, then the text.
+          // Drawn ABOVE the box (py - TH), so a label never covers the vehicle
+          // it belongs to.
           ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(px, py - TH, tw, TH)
           ctx.fillStyle = color;              ctx.fillRect(px, py - TH, 3, TH)
           ctx.fillStyle = '#fff';             ctx.fillText(labelText, px + PAD + 2, py - TH + 4)
@@ -285,17 +375,30 @@ export function CameraProvider({ children }) {
       } catch (err) {
         // One bad frame must not end the feed. Logged once per camera so a
         // recurring fault is visible without flooding the console at 60 fps.
+        // Note, factually: nothing ever clears loopErrMap — not
+        // stopRenderLoop, not disconnectAll. Combined with disconnectCamera
+        // KEEPING the urlToIdMap entry (so a reconnected camera reuses its
+        // camId), this means "once per camera" is really "once per camera per
+        // page load": after one error, a later and possibly different fault on
+        // the same camera is never logged. Recorded, not changed.
         if (!loopErrMap.current[camId]) {
           loopErrMap.current[camId] = true
           console.error('[camera] render loop error (recovering)', err)
         }
       } finally {
+        // THE line that keeps the feed alive. In `finally`, so every exit from
+        // the try — a normal paint, an early `return` when no canvas is
+        // registered, or a throw — still queues the next frame. This is the
+        // fix for the freeze described at the top of the loop.
         rafMap.current[camId] = requestAnimationFrame(draw)
       }
     }
-    rafMap.current[camId] = requestAnimationFrame(draw)
+    rafMap.current[camId] = requestAnimationFrame(draw)   // the first tick; every later one comes from the finally above
   }, [])
 
+  // The per-camera teardown. Note what it does NOT clear: detectMap, gateMap,
+  // retryMap and urlToIdMap all survive, because a stopped camera is expected
+  // to come back and should return with the same identity and settings.
   const stopRenderLoop = useCallback((camId) => {
     if (rafMap.current[camId]) {
       cancelAnimationFrame(rafMap.current[camId])
@@ -309,7 +412,7 @@ export function CameraProvider({ children }) {
     // camera that has just been stopped, painting a ghost frame onto the next
     // feed to reuse the canvas.
     delete decodeMap.current[camId]
-    delete queuedMap.current[camId]
+    delete queuedMap.current[camId]          // the pending base64 too, or a stopped camera keeps a whole JPEG alive
     delete trackMap.current[camId]
     delete smoothMap.current[camId]
     delete paneCountMap.current[camId]
@@ -325,10 +428,15 @@ export function CameraProvider({ children }) {
   // One place decides when to retry, so the 'error' path and the 'close' path
   // can no longer schedule two overlapping reconnects for the same camera —
   // which opened two sockets and left one of them orphaned.
+  // Backoff, and the counter that drives it. Reset to 0 whenever frames start
+  // flowing again (see the status handler), so a camera that recovers does not
+  // inherit a 30-second delay the next time it drops.
   const scheduleReconnect = useCallback((camId, rtspUrl) => {
-    if (timerMap.current[camId]) return
+    if (timerMap.current[camId]) return       // a retry is already pending; a second would double the attempt rate
     const attempt = (retryMap.current[camId] ?? 0) + 1
     retryMap.current[camId] = attempt
+    // 2s, 4s, 8s, 16s, 30s, 30s… Each attempt costs the backend an RTSP open
+    // of up to 10 seconds, which is why this is not a flat retry.
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
 
     // Announce an outage once, not on every attempt.
@@ -339,7 +447,14 @@ export function CameraProvider({ children }) {
 
     timerMap.current[camId] = setTimeout(() => {
       delete timerMap.current[camId]
+      // Two guards before reconnecting, and both matter. The URL check
+      // confirms this camera still exists under this id (it may have been
+      // removed, or re-added with a new id, while the timer was pending); the
+      // socket check confirms nothing else has already reconnected it.
       if (urlToIdMap.current[rtspUrl] === camId && !wsMap.current[camId]) {
+        // Through the REF, not the binding: _connect is defined below this
+        // function, and reaching it directly would be a cycle between two
+        // useCallbacks. The ref is what breaks it.
         connectRef.current?.(camId, rtspUrl, detectMap.current[camId] ?? false)
       }
     }, delay)
@@ -347,8 +462,11 @@ export function CameraProvider({ children }) {
 
   // ── Open WebSocket for a camera ───────────────────────────────────────────
   const _connect = useCallback((camId, rtspUrl, detect = false) => {
+    // Read at connect time rather than captured: a reconnect after a token
+    // refresh must carry the NEW token, and the socket authenticates by query
+    // string because browsers cannot set headers on a WebSocket handshake.
     const token = localStorage.getItem('access_token') || ''
-    if (!token) return
+    if (!token) return                        // signed out — nothing to connect with
 
     // A pending retry is superseded by this attempt
     if (timerMap.current[camId]) {
@@ -359,27 +477,40 @@ export function CameraProvider({ children }) {
     // Cancel any lingering WS before opening a new one for the same cam
     const stale = wsMap.current[camId]
     if (stale) {
+      // onclose cleared FIRST. Closing a socket fires its close handler, and
+      // that handler schedules a reconnect — so without this line, replacing a
+      // socket would queue a retry for the one we are deliberately discarding.
       stale.onclose = null
-      try { stale.close() } catch {}
+      try { stale.close() } catch {}          // a socket already closing throws; nothing to do about it
       delete wsMap.current[camId]
     }
 
     const detectParam = detect ? '&detect=1' : ''
     const ws = new WebSocket(`${WS_BASE}/ws/scan/rtsp/?token=${token}${detectParam}`)
     wsMap.current[camId] = ws
+    // Started here, not on first frame: the loop paints the dark placeholder
+    // while connecting, so the viewport is never an empty white rectangle.
     startRenderLoop(camId)
 
     ws.onopen = () => {
+      // Still "Connecting…" — the socket is up, but the backend has not yet
+      // opened the RTSP stream behind it. Those are two separate connections
+      // and the UI distinguishes them (wsActive vs streamConnected).
       setCameras(p => p.map(c => c.id === camId ? { ...c, wsActive: true, statusMsg: 'Connecting…' } : c))
       const gate = gateMap.current[camId]
+      // The gate is sent with the start message and tags every scan this
+      // camera produces. Omitted entirely when unknown, rather than sent
+      // empty, so the backend falls back to the guard's own posting.
       ws.send(JSON.stringify({ type: 'start', rtsp_url: rtspUrl, ...(gate ? { gate_id: gate } : {}) }))
     }
 
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data)
+        // Five message types, and `frame` is tested first because it is by far
+        // the most common — everything else arrives occasionally.
         if (msg.type === 'frame') {
-          acceptFrame(camId, msg.image_b64)
+          acceptFrame(camId, msg.image_b64)   // straight into the decode queue; never drawn from here
           return
         }
         if (msg.type === 'status') {
@@ -390,22 +521,29 @@ export function CameraProvider({ children }) {
             ? { ...c, streamConnected: !!msg.connected, statusMsg: msg.message || '' } : c))
           return
         }
+        // A backend-reported failure — the RTSP source is unreachable or the
+        // stream died. Torn down deliberately here rather than waiting for the
+        // socket to drop, so the retry clock starts immediately.
         if (msg.type === 'error') {
           const wsErr = wsMap.current[camId]
           if (wsErr) {
-            try { wsErr.onclose = null; wsErr.close() } catch {}
+            try { wsErr.onclose = null; wsErr.close() } catch {}   // onclose nulled first, same reason as above
             delete wsMap.current[camId]
           }
-          stopRenderLoop(camId)
+          stopRenderLoop(camId)               // stopped here, unlike a plain disconnect, because there is nothing left to paint
           setCameras(p => p.map(c => c.id === camId
             ? { ...c, wsActive: false, streamConnected: false, statusMsg: msg.message || 'Stream failed.' } : c))
           if (urlToIdMap.current[rtspUrl] === camId) scheduleReconnect(camId, rtspUrl)
           return
         }
+        // Detections replace wholesale rather than merging: the backend sends
+        // the complete current set every time, so anything absent has gone.
+        // Rebuilt as a Map keyed by track_id, which is what the draw loop
+        // needs to pair a detection with its smoothing state.
         if (msg.type === 'tracks' && msg.tracks) {
           const map = new Map()
           for (const t of msg.tracks) map.set(t.track_id, t)
-          trackMap.current[camId] = map
+          trackMap.current[camId] = map       // a ref, so 30 detections a second cost no re-renders
           return
         }
         if (msg.type === 'ocr_update') {
@@ -535,6 +673,10 @@ export function CameraProvider({ children }) {
   }, [_connect, startRenderLoop])
 
   // ── Remove camera (close WS + remove from list + stop tracking) ───────────
+  // The difference between disconnect and REMOVE is one line — the urlToIdMap
+  // entry. Disconnect keeps it, so reconnecting the same URL returns the same
+  // camId with its settings intact; remove drops it, so the URL would come
+  // back as a brand-new camera.
   const removeCamera = useCallback((camId) => {
     disconnectCamera(camId)
     setCameras(p => {
@@ -601,11 +743,17 @@ export function CameraProvider({ children }) {
   }, [addCamera, removeCamera])
 
   // ── Disconnect and clear all cameras ──────────────────────────────────────
+  // Wholesale teardown, on logout. Written as direct ref clearing rather than
+  // a loop over disconnectCamera — which is where the asymmetry noted below
+  // comes from.
   const disconnectAll = useCallback(() => {
     Object.keys(wsMap.current).forEach(id => {
       const ws = wsMap.current[id]
       if (ws) {
-        ws.onclose = null
+        ws.onclose = null                     // before close(), so no reconnect is scheduled for a socket being torn down on purpose
+        // A courtesy 'stop' so the backend releases the RTSP handle promptly
+        // rather than waiting to notice the socket died — which matters on
+        // the campus unit, where held sessions are what freeze the feeds.
         try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' })); ws.close() } catch {}
       }
     })
@@ -626,9 +774,29 @@ export function CameraProvider({ children }) {
     setResults([])
     setFlash(false)
     setPaneCounts({})
+    // Note, factually — TEARDOWN ASYMMETRY. This clears 11 of the 14 per-camera
+    // ref maps. Three are missed, because this path rebuilds the maps directly
+    // instead of going through stopRenderLoop (which does clear the first two):
+    //
+    //   decodeMap    a boolean per camera
+    //   queuedMap    a pending base64 JPEG per camera — the one with real size
+    //   loopErrMap   a boolean, and cleared by NO path anywhere in this file
+    //
+    // Not a misbehaviour: genId() only ever counts up and urlToIdMap IS
+    // cleared here, so a camera added after this gets a fresh id and never
+    // reads the stale entries. The cost is retention — one queued frame per
+    // camera, held until the page unloads. Recorded, not changed.
   }, [])
 
   // Cleanup only on true app unmount (browser tab close / hard logout)
+  // True unmount only — the empty dep array means this never re-runs, so
+  // navigating between pages does NOT tear down feeds. That is the whole
+  // reason the provider sits above the router: reconnecting these cameras is
+  // slow, and on the campus unit actively harmful.
+  //
+  // Only the three things that would otherwise outlive the page are released
+  // here (sockets, animation frames, timers). The ref maps are deliberately
+  // left alone: the page is going away and they go with it.
   useEffect(() => () => {
     Object.values(wsMap.current).forEach(ws => { try { ws?.close() } catch {} })
     Object.values(rafMap.current).forEach(h => cancelAnimationFrame(h))
@@ -653,6 +821,9 @@ export function CameraProvider({ children }) {
   )
 }
 
+// Throws rather than returning null, so a component rendered outside the
+// provider fails loudly at mount instead of silently never receiving frames —
+// which would look like a broken camera rather than a wiring mistake.
 export function useCameraContext() {
   const ctx = useContext(CameraContext)
   if (!ctx) throw new Error('useCameraContext must be used within CameraProvider')
