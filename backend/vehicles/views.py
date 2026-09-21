@@ -2944,6 +2944,7 @@ class RegistrationPaymentView(APIView):
 #             owner's to rewrite unilaterally.
 
 
+# Finds the one approved registration an owner's dashboard is about.
 def _accepted_registration_for(user):
     """The accepted registration behind a vehicle-owner account, or None.
 
@@ -2954,12 +2955,13 @@ def _accepted_registration_for(user):
     approval.)
     """
     return (VehicleRegistration.objects
-            .filter(Q(user=user) | Q(email=user.email),
-                    status=VehicleRegistration.Status.ACCEPTED)
-            .order_by('-reviewed_at')
-            .first())
+            .filter(Q(user=user) | Q(email=user.email),          # the FK where it is set, otherwise the address the row was filed under
+                    status=VehicleRegistration.Status.ACCEPTED)  # only an approved row has a pass worth correcting
+            .order_by('-reviewed_at')                            # most recently approved first, so a renewal supersedes last year's
+            .first())                                            # None when nothing is approved — every caller checks for it
 
 
+# Carries an approved change out to the records the registration created.
 def _mirror_registration_change(registration, changed_fields):
     """Carry an approved change out to the records built from the registration.
 
@@ -2982,36 +2984,50 @@ def _mirror_registration_change(registration, changed_fields):
     old row is released rather than deleted: it keeps whatever history hangs off
     it, and stops admitting the car.
     """
-    touched = set(changed_fields)
+    touched = set(changed_fields)                # a set, so the membership tests below read directly
 
+    # The account, if the approval created one. user_id rather than .user: this
+    # asks whether there IS an account without fetching it to find out.
     if 'full_name' in touched and registration.user_id:
         user = registration.user
         user.full_name = registration.full_name
-        user.save(update_fields=['full_name'])
+        user.save(update_fields=['full_name'])   # the name only; nothing else on the account is this function's business
 
+    # The four fields that describe the car. Anything else on the whitelist —
+    # a licence number, a program — lives only on the registration row, so
+    # there is nothing further to carry out.
     vehicle_fields = {'plate_number', 'conduction_number', 'vehicle_type', 'vehicle_color'}
     if not (touched & vehicle_fields):
-        return
+        return                                   # nothing about the vehicle moved
 
     old_vehicle = registration.vehicle
+    # The distinction the rest of this function turns on: did it become a
+    # DIFFERENT car, or the same car described better?
     identity_moved = bool(touched & {'plate_number', 'conduction_number'})
 
     if not identity_moved and old_vehicle is not None:
         # Same car, different description — no row to adopt.
-        old_vehicle.vehicle_type = _vehicle_type_for(registration.vehicle_type)
+        old_vehicle.vehicle_type = _vehicle_type_for(registration.vehicle_type)   # the form's wording, mapped to the model's own choice value
         old_vehicle.color = registration.vehicle_color
         old_vehicle.save(update_fields=['vehicle_type', 'color'])
         return
 
+    # The identity moved (or there was no Vehicle at all). Adopt the row for
+    # the new plate through the very helper an approval uses, so an edited
+    # registration and a freshly approved one produce the same Vehicle.
     new_vehicle = _upsert_vehicle_for_registration(registration, registration.user)
     if old_vehicle is not None and old_vehicle.pk != new_vehicle.pk:
+        # Released, not deleted — see the docstring. Unowned and unauthorized
+        # is what stops the old plate admitting the car; the row itself stays,
+        # and so does every visitor pass and scan hanging off it.
         old_vehicle.user = None
         old_vehicle.is_authorized = False
         old_vehicle.save(update_fields=['user', 'is_authorized'])
-    registration.vehicle = new_vehicle
+    registration.vehicle = new_vehicle           # the registration now points at the car it actually describes
     registration.save(update_fields=['vehicle'])
 
 
+# Path one of the two: the applicant fixes their own PENDING application.
 class RegistrationSelfEditView(APIView):
     """The applicant's own correction step, while the application is pending.
 
@@ -3026,8 +3042,8 @@ class RegistrationSelfEditView(APIView):
     re-sends is the acknowledgement PDF, which is rebuilt from the row — the
     copy the applicant is holding would otherwise still show the typo.
     """
-    permission_classes = [permissions.AllowAny]
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    permission_classes = [permissions.AllowAny]   # authorised by the emailed token, not by an account — there is no account yet
+    parser_classes = [JSONParser, MultiPartParser, FormParser]   # JSON today; the multipart parsers keep an older bundle's form post readable
 
     EXPIRED_MESSAGE = (
         "This link is no longer valid. It may have expired, or your application "
@@ -3036,17 +3052,21 @@ class RegistrationSelfEditView(APIView):
     )
 
     def get(self, request):
-        registration = _payment_registration(request.query_params.get('token'))
+        # Everything the edit form needs to draw itself: which boxes it may
+        # offer, what goes in them, and what it must show without offering.
+        registration = _payment_registration(request.query_params.get('token'))   # the same PENDING-only lookup the receipt step uses
         if registration is None:
             return Response({"error": self.EXPIRED_MESSAGE},
                             status=status.HTTP_404_NOT_FOUND)
         return Response({
-            "registrant_type": registration.registrant_type,
+            "registrant_type": registration.registrant_type,   # the form asks different questions of a student, an employee and a fetcher
             "student_level":   registration.student_level,
-            "reference":       "REG-%s" % str(registration.pk).zfill(6),
+            "reference":       "REG-%s" % str(registration.pk).zfill(6),   # a handle they can quote at the CDSO desk; the token itself is never shown
+            # Worked out per registration rather than fixed: an e-bike's issued
+            # control number, for one, is not among the fields it offers.
             "editable":        [{"field": f.name, "label": f.label}
                                 for f in editable_for(registration)],
-            "values":          current_values(registration),
+            "values":          current_values(registration),   # what to prefill each box with
             # Shown read-only beside the form: they are what the applicant uses
             # to recognise their own application, and being unable to edit the
             # email is easier to accept when you can see which one it is.
@@ -3057,23 +3077,30 @@ class RegistrationSelfEditView(APIView):
         })
 
     def post(self, request):
+        # Resolved from the token again. The GET that drew the form proves
+        # nothing about this request, and the row may have been reviewed since.
         registration = _payment_registration(request.data.get('token'))
         if registration is None:
             return Response({"error": self.EXPIRED_MESSAGE},
                             status=status.HTTP_404_NOT_FOUND)
 
-        raw = {k: v for k, v in request.data.items() if k != 'token'}
+        raw = {k: v for k, v in request.data.items() if k != 'token'}   # everything but the token is a candidate change
+        # The whitelist, the per-field cleaners and the duplicate checks all
+        # live in registration_edits, so this path and the CDSO-approved one
+        # below enforce one set of rules rather than two copies of it.
         changes, errors = clean_changes(registration, raw)
         if errors:
-            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)   # keyed by field, so each message lands under its own box
         if not changes:
+            # Submitted without altering anything. A 200, not an error: nothing
+            # went wrong, there is simply nothing to do.
             return Response({"message": "Nothing was changed.", "changed": []},
                             status=status.HTTP_200_OK)
 
-        summary = describe(registration, changes)
+        summary = describe(registration, changes)   # the old-to-new rows, built BEFORE the write while the old values still exist
         with transaction.atomic():
-            apply_changes(registration, changes)
-            registration.save()
+            apply_changes(registration, changes)    # writes the fields onto the object and deliberately does not save
+            registration.save()                     # the one save, inside the transaction that owns it
 
         # Not audited against a user: the applicant has no account yet, and an
         # AuditLog row needs an actor to mean anything. The notification below
@@ -3088,11 +3115,12 @@ class RegistrationSelfEditView(APIView):
         return Response({
             "message": "Your details have been updated. A new acknowledgement has "
                        "been emailed to you.",
-            "changed": summary,
-            "values":  current_values(registration),
+            "changed": summary,                    # so the page can confirm exactly what it understood them to change
+            "values":  current_values(registration),   # re-read after the write, so the form redraws from the row rather than from its own optimism
         }, status=status.HTTP_200_OK)
 
 
+# Path two: the owner of an ACCEPTED registration asks CDSO for a change.
 class OwnerChangeRequestView(APIView):
     """The owner's side of an approval-gated correction.
 
@@ -3107,13 +3135,22 @@ class OwnerChangeRequestView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    # The two questions both methods have to ask before doing anything, asked
+    # once. Returns (registration, None) when the caller may proceed, and
+    # (None, response) when it may not — so each method is two lines of guard.
     def _guard(self, request):
+        # An admin or a guard has their own screens for this; only the person
+        # the registration belongs to may file a request against it.
         if request.user.role != 'vehicle_owner':
             return None, Response(
                 {"error": "Only vehicle owners can change their registration details."},
                 status=status.HTTP_403_FORBIDDEN)
+        # Never taken from the request: the registration is the one this
+        # account owns, so there is no id an owner could point at someone else's.
         registration = _accepted_registration_for(request.user)
         if registration is None:
+            # An account with nothing approved — a pending applicant who somehow
+            # has a login, or an owner whose registration expired.
             return None, Response(
                 {"error": "No approved registration found for this account."},
                 status=status.HTTP_404_NOT_FOUND)
@@ -3125,13 +3162,13 @@ class OwnerChangeRequestView(APIView):
             return error
         requests = (RegistrationChangeRequest.objects
                     .filter(registration=registration)
-                    .select_related('reviewed_by')[:20])
+                    .select_related('reviewed_by')[:20])   # the reviewer's name is rendered on every row, so fetch it in the same query; the model orders newest-first, and 20 is all a dashboard shows
         return Response({
-            "editable": [{"field": f.name, "label": f.label}
+            "editable": [{"field": f.name, "label": f.label}   # the same whitelist the pending path offers, worked out for this registration
                          for f in editable_for(registration)],
             "values":   current_values(registration),
-            "locked":   dict(READ_ONLY_REASONS),
-            "requests": [_serialize_change_request(r) for r in requests],
+            "locked":   dict(READ_ONLY_REASONS),   # field -> why it cannot be changed, so the form can say so instead of just greying the box out
+            "requests": [_serialize_change_request(r) for r in requests],   # the history, which is what lets the page say "waiting on CDSO"
         })
 
     def post(self, request):
@@ -3139,6 +3176,8 @@ class OwnerChangeRequestView(APIView):
         if error:
             return error
 
+        # Asked in Python first so the ordinary case gets a sentence the owner
+        # can act on; the database constraint below is what actually holds.
         if RegistrationChangeRequest.objects.filter(
             registration=registration,
             status=RegistrationChangeRequest.Status.PENDING,
@@ -3148,11 +3187,14 @@ class OwnerChangeRequestView(APIView):
                           "Cancel it first if you need to change something else."},
                 status=status.HTTP_409_CONFLICT)
 
-        before = current_values(registration)
-        changes, errors = clean_changes(registration, dict(request.data))
+        before = current_values(registration)    # read first: once the request is approved the row holds the new values on both sides
+        changes, errors = clean_changes(registration, dict(request.data))   # the same cleaners the pending path runs
         if errors:
             return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
         if not changes:
+            # A 400 here, where the pending path returns 200 for the same
+            # situation: filing an empty request would put a row in the CDSO
+            # queue for a reviewer to open and find nothing in.
             return Response(
                 {"error": "Nothing was changed, so there is nothing to submit."},
                 status=status.HTTP_400_BAD_REQUEST)
@@ -3160,8 +3202,8 @@ class OwnerChangeRequestView(APIView):
         try:
             change_request = RegistrationChangeRequest.objects.create(
                 registration=registration,
-                requested_by=request.user,
-                changes=changes,
+                requested_by=request.user,        # who asked — not necessarily who the registration names, on a shared account
+                changes=changes,                  # the cleaned field -> new value map, not the raw payload
                 # Snapshot for the audit trail, and what a *decided* request is
                 # rendered from — once a change is applied the row holds the new
                 # value on both sides. See the model docstring.
@@ -3177,18 +3219,21 @@ class OwnerChangeRequestView(APIView):
                           "Cancel it first if you need to change something else."},
                 status=status.HTTP_409_CONFLICT)
 
+        # Field NAMES only, never the values: the audit log is read by staff
+        # who have no business seeing a licence number they were not shown.
         audit(request, AuditLog.Action.RECORD_CREATED,
               "Registration change requested by owner | Plate: %s | Fields: %s | "
               "Awaiting CDSO approval"
               % (registration.plate_number or registration.conduction_number,
                  ', '.join(sorted(changes))),
               target_user=request.user)
-        _notify_change_requested(registration, change_request)
+        _notify_change_requested(registration, change_request)   # rings the admin bell; the queue is otherwise silent
 
         return Response(_serialize_change_request(change_request),
-                        status=status.HTTP_201_CREATED)
+                        status=status.HTTP_201_CREATED)   # the filed request, in the same shape the history list uses
 
 
+# The owner changes their mind before CDSO gets to it.
 class OwnerChangeRequestCancelView(APIView):
     """The owner withdraws their own pending request.
 
@@ -3202,19 +3247,23 @@ class OwnerChangeRequestCancelView(APIView):
         if request.user.role != 'vehicle_owner':
             return Response({"error": "Only vehicle owners can cancel their own request."},
                             status=status.HTTP_403_FORBIDDEN)
+        # requested_by in the filter, not checked afterwards: somebody else's
+        # request is simply not found, which is also the honest answer to give.
         change_request = (RegistrationChangeRequest.objects
                           .filter(pk=pk, requested_by=request.user)
                           .first())
         if change_request is None:
             return Response({"error": "Change request not found."},
                             status=status.HTTP_404_NOT_FOUND)
+        # A decided request is history. Cancelling one already approved would
+        # claim a change was withdrawn that has in fact been applied.
         if change_request.status != RegistrationChangeRequest.Status.PENDING:
             return Response(
                 {"error": "This request has already been reviewed and cannot be cancelled."},
                 status=status.HTTP_400_BAD_REQUEST)
 
-        change_request.status = RegistrationChangeRequest.Status.CANCELLED
-        change_request.reviewed_at = timezone.now()
+        change_request.status = RegistrationChangeRequest.Status.CANCELLED   # leaving PENDING is what releases the one-open-request constraint
+        change_request.reviewed_at = timezone.now()   # when it stopped being open; reviewed_by stays empty because nobody reviewed it
         change_request.save(update_fields=['status', 'reviewed_at'])
 
         audit(request, AuditLog.Action.RECORD_UPDATED,
@@ -3223,27 +3272,37 @@ class OwnerChangeRequestCancelView(APIView):
         return Response(_serialize_change_request(change_request))
 
 
+# The CDSO's side: the queue of requests waiting on a decision.
 class ChangeRequestListView(APIView):
     """The CDSO review queue. `?status=` filters; pending is the default and is
     deliberately oldest-first — the queue is worked through, not browsed."""
     permission_classes = [IsAdminOrCdso]
 
     def get(self, request):
-        wanted = (request.query_params.get('status') or 'pending').strip().lower()
+        wanted = (request.query_params.get('status') or 'pending').strip().lower()   # pending by default: the queue is what a reviewer opens this screen for
+        # All three relations are read for every row below (the applicant, who
+        # asked, who decided), so they are joined in rather than fetched one
+        # query per row.
         qs = (RegistrationChangeRequest.objects
               .select_related('registration', 'requested_by', 'reviewed_by'))
         if wanted != 'all':
+            # Checked against the model's own choices, so an unknown filter is
+            # refused instead of quietly returning an empty queue that reads
+            # like "nothing to do".
             valid = {c for c, _ in RegistrationChangeRequest.Status.choices}
             if wanted not in valid:
                 return Response({"error": "Unknown status filter."},
                                 status=status.HTTP_400_BAD_REQUEST)
             qs = qs.filter(status=wanted)
         if wanted == 'pending':
-            qs = qs.order_by('created_at')
-        return Response([_serialize_change_request(r, for_review=True)
-                         for r in qs[:200]])
+            qs = qs.order_by('created_at')       # oldest first, overriding the model's newest-first default: a queue is worked through, not browsed
+        return Response([_serialize_change_request(r, for_review=True)   # for_review adds the applicant's details a reviewer needs
+                         for r in qs[:200]])     # capped: a screen nobody can read past 200 rows of
 
 
+# The decision itself — the only place a change against an accepted
+# registration actually lands. Reject is a few lines; approve is the rest of
+# the class, because approving has to re-check, apply, mirror and record.
 class ChangeRequestDecisionView(APIView):
     """CDSO approves or rejects one pending change request.
 
@@ -3255,14 +3314,19 @@ class ChangeRequestDecisionView(APIView):
     """
     permission_classes = [IsAdminOrCdso]
 
+    # `decision` comes from the URL ('approve' or 'reject'), so the two
+    # outcomes are separate routes rather than a flag in the body that could be
+    # mistyped into the wrong one.
     def post(self, request, pk, decision):
         change_request = (RegistrationChangeRequest.objects
-                          .select_related('registration')
+                          .select_related('registration')   # the registration is read on every path below
                           .filter(pk=pk)
                           .first())
         if change_request is None:
             return Response({"error": "Change request not found."},
                             status=status.HTTP_404_NOT_FOUND)
+        # Already decided — most often two reviewers with the queue open at the
+        # same time. Says which way it went, so the second one knows.
         if change_request.status != RegistrationChangeRequest.Status.PENDING:
             return Response(
                 {"error": "This request has already been %s."
@@ -3270,12 +3334,16 @@ class ChangeRequestDecisionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST)
 
         registration = change_request.registration
-        note = (request.data.get('note') or '').strip()
+        note = (request.data.get('note') or '').strip()   # optional on approve, required on reject
 
         if decision == 'reject':
+            # A reason is required because the owner is emailed it. "Declined"
+            # with nothing after it leaves them with no idea what to file next.
             if not note:
                 return Response({"error": "A reason is required when declining a change."},
                                 status=status.HTTP_400_BAD_REQUEST)
+            # Nothing is applied and nothing is mirrored: a rejection leaves the
+            # registration exactly as it was, so there is no transaction here.
             change_request.status = RegistrationChangeRequest.Status.REJECTED
             change_request.decision_note = note
             change_request.reviewed_by = request.user
@@ -3290,14 +3358,16 @@ class ChangeRequestDecisionView(APIView):
                      request.user.full_name),
                   target_user=registration.user)
             send_in_background(send_change_request_decision_email,
-                               registration, change_request, [])
-            return Response(_serialize_change_request(change_request, for_review=True))
+                               registration, change_request, [])   # an empty summary: nothing changed, so there is no before-and-after to show
+            return Response(_serialize_change_request(change_request, for_review=True))   # the decided row, so the queue can redraw it in place
 
         # ── Approve ──
         # Re-validated against the row as it stands now, not as it stood when
         # the request was filed.
         changes, errors = clean_changes(registration, change_request.changes)
         if errors:
+            # 409, not 400: the request was valid when filed and the reviewer
+            # did nothing wrong — the world moved underneath it.
             return Response(
                 {"error": "This change can no longer be applied — the details it asks "
                           "for are not available any more. Decline it and ask the owner "
@@ -3317,22 +3387,29 @@ class ChangeRequestDecisionView(APIView):
                 'status', 'decision_note', 'reviewed_by', 'reviewed_at'])
             return Response(_serialize_change_request(change_request, for_review=True))
 
-        summary = describe(registration, changes)
+        summary = describe(registration, changes)   # built before the write, while the old values are still on the row
+        # All four writes in one transaction. Applying the change but failing to
+        # mirror it is the worst outcome available here: the owner's dashboard
+        # would show the new plate while the gate still knows the old one.
         with transaction.atomic():
-            touched = apply_changes(registration, changes)
+            touched = apply_changes(registration, changes)   # returns the field names actually written, which is what the mirror works from
             registration.save()
-            _mirror_registration_change(registration, touched)
+            _mirror_registration_change(registration, touched)   # out to the Vehicle row and the account
             change_request.status = RegistrationChangeRequest.Status.APPROVED
-            change_request.decision_note = note
+            change_request.decision_note = note      # optional here — an approval explains itself
             change_request.reviewed_by = request.user
             change_request.reviewed_at = timezone.now()
             change_request.save(update_fields=[
                 'status', 'decision_note', 'reviewed_by', 'reviewed_at'])
+        # ── Past this line it has committed: the pass describes the new car. ──
 
+        # The full before-and-after here, unlike the owner's own filing above:
+        # this is the record of what a staff member changed on somebody else's
+        # registration, and "which fields" would not be enough to answer for it.
         audit(request, AuditLog.Action.RECORD_UPDATED,
               "Registration change request #%s approved | Applicant: %s | %s | By: %s"
               % (change_request.pk, registration.full_name,
-                 ' | '.join("%s: %s -> %s" % (row['label'], row['old'] or '(blank)',
+                 ' | '.join("%s: %s -> %s" % (row['label'], row['old'] or '(blank)',   # '(blank)' so an empty field reads as empty rather than as a gap in the line
                                               row['new'])
                             for row in summary),
                  request.user.full_name),
@@ -3343,6 +3420,8 @@ class ChangeRequestDecisionView(APIView):
         return Response(_serialize_change_request(change_request, for_review=True))
 
 
+# One request in the shape both screens read it in. The `decided` switch below
+# is the whole point of the function — see the docstring.
 def _serialize_change_request(change_request, for_review=False):
     """One request as the owner portal and the CDSO queue both read it.
 
@@ -3356,25 +3435,32 @@ def _serialize_change_request(change_request, for_review=False):
     done to their registration.
     """
     registration = change_request.registration
-    decided = change_request.status != RegistrationChangeRequest.Status.PENDING
+    decided = change_request.status != RegistrationChangeRequest.Status.PENDING   # approved, rejected or cancelled — anything that is no longer open
     data = {
         "id":            change_request.pk,
-        "status":        change_request.status,
-        "status_label":  change_request.get_status_display(),
+        "status":        change_request.status,               # the stored value, for the page's own logic
+        "status_label":  change_request.get_status_display(), # and the readable one, so the page never spells it itself
+        # `previous` is passed only once the request is decided: while it is
+        # open the diff is rebuilt live against the registration as it stands.
         "changes":       describe(registration, change_request.changes or {},
                                  previous=change_request.previous if decided else None),
         "decision_note": change_request.decision_note,
         "created_at":    change_request.created_at,
         "reviewed_at":   change_request.reviewed_at,
-        "reviewed_by":   change_request.reviewed_by.full_name if change_request.reviewed_by else '',
+        "reviewed_by":   change_request.reviewed_by.full_name if change_request.reviewed_by else '',   # '' rather than None: a cancelled request was never reviewed
     }
+    # Only the CDSO queue gets these. The owner is looking at their own
+    # registration and already knows whose it is — sending it anyway would put
+    # the applicant's email into a response that did not need to carry it.
     if for_review:
         data.update({
-            "registration_id": registration.pk,
+            "registration_id": registration.pk,   # lets the queue link straight to the application
             "full_name":       registration.full_name,
             "email":           registration.email,
             "registrant_type": registration.registrant_type,
-            "plate_number":    registration.plate_number or registration.conduction_number,
+            "plate_number":    registration.plate_number or registration.conduction_number,   # whichever identifies this vehicle
+            # Falls back to the applicant's name for a row whose requester is
+            # gone — a deleted account nulls the FK but leaves the request.
             "requested_by":    (change_request.requested_by.full_name
                                 if change_request.requested_by else registration.full_name),
         })
@@ -3383,10 +3469,12 @@ def _serialize_change_request(change_request, for_review=False):
 
 def _notify_change_requested(registration, change_request):
     """Admin-bell entry for a filed request — the queue is otherwise silent."""
-    from accounts.notifications import notify as bell
+    from accounts.notifications import notify as bell   # imported here rather than at module level, to keep the import graph acyclic
+    # Labels, not values: the bell is read by any admin, and what was asked for
+    # is the reviewer's business once they open the request itself.
     fields = ', '.join(sorted(row['label'] for row in
                               describe(registration, change_request.changes or {})))
-    plate = registration.plate_number or registration.conduction_number
+    plate = registration.plate_number or registration.conduction_number   # whichever identifies the vehicle, for the notification's title
     bell('registration', 'change_requested',
          "Detail change requested — %s" % plate,
          "%s asked to change: %s. Waiting for CDSO approval."
@@ -3401,9 +3489,9 @@ def _notify_registration_edited(registration, summary):
     the application open, and the row they are reading has just moved.
     """
     from accounts.notifications import notify as bell
-    fields = ', '.join(sorted(row['label'] for row in summary))
+    fields = ', '.join(sorted(row['label'] for row in summary))   # the summary is already built here, so there is nothing to re-derive
     plate = registration.plate_number or registration.conduction_number
-    bell('registration', 'registration_edited',
+    bell('registration', 'registration_edited',   # a different kind from the one above, so the bell can tell "corrected" from "asked to correct"
          "Applicant corrected their details — %s" % plate,
          "%s updated: %s before review." % (registration.full_name, fields),
          severity='info', plate_number=plate, link='/admin/vehicles')
@@ -3413,10 +3501,15 @@ def _notify_registration_edited(registration, summary):
 # Department & Program lists (public, for registration form)
 # ──────────────────────────────────────────────
 
+# The department dropdown on the public registration form. Curated by admin as
+# ReferenceItem rows, so adding one needs no code change.
 class DepartmentListView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny]   # read by the form before anyone has an account
 
     def get(self, request):
+        # is_active, so retiring a department stops it being offered without
+        # rewriting the registrations that already name it. values_list with
+        # flat=True: a plain list of names is the whole response.
         names = list(ReferenceItem.objects.filter(category='department', is_active=True).values_list('name', flat=True))
         return Response(names)
 
@@ -3430,6 +3523,8 @@ class ProgramListView(APIView):
     def get(self, request):
         names = list(
             ReferenceItem.objects.filter(category='program', is_active=True)
+            # Excluded by name rather than deleted: the rows are still what
+            # older registrations point at, and removing them would strand them.
             .exclude(name__icontains='Grade 11')
             .exclude(name__icontains='Grade 12')
             .values_list('name', flat=True)
