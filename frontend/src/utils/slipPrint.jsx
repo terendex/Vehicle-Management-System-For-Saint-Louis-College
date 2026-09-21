@@ -13,6 +13,11 @@ import notify from '../components/Feedback/notify'
 // Mirrors ENTRY_FOOTER in slips.py — the lines under the QR when a slip sets none.
 const ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
 
+// Every value that reaches the print window goes through here. The slip is
+// built by writing an HTML string into a new window, so a plate or a visitor
+// name containing a bracket would otherwise become markup. All five characters
+// are covered, including both quote kinds, since values land inside attributes
+// as well as text.
 const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
@@ -20,9 +25,15 @@ const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
 // printer (the cloud site), and the "print from this computer" option.
 export function printSlipInBrowser(slip, { reprint = false } = {}) {
   const w = window.open('', '_blank', 'width=320,height=520')
+  // A popup blocker returns null. Reported as false rather than thrown, so the
+  // caller can offer a button — a click is a user gesture, which the blocker
+  // allows.
   if (!w) return false
   // What the gate scans: the slip's own code (SLC-VISITOR / SLC-SUPPLIER /
   // SLC-NOPLATE:{id}), or for a supplier pass the plate as VEHICLE:{plate} (slip.qr).
+  // Rendered to a STRING, not mounted: this markup is written into another
+  // window's document, where React has nothing to attach to. SVG rather than
+  // canvas so it survives that serialisation and prints at full resolution.
   const qrSvg = renderToStaticMarkup(<QRCodeSVG value={slip.qr || slip.code} size={130} level="M" />)
   // A third element marks the row a guard reads at a glance — bold and larger.
   const sections = slip.sections.map(rows => rows.map(([label, value, key]) =>
@@ -103,6 +114,9 @@ export async function printSlip(slip, { reprint = false, browser = false } = {})
     printed = data.slip || slip
     if (!browser) return { how: 'printer', slip: printed }
   } catch (err) {
+    // 503 is the documented "this server has no printer" answer, and it is the
+    // ONLY error that falls through to the browser dialog. Anything else means
+    // a printer exists and failed, which the caller must be told about.
     if (err?.response?.status !== 503) {
       throw new Error(
         err?.response?.data?.error || 'The slip did not print — the printer could not be reached.',
@@ -114,6 +128,9 @@ export async function printSlip(slip, { reprint = false, browser = false } = {})
   // A print window opened without a click (a camera-admitted supplier) can be
   // popup-blocked; the caller then offers a button, which is a click.
   if (!printSlipInBrowser(printed, { reprint })) return { how: 'blocked', slip: printed }
+  // Fire-and-forget, and only for a reprint: the audit row is a record of the
+  // second copy, and failing to write it must not make the guard think the
+  // slip did not print when it did.
   if (reprint) confirmSlipReprinted(printed.code).catch(() => {})
   return { how: 'dialog', slip: printed }
 }
@@ -129,6 +146,8 @@ export function slipName(slip) {
 // Slip codes with a print under way from this tab. notify collapses identical
 // pending dialogs into one promise, so without this a double-click on Print
 // would be confirmed once and print twice.
+// Module scope, so the guard is shared by every screen that can print — two
+// components showing the same visitor cannot each start a print.
 const printing = new Set()
 
 // A print a person asked for: confirm → print → a success or error dialog to
@@ -143,7 +162,7 @@ export async function printSlipWithFeedback(slip, {
 } = {}) {
   // By pass/entry, not code — a visitor slip's code changes with every print.
   const key = `${slip.kind}:${slip.id}`
-  if (printing.has(key)) return { how: 'busy', slip }
+  if (printing.has(key)) return { how: 'busy', slip }   // 'busy' is a distinct outcome, so a caller can stay quiet rather than reporting a failure
   printing.add(key)
   try {
     const name = slipName(slip)
@@ -185,6 +204,9 @@ export async function printSlipWithFeedback(slip, {
     }
     return { how, slip: printed }
   } finally {
+    // In `finally`, so a throw anywhere above — a dismissed dialog, a printer
+    // error, a network failure — still releases the key. Without it one failed
+    // print would disable that slip's button for the life of the page.
     printing.delete(key)
   }
 }

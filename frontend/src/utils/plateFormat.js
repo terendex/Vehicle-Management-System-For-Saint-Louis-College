@@ -1,14 +1,36 @@
 // Auto-formats plate as the user types. Only inserts a space for the common
 // 2-3 letter prefix + digit patterns (e.g. ABC1234 → ABC 1234, AB1234 → AB 1234).
 // Other formats (N123BC, 123ABC, 1234) are left as-is since they have no standard separator.
+// =============================================================================
+// Plate identifiers, and the three kinds this system recognises.
+//
+//   a PLATE            ABC 1234 and eleven other Philippine shapes
+//   a CONDUCTION no.   what a brand-new car carries until its plate arrives
+//   a CONTROL no.      FM-001…, issued by this system to an e-bike and stored
+//                      in the plate_number column
+//
+// Two of the three mirror backend rules and say so at their definitions. Where
+// they differ in STRICTNESS is deliberate and explained at each: the plate
+// patterns are exact because OCR fragments were passing as plates, while the
+// conduction check is loose because the server is the authority and an
+// over-strict client locks a guard out of a car that is genuinely registered.
+// =============================================================================
 export function formatPlateNumber(raw) {
+  // Spaces and dashes survive the strip, because the next test needs to know
+  // whether the user has already typed a separator.
   const upper = raw.toUpperCase().replace(/[^A-Z0-9\s-]/g, '')
   // Only auto-insert space if the user hasn't already typed one
+  // Only auto-insert space if the user hasn't already typed one
+  // — otherwise typing "ABC 1234" would become "ABC  1234", and a user
+  // correcting their own spacing would fight the field.
   if (!/[\s-]/.test(upper)) {
+    // 2-3 letters followed by a digit. `.*` rather than a digit count, so the
+    // space appears as soon as the shape is recognisable and does not wait
+    // for the plate to be finished.
     const m = upper.match(/^([A-Z]{2,3})(\d.*)$/)
     if (m) return m[1] + ' ' + m[2]
   }
-  return upper
+  return upper                                  // every other shape is returned untouched — see the note above
 }
 
 // Mirrors PH_PLATE_PATTERNS in backend/scanning/ml/validator.py.
@@ -33,9 +55,12 @@ const PH_PLATE_PATTERNS = [
 
 // Checks a plate against known Philippine plate formats (ignoring spaces/dashes).
 export function isValidPlateNumber(raw) {
+  // Separators removed before matching, so the patterns above describe the
+  // CHARACTERS of a plate and none of them has to account for spacing. This
+  // is why "ABC 1234" and "ABC-1234" both validate against /^[A-Z]{3}\d{4}$/.
   const n = raw.replace(/[\s\-_]/g, '').toUpperCase()
-  if (!n) return false
-  return PH_PLATE_PATTERNS.some(p => p.test(n))
+  if (!n) return false                          // empty is not valid; without this the .some() below would simply return false anyway, but the intent is clearer stated
+  return PH_PLATE_PATTERNS.some(p => p.test(n))   // any one shape matching is enough
 }
 
 // A conduction sticker is what a brand-new car carries until its plate arrives,
@@ -49,8 +74,11 @@ export function isValidPlateNumber(raw) {
 // what matches nothing, so a client-side guess that is too strict does not
 // filter garbage — it locks a guard out of a car that is genuinely registered.
 export function isValidConductionNumber(raw) {
+  // `raw || ''` where isValidPlateNumber above takes raw directly — this one
+  // is called with values that may be null (a registration's blank
+  // conduction_number), the other only with typed input.
   const n = (raw || '').replace(/[\s\-_]/g, '').toUpperCase()
-  return /^[A-Z0-9]{5,12}$/.test(n)
+  return /^[A-Z0-9]{5,12}$/.test(n)             // a length range, not a shape: there is no national format to check against
 }
 
 // An e-bike's system-issued control number (FM-001, FM-002, ...). It is stored

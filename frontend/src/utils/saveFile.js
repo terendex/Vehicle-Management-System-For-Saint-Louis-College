@@ -20,15 +20,19 @@
  * download, which still works — it just does not ask.
  */
 
+// Feature-detected per call rather than cached in a constant: cheap, and it
+// keeps the module importable where `window` does not exist at all.
 const supportsPicker = () => typeof window !== 'undefined' && 'showSaveFilePicker' in window
 
 /** The ordinary browser download, used when there is no picker. */
 export function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(blob)         // a blob: URL the browser can fetch from memory
   const a = document.createElement('a')
   a.href = url
   a.download = filename
-  a.click()
+  a.click()                                     // never added to the DOM — clicking a detached anchor still downloads
+  // Revoked immediately. The click has already handed the blob to the download
+  // machinery, so releasing the URL now frees the memory without cancelling it.
   URL.revokeObjectURL(url)
 }
 
@@ -41,6 +45,8 @@ export function downloadBlob(blob, filename) {
  * caller carries on and gets the fallback download at the end.
  */
 export async function pickSaveLocation(suggestedName, { description = 'JSON file', accept = { 'application/json': ['.json'] } } = {}) {
+  // A target with a null handle is NOT a failure — it is the documented
+  // "no picker here, use the fallback" answer. Only `null` itself means stop.
   if (!supportsPicker()) return { handle: null }
   try {
     const handle = await window.showSaveFilePicker({
@@ -50,6 +56,9 @@ export async function pickSaveLocation(suggestedName, { description = 'JSON file
     return { handle }
   } catch (err) {
     // AbortError is the person closing the dialog — a real cancellation.
+    // The one case that returns null rather than a fallback target: the
+    // person actively closed the dialog, which means abandon the whole
+    // operation, not save it somewhere else.
     if (err?.name === 'AbortError') return null
     // Anything else (a lost user gesture, a locked-down policy) is not worth
     // failing the download over; fall back to the browser's own download.
@@ -65,6 +74,8 @@ export async function saveBlobTo(target, blob, fallbackName) {
   if (target?.handle) {
     const writable = await target.handle.createWritable()
     await writable.write(blob)
+    // close() is what actually commits the bytes — without it the file stays
+    // the empty one the picker created.
     await writable.close()
     return true
   }

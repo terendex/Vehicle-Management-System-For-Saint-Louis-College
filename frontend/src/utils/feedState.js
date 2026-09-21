@@ -12,9 +12,18 @@
 // render after addCamera — which is still "connecting", not an outage.
 export function feedState(cam) {
   if (!cam) return 'none'
+  // Order matters: these are checked most-connected first, because the two
+  // flags are independent. A camera can have wsActive without
+  // streamConnected — the socket is up but the backend has not opened RTSP —
+  // and that is "connecting", not "live".
   if (cam.streamConnected) return 'live'
   if (cam.wsActive) return 'connecting'
   const msg = (cam.statusMsg || '').trim()
+  // The subtle case. Socket down AND a message means a real outage. Socket
+  // down with no message is the first render after addCamera, before anything
+  // has been attempted — reporting that as "offline" would flash a red dot on
+  // every camera each time a page mounts. The regex also excludes the
+  // backend's own "Connecting…" text, which is a status, not a fault.
   return msg && !/^connecting/i.test(msg) ? 'offline' : 'connecting'
 }
 

@@ -16,6 +16,8 @@ import { lazy } from 'react'
 // fails too, the error propagates to the boundary, which explains it instead
 // of showing nothing.
 
+// sessionStorage, not localStorage: the flag is per TAB and dies with it, so
+// one tab's failed retry cannot suppress another tab's.
 const RELOAD_FLAG = 'chunk-reload-attempted'
 
 export default function lazyWithRetry(importer) {
@@ -23,6 +25,8 @@ export default function lazyWithRetry(importer) {
     try {
       const mod = await importer()
       // Clear on success so a later deploy gets its own retry.
+      // Cleared on EVERY success, not just after a retry — that is what makes
+      // the allowance "one reload per failure" rather than "one per tab".
       sessionStorage.removeItem(RELOAD_FLAG)
       return mod
     } catch (err) {
@@ -30,8 +34,13 @@ export default function lazyWithRetry(importer) {
         sessionStorage.setItem(RELOAD_FLAG, '1')
         window.location.reload()
         // Never resolves — the reload replaces the page.
+        // Returning a forever-pending promise keeps React's Suspense boundary
+        // showing its fallback for the moment before navigation. Resolving or
+        // throwing here would flash an error the user never needs to see.
         return new Promise(() => {})
       }
+      // Second failure: the chunk is genuinely gone, not stale. Rethrow so the
+      // route error boundary can say so — the alternative is a reload loop.
       throw err
     }
   })

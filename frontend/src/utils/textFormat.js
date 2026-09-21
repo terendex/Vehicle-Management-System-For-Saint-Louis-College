@@ -4,6 +4,8 @@
 
 // Collapses runs of whitespace and trims the ends.
 export function collapseSpaces(raw) {
+  // \s+ covers tabs and newlines too, not just spaces — text pasted from a
+  // spreadsheet or a PDF arrives with both.
   return raw.replace(/\s+/g, ' ').trim()
 }
 

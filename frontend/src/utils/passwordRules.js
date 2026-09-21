@@ -11,9 +11,14 @@ export const PW_RULES = [
   { key: 'special', label: 'One special character (!@#$…)', test: (p) => /[!@#$%^&*()_+\-=[\]{};'"\\|,.<>/?]/.test(p) },
 ]
 
+// Strength is simply HOW MANY of the five rules pass — there is no entropy
+// maths here. That keeps the meter honest about what it measures: the bar and
+// the checklist beside it can never disagree, because they read the same rules.
 export function pwStrength(pw) {
-  if (!pw) return { level: '', score: 0 }
+  if (!pw) return { level: '', score: 0 }       // empty field shows no bar at all, rather than "weak"
   const passed = PW_RULES.filter(r => r.test(pw)).length
+  // <= 1 rather than === 1, so zero passing rules is also "weak" and the
+  // function always returns a level for a non-empty password.
   if (passed <= 1) return { level: 'weak',   score: 1 }
   if (passed === 2) return { level: 'fair',   score: 2 }
   if (passed === 3) return { level: 'good',   score: 3 }
