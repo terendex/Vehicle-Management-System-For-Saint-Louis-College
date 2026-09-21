@@ -4388,18 +4388,30 @@ class ParkingNoticeDetailView(APIView):
 # ──────────────────────────────────────────────
 # Registration Period management (Admin/CDSO)
 # ──────────────────────────────────────────────
+#
+# A period is the window the public registration form opens and closes on —
+# _registration_window() near the top of this file reads whichever row is
+# active. Exactly one may be active at a time, and that rule is kept by hand
+# here rather than by a constraint: every path that activates one deactivates
+# the rest first.
+#
+# Old periods are kept rather than deleted, so "which window was this
+# registration filed under?" still has an answer years later.
 
+# One shape for a period, used by every method below.
 def _serialize_period(p):
     return {
         'id':         p.id,
-        'label':      p.label,
-        'start_date': p.start_date.isoformat(),
+        'label':      p.label,               # e.g. "AY 2026-2027 First Semester"
+        'start_date': p.start_date.isoformat(),   # ISO text: the form shows these, it does no date maths
         'end_date':   p.end_date.isoformat(),
-        'is_active':  p.is_active,
+        'is_active':  p.is_active,           # the one flag that decides whether registration is open at all
         'created_at': p.created_at.isoformat(),
     }
 
 
+# Validation for both the create and the edit, so a period cannot be created
+# under one set of rules and then edited under another.
 def _clean_period_payload(data, *, partial=False, current=None):
     """Validate a registration-period payload for create (all fields) or edit.
 
@@ -4409,43 +4421,58 @@ def _clean_period_payload(data, *, partial=False, current=None):
     """
     from datetime import datetime as _dt
 
+    # Strict: one format, and it raises on anything else. The callers below
+    # catch that and turn it into a field message.
     def _as_date(raw):
         return _dt.strptime(str(raw), '%Y-%m-%d').date()
 
-    errors = {}
-    cleaned = {}
+    errors = {}                                  # field -> message, collected so the form gets every problem at once
+    cleaned = {}                                 # only trustworthy once errors is empty
 
+    # The condition each field below repeats: take what was sent if it was
+    # sent, and on a PATCH fall back to what the row already holds. `not
+    # partial` makes a create demand every field, since there is nothing to
+    # fall back to.
     if 'label' in data or not partial:
         label = (data.get('label') or '').strip()
         if not label:
-            errors['label'] = 'Label is required.'
+            errors['label'] = 'Label is required.'   # present but blank is a mistake, not "leave it alone"
         cleaned['label'] = label
     else:
-        cleaned['label'] = current.label
+        cleaned['label'] = current.label         # untouched by this request
 
     for field in ('start_date', 'end_date'):
         if field in data or not partial:
             try:
                 cleaned[field] = _as_date(data.get(field))
-            except (ValueError, TypeError):
-                errors[field] = 'Required. Use YYYY-MM-DD.'
+            except (ValueError, TypeError):      # TypeError as well: a missing key reaches str(None), which is not a date either
+                errors[field] = 'Required. Use YYYY-MM-DD.'   # one message for both "absent" and "unparseable", since the fix is the same
         else:
             cleaned[field] = getattr(current, field)
 
+    # Returns None for `cleaned` on failure rather than a half-filled dict, so
+    # a caller that forgets to check `errors` cannot write partial values.
     if errors:
         return None, errors
+    # Only reachable once both dates parsed. `<` and not `<=`: a one-day window
+    # that opens and closes on the same date is legitimate.
     if cleaned['end_date'] < cleaned['start_date']:
         return None, {'end_date': 'End date must be on or after start date.'}
     return cleaned, {}
 
 
+# List the periods, and open a new one.
 class RegistrationPeriodListCreateView(APIView):
+    # Split by method: the dates are shown on screens every role sees, but
+    # only staff may move them.
     def get_permissions(self):
         if self.request.method == 'GET':
             return [permissions.IsAuthenticated()]
         return [IsAdminOrCdso()]
 
     def get(self, request):
+        # Every period, archived ones included — this is the history as well as
+        # the current window. Newest first, from the model's own ordering.
         return Response([_serialize_period(p) for p in RegistrationPeriod.objects.all()])
 
     def post(self, request):
@@ -4454,6 +4481,13 @@ class RegistrationPeriodListCreateView(APIView):
             return Response(errors, status=400)
         label, start, end = cleaned['label'], cleaned['start_date'], cleaned['end_date']
 
+        # Creating a period activates it, which means standing the previous one
+        # down first. .update() rather than a loop: one statement, and it
+        # covers however many rows are wrongly active, not just the one.
+        #
+        # Not wrapped in a transaction — if the create below failed, no period
+        # would be active and registration would read as closed until an admin
+        # activated one by hand. Recorded, not changed: this pass comments code.
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
         audit(request, AuditLog.Action.RECORD_CREATED,
@@ -4472,7 +4506,9 @@ class RegistrationPeriodDetailView(APIView):
 
     def patch(self, request, pk):
         period = get_object_or_404(RegistrationPeriod, pk=pk)
-        before = f"{period.label} ({period.start_date} to {period.end_date})"
+        before = f"{period.label} ({period.start_date} to {period.end_date})"   # captured before the write, for the audit line's left-hand side
+        # partial=True with the row as `current`, so a request naming only the
+        # end date keeps the label and start date it already had.
         cleaned, errors = _clean_period_payload(request.data, partial=True, current=period)
         if errors:
             return Response(errors, status=400)
@@ -4480,6 +4516,8 @@ class RegistrationPeriodDetailView(APIView):
         period.label      = cleaned['label']
         period.start_date = cleaned['start_date']
         period.end_date   = cleaned['end_date']
+        # is_active is deliberately not in this list: whether a period is the
+        # live one is the activate endpoint's decision, not an edit's.
         period.save(update_fields=['label', 'start_date', 'end_date'])
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Registration period edited | {before} -> {period.label} "
@@ -4487,15 +4525,20 @@ class RegistrationPeriodDetailView(APIView):
         return Response(_serialize_period(period))
 
 
+# The switch: which period registration currently runs against. POST turns one
+# on, DELETE turns one off — and DELETE really does mean off, not gone.
 class RegistrationPeriodActivateView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def post(self, request, pk):
         """Set this period as the active one (deactivates all others)."""
         period = get_object_or_404(RegistrationPeriod, pk=pk)
+        # Stand the others down first, then raise this one. The same
+        # one-at-a-time rule the create path keeps, and the reason `get_active()`
+        # can settle for .first().
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period.is_active = True
-        period.save(update_fields=['is_active'])
+        period.save(update_fields=['is_active'])   # one column: the dates and label are not this endpoint's business
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Registration period activated | {period.label} | By: {request.user.full_name}")
         return Response(_serialize_period(period))
@@ -4503,8 +4546,13 @@ class RegistrationPeriodActivateView(APIView):
     def delete(self, request, pk):
         """Deactivate without deleting — archives the period."""
         period = get_object_or_404(RegistrationPeriod, pk=pk)
+        # A DELETE route that does not delete. The row is what past
+        # registrations were filed under, so it stays; clearing the flag is
+        # what closes registration.
         period.is_active = False
         period.save(update_fields=['is_active'])
+        # RECORD_UPDATED, not RECORD_DELETED — the audit line says what actually
+        # happened to the row rather than what the HTTP verb was.
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Registration period archived | {period.label} | By: {request.user.full_name}")
         return Response(_serialize_period(period))
@@ -4513,15 +4561,30 @@ class RegistrationPeriodActivateView(APIView):
 # ──────────────────────────────────────────────
 # Supplier Management (Admin only)
 # ──────────────────────────────────────────────
+#
+# A supplier is a company that delivers to the campus — canteen stock,
+# maintenance, deliveries — and its plates are admitted at the gate without a
+# vehicle pass, because the vehicle belongs to a company rather than a person.
+#
+# One plate belongs to exactly one supplier: SupplierPlate.plate_number is
+# unique across the whole table, which is why the checks below search every
+# supplier's plates rather than just this one's.
 
+# Imported here rather than at the top of the file, where the other models are.
+# Not required by anything — these are ordinary module-level imports that
+# happen to sit mid-file. Recorded, not moved: this pass comments code.
 from .models import Supplier, SupplierPlate
 from .serializers import SupplierSerializer, SupplierPlateSerializer
 
 
+# List every supplier, and add one.
 class SupplierListCreateView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole]        # admin only, tighter than the IsAdminOrCdso used elsewhere in this file
 
     def get(self, request):
+        # prefetch_related, not select_related: plates are a reverse
+        # many-to-one, so they come back in one extra query for the whole list
+        # instead of one per supplier. Ordered by company name, from the model.
         suppliers = Supplier.objects.prefetch_related('plates').all()
         return Response(SupplierSerializer(suppliers, many=True).data)
 
@@ -4529,25 +4592,38 @@ class SupplierListCreateView(APIView):
         company_name = (request.data.get('company_name') or '').strip()
         if not company_name:
             return Response({'company_name': 'Company name is required.'}, status=400)
+        # __iexact, although the column is already unique: the database
+        # constraint is case-sensitive, so "Acme" and "ACME" would both be
+        # accepted as separate companies. This catches that, and returns a
+        # sentence rather than the IntegrityError the constraint would raise.
         if Supplier.objects.filter(company_name__iexact=company_name).exists():
             return Response({'company_name': 'A supplier with this name already exists.'}, status=400)
 
         # Store plates in the same normalized form scans use (no spaces),
         # otherwise gate lookups can never match them
+        # dict.fromkeys rather than a set: it drops duplicates while keeping
+        # the order they were typed in, so the audit line below reads back the
+        # way the admin entered them.
         plate_numbers = list(dict.fromkeys(
             _normalize_plate(p) for p in (request.data.get('plates') or []) if p and p.strip()
         ))
         if plate_numbers:
+            # Searched across ALL suppliers, not just this one, because a plate
+            # may belong to only one company. Every clashing plate is named at
+            # once, so a list of twenty is not fixed one rejection at a time.
             existing = SupplierPlate.objects.filter(plate_number__in=plate_numbers).values_list('plate_number', flat=True)
             if existing:
                 return Response({'plates': f"Plate(s) already registered: {', '.join(existing)}."}, status=400)
 
-        category = request.data.get('category') or Supplier.Category.OTHER
-        if category not in Supplier.Category.values:
+        category = request.data.get('category') or Supplier.Category.OTHER   # unstated means "Other", which is a real answer here
+        if category not in Supplier.Category.values:   # checked against the model's own choices, which Django does not enforce on .create()
             return Response({'category': 'Invalid supplier category.'}, status=400)
 
+        # Two statements, not one transaction: a supplier with no plates is a
+        # usable row an admin can add plates to, so a failure here does not
+        # leave anything that has to be cleaned up.
         supplier = Supplier.objects.create(company_name=company_name, category=category)
-        SupplierPlate.objects.bulk_create(
+        SupplierPlate.objects.bulk_create(   # one INSERT for the whole list, not one per plate
             SupplierPlate(supplier=supplier, plate_number=p) for p in plate_numbers
         )
         audit(request, AuditLog.Action.RECORD_CREATED,
@@ -4555,47 +4631,62 @@ class SupplierListCreateView(APIView):
         return Response(SupplierSerializer(supplier).data, status=201)
 
 
+# Edit or remove one supplier.
 class SupplierDetailView(APIView):
     permission_classes = [IsAdminRole]
 
+    # Field at a time, guarded on the key being present — the same shape the
+    # event PATCH uses, and for the same reason: absent means "leave it".
     def patch(self, request, pk):
         supplier = get_object_or_404(Supplier, pk=pk)
         if 'company_name' in request.data:
             name = (request.data['company_name'] or '').strip()
             if not name:
                 return Response({'company_name': 'Company name cannot be empty.'}, status=400)
+            # No uniqueness check on the way in, unlike the create above: the
+            # column's own constraint is what stops a rename onto a name that
+            # is already taken. Recorded, not changed.
             supplier.company_name = name
         if 'is_active' in request.data:
+            # The switch the gate reads: deactivating a supplier stops its
+            # plates being admitted without removing the record of them.
             supplier.is_active = bool(request.data['is_active'])
         if 'category' in request.data:
             category = request.data['category']
             if category not in Supplier.Category.values:
-                return Response({'category': 'Invalid supplier category.'}, status=400)
+                return Response({'category': 'Invalid supplier category.'}, status=400)   # returned before the save, so nothing partial lands
             supplier.category = category
-        supplier.save()
+        supplier.save()                          # a full save covering whichever of the three blocks ran
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Supplier updated | {supplier.company_name} | Active: {supplier.is_active} | By: {request.user.full_name}")
         return Response(SupplierSerializer(supplier).data)
 
     def delete(self, request, pk):
         supplier = get_object_or_404(Supplier, pk=pk)
-        name = supplier.company_name
+        name = supplier.company_name             # read before the row goes, so the audit line still has a name to give
+        # A real delete, and it takes the company's plates with it:
+        # SupplierPlate.supplier is CASCADE. Deactivating (the PATCH above) is
+        # the way to stop a supplier without losing which plates were theirs.
         supplier.delete()
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Supplier deleted | {name} | By: {request.user.full_name}")
         return Response(status=204)
 
 
+# One plate at a time, for a supplier that already exists.
 class SupplierPlateView(APIView):
     """Add or remove a plate for a specific supplier."""
     permission_classes = [IsAdminRole]
 
     def post(self, request, pk):
-        supplier = get_object_or_404(Supplier, pk=pk)
+        supplier = get_object_or_404(Supplier, pk=pk)   # 404s before anything is validated, so a bad id is not reported as a bad plate
         # Same normalized form scans use (no spaces) so gate lookups match
         plate_number = _normalize_plate(request.data.get('plate_number'))
-        if not plate_number:
+        if not plate_number:                     # covers missing, null, blank and whitespace-only alike, since all normalise to ''
             return Response({'plate_number': 'Plate number is required.'}, status=400)
+        # Across every supplier again, for the same one-company-per-plate rule.
+        # The message deliberately does not name which company holds it —
+        # an admin can look it up, and the answer is not this endpoint's to give.
         if SupplierPlate.objects.filter(plate_number=plate_number).exists():
             return Response({'plate_number': 'This plate is already registered to a supplier.'}, status=400)
         sp = SupplierPlate.objects.create(supplier=supplier, plate_number=plate_number)
@@ -4604,61 +4695,93 @@ class SupplierPlateView(APIView):
         return Response(SupplierPlateSerializer(sp).data, status=201)
 
     def delete(self, request, pk, plate_pk):
+        # Both ids in the lookup: a plate id that belongs to a different
+        # supplier is simply not found, rather than being deleted through the
+        # wrong company's URL.
         plate = get_object_or_404(SupplierPlate, pk=plate_pk, supplier_id=pk)
-        desc = f"{plate.plate_number} from {plate.supplier.company_name}"
-        plate.delete()
+        desc = f"{plate.plate_number} from {plate.supplier.company_name}"   # built before the delete, while the relation still resolves
+        plate.delete()                           # a real delete: the plate is simply no longer theirs, and nothing hangs off the row
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Supplier plate removed | {desc} | By: {request.user.full_name}")
         return Response(status=204)
 
 
 # ── Vehicle Registrations Report (CDSO/admin — branded PDF & Excel) ──────────
+#
+# Two downloads of the same thing in different formats, plus a summary that
+# counts rather than lists. The filtering, the row building and the subtitle
+# are pulled out into helpers precisely so the PDF and the Excel cannot come
+# back with different numbers from the same query string.
+
+# The column set, defined once: the Excel and the PDF share it, so the two
+# files have the same columns in the same order.
 REGISTRATION_REPORT_HEADERS = ['#', 'Date', 'Plate', 'Registrant', 'Type', 'Vehicle', 'Status']
 
 
 def _filter_registrations_report(request):
     """Filter registrations for a report — mirrors the management page knobs."""
-    qs = VehicleRegistration.objects.all()
+    qs = VehicleRegistration.objects.all()   # every status, including rejected and expired: a report is the record, not the working queue
     date_from = request.query_params.get('date_from', '').strip()
     date_to   = request.query_params.get('date_to', '').strip()
     status_f  = request.query_params.get('status', '').strip()
     search    = request.query_params.get('search', '').strip()
+    # Campus-local dates, inclusive at both ends, and an unparseable date is
+    # ignored rather than raising — see filter_local_date_range, which exists
+    # because the plain `__date__gte` form both defeated the index and turned
+    # a mistyped query parameter into a 500.
     qs = filter_local_date_range(qs, 'created_at', date_from, date_to)
     if status_f:
+        # Not checked against the choices: an unknown status simply matches
+        # nothing, and an empty report for a filter nobody set is harmless.
         qs = qs.filter(status=status_f)
     if search:
+        # Plate or name, the two things somebody looking for one registration
+        # actually has to hand.
         qs = qs.filter(Q(plate_number__icontains=search) | Q(full_name__icontains=search))
 
+    # `desc` is the filter written out for the report's subtitle, so a printed
+    # copy says on its face what it was filtered to — a page of numbers with no
+    # statement of what was excluded is the kind of report that gets misread.
     status_labels = dict(VehicleRegistration.Status.choices)
     desc = []
     if date_from or date_to:
-        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")   # names the open end, rather than leaving a blank
     if status_f:
-        desc.append(f"Status: {status_labels.get(status_f, status_f)}")
+        desc.append(f"Status: {status_labels.get(status_f, status_f)}")   # the readable label, falling back to the raw value for an unknown one
     if search:
         desc.append(f"Search: '{search}'")
-    return qs.order_by('-created_at'), desc
+    return qs.order_by('-created_at'), desc      # newest first, and the description alongside — both callers need both
 
 
+# Turns registration rows into the flat list of cells both report formats take.
 def _registration_report_rows(qs):
     from django.utils import timezone as tz
+    # The label maps are built once, outside the loop: a get_..._display() call
+    # per row would do this lookup thousands of times over.
     reg_labels    = dict(VehicleRegistration.RegistrantType.choices)
     status_labels = dict(VehicleRegistration.Status.choices)
     rows = []
-    for i, r in enumerate(qs, start=1):
+    for i, r in enumerate(qs, start=1):          # start=1 so the '#' column reads as a human numbering, not an index
         rows.append([
             i,
-            tz.localtime(r.created_at).strftime('%b %d, %Y'),
+            tz.localtime(r.created_at).strftime('%b %d, %Y'),   # campus-local: a report printed here must not date rows by UTC
+            # An em dash rather than a blank for every empty field, so a gap in
+            # a printed table reads as "nothing recorded" instead of looking
+            # like a column that failed to render.
             r.plate_number or '—',
             r.full_name or '—',
-            reg_labels.get(r.registrant_type, r.registrant_type or '—'),
+            reg_labels.get(r.registrant_type, r.registrant_type or '—'),   # falls back to the stored value, then to a dash
             r.vehicle_type or '—',
-            status_labels.get(r.status, r.status),
+            status_labels.get(r.status, r.status),   # status always has a value, so no dash case here
         ])
     return rows
 
 
+# The one line under the report title that says what is in it.
 def _registration_report_subtitle(desc, count):
+    # 'All records' rather than an empty string when nothing was filtered: the
+    # subtitle should still assert something, and the count is what a reader
+    # checks the table against.
     return ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
 
 
@@ -4668,11 +4791,18 @@ class RegistrationReportExcelView(APIView):
 
     def get(self, request):
         from django.utils import timezone as tz
-        from report_utils import branded_excel_response, report_filename
+        from report_utils import branded_excel_response, report_filename   # imported per call: reportlab/openpyxl are heavy and only these endpoints need them
         qs, desc = _filter_registrations_report(request)
+        # Capped at 5,000. The slice is applied to the queryset, so the LIMIT
+        # reaches the database rather than 100,000 rows being fetched and
+        # discarded — and `len(rows)` below therefore counts what is actually
+        # in the file, which is what the subtitle should state.
         rows = _registration_report_rows(qs[:5000])
+        # The Excel subtitle carries who generated it and when; the PDF below
+        # does not, because branded_pdf_response takes `generated_by` as its
+        # own argument and prints it itself.
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
-                    f"by {getattr(request.user, 'full_name', '')} · "
+                    f"by {getattr(request.user, 'full_name', '')} · "   # getattr with a default: an unnamed account must not break a download
                     + _registration_report_subtitle(desc, len(rows)))
         return branded_excel_response(
             filename=report_filename('Vehicle Registrations Report', 'xlsx'),
@@ -4681,7 +4811,7 @@ class RegistrationReportExcelView(APIView):
             subtitle=subtitle,
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 16, 16, 28, 14, 16, 14],
+            col_widths=[5, 16, 16, 28, 14, 16, 14],   # character widths, widest for the registrant's name
         )
 
 
@@ -4701,13 +4831,19 @@ class RegistrationReportPdfView(APIView):
             generated_by=getattr(request.user, 'full_name', ''),
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
+            # Millimetres, summing to 237 of the 267 available (A4 landscape
+            # less report_utils' 15mm margins), so the table sits short of the
+            # full width rather than filling it.
             col_widths_mm=[10, 30, 30, 60, 40, 40, 27],
         )
 
 
+# The bucket anything unrecognised falls into. A plain string, not a member of
+# any enum, precisely so it cannot collide with a real stored value.
 OTHER_KEY = 'other'
 
 
+# Every number the summary page and the summary PDF show, from one GROUP BY.
 def _registration_counts(qs):
     """Cross-tab of registrant type x status and type x payment, with totals.
 
@@ -4727,6 +4863,10 @@ def _registration_counts(qs):
     report's total disagree with the rows printed above it, which reads as a
     broken report rather than as odd data.
     """
+    # Labels for display, values for the keys. Both are copies — `list(...)`
+    # and `dict(...)` — because the Other bucket is appended to them further
+    # down, and appending to the enum's own list would leak into every other
+    # caller in the process.
     type_labels    = dict(VehicleRegistration.RegistrantType.choices)
     status_labels  = dict(VehicleRegistration.Status.choices)
     payment_labels = dict(VehicleRegistration.PaymentStatus.choices)
@@ -4736,9 +4876,9 @@ def _registration_counts(qs):
 
     # Every cell exists up front, including the Other row and column, so the
     # accumulate loop never has to branch on a missing key.
-    known_types = set(types)
-    grid = {t: {st: 0 for st in statuses + [OTHER_KEY]} for t in types + [OTHER_KEY]}
-    pay_grid = {t: {pm: 0 for pm in payments + [OTHER_KEY]} for t in types + [OTHER_KEY]}
+    known_types = set(types)                 # a set, because the loop below tests membership once per group
+    grid = {t: {st: 0 for st in statuses + [OTHER_KEY]} for t in types + [OTHER_KEY]}       # type x status
+    pay_grid = {t: {pm: 0 for pm in payments + [OTHER_KEY]} for t in types + [OTHER_KEY]}   # type x payment
     # Status x payment as well, so the page can scope the payment tiles to the
     # status the table is actually showing. Free: the GROUP BY below already
     # carries all three columns, so this is a third accumulation over rows we
@@ -4746,19 +4886,31 @@ def _registration_counts(qs):
     status_pay_grid = {st: {pm: 0 for pm in payments + [OTHER_KEY]}
                        for st in statuses + [OTHER_KEY]}
 
+    # Tracked rather than inferred from the grid afterwards: a zero in the
+    # Other row could equally mean "no such rows" or "the bucket exists and is
+    # empty", and only the first should hide the row.
     seen_other_type = seen_other_status = seen_other_payment = False
+    # .values(...).annotate(...) is the GROUP BY: one row back per distinct
+    # combination, with its count, however many registrations there are.
     for row in (qs.values('registrant_type', 'status', 'payment_status')
                   .annotate(n=Count('id'))):
+        # Each axis independently: a row can be a known type with an unknown
+        # status, and it still has to land in exactly one cell of each grid.
         t  = row['registrant_type'] if row['registrant_type'] in known_types else OTHER_KEY
-        st = row['status'] if row['status'] in status_labels else OTHER_KEY
+        st = row['status'] if row['status'] in status_labels else OTHER_KEY       # the label dict doubles as the membership test
         pm = row['payment_status'] if row['payment_status'] in payment_labels else OTHER_KEY
         seen_other_type    = seen_other_type    or t  == OTHER_KEY
         seen_other_status  = seen_other_status  or st == OTHER_KEY
         seen_other_payment = seen_other_payment or pm == OTHER_KEY
+        # The same count added into all three grids, which is what makes them
+        # reconcile: every grid totals to the same number of registrations.
         grid[t][st] += row['n']
         pay_grid[t][pm] += row['n']
         status_pay_grid[st][pm] += row['n']
 
+    # Appended only now, and only when something landed there — the grids were
+    # built with the Other key already present, so this adds it to the lists
+    # that decide what gets RENDERED, not to the counting.
     if seen_other_type:
         types.append(OTHER_KEY)
         type_labels[OTHER_KEY] = 'Other'
@@ -4769,9 +4921,13 @@ def _registration_counts(qs):
         payments.append(OTHER_KEY)
         payment_labels[OTHER_KEY] = 'Other'
 
+    # The margins of the grid: rows summed across, columns summed down. Derived
+    # rather than counted separately, so a total can never disagree with the
+    # cells printed above it. `types` and `statuses` now include Other where it
+    # was seen, so nothing counted is left out of a total.
     by_type    = {t: sum(grid[t][st] for st in statuses) for t in types}
     by_status  = {st: sum(grid[t][st] for t in types) for st in statuses}
-    by_payment = {pm: sum(pay_grid[t][pm] for t in types) for pm in payments}
+    by_payment = {pm: sum(pay_grid[t][pm] for t in types) for pm in payments}   # from pay_grid, so it totals the same rows by the other axis
     return {
         'types':          types,
         'statuses':       statuses,
@@ -4785,7 +4941,7 @@ def _registration_counts(qs):
         'by_type':        by_type,
         'by_status':      by_status,
         'by_payment':     by_payment,
-        'total':          sum(by_type.values()),
+        'total':          sum(by_type.values()),   # summed off a margin, not counted again — it cannot drift from the grid
     }
 
 
@@ -4794,6 +4950,8 @@ class RegistrationSummaryView(APIView):
     permission_classes = [IsAdminOrCdso]
 
     def get(self, request):
+        # Unfiltered, unlike the PDF below: this feeds the page's tiles, which
+        # describe everything on record rather than a chosen slice.
         counts = _registration_counts(VehicleRegistration.objects.all())
         type_labels    = counts['type_labels']
         status_labels  = counts['status_labels']
@@ -4811,6 +4969,8 @@ class RegistrationSummaryView(APIView):
                  'by_type': {t: counts['grid'][t][st] for t in counts['types']}}
                 for st in counts['statuses']
             ],
+            # The flat payment totals, for when no status is selected. The
+            # per-status splits above are what a selected status reads from.
             'by_payment': [
                 {'key': pm, 'label': payment_labels.get(pm, pm), 'count': counts['by_payment'][pm]}
                 for pm in counts['payments']
@@ -4829,8 +4989,10 @@ class RegistrationSummaryReportPdfView(APIView):
 
     def get(self, request):
         from report_utils import branded_pdf_response, report_filename
+        # Filtered by the same helper the row-by-row reports use, so a summary
+        # and a listing downloaded from the same screen describe the same set.
         qs, desc = _filter_registrations_report(request)
-        counts = _registration_counts(qs)
+        counts = _registration_counts(qs)        # no 5,000 cap here: this counts rather than lists, so size does not grow the file
         type_labels = counts['type_labels']
 
         def section(axis_keys, axis_labels, cells, totals):
@@ -4839,15 +5001,26 @@ class RegistrationSummaryReportPdfView(APIView):
             the landscape width is shared evenly by the count columns."""
             headers = (['Registrant Type']
                        + [axis_labels.get(k, k) for k in axis_keys] + ['Total'])
+            # A row per type, each ending in that type's own total — so every
+            # row reads across to a figure the reader can check.
             rows = [[type_labels.get(t, t)]
                     + [cells[t][k] for k in axis_keys]
                     + [counts['by_type'][t]]
                     for t in counts['types']]
+            # And the margin row. Its last cell is the grand total, which is the
+            # one number both this row and the Total column have to agree on.
             rows.append(['ALL TYPES']
                         + [totals[k] for k in axis_keys] + [counts['total']])
             n = len(axis_keys)
+            # 267mm is A4 landscape less report_utils' 15mm margins. 60 for the
+            # type name and 30 for the total are fixed; whatever is left is
+            # shared evenly, so the table fills the page whether there are four
+            # status columns or nine. `if n else 0` guards the division for an
+            # axis with no keys at all.
             return headers, rows, [60] + [(267 - 60 - 30) / n if n else 0] * n + [30]
 
+        # The same function twice, once per axis: status is the main table and
+        # payment is the extra one appended below it.
         status_headers, status_rows, status_widths = section(
             counts['statuses'], counts['status_labels'], counts['grid'], counts['by_status'])
         pay_headers, pay_rows, pay_widths = section(
@@ -4872,41 +5045,59 @@ class RegistrationSummaryReportPdfView(APIView):
         )
 
 
+# The last group in this file: who the CDSO is expecting, and when.
 class ScheduledVisitListCreateView(APIView):
     """Advance coordination for visitors/suppliers — lets CDSO log who is
     expected on a given day, before they show up at the gate."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        visits = ScheduledVisit.objects.select_related('supplier').all()
+        visits = ScheduledVisit.objects.select_related('supplier').all()   # the supplier's name renders on every row, so join it in
+        # Any truthy value turns the filter on — the caller is the CDSO screen
+        # sending `?upcoming=1`, so the parameter's value is never inspected.
         upcoming_only = request.query_params.get('upcoming')
         if upcoming_only:
+            # Two conditions, because "upcoming" means both: still to come, and
+            # not already ticked off. Someone expected today who has not turned
+            # up yet is still upcoming, which is why it is >= and not >.
             visits = visits.filter(expected_date__gte=timezone.localdate(), is_arrived=False)
-        return Response(ScheduledVisitSerializer(visits, many=True).data)
+        return Response(ScheduledVisitSerializer(visits, many=True).data)   # soonest first, from the model's ordering
 
     def post(self, request):
         visitor_name = (request.data.get('visitor_name') or '').strip()
-        expected_date = request.data.get('expected_date')
+        expected_date = request.data.get('expected_date')   # taken raw — see the note on the create below
         category = request.data.get('category') or ScheduledVisit.Category.OTHER
 
         if not visitor_name:
             return Response({'visitor_name': 'Name is required.'}, status=400)
+        # Presence only. Whether it is a DATE is never checked here, unlike
+        # every other date in this file, which is parsed with strptime and
+        # answered with a 400 — see _clean_period_payload just above, or
+        # _parse_event_time. The consequence is spelled out at the create.
         if not expected_date:
             return Response({'expected_date': 'Expected date is required.'}, status=400)
         if category not in ScheduledVisit.Category.values:
             return Response({'category': 'Invalid category.'}, status=400)
 
+        # Optional: a visitor need not be tied to a supplier at all, and the
+        # FK is SET_NULL, so one that is may outlive the company record.
         supplier = None
         supplier_id = request.data.get('supplier')
         if supplier_id:
-            supplier = get_object_or_404(Supplier, pk=supplier_id)
+            supplier = get_object_or_404(Supplier, pk=supplier_id)   # a named supplier that does not exist is a 404, not a silently unlinked visit
 
         visit = ScheduledVisit.objects.create(
             visitor_name=visitor_name,
             category=category,
             supplier=supplier,
-            plate_number=_normalize_plate(request.data.get('plate_number') or ''),
+            plate_number=_normalize_plate(request.data.get('plate_number') or ''),   # normalised so a gate scan can match it; blank is allowed, the vehicle may not be known yet
             purpose=(request.data.get('purpose') or '').strip(),
+            # expected_date reaches the DateField as whatever was posted. A
+            # well-formed "YYYY-MM-DD" is converted for us; anything else —
+            # "21/09/2026", or a word — raises django.core.exceptions
+            # .ValidationError here, which DRF does not translate, so the
+            # caller gets a 500 rather than the 400 every other date input in
+            # this file returns. Recorded, not changed: this pass comments code.
             expected_date=expected_date,
             notes=(request.data.get('notes') or '').strip(),
         )
@@ -4915,19 +5106,31 @@ class ScheduledVisitListCreateView(APIView):
         return Response(ScheduledVisitSerializer(visit).data, status=201)
 
 
+# Tick a visit off, or drop it.
 class ScheduledVisitDetailView(APIView):
     permission_classes = [IsAdminRole]
 
     def patch(self, request, pk):
         visit = get_object_or_404(ScheduledVisit, pk=pk)
+        # Only is_arrived is honoured. Anything else in the payload — a new
+        # date, a different name — is read and ignored, so a visit is corrected
+        # by deleting it and logging it again rather than by editing it.
         if 'is_arrived' in request.data:
             visit.is_arrived = bool(request.data['is_arrived'])
+        # Saved unconditionally, so a PATCH naming nothing still writes the row
+        # back unchanged. And no audit line is written — the only staff write
+        # in this section without one (every Supplier, SupplierPlate, period
+        # and ScheduledVisit endpoint around it audits), so ticking somebody
+        # off as arrived leaves no trace of who did it. Recorded, not changed.
         visit.save()
         return Response(ScheduledVisitSerializer(visit).data)
 
     def delete(self, request, pk):
         visit = get_object_or_404(ScheduledVisit, pk=pk)
-        desc = f"{visit.visitor_name} ({visit.expected_date})"
+        desc = f"{visit.visitor_name} ({visit.expected_date})"   # captured before the row goes, so the audit line can still name them
+        # A real delete. A scheduled visit is an expectation, not a record of
+        # anything that happened — what actually happened at the gate is on the
+        # scan logs, which this does not touch.
         visit.delete()
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Scheduled visit removed | {desc} | By: {request.user.full_name}")
