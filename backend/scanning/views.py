@@ -1719,6 +1719,8 @@ class VisitorQrExitView(APIView):
         return Response(data)
 
 
+# The offices a visitor can say they are here to see — fills a dropdown on the
+# visitor pass form, nothing more.
 class OfficeListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1727,7 +1729,12 @@ class OfficeListView(APIView):
         return Response(OfficeSerializer(offices, many=True).data)
 
 
+# One shape for a gate, hand-written rather than serialized: four fields, and
+# both views below return exactly these.
 def _gate_dict(g):
+    # `id` is the row number and `gate_id` is the slug ('gate1') that every
+    # AccessLog and every guard posting is keyed on. They are not
+    # interchangeable — the slug is the one that means something.
     return {'id': g.id, 'gate_id': g.gate_id, 'label': g.label, 'is_active': g.is_active}
 
 
@@ -1740,7 +1747,12 @@ class GateListView(APIView):
     def get(self, request):
         from .models import Gate
         qs = Gate.objects.all()
+        # AllowAny on the class, so request.user may be anonymous — hence the
+        # is_authenticated check before reading the role at all.
         is_staff = request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'
+        # Retired gates are hidden from the kiosk (a guard must not post to a
+        # gate that no longer exists) but an admin managing them needs to see
+        # them, which is what ?all=1 is for.
         if not (is_staff and request.query_params.get('all')):
             qs = qs.filter(is_active=True)
         return Response([_gate_dict(g) for g in qs])
@@ -1748,19 +1760,26 @@ class GateListView(APIView):
     def post(self, request):
         from .models import Gate
         import re as _re
+        # The real gate on writing. The class is AllowAny so the kiosk can read
+        # the list before anyone logs in, which means POST has to guard itself.
         if not (request.user.is_authenticated and getattr(request.user, 'role', '') == 'admin'):
             return Response({'error': 'Not authorised.'}, status=status.HTTP_403_FORBIDDEN)
 
-        gate_id = (request.data.get('gate_id') or '').strip().lower()
+        gate_id = (request.data.get('gate_id') or '').strip().lower()   # lower-cased: the slug is compared exactly everywhere else
         label   = (request.data.get('label') or '').strip()
+        # fullmatch, not search: the whole string must be the slug. The shape
+        # is fixed because gate_id is written onto every AccessLog row and read
+        # back by _gate_label and the gate filters.
         if not _re.fullmatch(r'gate\d{1,3}', gate_id):
             return Response({'error': "Gate ID must look like 'gate2', 'gate5', etc."}, status=status.HTTP_400_BAD_REQUEST)
         if not label:
             return Response({'error': 'A display label is required (e.g. "Gate 2 — North Entrance").'}, status=status.HTTP_400_BAD_REQUEST)
+        # Checked in Python so the admin gets a sentence rather than an
+        # IntegrityError from the column's own uniqueness.
         if Gate.objects.filter(gate_id=gate_id).exists():
             return Response({'error': f'{gate_id} already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        gate = Gate.objects.create(gate_id=gate_id, label=label)
+        gate = Gate.objects.create(gate_id=gate_id, label=label)   # is_active takes the model default
         AuditLog.objects.create(
             actor=request.user, action=AuditLog.Action.RECORD_UPDATED,
             details=f'Gate created: {gate.label} ({gate.gate_id})',
@@ -1781,11 +1800,16 @@ class GateDetailView(APIView):
         except Gate.DoesNotExist:
             return Response({'error': 'Gate not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Two different tests on purpose: a blank label means "leave it"
+        # (a gate with no name is unusable), while is_active is keyed on the
+        # KEY being present, so an explicit False can switch a gate off.
         label = (request.data.get('label') or '').strip()
         if label:
             gate.label = label
         if 'is_active' in request.data:
             gate.is_active = bool(request.data.get('is_active'))
+        # Both columns are written whichever branch ran; harmless, since each
+        # is either the new value or the one already on the row.
         gate.save(update_fields=['label', 'is_active'])
         AuditLog.objects.create(
             actor=request.user, action=AuditLog.Action.RECORD_UPDATED,
@@ -1810,6 +1834,9 @@ ACCESS_LOG_STATUS_GROUPS = {
 }
 
 
+# Builds the queryset both the screen and the two reports read. Everything
+# about this helper is shaped by one constraint, stated in its docstring: a
+# visit is TWO rows, and filtering must not cut one of them away.
 def _filter_access_logs(request):
     """Apply the filters the Vehicle Log screens use.
 
@@ -1820,10 +1847,12 @@ def _filter_access_logs(request):
     """
     qs = (
         AccessLog.objects
+        # All three are rendered on every row of the table and every line of
+        # the report — vehicle__user is a two-step join for the owner's name.
         .select_related('scanned_by', 'on_duty_guard', 'vehicle__user')
-        .order_by('-scanned_at')
+        .order_by('-scanned_at')             # newest first; the row cap below therefore keeps the most recent
     )
-    filters_desc = []
+    filters_desc = []                        # the filter written out in words, for the report subtitle
 
     gate_id = (request.query_params.get('gate_id') or '').strip()
     if gate_id:
@@ -1835,6 +1864,9 @@ def _filter_access_logs(request):
     date = (request.query_params.get('date') or '').strip()
     if date:
         try:
+            # day_range gives the campus-local day as a half-open UTC window,
+            # so the comparison is on the indexed column rather than on a
+            # __date lookup the index cannot serve.
             _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
             qs = qs.filter(scanned_at__gte=_start, scanned_at__lt=_end)
             filters_desc.append(f'Date: {date}')
@@ -1875,6 +1907,10 @@ def _filter_access_logs(request):
         filters_desc.append(
             'Category: ' + dict(AccessLog.Category.choices)[category])
 
+    # Status is DESCRIBED here but never applied — the docstring says why. The
+    # reports apply it after merging, via _apply_status_group. It still has to
+    # be named in filters_desc so a printed report states what it was filtered
+    # to, even though the narrowing happens later.
     status_key = (request.query_params.get('status') or '').strip()
     if status_key in ACCESS_LOG_STATUS_GROUPS:
         labels = dict(AccessLog.Status.choices)
@@ -1882,7 +1918,7 @@ def _filter_access_logs(request):
             'Status: ' + ', '.join(labels.get(v, v) for v in ACCESS_LOG_STATUS_GROUPS[status_key])
         )
 
-    return qs, filters_desc
+    return qs, filters_desc                  # unevaluated: the caller applies its own row cap before hitting the database
 
 
 def _merge_access_log_visits(logs):
@@ -1892,49 +1928,76 @@ def _merge_access_log_visits(logs):
     entry is in `logs` too, so an exit whose entry fell outside the filter or
     the row cap still shows on its own rather than vanishing.
     """
+    # Done in Python over the rows already fetched, not in SQL: the pairing is
+    # a self-join the row cap would break, and the list is at most a few
+    # thousand rows by the time it gets here.
     entries_by_id = {log.id: log for log in logs if log.status == AccessLog.Status.AUTHORIZED}
     exit_by_entry_id = {}
     for log in logs:
+        # `in entries_by_id` is the guard the docstring describes: an exit
+        # whose entry is outside the filter or past the cap is NOT folded away,
+        # so it still appears as its own row instead of vanishing entirely.
         if log.status == AccessLog.Status.EXITED and log.paired_entry_id in entries_by_id:
             exit_by_entry_id[log.paired_entry_id] = log
 
-    merged_exit_ids = {exit_log.id for exit_log in exit_by_entry_id.values()}
-    visible = [log for log in logs if log.id not in merged_exit_ids]
-    return visible, exit_by_entry_id
+    merged_exit_ids = {exit_log.id for exit_log in exit_by_entry_id.values()}   # a set, so the filter below is a lookup per row
+    visible = [log for log in logs if log.id not in merged_exit_ids]   # order preserved: still newest-first from the queryset
+    return visible, exit_by_entry_id         # the map goes back too, so callers can read each visit's exit time and duration
 
 
+# How long a visit lasted, in whole minutes.
 def _visit_duration_minutes(entry_log, exit_log):
+    # max(0, ...) guards a clock-skewed pair whose exit reads earlier than its
+    # entry — a negative duration on a report is worse than a zero.
     return max(0, round((exit_log.scanned_at - entry_log.scanned_at).total_seconds() / 60))
 
 
 def _apply_status_group(logs, status_key):
     """Narrow already-merged rows to one UI status group; unknown keys pass through."""
+    # Applied to MERGED rows, which is the whole reason it is not in SQL: by
+    # this point each visit is one row carrying its entry's status, so
+    # narrowing here cannot orphan an exit.
     wanted = ACCESS_LOG_STATUS_GROUPS.get(status_key)
-    return [log for log in logs if log.status in wanted] if wanted else logs
+    return [log for log in logs if log.status in wanted] if wanted else logs   # an unknown or absent key narrows nothing
 
 
+# The Vehicle Log table: one row per visit, newest first.
 class AccessLogListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs, _ = _filter_access_logs(request)
+        qs, _ = _filter_access_logs(request)     # filters_desc is discarded — it exists for the report subtitle, and a table has none
 
         try:
             limit = int(request.query_params.get('limit', 200))
         except (TypeError, ValueError):
-            limit = 200
-        limit = max(1, min(limit, 1000))
-        logs = list(qs[:limit])
+            limit = 200                          # unparseable falls back rather than refusing the screen
+        limit = max(1, min(limit, 1000))         # clamped at both ends: 0 would return nothing, and an unbounded limit is a memory hazard
+        logs = list(qs[:limit])                  # the slice reaches the database as a LIMIT
 
         visible, exit_by_entry_id = _merge_access_log_visits(logs)
-        entries_by_id = {log.id: log for log in logs}
+        # Note: _apply_status_group is NOT called here, where the two report
+        # views do call it. The screen narrows by status in the browser
+        # instead (frontend VehicleLog.jsx filters the rows it was given), so
+        # the table and the export agree on WHICH statuses — but not
+        # necessarily on how many rows they looked at: this endpoint caps at
+        # `limit` (200 by default) while the reports cap at
+        # VEHICLE_LOG_REPORT_CAP (5000). A filtered export can therefore
+        # legitimately contain rows the table never received. Recorded, not
+        # changed: this pass comments code.
+        entries_by_id = {log.id: log for log in logs}   # built from ALL rows, not just visible ones, so a merged exit can still find its entry
 
         data = AccessLogSerializer(visible, many=True).data
+        # The exit half is added onto the serialized entry rows rather than
+        # being a serializer field: the pairing is only known after the merge
+        # above, which the serializer has no access to.
         for row in data:
             exit_log = exit_by_entry_id.get(row['id'])
             if exit_log:
                 row['exited_at'] = exit_log.scanned_at
                 row['duration_minutes'] = _visit_duration_minutes(entries_by_id[row['id']], exit_log)
+        # A row with no exited_at is a vehicle still inside — the screen reads
+        # the absence of the key, so nothing needs to say so explicitly.
         return Response(data)
 
 
@@ -1952,21 +2015,25 @@ VEHICLE_LOG_REPORT_HEADERS = [
 VEHICLE_LOG_REPORT_CAP = 5000
 
 
+# Turns merged visits into the flat cells both report formats take.
 def _vehicle_log_report_rows(logs, exit_by_entry_id):
     from django.utils import timezone as tz
     from .models import Gate
 
+    # All three label maps are built once, before the loop. gate_labels in
+    # particular is one query for every gate rather than a lookup per row.
     status_labels = dict(AccessLog.Status.choices)
     category_labels = dict(AccessLog.Category.choices)
     gate_labels = dict(Gate.objects.values_list('gate_id', 'label'))
 
+    # Minutes written the way somebody reads them: "45 min", "2h 10m", "3h".
     def duration_text(minutes):
         if minutes is None:
-            return ''
+            return ''                            # still inside — blank, not "0 min", which would claim they left immediately
         if minutes < 60:
             return f'{minutes} min'
         hours, mins = divmod(minutes, 60)
-        return f'{hours}h {mins}m' if mins else f'{hours}h'
+        return f'{hours}h {mins}m' if mins else f'{hours}h'   # drops a trailing "0m"
 
     rows = []
     for i, log in enumerate(logs, start=1):
@@ -1978,6 +2045,9 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
         owner = (getattr(getattr(log.vehicle, 'user', None), 'full_name', '')
                  or log.driver_name or 'Unregistered')
 
+        # Remarks collects everything that does not have a column of its own,
+        # joined at the end. Order is deliberate: what the vehicle was, then
+        # what a guard did about it, then why it was refused.
         remarks = []
         if log.is_unrecognized:
             described = ' '.join(
@@ -1989,6 +2059,8 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             remarks.append(f'Override: {log.override_reason}' if log.override_reason else 'Override')
         if log.denied_reason:
             remarks.append(log.denied_reason)
+        # Only meaningful for an authorized entry: a denied or unreadable row
+        # never put anybody on campus, so "still inside" would be nonsense.
         if not exit_log and log.status == AccessLog.Status.AUTHORIZED:
             remarks.append('Still inside')
 
@@ -2004,9 +2076,11 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             gate_labels.get(log.gate_id, log.gate_id or ''),
             status_labels.get(log.status, log.status),
             getattr(log.on_duty_guard, 'full_name', '') or '',
+            # Time only, no date: the entry column already carries the date,
+            # and a visit that crosses midnight is rare enough to read from it.
             tz.localtime(exit_log.scanned_at).strftime('%I:%M %p') if exit_log else '',
             duration_text(minutes),
-            ' · '.join(remarks),
+            ' · '.join(remarks),                 # a middle dot, so remarks stay legible run together in one cell
         ])
     return rows
 
@@ -2015,14 +2089,18 @@ def _vehicle_log_report_data(request):
     """(rows, filters_desc) for both formats — one filter path, one merge."""
     qs, filters_desc = _filter_access_logs(request)
     logs = list(qs[:VEHICLE_LOG_REPORT_CAP])
+    # Merge FIRST, then narrow by status — the order the whole design depends
+    # on. Narrowing first would drop the exit rows before they could be folded
+    # into their entries, and every visit would lose its duration.
     visible, exit_by_entry_id = _merge_access_log_visits(logs)
     visible = _apply_status_group(visible, (request.query_params.get('status') or '').strip())
-    return _vehicle_log_report_rows(visible, exit_by_entry_id), filters_desc
+    return _vehicle_log_report_rows(visible, exit_by_entry_id), filters_desc   # both formats call this, so they cannot disagree
 
 
+# The same visits as the table, as a spreadsheet.
 class VehicleLogExportView(APIView):
     """Download the (filtered) vehicle log as an Excel report — CDSO only."""
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole]           # tighter than the table above, which any signed-in role may read
 
     def get(self, request):
         from django.utils import timezone as tz
@@ -2039,7 +2117,7 @@ class VehicleLogExportView(APIView):
             subtitle=subtitle,
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 22, 14, 26, 16, 12, 22, 14, 22, 12, 10, 40],
+            col_widths=[5, 22, 14, 26, 16, 12, 22, 14, 22, 12, 10, 40],   # characters, not millimetres — widest for Remarks, the free-text column
         )
 
 
@@ -2067,14 +2145,28 @@ class VehicleLogPdfExportView(APIView):
         )
 
 
+# ──────────────────────────────────────────────
+# Plate-reader training samples
+# ──────────────────────────────────────────────
+#
+# Every scan can leave a sample behind: the frame, what the model read, and how
+# sure it was. A person then confirms or corrects the reading, and the
+# confirmed ones are what the model is retrained on. These four endpoints are
+# that review loop — list, review, retrain, and the counts above it.
+
+# The review queue: the hundred most recent samples.
 class MLTrainingSampleList(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Newest first and hard-capped — this is a screen somebody works
+        # through, not an export, and there is no paging behind it.
         samples = MLTrainingSample.objects.all().order_by('-created_at')[:100]
         return Response(MLTrainingSampleSerializer(samples, many=True).data)
 
 
+# A person's verdict on one sample: correct the plate text, and/or set what
+# becomes of it.
 class MLTrainingSampleReview(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -2084,21 +2176,37 @@ class MLTrainingSampleReview(APIView):
         except MLTrainingSample.DoesNotExist:
             return Response({'error': 'Sample not found'}, status=404)
 
+        # `is not None`, not a truthiness test: '' is a meaningful correction
+        # here — the reviewer saying the model read text that was not there.
         plate_number = request.data.get('plate_number')
         if plate_number is not None:
             sample.plate_number = plate_number
+        # Two vocabularies are accepted: a raw status value, or one of the
+        # three verbs the review screen sends. Defaults to the sample's current
+        # status, so a request that only corrects the plate changes nothing else.
         action = request.data.get('action', sample.status)
         valid = dict(MLTrainingSample.STATUS_CHOICES).keys()
         if action not in valid and action not in ('approve', 'reject', 'mark_used'):
+            # The message names only the raw statuses, not the three verbs —
+            # so a mistyped verb is reported against a list it was never in.
             return Response({'error': f'Invalid action. Must be one of {valid}'}, status=400)
+        # Indexed into STATUS_CHOICES rather than named, so these two lines
+        # depend on the order of that list in the model staying as it is.
         if action == 'approve':
             sample.status = MLTrainingSample.STATUS_CHOICES[2][0]  # 'verified'
         elif action == 'reject' or action == 'mark_used':
             sample.status = MLTrainingSample.STATUS_CHOICES[3][0]  # 'rejected'
+        # Note, factually: this branch is unreachable. 'mark_used' is already
+        # matched by the elif above, so it sets status='rejected' and returns
+        # before getting here — `used_in_training` is never set to True by this
+        # endpoint, and asking to mark a sample used instead marks it rejected.
+        # MLStatsView's `pending_train` counts used_in_training=False, so it
+        # will not fall as samples are marked. Recorded, not changed: this pass
+        # comments code.
         elif action == 'mark_used':
             sample.used_in_training = True
         else:
-            sample.status = action
+            sample.status = action               # a raw status value, already checked against the choices above
         sample.save()
         return Response(MLTrainingSampleSerializer(sample).data)
 
@@ -2108,9 +2216,12 @@ class TriggerRetrainView(APIView):
 
     def post(self, request):
         from scanning.tasks import ml_retrain_task
+        # .delay() hands it to Celery and returns at once. Retraining takes
+        # minutes to hours, so the request cannot wait for it — the caller gets
+        # a task id and asks about it separately.
         task = ml_retrain_task.delay()
         return Response({
-            'status': 'enqueued',
+            'status': 'enqueued',                # enqueued, not started: an idle worker is the difference
             'task_id': task.id,
             'message': 'Retrain task has been queued.',
         })
@@ -2120,11 +2231,17 @@ class MLStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Six separate COUNT(*) statements, one per tile. Compare
+        # ScheduleSlotsView in vehicles/views.py, which folds the same shape of
+        # question into a single aggregate — this one was left as it is.
         total      = MLTrainingSample.objects.count()
         unlabeled  = MLTrainingSample.objects.filter(status='unlabeled').count()
         auto_labeled = MLTrainingSample.objects.filter(status='auto_labeled').count()
         verified   = MLTrainingSample.objects.filter(status='verified').count()
         rejected   = MLTrainingSample.objects.filter(status='rejected').count()
+        # Counts every sample never used, whatever its status — so rejected
+        # ones are included, and see the note in MLTrainingSampleReview about
+        # why this number does not currently move.
         pending_train = MLTrainingSample.objects.filter(used_in_training=False).count()
         return Response({
             'total_samples': total,
