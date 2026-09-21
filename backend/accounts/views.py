@@ -26,37 +26,82 @@ from .serializers import (
     NotificationSerializer,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)     # messages appear under "accounts.views"
+
+# =============================================================================
+# HOW TO READ THIS FILE
+#
+# Accounts: who exists, what they may do, and how they prove who they are.
+# Roughly in the order it appears:
+#
+#   1. Permissions and audit helpers          (everything below uses these)
+#   2. User administration                    create, edit, disable, delete
+#   3. DashboardStatsView                     the admin home screen's numbers
+#   4. Audit log, backup and RESTORE          the record, and the database itself
+#   5. Self-service                           password change, own registration
+#   6. Password reset                         request, email, confirm
+#   7. Logins and notifications               guard QR, guard credentials
+#
+# Two things run through all of it. Every staff action writes an AuditLog row
+# through `log_action` below — that trail is the point of most of this file.
+# And "admin" IS the CDSO: there is no separate role, so the two permission
+# classes below are the same check under two names.
+# =============================================================================
 
 
+# Where the request actually came from, for the audit trail.
 def get_client_ip(request):
     """Extract client IP from request."""
+    # Behind a proxy REMOTE_ADDR is the proxy; the forwarded header is a chain
+    # "client, proxy1, proxy2", so the first entry is the original caller.
     x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
     if x_forwarded:
         return x_forwarded.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
 
 
+# Records what a staff member did. Every administrative endpoint in this file
+# calls it.
 def log_action(request, action, target_user=None, details=''):
     """Create an audit log entry."""
+    # No try/except, unlike scanning/views.py's _audit() which swallows
+    # failures: at the gate a broken audit table must not stop a vehicle, but
+    # here an unrecorded account change is worse than a failed request — and
+    # inside an atomic block (see AdminReplaceView) the raise is what rolls the
+    # whole action back.
     AuditLog.objects.create(
-        actor=request.user,
+        actor=request.user,                  # who did it
         action=action,
-        target_user=target_user,
-        details=details,
+        target_user=target_user,             # who it was done TO, when that differs
+        details=details,                     # the sentence a reviewer will read
         ip_address=get_client_ip(request),
     )
 
 
+# Paging for the user list. `max_page_size` is the guard that matters: without
+# it a caller could ask for every account in one response.
 class StandardResultsSetPagination(PageNumberPagination):
-    page_size = 10
-    page_size_query_param = 'page_size'
-    max_page_size = 100
+    page_size = 10                           # what a screen shows by default
+    page_size_query_param = 'page_size'      # ...and the caller may ask for more
+    max_page_size = 100                      # but no more than this
 
 
+# The two permission classes, and they are the SAME CHECK under two names:
+# admin IS the CDSO since the separate cdso role was removed. The second name
+# is kept because it reads correctly at the endpoints that are about CDSO work.
+#
+# Noted, with no code changed: both classes are ALSO defined again in
+# vehicles/views.py, and the two copies have drifted in form — that pair wraps
+# the result in bool() and carries comments instead of docstrings. The effect
+# is the same, because DRF only tests the returned value for truthiness and
+# this chain yields None/False/bool in the cases that matter. The risk is not
+# today's behaviour but tomorrow's: a real change to one copy would not reach
+# the other. scanning/views.py imports IsAdminRole from HERE.
 class IsAdminRole(permissions.BasePermission):
     """Allow access only to users with admin role."""
     def has_permission(self, request, view):
+        # All three parts matter: an anonymous caller has no role, and reading
+        # .role off one without the guard would raise.
         return (
             request.user
             and request.user.is_authenticated
@@ -70,29 +115,39 @@ class IsAdminOrCdso(permissions.BasePermission):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.role == 'admin'
+            and request.user.role == 'admin'    # identical to IsAdminRole above, deliberately — see the block comment
         )
 
 
+# The ordinary email-and-password login. Only the serializer is replaced — it
+# is what puts the role and the name into the token, so the frontend knows who
+# it is dealing with without a second request.
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
 
+# "Register" here means an ADMIN creating an account, not self-signup: note the
+# permission class. Nobody creates their own account in this system.
 class RegisterView(generics.CreateAPIView):
     queryset            = User.objects.all()
     serializer_class    = RegisterSerializer
     permission_classes  = [IsAdminRole]
 
+    # perform_create rather than create(): the serializer does the work, and
+    # this hook exists purely so the creation reaches the audit trail.
     def perform_create(self, serializer):
         user = serializer.save()
         log_action(self.request, AuditLog.Action.USER_CREATED, target_user=user)
 
 
+# "Who am I?" — every signed-in screen calls this on load.
 class MeView(generics.RetrieveAPIView):
     serializer_class   = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
+        # The caller's own row, never one named in the URL — so this endpoint
+        # cannot be turned into a way to read somebody else's account.
         return self.request.user
 
 
@@ -100,6 +155,7 @@ class MeView(generics.RetrieveAPIView):
 #  User Management (admin only)
 # ──────────────────────────────────────────────
 
+# The admin's user table: everyone except admins, searchable and filterable.
 class UserListView(generics.ListAPIView):
     """List all users except admins, with optional ?search= by name."""
     serializer_class   = UserSerializer
@@ -115,6 +171,8 @@ class UserListView(generics.ListAPIView):
         # (registrations carry image/document fields we'd otherwise pull down).
         qs = (
             User.objects
+            # Admins are excluded from their own management screen — the ways
+            # to change an admin are AdminReplaceView and nothing else.
             .exclude(role='admin')
             .prefetch_related(Prefetch(
                 'registrations',
@@ -122,8 +180,10 @@ class UserListView(generics.ListAPIView):
                     'id', 'user_id', 'registrant_type',
                 ).order_by('id'),
             ))
-            .order_by('-id')
+            .order_by('-id')             # newest accounts first, which is what an admin is usually looking for
         )
+        # One box, three columns: whichever of the three the admin happens to
+        # have — a name, an address, or the code printed on a badge.
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(
@@ -132,21 +192,28 @@ class UserListView(generics.ListAPIView):
                 Q(user_code__icontains=search)
             )
 
+        # Each filter is checked against a fixed list rather than passed
+        # through, so an unrecognised value is IGNORED rather than returning an
+        # empty table that reads as "no such users".
         role = self.request.query_params.get('role', '').strip()
-        if role in ['security', 'vehicle_owner']:
+        if role in ['security', 'vehicle_owner']:   # 'admin' is deliberately not offered: they are excluded above
             qs = qs.filter(role=role)
 
         registrant_type = self.request.query_params.get('registrant_type', '').strip()
         if registrant_type in ['student', 'employee', 'fetcher']:
+            # .distinct() because this filters through a to-many relation: an
+            # owner with two registrations of the same type would appear twice.
             qs = qs.filter(registrations__registrant_type=registrant_type).distinct()
 
+        # Written as two explicit branches rather than a boolean cast, so any
+        # third value (or none) leaves the list unfiltered.
         status_param = self.request.query_params.get('status', '').strip()
         if status_param == 'active':
             qs = qs.filter(is_active=True)
         elif status_param == 'disabled':
             qs = qs.filter(is_active=False)
 
-        return qs
+        return qs                            # unevaluated; the pagination class applies the LIMIT
 
 
 class UserDetailView(generics.RetrieveAPIView):
@@ -156,6 +223,8 @@ class UserDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAdminRole]
 
 
+# Editing an account. Most of the body below is not the edit — it is working
+# out what CHANGED, so the audit line can say so.
 class UserUpdateView(generics.UpdateAPIView):
     """Edit user details (full_name, email, role, photo)."""
     queryset           = User.objects.all()
@@ -166,13 +235,18 @@ class UserUpdateView(generics.UpdateAPIView):
         return {**super().get_serializer_context(), 'request': self.request}
 
     def perform_update(self, serializer):
+        # Read BEFORE the save, while the old values are still on the instance.
         old_user = serializer.instance
         changes = []
         for field in ['full_name', 'email', 'role']:
             old_val = getattr(old_user, field)
+            # Defaulting to the old value means a field the request did not
+            # mention compares equal and is not reported as a change.
             new_val = serializer.validated_data.get(field, old_val)
             if old_val != new_val:
                 changes.append(f"{field}: '{old_val}' → '{new_val}'")
+        # The photo is noted as changed without quoting it — a file path in an
+        # audit line tells a reader nothing.
         if 'photo' in serializer.validated_data:
             changes.append('photo updated')
 
@@ -193,6 +267,9 @@ class UserDeleteView(generics.DestroyAPIView):
         from .models import delete_user_with_owned_records
 
         user = self.get_object()
+        # An admin cannot be deleted here even by another admin. Replacing one
+        # is AdminReplaceView's job, and it does the create and the delete
+        # together so the system is never left without an admin.
         if user.role == 'admin':
             return Response(
                 {'detail': 'Cannot delete an admin from this endpoint.'},
@@ -200,8 +277,11 @@ class UserDeleteView(generics.DestroyAPIView):
             )
         # Logged before the delete: log_action reads the user it is pointed at.
         log_action(request, AuditLog.Action.USER_DELETED, target_user=user)
+        # Sweeps what BELONGS to them (vehicles, registrations) and leaves what
+        # merely references them as an actor — see the class docstring, and the
+        # helper itself for which is which.
         delete_user_with_owned_records(user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(status=status.HTTP_204_NO_CONTENT)   # 204: gone, nothing left to return
 
 
 class UserToggleStatusView(APIView):
@@ -215,14 +295,21 @@ class UserToggleStatusView(APIView):
                 {'detail': 'Cannot disable an admin account.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        old_status = user.is_active
+        old_status = user.is_active          # read but not used further; the new value is what the audit action is chosen from
+        # A toggle, not a set: the caller says "flip this account" rather than
+        # sending the state it wants, so two admins clicking at once cannot
+        # both write the same value and think they each did something.
         user.is_active = not user.is_active
-        user.save(update_fields=['is_active'])
+        user.save(update_fields=['is_active'])   # one column; nothing else on the account is touched
+        # Two distinct audit actions rather than one with a detail string, so
+        # the trail can be filtered for disablings specifically.
         action = AuditLog.Action.USER_ENABLED if user.is_active else AuditLog.Action.USER_DISABLED
         log_action(request, action, target_user=user)
         return Response(UserSerializer(user).data)
 
 
+# The only way an admin account changes hands. The whole point is that it is
+# ONE step: create the replacement and remove the incumbent together.
 class AdminReplaceView(APIView):
     """Create a new admin and delete the current admin."""
     permission_classes = [IsAdminRole]
@@ -240,9 +327,12 @@ class AdminReplaceView(APIView):
         # longer exists are unusable — a stray mail beats a split admin state.
         with transaction.atomic():
             new_admin = serializer.save()
+            # Inside the transaction on purpose: log_action does not swallow
+            # failures, so a failed audit write rolls the replacement back
+            # rather than leaving an unrecorded change of admin.
             log_action(request, AuditLog.Action.ADMIN_REPLACED, target_user=new_admin,
                        details=f"Replaced admin: {old_admin.email}")
-            old_admin.delete()
+            old_admin.delete()               # the incumbent, captured before the save above
         return Response(
             {
                 'detail': 'Admin replaced successfully.',
@@ -260,9 +350,11 @@ class AdminCreateGuardView(APIView):
     def post(self, request):
         serializer = GuardCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        guard = serializer.save()
+        guard = serializer.save()            # the serializer generates the password and emails it
         log_action(request, AuditLog.Action.USER_CREATED, target_user=guard,
                    details=f'Guard account created: {guard.full_name}')
+        # context={'request': ...} so the serializer can build an absolute URL
+        # for the photo; without it the frontend gets a path it cannot fetch.
         return Response(UserSerializer(guard, context={'request': request}).data,
                         status=status.HTTP_201_CREATED)
 
