@@ -1601,6 +1601,22 @@ class GuardQrCodeView(APIView):
         })
 
 
+# ──────────────────────────────────────────────
+#  Password reset
+# ──────────────────────────────────────────────
+#
+# The only endpoints in this file a stranger can reach, so read the whole flow
+# with that in mind. Three ideas run through it:
+#
+#   1. NEVER say whether an address exists. The same sentence comes back for
+#      an unknown address, a rate-limited one, and a successful send.
+#   2. Fail OPEN on infrastructure, CLOSED on identity. A dead cache must not
+#      lock people out of resetting; a bad token must always refuse.
+#   3. A reset proves control of the mailbox and nothing else — so it ends
+#      every existing session and re-arms the second factor.
+
+
+# Every field on these endpoints goes through here first.
 def _text(value):
     """A request field as text — '' when it is missing or not a string.
 
@@ -1608,6 +1624,9 @@ def _text(value):
     A null, a number or a list reached `.strip()` and came back as a 500 from an
     endpoint anyone on the internet can call.
     """
+    # isinstance rather than str(): coercing would turn None into the string
+    # "None" and a list into its repr, both of which would then be processed as
+    # if somebody had typed them.
     return value if isinstance(value, str) else ''
 
 
@@ -1619,11 +1638,16 @@ def _count_towards_limit(key, window_seconds):
     resetting their password, so callers treat None as "under the limit".
     """
     from django.core.cache import cache
+    # add() only succeeds when the key is absent, so it both creates the
+    # counter and sets the window's expiry in one atomic step. Doing this as
+    # get-then-set would let two simultaneous requests each see zero.
     if cache.add(key, 1, window_seconds):
         return 1
     try:
         return cache.incr(key)
     except ValueError:          # expired between add() and incr()
+        # The window rolled over in the gap. Start a fresh one rather than
+        # raising — at worst somebody gets one extra attempt.
         cache.set(key, 1, window_seconds)
         return 1
 
@@ -1645,6 +1669,12 @@ class PasswordResetRequestView(APIView):
     # The per-address cap is silent, so it cannot be used to learn whether an
     # account exists; the per-client cap answers 429, which says nothing about
     # any address.
+    # Two limits with deliberately different behaviour, and the asymmetry IS
+    # the defence against address enumeration:
+    #   per ADDRESS — silent. Returns the same success sentence, so hitting the
+    #                 cap tells the caller nothing about that address.
+    #   per CLIENT  — answers 429. Safe to be loud, because it is a fact about
+    #                 the caller's own IP and says nothing about any address.
     RESET_WINDOW_SECONDS      = 15 * 60
     RESET_EMAILS_PER_ADDRESS  = 3
     RESET_REQUESTS_PER_CLIENT = 10
@@ -1661,8 +1691,12 @@ class PasswordResetRequestView(APIView):
         if not email:
             return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Checked BEFORE the address is looked up, so a scripted caller is cut
+        # off without the server doing a database query per attempt.
         client_hits = _count_towards_limit(
             f'pwreset:client:{get_client_ip(request)}', self.RESET_WINDOW_SECONDS)
+        # `is not None` first: a dead cache returns None and must read as
+        # "under the limit", never as "over it". Fail open on infrastructure.
         if client_hits is not None and client_hits > self.RESET_REQUESTS_PER_CLIENT:
             return Response(
                 {'error': 'Too many password reset requests. Please wait a few minutes and try again.'},
@@ -1677,16 +1711,25 @@ class PasswordResetRequestView(APIView):
         # live rows can differ only in case. .get() raised MultipleObjectsReturned
         # on those — a 500 — and each of them is a real account that may need
         # its own link.
+        # is_active and is_archived are part of the lookup, not checked after:
+        # a disabled or archived account must not be resettable at all, and
+        # excluding it here means it also cannot be distinguished from a
+        # non-existent one.
         users = list(User.objects.filter(email__iexact=email, is_active=True, is_archived=False))
         if not users:
-            return Response({'message': SAFE_MSG})
+            return Response({'message': SAFE_MSG})   # SAFE_MSG #1 of 3 — an unknown address looks exactly like a successful send
 
+        # Hashed before it becomes a cache key, so the cache does not end up
+        # holding a list of every address anyone has tried to reset.
         address_key = hashlib.sha256(email.encode()).hexdigest()
         address_hits = _count_towards_limit(f'pwreset:address:{address_key}', self.RESET_WINDOW_SECONDS)
         if address_hits is not None and address_hits > self.RESET_EMAILS_PER_ADDRESS:
             logger.warning('Password-reset email for user(s) %s withheld: more than %d requests '
                            'in %d minutes.', [u.pk for u in users], self.RESET_EMAILS_PER_ADDRESS,
                            self.RESET_WINDOW_SECONDS // 60)
+            # SAFE_MSG #2 of 3 — withheld, but indistinguishable from sent.
+            # The server log is where the suppression is visible, which is the
+            # only place it can be without leaking to the caller.
             return Response({'message': SAFE_MSG})
 
         # PUBLIC_SITE_URL: a reset link built from the campus half's LAN address
@@ -1694,13 +1737,18 @@ class PasswordResetRequestView(APIView):
         frontend_url = getattr(django_settings, 'PUBLIC_SITE_URL', '') or 'http://localhost:5173'
         lifetime = _reset_link_lifetime()
 
+        # A loop because `users` can hold more than one row — see the comment
+        # above the query. Each account gets its OWN token, since the token is
+        # derived from that user's password hash and last-login stamp.
         for user in users:
             token = default_token_generator.make_token(user)
-            uid   = urlsafe_base64_encode(force_bytes(user.pk))
+            uid   = urlsafe_base64_encode(force_bytes(user.pk))   # the pk, encoded for the URL — not secret, and not what authorises anything
             reset_link = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+            # Backgrounded: the response must not reveal how long a send took,
+            # and a slow mail host must not hold the request open.
             send_in_background(_send_password_reset_email, user, reset_link, lifetime)
 
-        return Response({'message': SAFE_MSG})
+        return Response({'message': SAFE_MSG})   # SAFE_MSG #3 of 3 — the success case, worded identically to both failures
 
 
 def _reset_link_lifetime():
@@ -1817,6 +1865,9 @@ class PasswordResetConfirmView(APIView):
         new_password     = _text(request.data.get('new_password')).strip()
         confirm_password = _text(request.data.get('confirm_password')).strip()
 
+        # All four together, so a missing field is one message rather than
+        # four probes. Note the ordering of this whole method: shape first,
+        # then identity, then policy — nothing is written until all three pass.
         if not all([uid, token, new_password, confirm_password]):
             return Response({'error': 'All fields are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1829,15 +1880,28 @@ class PasswordResetConfirmView(APIView):
         try:
             pk   = force_str(urlsafe_base64_decode(uid))
             user = User.objects.get(pk=pk, is_active=True, is_archived=False)
+        # Note, factually: `Exception` at the end makes the three named classes
+        # before it redundant — it already catches all of them. The effect is
+        # the intended one (any failure to resolve the uid is "invalid link"),
+        # but the tuple reads as if it were narrower than it is. Recorded, not
+        # changed: this pass comments code.
         except (User.DoesNotExist, ValueError, TypeError, Exception):
+            # One message for a malformed uid, a missing account and a disabled
+            # one alike — the same non-disclosure rule as step 1.
             return Response({'error': 'Invalid reset link.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # THE identity check. Django derives the token from the user's password
+        # hash, last_login and pk, so it expires on its own timer AND is
+        # invalidated the moment the password changes — which is what stops one
+        # link being used twice.
         if not default_token_generator.check_token(user, token):
             return Response(
                 {'error': 'This reset link has expired or is invalid. Please request a new one.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Checked only AFTER the token passed. Asking it earlier would turn
+        # this endpoint into a password oracle for anyone with a valid uid.
         if user.check_password(new_password):
             return Response(
                 {'error': 'New password must be different from your current password.'},
@@ -1864,6 +1928,9 @@ class PasswordResetConfirmView(APIView):
         # arrives here for their first change, so they get the welcome too.
         was_first_change = user.must_change_password
 
+        # All four writes together. The dangerous partial state is a changed
+        # password with sessions still live, or 2FA not re-armed — either would
+        # leave an attacker holding access the reset was meant to remove.
         with transaction.atomic():
             user.set_password(new_password)
             user.must_change_password = False
@@ -1872,15 +1939,22 @@ class PasswordResetConfirmView(APIView):
             # takes first. Guards are skipped because they carry no second factor to
             # ask for; the flag would sit unread and never be cleared.
             from . import twofa
+            # requires_2fa(), not True: setting it on a guard would leave a
+            # flag nothing can ever clear, locking them out of the gate.
             user.must_verify_2fa = twofa.requires_2fa(user)
             user.save(update_fields=['password', 'must_change_password', 'must_verify_2fa'])
+            # Last, and inside the transaction: if revoking the old sessions
+            # fails, the password change rolls back with it rather than leaving
+            # a half-secured account.
             _end_sessions(user)
 
         notify_password_set(user, was_first_change)
 
         return Response({
             'message': 'Password reset successfully. You can now log in with your new password.',
-            'role': user.role,
+            'role': user.role,               # the login screen sends them to the right place afterwards
+            # Told in advance, so the next sign-in does not look like a fault
+            # when it asks for a code it did not ask for before.
             'twofa_required_next_login': user.must_verify_2fa,
         })
 
