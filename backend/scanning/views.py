@@ -3453,8 +3453,21 @@ class UnrecognizedExitView(APIView):
         })
 
 
-# How a guard starts their shift: scan their own QR at the kiosk. This is a
-# LOGIN endpoint, so it is open — the QR token is the credential.
+# ⚠ THIS CLASS IS NOT ROUTED. Nothing reaches it.
+#
+# scanning/urls.py does `from accounts.views import QRLoginView` and routes
+# THAT class at 'qr-login/' — note the bare name there, where every other
+# route in the file uses `views.X`. The guard sign-in that actually runs is
+# accounts.views.QRLoginView; config/urls.py routes the same one again at
+# /api/auth/qr-login/.
+#
+# The two have drifted, and this dead copy is the less careful of the pair:
+# the live one refuses QR sign-in while `must_change_password` is set, and
+# returns a 400 when no valid gate is chosen. Neither guard exists below.
+# Read this class as history, and read accounts.views.QRLoginView for what a
+# guard scanning their badge actually does.
+#
+# Recorded, not changed: this pass comments code.
 class QRLoginView(APIView):
     """
     Kiosk QR scan login — validates guard's QR token, ends any active shift
@@ -3489,10 +3502,12 @@ class QRLoginView(APIView):
 
         # Persist the gate the guard logged in at on their profile.
         #
-        # This write is what every later scan depends on: the entry, exit and
-        # override endpoints all read gate_assignment off request.user and have
-        # no other source. Without it their scans would land in the orphan
-        # 'main' bucket, visible in no gate's log.
+        # In the LIVE view (accounts.views.QRLoginView) the equivalent write is
+        # what every later scan depends on: the entry, exit and override
+        # endpoints read gate_assignment off request.user and have no other
+        # source, so without it their scans fall to the orphan 'main' bucket.
+        # Here it has no effect on anything, because nothing calls this class —
+        # see the note above it.
         #
         # .update() rather than .save(): it writes the one column without
         # touching anything else on the account, then the in-memory object is
