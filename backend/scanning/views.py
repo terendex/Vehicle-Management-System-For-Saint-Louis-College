@@ -2253,6 +2253,18 @@ class MLStatsView(APIView):
         })
 
 
+# ──────────────────────────────────────────────
+# What the guard does by hand
+# ──────────────────────────────────────────────
+#
+# The three views below are the guard overruling, refusing, or closing a visit
+# themselves. They share a shape worth noticing: each writes an AccessLog row
+# exactly as a scan would, so the log reads the same whether a decision came
+# from the camera or from a person — the difference is recorded ON the row
+# (is_override, denied_reason) rather than by leaving it out.
+
+# The guard lets a vehicle in that the system refused. A reason is required,
+# because this is the one action that overrules the rules on purpose.
 class OverrideEntryView(APIView):
     """Guard overrides a denial and grants entry with a logged reason."""
     permission_classes = [permissions.IsAuthenticated]
@@ -2263,17 +2275,24 @@ class OverrideEntryView(APIView):
 
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
+        # No default reason here, unlike DenyEntryView below — an override has
+        # to be justified in the guard's own words, since it is the action
+        # somebody will later be asked about.
         if not reason:
             return Response({'error': 'reason is required.'}, status=400)
 
         vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
+        # None is fine: an override can admit a plate with no record at all,
+        # and the row still stands with the plate text on it.
 
+        # The guard's own posting, with no client-supplied gate_id accepted —
+        # a guard overrides at the gate they are standing on.
         gate_id = getattr(request.user, 'gate_assignment', None) or 'main'
         AccessLog.objects.create(
             plate_number    = plate_number,
             vehicle         = vehicle,
-            status          = AccessLog.Status.AUTHORIZED,
-            is_override     = True,
+            status          = AccessLog.Status.AUTHORIZED,   # the vehicle IS in, so the ledger must say so or the exit will not pair
+            is_override     = True,              # ...but flagged, so the reports can tell it from an ordinary admission
             override_reason = reason,
             gate_id         = gate_id,
             scanned_by      = request.user,
@@ -2288,6 +2307,8 @@ class OverrideEntryView(APIView):
             f"Reason: {reason} | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
+        # No violation is issued and no penalty applied: the guard has decided
+        # this vehicle may pass, and the record of that decision is the point.
         return Response({'status': 'overridden', 'plate_number': plate_number})
 
 
@@ -2302,6 +2323,9 @@ class DenyEntryView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        # A default IS supplied here, where the override demands one: turning
+        # somebody away needs no special justification, and a guard under
+        # pressure at the gate should not be blocked on typing a sentence.
         reason = (request.data.get('reason') or '').strip() or 'Entry denied at gate by guard.'
 
         vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
@@ -2309,11 +2333,13 @@ class DenyEntryView(APIView):
         AccessLog.objects.create(
             plate_number  = plate_number,
             vehicle       = vehicle,
-            status        = AccessLog.Status.DENIED,
+            status        = AccessLog.Status.DENIED,   # DENIED never puts anyone inside, so nothing will try to pair an exit to it
             denied_reason = reason,
             gate_id       = gate_id,
             scanned_by    = request.user,
         )
+        # Note: no _audit() call here, unlike the override above. The AccessLog
+        # row is the record; the audit trail carries overrides but not refusals.
 
         return Response({
             'plate_number': plate_number,
@@ -2324,6 +2350,11 @@ class DenyEntryView(APIView):
         })
 
 
+# The guard closing a visit by typing the plate. This is the MOST COMPLETE
+# exit path in the file — it pairs the log, closes an active visitor pass, and
+# runs the stay-limit checks. Worth reading as the reference version: the
+# camera path in ScanView and the slip path in _record_visitor_exit each do
+# only part of what happens here (see the notes on both).
 class ExitLogView(APIView):
     """Guard records a vehicle exit and auto-pairs it to the matching entry."""
     permission_classes = [permissions.IsAuthenticated]
@@ -2333,12 +2364,17 @@ class ExitLogView(APIView):
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
 
+        # Format-checked because this one is TYPED, not read by a camera — a
+        # mistyped plate would write an exit row that pairs to nothing and
+        # leaves the real vehicle counted inside.
         if not is_valid_ph_plate(plate_number):
             return Response({'error': 'Invalid plate format. Enter a valid Philippine plate number.'}, status=400)
 
         # An explicit "record exit" — so a visitor on an active pass exits here
         # too, and _close_active_pass below closes the pass. (A plain plate
         # CHECK never does; it shows the slip instead.)
+        # Looked up BEFORE the close below, because _close_active_pass will
+        # mark it exited — and the audit line still needs the visitor's name.
         visitor_pass = _active_visitor_pass(plate_number)
 
         vehicle = Vehicle.resolve(plate_number)  # plate or conduction number
@@ -2352,7 +2388,7 @@ class ExitLogView(APIView):
             scanned_by   = request.user,
         )
 
-        _pair_entry_exit(exit_log)
+        _pair_entry_exit(exit_log)               # the half the slip path omits — this is what closes the visit in the occupancy ledger
         # The exit row was classified from the plate alone, which reads an
         # organizer's unregistered plate as "unknown". It is the other half of
         # an event visit, so it says so.
@@ -2362,9 +2398,9 @@ class ExitLogView(APIView):
             exit_log.entrant_category = AccessLog.Category.EVENT
             exit_log.event_id = entry_log.event_id
             exit_log.save(update_fields=['entrant_category', 'event'])
-        overstay_minutes = _close_active_pass(plate_number, gate_id)
+        overstay_minutes = _close_active_pass(plate_number, gate_id)   # and the half the camera path omits: the pass itself
 
-        duration_minutes = None
+        duration_minutes = None                  # stays None when nothing paired — the vehicle had no recorded entry today
         entry_scanned_at = None
         if exit_log.paired_entry:
             delta            = exit_log.scanned_at - exit_log.paired_entry.scanned_at
@@ -2375,7 +2411,14 @@ class ExitLogView(APIView):
             _audit_typed_visitor_exit(request, visitor_pass, gate_id, duration_minutes, overstay_minutes)
 
         # Stay-limit enforcement (fetcher / supplier rules)
+        #
+        # max() throughout: the visitor-pass overstay and the rule overstay are
+        # two different measures of the same stay, and the guard should be told
+        # the larger rather than whichever assignment ran last.
         if duration_minutes is not None:
+            # Reached only when a duration is known — with no paired entry
+            # there is no length of stay to measure. Standby fetchers are
+            # allowed to wait inside, so only Drop & Go is held to the limit.
             if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
@@ -2396,13 +2439,18 @@ class ExitLogView(APIView):
         })
 
 
+# The supervisor's screen: what each guard did today, who is on shift, and
+# anything that looks off. Read-only throughout.
 class GuardMonitorView(APIView):
     """Admin-only: per-gate activity, current shifts, and cross-gate discrepancies."""
 
+    # No permission_classes on this class, unlike its neighbours — it falls
+    # back to the project default (IsAuthenticated, in config/settings.py) and
+    # adds the admin requirement by hand below.
     def get(self, request):
         if not request.user.is_authenticated or request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied()
+            raise PermissionDenied()   # raised, not returned: DRF renders it as a 403 with its own body
 
         from django.db.models import Count, Q
         from accounts.models import User as UserModel
@@ -2412,6 +2460,9 @@ class GuardMonitorView(APIView):
         guards = UserModel.objects.filter(role='security').order_by('full_name')
 
         # Current active shifts keyed by gate
+        # Keyed by GATE, not by guard: the question this answers is "who is on
+        # gate 1 right now", and a gate has one guard on it at a time. A second
+        # open shift on the same gate would overwrite the first here.
         active_shifts = {}
         for shift in GuardShift.objects.filter(clocked_out_at__isnull=True).select_related('guard'):
             active_shifts[shift.gate] = {
@@ -2422,15 +2473,24 @@ class GuardMonitorView(APIView):
             }
 
         result = []
+        # Four queries per guard below (the aggregate, the visitor count, the
+        # recent rows and today's shifts), so this loop costs 4N round trips
+        # for N security accounts. Acceptable because the roster is small and
+        # only an admin opens this screen; worth knowing before it grows.
         for guard in guards:
             today_logs = AccessLog.objects.filter(
                 scanned_by=guard,
                 scanned_at__gte=_today_start, scanned_at__lt=_today_end,
             )
 
+            # One query for all four tallies, using FILTER rather than four
+            # separate counts — the same shape the rest of the project uses.
             stats = today_logs.aggregate(
                 total      = Count('id'),
                 authorized = Count('id', filter=Q(status=AccessLog.Status.AUTHORIZED)),
+                # "Denied" here is broader than the Vehicle Log's group: it
+                # counts UNKNOWN too, because from the guard's side turning
+                # away an unregistered plate is the same piece of work.
                 denied     = Count('id', filter=Q(status__in=[
                     AccessLog.Status.DENIED, AccessLog.Status.WRONG_DAY, AccessLog.Status.UNKNOWN,
                 ])),
@@ -2440,6 +2500,9 @@ class GuardMonitorView(APIView):
             visitors = VisitorPass.objects.filter(issued_by=guard, valid_date=today).count()
 
             recent = today_logs.select_related('vehicle__user').order_by('-scanned_at')[:10]
+            # .first() on the already-sliced queryset, so this is one more
+            # query rather than a re-sort — and the newest scan doubles as the
+            # "last seen" time for the guard.
             last_log  = recent.first()
             last_seen = last_log.scanned_at if last_log else None
 
@@ -2458,6 +2521,9 @@ class GuardMonitorView(APIView):
                 'photo_url':       photo_url,
                 'gate_assignment': guard.gate_assignment,
                 'last_seen':       last_seen,
+                # "Active" means scanned something TODAY, not clocked in — a
+                # guard on shift who has scanned nothing reads as inactive,
+                # which is the thing a supervisor is looking for.
                 'is_active':       last_seen is not None,
                 'stats': {
                     'total':      stats['total']      or 0,
@@ -2470,18 +2536,26 @@ class GuardMonitorView(APIView):
                 'shifts_today': list(shifts_today),
             })
 
+        # Active guards first, then alphabetical within each group. `not
+        # is_active` sorts False (0) before True (1), which puts the active
+        # ones at the top.
         result.sort(key=lambda g: (not g['is_active'], g['full_name']))
 
         # Cross-gate discrepancies: vehicle entered one gate, exited a different gate today
+        # A vehicle in at one gate and out at another. Not wrong in itself —
+        # the campus has two gates — but it is what a swapped or mis-set gate
+        # posting looks like, so it is surfaced for a human to judge.
         cross_gate = []
         exit_logs = (
             AccessLog.objects
-            .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,
+            .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,   # only paired rows: an unpaired exit has no entry gate to compare with
                     scanned_at__gte=_today_start, scanned_at__lt=_today_end)
-            .select_related('paired_entry', 'vehicle__user')
+            .select_related('paired_entry', 'vehicle__user')   # both are read in the loop, so they are joined in
         )
         for ex_log in exit_logs:
             entry = ex_log.paired_entry
+            # Both gate_ids must be non-empty as well as different: a blank on
+            # either side is a missing posting, not a discrepancy to report.
             if entry and entry.gate_id != ex_log.gate_id and entry.gate_id and ex_log.gate_id:
                 cross_gate.append({
                     'plate_number':  ex_log.plate_number,
@@ -2499,6 +2573,8 @@ class GuardMonitorView(APIView):
         })
 
 
+# The visitor needs longer. Extends the allowance rather than issuing a second
+# pass, so the visit stays one record.
 class ExtendVisitorPassView(APIView):
     """Guard extends the allowed time for an active visitor pass."""
     permission_classes = [permissions.IsAuthenticated]
@@ -2511,14 +2587,23 @@ class ExtendVisitorPassView(APIView):
 
         try:
             extra_minutes = int(request.data.get('extra_minutes', 0))
+            # Positive only. A negative would silently SHORTEN the visit, which
+            # is not what this endpoint claims to do; `raise ValueError` routes
+            # it into the same message as an unparseable value.
             if extra_minutes <= 0:
                 raise ValueError
         except (TypeError, ValueError):
             return Response({'error': 'extra_minutes must be a positive integer.'}, status=400)
 
+        # Both fields moved together, and no upper bound — unlike the 24-hour
+        # cap when a pass is issued, an extension can be repeated without limit.
         pass_.allowed_duration += extra_minutes
+        # Guarded because expires_at is nullable: a pass issued with no time
+        # limit has nothing to extend, and only the stated allowance changes.
         if pass_.expires_at:
             pass_.expires_at += timedelta(minutes=extra_minutes)
+        # Added to the EXISTING expiry, not recomputed from now — so extending
+        # a pass that already ran over does not quietly forgive the overstay.
         pass_.save(update_fields=['allowed_duration', 'expires_at'])
 
         guard_name = request.user.full_name
@@ -2532,6 +2617,9 @@ class ExtendVisitorPassView(APIView):
         return Response(VisitorPassSerializer(pass_).data)
 
 
+# "Does this camera URL work?", answered before anyone saves it. Every message
+# below is written to tell an installer what to do next, not to describe an
+# error class.
 class TestRtspView(APIView):
     """Quick probe: tries to open an RTSP URL and read one frame, returns ok/message."""
     permission_classes = [permissions.IsAuthenticated]
@@ -2564,6 +2652,16 @@ class TestRtspView(APIView):
             finally:
                 cap.release()
 
+        # Run on a worker thread so the open/read can be given up on: a dead
+        # RTSP host otherwise blocks for however long the library decides.
+        #
+        # Note, factually: the 45-second timeout bounds how long `result()`
+        # waits, but NOT how long this request takes. Leaving the `with` block
+        # calls Executor.shutdown(wait=True), which blocks until `_probe`
+        # actually returns — so on a camera that hangs, the guard is told
+        # "timed out" only once the probe finishes anyway, and the thread holds
+        # its camera session until then. Recorded, not changed: this pass
+        # comments code.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(_probe)
             try:
@@ -2571,8 +2669,10 @@ class TestRtspView(APIView):
             except concurrent.futures.TimeoutError:
                 ok, msg = False, 'Connection timed out (45 s) — camera is unreachable from this server.'
             except Exception as e:
-                ok, msg = False, f'Error: {e}'
+                ok, msg = False, f'Error: {e}'   # the library's own message, which is usually the most specific thing available
 
+        # Always 200, with ok=False for a failed probe. The request succeeded
+        # in answering the question; the answer was simply "no".
         return Response({'ok': ok, 'message': msg})
 
 
