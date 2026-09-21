@@ -2223,39 +2223,68 @@ class CdsoDirectRegisterView(APIView):
 # ──────────────────────────────────────────────
 # Registration Window & Open Public Registration
 # ──────────────────────────────────────────────
+#
+# Everything from here to the end of the payment view answers WITHOUT an
+# account — it is the path a new applicant walks once a year:
+#
+#   1. Is registration open, until when, at what price?  RegistrationStatusView
+#   2. If it is an e-bike, what number will I get?       EbikeControlNumberPreviewView
+#   3. Is there still room on the schedule I want?       ScheduleSlotsView
+#   4. Is my plate / email / licence already taken?      RegistrationAvailabilityView
+#   5. Submit.                                           PublicOpenRegistrationView
+#   6. Pay at Accounting, then file the OR number.       RegistrationPaymentView
+#
+# Steps 1-4 only read, so they can answer anyone who asks. Step 5 is the only
+# one that writes, and it re-runs every check steps 1-4 already performed: the
+# answers sitting in the browser are a courtesy to the applicant, never the
+# authority on whether a registration may be filed.
 
+# These four are left over from when the window was a fixed stretch of the
+# calendar. Nothing reads them any more — the live window is a RegistrationPeriod
+# row an admin sets, which _registration_window() below reads instead. Left in
+# place: this pass comments the code, it does not remove any of it.
 REGISTRATION_OPEN_MONTH  = 6   # June  (tentative — 2 months before school year)
 REGISTRATION_OPEN_DAY    = 1
 REGISTRATION_CLOSE_MONTH = 10  # October (tentative — end of first semester enrollment window)
 REGISTRATION_CLOSE_DAY   = 31
+# How many students may hold any one campus day. Read here and by the admin
+# dashboard in accounts/views.py, so both draw the line in the same place.
 SCHEDULE_SLOT_LIMIT      = 100  # per day
 
 
+# The single answer to "may I register, until when, and what will it cost?".
+# Built in one place so the status endpoint, the submit handler and the price
+# on the form can never drift apart.
 def _registration_window():
-    settings_obj = SystemSettings.get()
+    settings_obj = SystemSettings.get()          # the one settings row; the fees are editable, not hardcoded
     fees = {
-        "vehicle_pass_fee":          float(settings_obj.vehicle_pass_fee),
-        "vehicle_pass_fee_employee": float(settings_obj.vehicle_pass_fee_employee),
+        # float() is for the wire only — JSON has no decimal type. Every amount
+        # the server actually charges or stores stays a Decimal (see fee_for).
+        "vehicle_pass_fee":          float(settings_obj.vehicle_pass_fee),           # what a student owes
+        "vehicle_pass_fee_employee": float(settings_obj.vehicle_pass_fee_employee),  # what a non-exempt employee owes
         # Departments that pay nothing. Sent rather than hardcoded in the form so
         # the price shown to an applicant comes from the same place the backend
         # charges from — adding a department here updates both at once.
         "fee_exempt_departments": sorted(VehicleRegistration.FEE_EXEMPT_DEPARTMENTS),
-        "department_options": [
-            {"value": value, "label": label}
+        "department_options": [                      # fills the form's department dropdown
+            {"value": value, "label": label}         # value is what gets stored, label is what the applicant reads
             for value, label in VehicleRegistration.DepartmentType.choices
         ],
     }
-    period = RegistrationPeriod.get_active()
+    period = RegistrationPeriod.get_active()         # the period an admin flagged active, or None
     if period:
-        today = timezone.localdate()
-        is_open = period.start_date <= today <= period.end_date
+        today = timezone.localdate()                 # campus-local date, so "today" means today here
+        is_open = period.start_date <= today <= period.end_date   # inclusive at both ends: the closing day still counts
         return {
             "is_open": is_open,
-            "open_date":  period.start_date.isoformat(),
+            "open_date":  period.start_date.isoformat(),   # ISO strings — the form displays these, it does no date maths
             "close_date": period.end_date.isoformat(),
             "slot_limit": SCHEDULE_SLOT_LIMIT,
             **fees,
         }
+    # No active period on record: closed, rather than open by default. With no
+    # dates to register against there is nothing to join. The fees still go out
+    # so the form can show what a pass costs even while registration is shut.
     return {
         "is_open":    False,
         "open_date":  None,
@@ -2265,11 +2294,12 @@ def _registration_window():
     }
 
 
+# The form's first call: open or closed, until when, and at what price.
 class RegistrationStatusView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny]   # a would-be applicant has no account yet
 
     def get(self, request):
-        return Response(_registration_window())
+        return Response(_registration_window())   # read-only, and the same dict the submit handler checks against
 
 
 class EbikeControlNumberPreviewView(APIView):
@@ -2283,6 +2313,9 @@ class EbikeControlNumberPreviewView(APIView):
     authentication_classes = []
 
     def get(self, request):
+        # The highest number issued so far, plus one. Nothing is locked and
+        # nothing is reserved: holding a number for anyone who merely opened the
+        # form would burn the sequence every time somebody browsed and left.
         return Response({'control_number': peek_next_control_number()})
 
 
@@ -2290,12 +2323,17 @@ class EbikeControlNumberPreviewView(APIView):
 # the slot grid and the accepted day names cannot drift apart.
 
 
+# How full each campus day is. Feeds the applicant's schedule picker and the
+# CDSO's day picker from one set of counts, so the two cannot disagree.
 class ScheduleSlotsView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        # A slot is taken while an application is alive, so PENDING counts too —
+        # otherwise a day could be handed out twice over while a queue of
+        # submissions sat waiting for review.
         active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-        base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
+        base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')   # only students hold named days; employees and fetchers are 'ANY'
         limit = SCHEDULE_SLOT_LIMIT
 
         # One query with a FILTER per day, not one .count() per day.
@@ -2316,11 +2354,11 @@ class ScheduleSlotsView(APIView):
 
         result = {}
         for day in ALL_DAYS:
-            used = counts[f'day_{day}']
+            used = counts[f'day_{day}']              # live registrations listing this day
             result[day] = {
                 "used": used,
                 "limit": limit,
-                "available": max(0, limit - used),
+                "available": max(0, limit - used),   # clamped: a day pushed past capacity by CDSO overrides reads as 0 left, never negative
             }
 
         # The public form books a whole rotation, so what it needs is the
@@ -2334,22 +2372,29 @@ class ScheduleSlotsView(APIView):
         result['groups'] = {
             code: {
                 "days": days,
-                "label": SCHEDULE_DAY_LABELS[code],
-                "used": max(result[d]['used'] for d in days),
+                "label": SCHEDULE_DAY_LABELS[code],                      # "Mon · Wed · Fri" — what the applicant actually reads
+                "used": max(result[d]['used'] for d in days),            # the busiest day speaks for the whole rotation
                 "limit": limit,
-                "available": min(result[d]['available'] for d in days),
+                "available": min(result[d]['available'] for d in days),  # and the tightest day decides what is left to give
             }
             for code, days in SCHEDULE_GROUP_DAYS.items()
         }
-        return Response(result)
+        return Response(result)   # both shapes in one reply: the per-day grid and the rotation summary
 
 
+# The "is this already taken?" endpoint the form calls as the applicant types.
+# It is advisory only: it tells somebody early, in the box they are standing in,
+# what PublicOpenRegistrationView would otherwise have told them after they
+# filled in the whole form and pressed submit.
 class RegistrationAvailabilityView(APIView):
     """Live duplicate check used to warn the user in the registration form's text boxes
     before they submit, e.g. 'This plate number already has an active registration.'"""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        # Every field is optional. The form calls this as each box is filled in,
+        # so a half-typed form asks only about what it has; a missing parameter
+        # defaults to '' and the matching helper simply reports it as free.
         plate_number    = request.query_params.get('plate_number', '')
         email           = request.query_params.get('email', '')
         drivers_license = request.query_params.get('drivers_license', '')
@@ -2357,25 +2402,63 @@ class RegistrationAvailabilityView(APIView):
         employee_id     = request.query_params.get('employee_id', '')
         conduction      = request.query_params.get('conduction_number', '')
 
+        # Only a LIVE application blocks a new one. A rejected or expired row is
+        # history and must not keep a plate or an email hostage for good.
         statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
         qs = VehicleRegistration.objects.filter(status__in=statuses)
 
+        # Each helper returns a ready-to-show sentence, or None when the value is
+        # free — so the hint under the field can name the conflict instead of
+        # just turning red. The same helpers run again at submit time; these are
+        # the identical functions, not a second copy of the rules.
         return Response({
             'plate_number':      _plate_conflict(plate_number, qs),
             'conduction_number': _conduction_conflict(conduction, qs),
             'email':             _email_conflict(email, qs),
             'drivers_license':   _license_conflict(drivers_license, qs),
+            # One helper answers both, told which to check by its first argument
+            # and handed '' for the other. Still answered even though the form no
+            # longer asks for these two — the submit handler drops them outright
+            # (see the Data Privacy Office block in PublicOpenRegistrationView).
             'student_id':        _id_conflict('student', student_id, '', qs),
             'employee_id':       _id_conflict('employee', '', employee_id, qs),
+            # The 3rd-offence block, checked against every identifier at once:
+            # a banned person changing one field does not get past it.
             'banned':            _registration_ban(plate_number, email, student_id, employee_id,
                                                    conduction_number=conduction),
         })
 
 
+# The public form's submit handler — the one way a registration is filed
+# without a CDSO officer sitting at a desk.
+#
+# It is a long gauntlet of checks and then one short save. The order is
+# deliberate: the cheapest and most final questions come first, so somebody who
+# cannot register at all is told so before anything else is worked out.
+#
+#    1. Is registration open?                     (a closed window ends it here)
+#    2. Is the registrant type one we accept?
+#    3. Plate, or conduction number, or neither   (an e-bike is issued a number)
+#    4. Is this person banned from registering?   (the 3rd-offence ladder)
+#    5. Does any identifier already hold a live registration?
+#    6. Strip what must not be stored             (form-only fields, and the
+#                                                  columns the DPO withdrew)
+#    7. Authorised driver, and the licence number
+#    8. Fetcher: classification, and the students they collect
+#    9. Student: resolve the rotation, then check that rotation's capacity
+#   10. ── transaction ── issue the e-bike control number and INSERT the row
+#   11. After it commits: the acknowledgement email, in the background
+#
+# Every step up to 10 returns a 400/403 carrying a sentence written to be shown
+# to the applicant word for word. Nothing is written until the transaction, so
+# a rejection at any point leaves no trace behind.
 class PublicOpenRegistrationView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        # 1. The window, re-read from the database rather than trusted from the
+        # form. A browser left open across the closing date would otherwise
+        # still submit against a window that shut days ago.
         window = _registration_window()
         if not window["is_open"]:
             return Response(
@@ -2383,6 +2466,10 @@ class PublicOpenRegistrationView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # 2. Three kinds of applicant, and nothing else. The type decides which
+        # rules apply further down (fees, campus days, the fetcher questions),
+        # so an unrecognised one cannot be allowed through to be handled as a
+        # default.
         registrant_type = request.data.get('registrant_type', '')
         if registrant_type not in ['student', 'employee', 'fetcher']:
             return Response({"error": "Invalid registrant type."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2390,15 +2477,16 @@ class PublicOpenRegistrationView(APIView):
         # An e-bike has neither a plate nor a conduction sticker: the system
         # issues it a control number (FM-001, ...) at save time, and whatever
         # identifier the payload carries is ignored rather than trusted.
+        # 3. What identifies the vehicle.
         ebike = is_ebike(request.data.get('vehicle_type'))
         if ebike:
-            plate_in = conduction_in = ''
+            plate_in = conduction_in = ''            # both blanked: whatever the payload sent is discarded, not trusted
         else:
             # A brand-new car registers with a conduction number instead of a plate.
             # Exactly one of the two must be provided — never both, never neither.
-            plate_in      = (request.data.get('plate_number') or '').strip()
+            plate_in      = (request.data.get('plate_number') or '').strip()   # `or ''` so a JSON null is handled like a missing field
             conduction_in = (request.data.get('conduction_number') or '').strip()
-            if plate_in and conduction_in:
+            if plate_in and conduction_in:           # both given: we would not know which one the gate should match on
                 return Response(
                     {"error": "Enter either a plate number or a conduction number, not both."},
                     status=status.HTTP_400_BAD_REQUEST)
@@ -2409,6 +2497,9 @@ class PublicOpenRegistrationView(APIView):
 
         # Hard block: applicants who reached the maximum number of violations and
         # were archived on expiry may never register again.
+        # 4. Checked before anything else about the application, because no
+        # amount of valid detail can change the answer. Every identifier goes in
+        # together so swapping one of them does not slip past the block.
         ban = _registration_ban(
             plate_in,
             request.data.get('email', ''),
@@ -2417,10 +2508,16 @@ class PublicOpenRegistrationView(APIView):
             conduction_number=conduction_in,
         )
         if ban:
+            # 403, and a flag the form reads to show the "speak to CDSO" notice
+            # rather than a field-level error the applicant could try to correct.
             return Response({"error": ban, "registration_banned": True}, status=status.HTTP_403_FORBIDDEN)
 
         # 1:1 guard — plate/conduction, email and student/employee ID must not
         # already have an active registration
+        # 5. The same checks RegistrationAvailabilityView answered as they
+        # typed, run again here — that endpoint informs the applicant, this one
+        # decides. The browser's copy may be stale by seconds or hours, and a
+        # direct POST never asked it at all.
         conflict = _registration_conflict(
             registrant_type,
             plate_in,
@@ -2431,14 +2528,21 @@ class PublicOpenRegistrationView(APIView):
             conduction_number=conduction_in,
         )
         if conflict:
-            return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)   # the helper's own sentence, shown as-is
 
+        # 6. From here on the work is done on `data`, a plain mutable copy —
+        # request.data itself is not written to, so what arrived stays readable
+        # if anything below needs to look at it again.
         data = dict(request.data)
-        data['plate_number'] = plate_in
+        data['plate_number'] = plate_in              # the cleaned values win over whatever was posted
         data['conduction_number'] = conduction_in
-        department_type = _normalize_department(data)
+        department_type = _normalize_department(data)   # label -> stored value; also what the fee exemption is decided on
 
         # Strip fields that are not model columns (e.g. form-only UI fields)
+        # These are real form fields, just not columns: the name parts are
+        # joined into full_name and the address parts into one line by the
+        # serializer, and privacy_consent is a tick box the form enforces.
+        # Passing them to the serializer would be an unknown-field error.
         for extra in ('last_name', 'first_name', 'middle_name',
                       'house_street', 'barangay', 'city_municipality', 'province',
                       'student_strand', 'student_grade',
@@ -2455,42 +2559,58 @@ class PublicOpenRegistrationView(APIView):
                          'student_id', 'employee_id', 'driver_contact'):
             data.pop(withheld, None)
 
+        # 7. Who may drive the vehicle. For a student it may be somebody else
+        # entirely (a parent, a driver), and that person's details are what the
+        # guard checks at the gate, so they are validated as a set.
         driver_error = _validate_authorized_driver(registrant_type, data)
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
 
+        # One licence, one active registration. Checked here as well as in the
+        # partial unique index behind it: the index would raise an IntegrityError
+        # the applicant cannot read, this returns a sentence they can act on.
         license_error = _license_db_conflict(data.get('drivers_license', ''))
         if license_error:
             return Response({"error": license_error}, status=status.HTTP_400_BAD_REQUEST)
 
+        # 8. Fetchers only: somebody who drives a student in and out. What
+        # they may do on campus depends on the classification, and who they are
+        # fetching has to be on record, so both are required here rather than
+        # left to CDSO to chase up later.
         if registrant_type == 'fetcher':
             # Classification is required: drop_and_go (allotted times only) or
             # standby (allowed to park inside campus while waiting).
             fetcher_type = (data.get('fetcher_type') or '').strip()
-            if fetcher_type not in ('drop_and_go', 'standby'):
+            if fetcher_type not in ('drop_and_go', 'standby'):   # no default: the two grant different access
                 return Response(
                     {"error": "Please choose a fetcher classification: Fetcher/Drop & Go or Standby."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             # At least one student must be listed
             students = data.get('fetcher_students') or []
+            # isinstance as well as the length: this arrives as JSON from an
+            # anonymous caller, so a string or a dict here is entirely possible
+            # and would otherwise be iterated character by character below.
             if not isinstance(students, list) or len(students) == 0:
                 return Response(
                     {"error": "At least one student must be listed on a fetcher registration."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            valid_levels = {c[0] for c in VehicleRegistration.StudentLevel.choices}
-            cleaned_students = []
+            valid_levels = {c[0] for c in VehicleRegistration.StudentLevel.choices}   # the stored values, taken from the model so the two cannot drift
+            cleaned_students = []                    # built up entry by entry; only this list is stored
             for s in students:
-                if not isinstance(s, dict):
+                if not isinstance(s, dict):          # same reasoning: anything at all can arrive inside the list
                     return Response({"error": "Invalid student entry."}, status=status.HTTP_400_BAD_REQUEST)
                 # DPO: the fetched student's ID number is no
                 # longer collected — they are identified by name and level, the
                 # same way the applicant themselves now is.
+                # Rebuilt field by field rather than stored as sent: this lands
+                # in a JSONField, which would keep any extra keys a caller chose
+                # to include. Three keys go in, and only these three.
                 entry = {
                     'full_name':     (s.get('full_name') or '').strip(),
                     'student_level': (s.get('student_level') or '').strip(),
-                    'program_year':  (s.get('program_year') or '').strip(),
+                    'program_year':  (s.get('program_year') or '').strip(),   # optional: a name and a level are enough
                 }
                 if not entry['full_name'] or not entry['student_level']:
                     return Response(
@@ -2500,11 +2620,18 @@ class PublicOpenRegistrationView(APIView):
                 if entry['student_level'] not in valid_levels:
                     return Response({"error": "Invalid education level for a listed student."}, status=status.HTTP_400_BAD_REQUEST)
                 cleaned_students.append(entry)
-            data['fetcher_students'] = cleaned_students
+            data['fetcher_students'] = cleaned_students   # the cleaned list replaces what was posted
         else:
+            # Not a fetcher, so these two must not be carried along. A payload
+            # that included them anyway would otherwise file a student or
+            # employee with a fetcher classification the gate would act on.
             data.pop('fetcher_type', None)
             data.pop('fetcher_students', None)
 
+        # 9. Campus days. Employees and fetchers come in whenever they are
+        # needed, so they hold no particular day and take up no slot: 'ANY' with
+        # an empty day list is what entry_logic reads as "no day restriction".
+        # Students are the only ones the schedule capacity applies to.
         if registrant_type == 'employee' or registrant_type == 'fetcher':
             data['schedule'] = 'ANY'
             data['campus_days'] = []
@@ -2520,11 +2647,17 @@ class PublicOpenRegistrationView(APIView):
             # resolution lives in campus_days.resolve_student_schedule and both
             # `schedule` (what the form sends) and `campus_days` (older clients,
             # direct callers) arrive at the same whole week.
+            # Returns the whole rotation and its code, or a ready-to-show
+            # error. student_level is passed because SpEd students attend every
+            # campus day and are the one exception to the 3-day allowance.
             campus_days, schedule_code, day_error = resolve_student_schedule(
                 data.get('schedule'), data.get('campus_days', []), data.get('student_level'))
             if day_error:
                 return Response({"error": day_error}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Capacity is checked against the resolved days, not the submitted
+            # ones — a rotation takes a slot on each of its days, including the
+            # ones the applicant never explicitly picked.
             active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
             base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
 
@@ -2538,7 +2671,7 @@ class PublicOpenRegistrationView(APIView):
                 for day in campus_days
             })
             full_days = [day for day in campus_days
-                         if day_counts[f'day_{day}'] >= SCHEDULE_SLOT_LIMIT]
+                         if day_counts[f'day_{day}'] >= SCHEDULE_SLOT_LIMIT]   # >= not ==: a day over capacity through a CDSO override is still full
             if full_days:
                 # A rotation is taken as a whole, so one full day closes the
                 # whole schedule — saying "Friday is full, pick another day"
@@ -2551,9 +2684,12 @@ class PublicOpenRegistrationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            data['campus_days'] = campus_days
-            data['schedule'] = schedule_code
+            data['campus_days'] = campus_days        # the resolved rotation, never the raw list that was posted
+            data['schedule'] = schedule_code         # kept in step with it, so the two can never describe different weeks
 
+        # 10. Field-level validation — types, lengths, required columns — is
+        # the serializer's job; everything above it is the campus rules, which
+        # it has no way to know about. Only now is anything about to be written.
         serializer = VehicleRegistrationSerializer(data=data)
         if serializer.is_valid():
             # Cleaning and Services staff owe nothing, so they never pass through
@@ -2564,15 +2700,23 @@ class PublicOpenRegistrationView(APIView):
             # The control number is allocated in the same transaction as the
             # INSERT — see allocate_control_number for why that matters.
             with transaction.atomic():
+                # The control number goes in the plate_number column: the gate,
+                # the QR and every lookup already work off that field, so an
+                # e-bike needs no separate path through any of them.
                 identity = {'plate_number': allocate_control_number()} if ebike else {}
                 registration = serializer.save(
                     registrant_type=registrant_type,
                     source=VehicleRegistration.Source.PUBLIC,
+                    # Set here, not taken from the payload: what somebody owes
+                    # is the school's decision, not a field they can submit.
                     payment_status=(VehicleRegistration.PaymentStatus.EXEMPT if exempt
                                     else VehicleRegistration.PaymentStatus.UNPAID),
+                    # 0.00 for the exempt, None for everyone else — None means
+                    # "not yet paid", which is not the same as having paid zero.
                     amount_paid=(Decimal('0.00') if exempt else None),
-                    **identity,
+                    **identity,                      # the control number, or nothing at all
                 )
+            # ── Past this line the row exists: the application is filed. ──
             # Acknowledgement mail, handed to a background thread like the
             # acceptance and receipt mails. The registration is already
             # committed, so the send never affected the outcome — it only made
@@ -2589,15 +2733,19 @@ class PublicOpenRegistrationView(APIView):
             # carries the link the applicant needs to upload their receipt.
             send_in_background(
                 send_pending_email, registration,
-                on_failure=_pending_email_failed_notice(registration),
+                on_failure=_pending_email_failed_notice(registration),   # raises an admin notification if the send fails
             )
             return Response(
                 {"message": "Registration submitted successfully. Please wait for CDSO review.",
                  "id": registration.id,
+                 # The number actually issued, which may not be the one the
+                 # preview endpoint showed — this is the authoritative answer.
                  "control_number": registration.plate_number if ebike else None,
-                 "email_status": 'queued'},
+                 "email_status": 'queued'},          # queued, not sent: the mail is still in flight when this returns
                 status=status.HTTP_201_CREATED,
             )
+        # The serializer's own field errors, keyed by field name so the form can
+        # put each message under the box it belongs to.
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -2625,6 +2773,9 @@ class UploadRegistrationDocumentsView(APIView):
     )
 
     def post(self, request):
+        # Whatever was sent is not read and not saved. The flag lets an older
+        # bundle show the message as information rather than as a failure the
+        # applicant should try again.
         return Response({"error": self.CLOSED_MESSAGE, "uploads_disabled": True},
                         status=status.HTTP_410_GONE)
 
@@ -2638,6 +2789,8 @@ UploadLicenseImageView = UploadRegistrationDocumentsView
 # Public receipt upload (applicant-driven proof of payment)
 # ──────────────────────────────────────────────
 
+# Turns the token out of the applicant's email into the registration it stands
+# for — the one gate every request on this path goes through.
 def _payment_registration(token):
     """Resolve a receipt-upload token to a still-reviewable registration.
 
@@ -2646,8 +2799,11 @@ def _payment_registration(token):
     link keep overwriting it would rewrite the evidence after the fact.
     """
     if not token:
-        return None
+        return None                                  # no token at all: nothing to look up
     try:
+        # Both conditions in the one query, so a token for an already-reviewed
+        # application is indistinguishable from a token that never existed —
+        # the caller cannot tell the two apart from the outside.
         return VehicleRegistration.objects.get(
             payment_token=token,
             status=VehicleRegistration.Status.PENDING,
@@ -2687,22 +2843,30 @@ class RegistrationPaymentView(APIView):
         """
         registration = _payment_registration(request.query_params.get('token'))
         if registration is None:
+            # One message for every failure — wrong token, already reviewed,
+            # nonexistent. Saying which would let somebody holding a guessed
+            # token learn whether it named a real application.
             return Response(
                 {"error": "This payment link is no longer valid. It may have expired, "
                           "or your application may already have been reviewed."},
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response({
-            "full_name":       registration.full_name,
+            "full_name":       registration.full_name,       # so the applicant can see they opened the right link
+            # Whichever identifies this vehicle: a brand-new car has only the
+            # conduction number, and an e-bike's control number lives in
+            # plate_number, so this one field covers all three cases.
             "plate_number":    registration.plate_number or registration.conduction_number,
             "registrant_type": registration.registrant_type,
-            "amount_due":      str(registration.pass_fee()),
-            "payment_status":  registration.payment_status,
-            "or_number":       registration.or_number,
-            "has_receipt":     bool(registration.or_receipt_image),
+            "amount_due":      str(registration.pass_fee()),  # str(), not float(): the amount is shown, never recomputed here
+            "payment_status":  registration.payment_status,   # drives what the page offers: pay, already paid, or exempt
+            "or_number":       registration.or_number,        # already filed, if they are coming back to the link
+            "has_receipt":     bool(registration.or_receipt_image),   # bool, not the file: the image itself is not exposed on a public link
         })
 
     def post(self, request):
+        # Resolved again from scratch. The GET that rendered the page proves
+        # nothing about this request — each one stands on its own token.
         registration = _payment_registration(request.data.get('token'))
         if registration is None:
             return Response(
@@ -2720,22 +2884,29 @@ class RegistrationPaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        or_number = (request.data.get('or_number') or '').strip()
+        or_number = (request.data.get('or_number') or '').strip()   # what the Accounting Office printed on their receipt
 
         # Same shape the accept flow has always enforced, applied at the point
         # the number is actually typed instead of days later at the counter.
         if not or_number:
             return Response({"error": "Official Receipt (OR) number is required."},
                             status=status.HTTP_400_BAD_REQUEST)
+        # isdigit() AND a length cap: the OR number is a printed numeral, so a
+        # typed-in letter is a mistake worth catching while the receipt is still
+        # in the applicant's hand rather than at the CDSO counter days later.
         if not or_number.isdigit() or len(or_number) > 7:
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # Four fields together record the payment; written in one save so a
+        # row can never be left half-paid.
         registration.or_number        = or_number
         # Snapshot of what was owed at the moment of payment — see the field.
         registration.amount_paid      = registration.pass_fee()
-        registration.paid_at          = timezone.now()
-        registration.payment_status   = VehicleRegistration.PaymentStatus.PAID
+        registration.paid_at          = timezone.now()   # when it was filed, which is not necessarily when they paid the cashier
+        registration.payment_status   = VehicleRegistration.PaymentStatus.PAID   # what moves it into the CDSO review queue
+        # update_fields, so this cannot overwrite anything a reviewer changed on
+        # the row while the applicant had the page open.
         registration.save(update_fields=[
             'or_number', 'amount_paid', 'paid_at', 'payment_status',
         ])
@@ -2748,7 +2919,7 @@ class RegistrationPaymentView(APIView):
 
         return Response(
             {"message": "Receipt number received. Your application is now queued for CDSO review.",
-             "payment_status": registration.payment_status},
+             "payment_status": registration.payment_status},   # echoed back so the page can re-render from the answer, not from what it assumed
             status=status.HTTP_200_OK,
         )
 
