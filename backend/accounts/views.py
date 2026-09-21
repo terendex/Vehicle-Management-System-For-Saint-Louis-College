@@ -738,6 +738,13 @@ class DashboardStatsView(APIView):
 #  Audit Log Views
 # ──────────────────────────────────────────────
 
+# ── The audit log, and reports of it ────────────────────────────────────────
+# The screen and the two exports all read through _filter_audit_logs below, so
+# a downloaded report cannot disagree with the table it was taken from.
+
+# A thin wrapper, kept so the audit views name the column once. The real work
+# is in time_utils: campus-local dates turned into half-open UTC bounds, which
+# an index can serve and which ignore an unparseable date rather than raising.
 def _apply_created_at_range(qs, date_from, date_to):
     """Inclusive local-date range filter on AuditLog.created_at."""
     return filter_local_date_range(qs, 'created_at', date_from, date_to)
@@ -755,6 +762,8 @@ class AuditLogListView(generics.ListAPIView):
     pagination_class   = StandardResultsSetPagination
 
     def get_queryset(self):
+        # [0] discards filters_desc — that exists for the report subtitles, and
+        # a paginated table has nowhere to put it.
         return _filter_audit_logs(self.request)[0]
 
 
@@ -764,15 +773,27 @@ def _filter_audit_logs(request):
     Returns (ordered_queryset, filters_desc) so the Excel and PDF exports stay
     identical to what the operator sees on screen.
     """
+    # Both relations are rendered on every row and every report line, so they
+    # are joined in rather than fetched one query per row.
     qs = AuditLog.objects.select_related('actor', 'target_user').all()
     action    = request.query_params.get('action', '').strip()
     date_from = request.query_params.get('date_from', '').strip()
     date_to   = request.query_params.get('date_to', '').strip()
     search    = request.query_params.get('search', '').strip()
     if action:
+        # Not checked against the choices: an unrecognised action simply
+        # matches nothing, and an empty audit log for a filter nobody set is
+        # harmless — unlike a 400 on a screen an admin is trying to read.
         qs = qs.filter(action=action)
     qs = _apply_created_at_range(qs, date_from, date_to)
     if search:
+        # Three ways to name the person who ACTED, plus the free text.
+        #
+        # Note, factually: target_user is joined above and rendered, but is not
+        # searched. Looking somebody up by name therefore finds what they did,
+        # and finds what was done TO them only where their name happens to
+        # appear in `details` — which log_action often includes, but not
+        # always. Recorded, not changed: this pass comments code.
         qs = qs.filter(
             Q(actor__user_code__icontains=search) |
             Q(actor__full_name__icontains=search) |
@@ -780,33 +801,42 @@ def _filter_audit_logs(request):
             Q(details__icontains=search)
         )
 
+    # The filter written out in words, so a printed report states on its face
+    # what was excluded from it.
     action_labels = dict(AuditLog.Action.choices)
     filters_desc = []
     if action:
-        filters_desc.append(f"Action: {action_labels.get(action, action)}")
+        filters_desc.append(f"Action: {action_labels.get(action, action)}")   # the readable label, falling back to the raw value
     if date_from or date_to:
         filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
     if search:
         filters_desc.append(f"Search: '{search}'")
+    # Newest first, so the row cap each caller applies keeps the most recent.
     return qs.order_by('-created_at'), filters_desc
 
 
+# One column set for both formats, so the Excel and the PDF cannot drift apart.
 AUDIT_REPORT_HEADERS = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
 
 
+# Turns audit rows into the flat cells both report formats take.
 def _audit_report_rows(qs):
     from django.utils import timezone as tz
-    action_labels = dict(AuditLog.Action.choices)
+    action_labels = dict(AuditLog.Action.choices)   # built once, outside the loop
     rows = []
-    for i, log in enumerate(qs, start=1):
+    for i, log in enumerate(qs, start=1):    # start=1 so '#' reads as a human numbering
+        # 'System' for a null actor: AuditLog.actor is nullable, both because
+        # scheduled jobs write rows with nobody behind them and because
+        # deleting an account nulls the FK while leaving its history. An empty
+        # cell would read as a rendering fault rather than as "no person".
         actor = log.actor.full_name if log.actor else 'System'
-        role  = (log.actor.role if log.actor else '').replace('_', ' ').title()
+        role  = (log.actor.role if log.actor else '').replace('_', ' ').title()   # 'vehicle_owner' -> 'Vehicle Owner'
         rows.append([
             i,
-            tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'),
+            tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'),   # campus-local, to the second: ordering matters in an audit trail
             actor, role,
-            action_labels.get(log.action, log.action),
-            log.details or '',
+            action_labels.get(log.action, log.action),   # falls back to the stored value for an action since renamed
+            log.details or '',               # '' not None, so the cell renders empty rather than as the word "None"
         ])
     return rows
 
@@ -819,9 +849,14 @@ class AuditLogExportView(APIView):
         from django.utils import timezone as tz
         from report_utils import branded_excel_response, report_filename
         qs, filters_desc = _filter_audit_logs(request)
+        # The slice reaches the database as a LIMIT, so len(rows) below counts
+        # what is actually in the file — which is what the subtitle states.
         rows = _audit_report_rows(qs[:5000])
+        # The Excel subtitle carries who generated it and when; the PDF below
+        # does not, because branded_pdf_response takes generated_by separately
+        # and prints it itself.
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
-                    f"by {getattr(request.user, 'full_name', '')} · "
+                    f"by {getattr(request.user, 'full_name', '')} · "   # getattr with a default: an unnamed account must not break a download
                     + ('; '.join(filters_desc) if filters_desc else 'All records')
                     + f" · {len(rows)} entries")
         return branded_excel_response(
@@ -831,7 +866,7 @@ class AuditLogExportView(APIView):
             subtitle=subtitle,
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 21, 24, 12, 20, 95],
+            col_widths=[5, 21, 24, 12, 20, 95],   # characters; Details takes most of it, being the free-text column
         )
 
 
@@ -867,6 +902,8 @@ class AuditLogPdfExportView(APIView):
 # produce exactly the same kind of file. Re-exported here because tests and
 # other modules have imported these names from this module since before that
 # helper existed.
+# noqa: E402 silences "module level import not at top of file" — this one is
+# deliberately here, under the header above, rather than with the other imports.
 from .backup_utils import (                                        # noqa: E402
     AUTO_PREFIX, BACKUP_APPS, BACKUP_EXCLUDE, MANUAL_PREFIX, SAFETY_PREFIX,
     dump_backup, list_backups, load_backup, prune_backups, safe_path, stamp,
@@ -882,14 +919,27 @@ class SystemBackupView(APIView):
     `step_up_on_read` opts this GET into the check, which otherwise exempts
     safe methods.
     """
+    # ── Backup and restore ──────────────────────────────────────────────
+    # Read the four classes from here to SystemRestoreView as one unit. They
+    # are the only endpoints that can lose data, and each safety measure below
+    # is load-bearing — the comments say what a missing line would cost.
+    #
+    # The step-up pattern across them is worth noticing: it is keyed to what
+    # the DATA can do, not to the HTTP verb. Reading a backup is a GET and is
+    # step-up protected, because the file is every account and plate in the
+    # system. Listing filenames is a GET and is not, because filenames are not
+    # data.
     permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    # Without this line the step-up would be skipped: HasRecentTwoFactor
+    # exempts safe methods unless a view opts in, and this GET hands over the
+    # entire database.
     step_up_on_read = True
 
     def get(self, request):
         from django.http import HttpResponse
         from vehicles.models import SystemSettings
 
-        payload = dump_backup()
+        payload = dump_backup()              # the whole fixture, built once and used for both the file and the download
 
         # Keep a copy on the server as well. A manual download is the moment the
         # data was known-good enough for someone to want it saved, and keeping
@@ -897,15 +947,25 @@ class SystemBackupView(APIView):
         # schedule has only just been switched on. Rotated by the same keep count
         # as the automatic ones, so repeated downloads cannot fill the disk. A
         # disk problem here must not cost the admin the download they asked for.
+        # The SAME payload is written and returned, so the server's copy and
+        # the admin's download are provably the same bytes rather than two
+        # dumps taken a moment apart.
         try:
             write_backup(MANUAL_PREFIX, payload)
             prune_backups(SystemSettings.get().auto_backup_keep)
         except OSError:
+            # Caught narrowly (OSError = the disk), and deliberately swallowed:
+            # the copy is a convenience, and failing the request would cost the
+            # admin the download they actually asked for. Logged with the
+            # traceback so a full disk is visible rather than silent.
             logger.warning("Could not keep a server-side copy of the manual backup", exc_info=True)
 
         response = HttpResponse(payload, content_type='application/json')
         response['Content-Disposition'] = (
-            f'attachment; filename="slc-vms-backup-{stamp(seconds=False)}.json"')
+            f'attachment; filename="slc-vms-backup-{stamp(seconds=False)}.json"')   # attachment, so a browser saves it rather than rendering megabytes of JSON
+        # Audited even though nothing changed: this is the request that puts
+        # every account and plate onto somebody's laptop, so it is exactly the
+        # kind of read that has to leave a trace.
         log_action(request, AuditLog.Action.RECORD_UPDATED, details='System backup downloaded')
         return response
 
@@ -943,8 +1003,15 @@ class SystemBackupFileView(APIView):
     def get(self, request, name):
         from django.http import FileResponse
 
+        # `name` comes straight from the URL. safe_path is the only thing
+        # standing between that and the filesystem: it rejects anything with a
+        # separator by regex AND re-checks the resolved realpath is still
+        # directly inside the backups directory, which is what catches a
+        # symlink. Without it this endpoint reads any file the server can.
         path = safe_path(name)
         if not path:
+            # One message for "not a safe name" and "does not exist" alike, so
+            # a caller cannot probe the filesystem by reading the difference.
             return Response({'error': 'Backup file not found.'},
                             status=status.HTTP_404_NOT_FOUND)
         log_action(request, AuditLog.Action.RECORD_UPDATED,
@@ -955,6 +1022,9 @@ class SystemBackupFileView(APIView):
     def delete(self, request, name):
         import os
 
+        # The same guard as the download, and it matters more here: this call
+        # removes a file. safe_path is what stops `name` naming anything
+        # outside the backups directory.
         path = safe_path(name)
         if not path:
             return Response({'error': 'Backup file not found.'},
@@ -962,6 +1032,9 @@ class SystemBackupFileView(APIView):
         try:
             os.remove(path)
         except OSError as exc:
+            # Reported rather than swallowed: unlike the convenience copy in
+            # SystemBackupView, the admin asked for THIS file to be gone and
+            # must be told if it is still there.
             return Response({'error': f'Could not delete the file. ({exc})'},
                             status=status.HTTP_400_BAD_REQUEST)
         log_action(request, AuditLog.Action.RECORD_UPDATED,
@@ -1002,24 +1075,45 @@ class SystemRestoreView(APIView):
     account itself.
     """
     permission_classes = [IsAdminRole, HasRecentTwoFactor]
+    # No step_up_on_read here, and none needed: this view only answers POST,
+    # which HasRecentTwoFactor checks without being asked.
 
+    # The order of this method IS the safety. Read it as five steps, and note
+    # what each one costs if it were not there:
+    #
+    #   1. get the bytes            (upload, or a named file via safe_path)
+    #   2. VALIDATE them            — before anything is written, so a garbage
+    #                                 file cannot trigger a pointless snapshot
+    #                                 or a half-applied load
+    #   3. SAFETY SNAPSHOT          — the only undo. Without this line a bad
+    #                                 restore is unrecoverable
+    #   4. LOAD, in one transaction — without the atomic block a failure
+    #                                 halfway leaves the database part-merged,
+    #                                 which is worse than either end state
+    #   5. broadcast, then audit    — after the commit, so nothing is announced
+    #                                 that did not actually land
     def post(self, request):
         import json
         from django.db import transaction
 
         from realtime.broadcast import broadcast_change
 
+        # Two sources, one path afterwards: an uploaded file, or the name of
+        # one already on the server (an automatic backup, or a safety snapshot
+        # from an earlier attempt).
         upload = request.FILES.get('file')
         filename = (request.data.get('filename') or '').strip()
 
         if upload:
-            source = upload.name
+            source = upload.name             # recorded in the audit line, so the restore says what it came from
+            # Checked BEFORE .read(): the size limit is worthless if the file
+            # has already been pulled into memory to measure it.
             if upload.size > 50 * 1024 * 1024:
                 return Response({'error': 'Backup file is too large (max 50 MB).'},
                                 status=status.HTTP_400_BAD_REQUEST)
             raw = upload.read()
         elif filename:
-            path = safe_path(filename)
+            path = safe_path(filename)       # the same traversal guard the download uses — a caller-supplied name never reaches open() unchecked
             if not path:
                 return Response({'error': 'Saved backup not found.'},
                                 status=status.HTTP_404_NOT_FOUND)
@@ -1030,22 +1124,44 @@ class SystemRestoreView(APIView):
             return Response({'error': 'No backup file provided.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # Step 2. Cheap structural validation, and it happens BEFORE the
+        # snapshot below on purpose: a file that is not a fixture at all should
+        # cost nothing and write nothing. Note what this does and does not
+        # check — that the bytes are UTF-8 and parse as a JSON *list*. It does
+        # not verify the contents are rows this system knows; that is left to
+        # the deserializer inside the transaction, where failure rolls back.
         try:
             text = raw.decode('utf-8')
             if not isinstance(json.loads(text), list):
                 raise ValueError('not a fixture list')
-        except Exception:
+        except Exception:                    # broad on purpose: decode, parse and type errors all mean the same thing to the caller
             return Response({'error': 'Invalid backup file — expected a JSON data fixture.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
         # 1) Auto safety snapshot of current data before overwriting anything.
+        #
+        # THE undo. Deliberately not wrapped in try/except, unlike the
+        # convenience copy in SystemBackupView: if this cannot be written the
+        # exception propagates and the restore never runs. Failing to start is
+        # the correct outcome — proceeding would mean overwriting live data
+        # with no way back.
         safety_name, _ = write_backup(SAFETY_PREFIX)
 
         # 2) Load the fixture atomically (rolls back on any error).
+        #
+        # The atomic block is what makes the error message below TRUE. Without
+        # it, "no changes were applied" would be a lie: load_backup writes per
+        # model, so a failure on the fifth table would leave four tables merged
+        # and the rest not. load_backup's own docstring states it must be
+        # called inside a transaction for exactly this reason — the rollback is
+        # the caller's job, and this line is the caller doing it.
         try:
             with transaction.atomic():
                 result = load_backup(text)
         except Exception as exc:
+            # The safety snapshot's name goes back with the failure, so the
+            # admin holding a broken system is told where the undo is in the
+            # same response that tells them it went wrong.
             return Response(
                 {'error': f'Restore failed and was rolled back. No changes were applied. ({exc})',
                  'safety_backup': safety_name},
@@ -1061,17 +1177,42 @@ class SystemRestoreView(APIView):
         for resource in result.resources:
             broadcast_change(resource, 'restored')
 
+        # Audited after the commit, so the trail records a restore that
+        # actually happened. The record count and the source file are both in
+        # the line, because "a restore was performed" on its own would not let
+        # anyone reconstruct what the system was made to look like.
         log_action(request, AuditLog.Action.RECORD_UPDATED,
                    details=f'System restore from backup ({result.records} records, source: {source})')
+        # The snapshot name is returned on SUCCESS too, not just on failure: a
+        # restore that worked mechanically can still be the wrong restore, and
+        # this is the handle for undoing it.
         return Response({'restored': result.records, 'safety_backup': safety_name},
                         status=status.HTTP_200_OK)
 
 
+# Wipes the accountability record itself.
+#
+# Recorded here, with no code changed, because the contrast with the four
+# backup views above is stark and worth a decision rather than an accident:
+#
+#   * NO step-up. SystemBackupView requires a fresh two-factor to READ the
+#     data; this endpoint destroys the log of who did what, with none.
+#   * NO log_action call. Every other administrative action in this file
+#     writes an AuditLog row — this one does not, so clearing the trail leaves
+#     no trace that it was cleared, or by whom.
+#   * NO scoping. It is all-or-nothing: there is no date range, so "tidy up
+#     last year" is not expressible and the only option is total deletion.
+#   * NO safety copy, unlike the restore path, which snapshots first.
+#
+# Judged against the rest of this file's own standards, this is the single
+# most destructive endpoint with the fewest guards on it.
 class AuditLogClearView(APIView):
     """Delete all audit log records — admin only."""
     permission_classes = [IsAdminRole]
 
     def delete(self, request):
+        # .all().delete() — every row, unconditionally. The count comes back
+        # so the caller can report it; nothing else survives the call.
         deleted_count, _ = AuditLog.objects.all().delete()
         return Response({'deleted': deleted_count}, status=status.HTTP_200_OK)
 
@@ -1088,11 +1229,18 @@ class AuditLogStatsView(APIView):
         today = timezone.localdate()
         week_ago = today - timedelta(days=7)
         
+        # Four separate queries, where DashboardStatsView folds this shape of
+        # question into one Count(filter=...) aggregate. Left as it is; noted
+        # because the two files answer the same kind of question differently.
         stats = {
             'total_logs': AuditLog.objects.count(),
+            # Half-open bounds from day_start/day_end rather than a __date
+            # lookup, so the created_at index is usable.
             'today_logs': AuditLog.objects.filter(
                 created_at__gte=day_start(today), created_at__lt=day_end(today)).count(),
             'week_logs': AuditLog.objects.filter(created_at__gte=day_start(week_ago)).count(),
+            # A queryset, not a dict: DRF serialises the rows as they are, so
+            # this goes out as a list of {action, count} objects.
             'by_action': AuditLog.objects.values('action').annotate(count=Count('action')),
         }
         return Response(stats)
