@@ -3984,6 +3984,22 @@ class SystemSettingsView(APIView):
 # ──────────────────────────────────────────────
 # Events (Admin/CDSO manage campus events + organizer plates)
 # ──────────────────────────────────────────────
+#
+# An event is a day the campus behaves differently, and it reaches two places
+# the CDSO does not touch by hand:
+#
+#   * parking — `parking_share` declares how much of the bays the event will
+#     fill, and the availability figures hold that much back while it runs
+#   * the gate — an organizer's plate is admitted for the event even without a
+#     vehicle pass
+#
+# Both of those read `is_under_way()`, which is true only while the event is
+# active, unarchived, dated today and inside its window — so an event that is
+# merely on record changes nothing.
+#
+# Four small helpers come first because the list and detail views share every
+# one of them; the two views are then mostly about which fields a request is
+# allowed to name.
 
 def _serialize_event(ev):
     """One shape for an event, shared by the list and detail views.
@@ -3995,32 +4011,43 @@ def _serialize_event(ev):
         'id':               ev.id,
         'name':             ev.name,
         'date':             ev.date.isoformat(),
+        # 24-hour HH:MM, which is what the form's time inputs post back — these
+        # two are for editing, and `time_display` below is for reading.
         'start_time':       ev.start_time.strftime('%H:%M') if ev.start_time else None,
         'end_time':         ev.end_time.strftime('%H:%M') if ev.end_time else None,
-        'time_display':     ev.time_display,
-        'parking_share':    ev.parking_share,
-        'parking_share_label': ev.get_parking_share_display(),
-        'parking_share_fraction': ev.share_fraction,
+        'time_display':     ev.time_display,   # "9:00 AM - 3:00 PM" or "All day" — built by the model, so every screen words it identically
+        'parking_share':    ev.parking_share,               # the stored choice
+        'parking_share_label': ev.get_parking_share_display(),   # and its wording, so no screen spells it itself
+        'parking_share_fraction': ev.share_fraction,        # the same choice as a 0.0-1.0 multiplier, for anything doing the arithmetic
+        # The three states are not the same question and all three go out:
+        # is_under_way is "right now"; is_active is the switch; archived is
+        # "finished with". An event can be active and still not under way.
         'is_under_way':     ev.is_under_way(),
         'is_active':        ev.is_active,
         'archived':         ev.archived,
-        'organizer_plates': ev.organizer_plates,
+        'organizer_plates': ev.organizer_plates,   # already canonical on the row — see _clean_organizer_plates
         'created_at':       ev.created_at.isoformat(),
-        'created_by_name':  ev.created_by.full_name if ev.created_by else None,
+        'created_by_name':  ev.created_by.full_name if ev.created_by else None,   # None when the creating account has since been deleted
     }
 
 
+# "What time?" from a form, as a time object — or nothing, which is its own
+# valid answer here: an event with no times set runs all day.
 def _parse_event_time(raw):
     """'' / None -> None (no time set); 'HH:MM' -> a time. Raises ValueError."""
     if raw in (None, ''):
-        return None
+        return None                              # unset, deliberately — not an error
     from datetime import datetime as _dt
     text = str(raw).strip()
+    # Two formats because browsers disagree: some time inputs post "14:30" and
+    # others "14:30:00". Both mean the same thing, so both are accepted.
     for fmt in ('%H:%M', '%H:%M:%S'):
         try:
             return _dt.strptime(text, fmt).time()
         except ValueError:
-            continue
+            continue                             # not this format; try the next
+    # Raised rather than returned: every caller wraps this and turns the message
+    # into a field error, so the wording here is what the admin reads.
     raise ValueError('Invalid time format. Use HH:MM (24-hour).')
 
 
@@ -4030,11 +4057,14 @@ def _clean_organizer_plates(raw):
     number or an e-bike control number may all be listed. Spaces were kept
     before, while every scan path strips them from the plate it reads — so
     "ABC 1234" typed into an event never matched the ABC1234 that drove up."""
-    from .models import canonical_identifier
+    from .models import canonical_identifier   # the one normaliser; the gate compares against exactly what it returns
     plates = []
-    for p in raw or []:
-        plate = canonical_identifier(str(p or ''))
-        if plate and plate not in plates:
+    for p in raw or []:                          # `or []` so a missing or null list is simply an empty one
+        plate = canonical_identifier(str(p or ''))   # upper-cased, spaces removed, and FM001/FM-1 re-spelled as FM-001
+        # Membership on a list rather than a set: the order the admin typed
+        # them in is preserved, and an event's list is short enough that the
+        # scan costs nothing.
+        if plate and plate not in plates:        # drops blanks and repeats
             plates.append(plate)
     return plates
 
@@ -4045,15 +4075,21 @@ def _apply_event_times(ev, data, errors):
     Only keys actually present are touched, so a PATCH that sends just the name
     cannot blank an event's times.
     """
+    # `in data`, never .get(): absent means "leave it alone", while a present
+    # '' means "clear the time". A .get() default could not tell them apart,
+    # and this helper is shared with a PATCH that often names neither.
     for field in ('start_time', 'end_time'):
         if field in data:
             try:
                 setattr(ev, field, _parse_event_time(data[field]))
             except ValueError as exc:
-                errors[field] = str(exc)
+                errors[field] = str(exc)         # recorded, not raised: the caller wants every field's problem at once
 
     if 'parking_share' in data:
-        share = (data['parking_share'] or Event.ParkingShare.NONE)
+        share = (data['parking_share'] or Event.ParkingShare.NONE)   # blank means the event reserves no parking
+        # Checked against the model's own choices: an unrecognised value would
+        # otherwise store fine and then reserve 0.0 of the parking silently,
+        # because share_fraction returns 0.0 for anything it does not know.
         if share not in Event.ParkingShare.values:
             errors['parking_share'] = 'Choose how much of parking the event fills.'
         else:
@@ -4061,27 +4097,44 @@ def _apply_event_times(ev, data, errors):
 
     # An event that ends before it starts is a typo every time, and it would
     # make is_under_way() false for every minute of the day.
+    # `not errors` first: if a time failed to parse, the attribute still holds
+    # whatever it held before, and comparing those two would be meaningless.
+    # `<=` and not `<`, because an event that ends the minute it starts has no
+    # window for is_under_way() to fall inside either.
     if (not errors and ev.start_time and ev.end_time
             and ev.end_time <= ev.start_time):
         errors['end_time'] = 'The end time must be after the start time.'
-    return errors
+    return errors                                # the same dict that came in, so callers can chain their own checks into it
 
 
+# List every event, and add one.
 class EventListCreateView(APIView):
-    permission_classes = [IsAdminOrCdso]
+    permission_classes = [IsAdminOrCdso]         # staff only: an event changes who the gate admits
 
+    # Kept as a method although it only forwards — the two views called
+    # self._serialize() before the shared function existed, and leaving the
+    # call shape alone is what let the duplicate body be removed safely.
     def _serialize(self, ev):
         return _serialize_event(ev)
 
     def get(self, request):
+        # Everything, including archived events: this is the management screen,
+        # and it is the caller that decides what to show. Ordering comes from
+        # the model (newest date first). select_related because every row
+        # renders its creator's name.
         events = Event.objects.select_related('created_by').all()
         return Response([self._serialize(e) for e in events])
 
     def post(self, request):
+        # A name and a date are the whole of what an event must have; times,
+        # parking share and organizer plates are all optional and all have
+        # sensible absences (all day, reserves nothing, nobody listed).
         name             = (request.data.get('name') or '').strip()
         date_str         = request.data.get('date')
         organizer_plates = request.data.get('organizer_plates', [])
 
+        # Returned one at a time, unlike the times below: these two are fatal on
+        # their own, so there is nothing to be gained by collecting them.
         if not name:
             return Response({'name': 'Name is required.'}, status=400)
         if not date_str:
@@ -4094,13 +4147,18 @@ class EventListCreateView(APIView):
             return Response({'date': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
 
         plates = _clean_organizer_plates(organizer_plates)
+        # Built but not saved. The times are applied onto the unsaved object so
+        # they can be validated in place, and nothing reaches the database
+        # until every one of them has passed.
         ev = Event(
             name=name, date=date_obj, organizer_plates=plates, created_by=request.user,
         )
-        errors = _apply_event_times(ev, request.data, {})
+        errors = _apply_event_times(ev, request.data, {})   # a fresh dict: this is a create, so nothing has been collected yet
         if errors:
             return Response(errors, status=400)
-        ev.save()
+        ev.save()                                # is_active and archived take the model's defaults; an event is not switched on by creating it
+        # The plate COUNT, not the plates: who was admitted is on the scan
+        # records, and an audit line is not the place to list vehicles.
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Event added | {ev.name} on {ev.date} ({ev.time_display}) | "
               f"Parking: {ev.get_parking_share_display()} | "
@@ -4108,6 +4166,9 @@ class EventListCreateView(APIView):
         return Response(self._serialize(ev), status=201)
 
 
+# Edit or remove one event. PATCH throughout, never PUT: an event is amended a
+# field at a time from the management screen, so every block below is guarded
+# on the key being present rather than on its value.
 class EventDetailView(APIView):
     permission_classes = [IsAdminOrCdso]
 
@@ -4116,16 +4177,21 @@ class EventDetailView(APIView):
 
     def patch(self, request, pk):
         try:
-            ev = Event.objects.select_related('created_by').get(pk=pk)
+            ev = Event.objects.select_related('created_by').get(pk=pk)   # the creator's name is in the reply, so join it in
         except Event.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=404)
 
         if 'name' in request.data:
             name = (request.data['name'] or '').strip()
+            # Present but blank is a mistake, not an instruction: an event with
+            # no name is unfindable on the screen that manages it.
             if not name:
                 return Response({'name': 'Name cannot be empty.'}, status=400)
             ev.name = name
 
+        # Moving the date is the one edit with side effects, because both
+        # "finished" and "running" were answers about the OLD date and neither
+        # survives the move.
         if 'date' in request.data:
             try:
                 from datetime import datetime as _dt, date as _date
@@ -4134,21 +4200,26 @@ class EventDetailView(APIView):
                 today = _date.today()
                 # Rescheduling unarchives the event; activation follows the new date
                 ev.archived  = False
-                ev.is_active = (new_date == today)
+                ev.is_active = (new_date == today)   # moved to today: on. Moved anywhere else: off until its day comes
             except ValueError:
                 return Response({'date': 'Invalid date format.'}, status=400)
 
+        # After the date block on purpose: a request that names both gets the
+        # switch it explicitly asked for, rather than the one the new date
+        # implies. That is what lets an admin arm tomorrow's event early.
         if 'is_active' in request.data:
             ev.is_active = bool(request.data['is_active'])
 
         if 'organizer_plates' in request.data:
+            # Replaces the list outright — there is no add-one endpoint, so the
+            # screen always sends the whole list as it should end up.
             ev.organizer_plates = _clean_organizer_plates(request.data['organizer_plates'])
 
-        errors = _apply_event_times(ev, request.data, {})
+        errors = _apply_event_times(ev, request.data, {})   # the same helper the create path uses, so the rules cannot differ between them
         if errors:
-            return Response(errors, status=400)
+            return Response(errors, status=400)   # nothing has been saved yet, so the event is untouched
 
-        ev.save()
+        ev.save()                                # one save covering every block above
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Event updated | {ev.name} on {ev.date} ({ev.time_display}) | "
               f"Parking: {ev.get_parking_share_display()} | By: {request.user.full_name}")
@@ -4156,21 +4227,34 @@ class EventDetailView(APIView):
 
     def delete(self, request, pk):
         try:
-            ev = Event.objects.get(pk=pk)
+            ev = Event.objects.get(pk=pk)        # no select_related: nothing below reads the creator
         except Event.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=404)
-        desc = f"{ev.name} on {ev.date}"
+        desc = f"{ev.name} on {ev.date}"         # read off the row BEFORE it is gone, so the audit line still has something to say
+        # A real delete, unlike a parking notice below, which is only
+        # deactivated. Safe because the one thing that points at an Event —
+        # scanning.AccessLog.event — is SET_NULL, so the scans of organizers
+        # who came and went survive and simply stop naming the event.
         ev.delete()
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Event deleted | {desc} | By: {request.user.full_name}")
-        return Response(status=204)
+        return Response(status=204)              # 204: deleted, and there is nothing left to return
 
 
 # ──────────────────────────────────────────────
 # Parking Notices (CDSO/Admin broadcast, owner read)
 # ──────────────────────────────────────────────
+#
+# A notice is an announcement the CDSO sends out: stored so it shows in every
+# owner's portal, and emailed at the same moment so it reaches them whether or
+# not they log in. Both classes below are written the same way — the route is
+# open to any signed-in account, and the role is checked inside each method
+# that writes, because owners must be able to READ what admins post.
 
 class ParkingNoticeView(APIView):
+    # A method rather than `permission_classes`, though it returns the same
+    # thing for every verb. The role split lives inside post() instead, since
+    # GET and POST here serve different people rather than different risks.
     def get_permissions(self):
         return [permissions.IsAuthenticated()]
 
@@ -4187,20 +4271,25 @@ class ParkingNoticeView(APIView):
         managed and removed, so it has to list every active one regardless of
         which admin account is looking.
         """
-        notices = ParkingNotice.objects.filter(is_active=True)
+        notices = ParkingNotice.objects.filter(is_active=True)   # is_active is the soft-delete flag: a removed notice is still on the row
+        # The join-date cut is the whole of the rule in the docstring: a notice
+        # posted before this account existed was never sent to them.
         if request.user.role != 'admin':
             notices = notices.filter(created_at__gte=request.user.date_joined)
-        return Response(ParkingNoticeSerializer(notices, many=True).data)
+        return Response(ParkingNoticeSerializer(notices, many=True).data)   # newest first, from the model's own ordering
 
     def post(self, request):
         """CDSO (admin) create and broadcast a notice to all vehicle owners."""
+        # The real gate on writing. get_permissions above let any signed-in
+        # account reach this method, so without this check an owner could
+        # broadcast to every other owner.
         if request.user.role != 'admin':
             return Response({'error': 'Permission denied.'}, status=403)
 
         serializer = ParkingNoticeSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
-        notice = serializer.save(created_by=request.user)
+        notice = serializer.save(created_by=request.user)   # saved first: the record is the notice, and the email is a copy of it
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Parking notice broadcast | {notice.title} | By: {request.user.full_name}")
 
@@ -4209,12 +4298,23 @@ class ParkingNoticeView(APIView):
         from django.core.mail import EmailMultiAlternatives
         from django.conf import settings
 
+        # Active owners only — an archived or deactivated account is not a
+        # person the CDSO is announcing anything to.
         recipients = list(
             UserModel.objects.filter(role='vehicle_owner', is_active=True)
-            .values_list('email', flat=True)
+            .values_list('email', flat=True)     # just the addresses; no User objects are needed
         )
-        email_status = 'no_recipients'
+        email_status = 'no_recipients'           # the default, reported honestly when there is nobody to send to
         if recipients:
+            # Built as an f-string, so `notice.title` and `notice.body` below
+            # go into the HTML exactly as typed — nothing escapes them the way
+            # a Django template would. The notice is stored and then mailed to
+            # every active owner, so markup written into either field persists
+            # on the row and is delivered: a stored-XSS path into their inboxes.
+            # The author is checked to be an admin one block up, and the
+            # plain-text alternative beside this is unaffected — that bounds it,
+            # it does not close it. Flagged for a fix; unchanged by this pass,
+            # which only comments.
             html_msg = f"""
             <html>
               <body style="font-family:Arial,sans-serif;color:#1A1D2E;background:#F0F2F7;padding:20px;margin:0;">
@@ -4234,16 +4334,21 @@ class ParkingNoticeView(APIView):
             </html>
             """
             # BCC so owners never see each other's addresses
+            #
+            # Sent inline, on the request, where every other mail in this file
+            # is handed to send_in_background. The admin therefore waits for the
+            # whole blast, and a slow mail host holds the response open.
+            # Recorded here for a later look; nothing is changed by this pass.
             try:
                 email = EmailMultiAlternatives(
                     subject=f"SLC Parking Notice: {notice.title}",
                     body=f"Parking Notice\n\n{notice.title}\n\n{notice.body}",
                     from_email=settings.DEFAULT_FROM_EMAIL,
-                    to=[settings.DEFAULT_FROM_EMAIL],
+                    to=[settings.DEFAULT_FROM_EMAIL],   # addressed to the office itself, because a mail needs a To: and the owners are all on BCC
                     bcc=recipients,
                 )
-                email.attach_alternative(html_msg, 'text/html')
-                email.send(fail_silently=False)
+                email.attach_alternative(html_msg, 'text/html')   # the plain-text body above stays as the fallback for clients that want it
+                email.send(fail_silently=False)   # NOT silent: the except below is what turns a failure into a reported status
                 email_status = 'sent'
             except Exception:
                 # Report through the app logger (message + full traceback) so the
@@ -4251,23 +4356,30 @@ class ParkingNoticeView(APIView):
                 logger.exception('Parking notice broadcast failed')
                 email_status = 'failed'
 
+        # 201 whatever the mail did. The notice exists and is already visible
+        # in every owner's portal, so the send is reported beside it rather
+        # than being allowed to fail the request that created it.
         data = ParkingNoticeSerializer(notice).data
-        data['email_status'] = email_status
-        data['recipient_count'] = len(recipients)
+        data['email_status'] = email_status      # 'sent', 'failed' or 'no_recipients' — the screen says which
+        data['recipient_count'] = len(recipients)   # so "sent" comes with how many it reached
         return Response(data, status=201)
 
 
+# Taking a notice down.
 class ParkingNoticeDetailView(APIView):
     def get_permissions(self):
-        return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated()]   # same shape as above: the role check that matters is inside delete()
 
     def delete(self, request, pk):
         """CDSO (admin) deactivate (soft-delete) a notice."""
-        if request.user.role != 'admin':
+        if request.user.role != 'admin':     # the route is open to any signed-in account, so this is the gate
             return Response({'error': 'Permission denied.'}, status=403)
         notice = get_object_or_404(ParkingNotice, pk=pk)
+        # Deactivated, not deleted — the opposite of how an event is removed.
+        # The notice was emailed to every owner, so the copy on record is what
+        # answers "what exactly did we tell them?" long after it left the portal.
         notice.is_active = False
-        notice.save(update_fields=['is_active'])
+        notice.save(update_fields=['is_active'])   # one column, so nothing else on the row can be disturbed
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Parking notice removed | {notice.title} | By: {request.user.full_name}")
         return Response({'message': 'Notice deactivated.'}, status=200)
