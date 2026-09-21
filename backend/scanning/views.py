@@ -23,16 +23,49 @@ from vehicles.serializers import VehicleSerializer
 from .serializers import VisitorPassSerializer, OfficeSerializer, AccessLogSerializer, GuardShiftSerializer, MLTrainingSampleSerializer
 from time_utils import day_range, filter_local_date_range
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)     # messages appear under "scanning.views"
+
+# =============================================================================
+# HOW TO READ THIS FILE
+#
+# This is the gate. Everything a vehicle does at the boundary of the campus
+# passes through here: the camera's scan, the guard typing a plate by hand, a
+# visitor's printed slip, the exit that closes the visit.
+#
+# The one idea the whole file is built on is that a plate has a STATE, and the
+# same scan means different things depending on it:
+#
+#     outside  →  a scan is an ENTRY
+#     inside   →  a scan is an EXIT
+#     just scanned (within a few seconds)  →  the camera saw the same car
+#                                             twice; ignore it
+#     just exited (within a minute)        →  suppress, or the car would be
+#                                             re-admitted as it drives away
+#
+# There is no "is_inside" column. The state is derived from today's AccessLog
+# rows every time it is asked for: an AUTHORIZED row that no EXITED row points
+# back at means the vehicle is still in. `_inside_state` is where that is
+# worked out, and the three constants below are the windows it uses.
+#
+# The decision about whether a vehicle MAY enter is not made here — that is
+# scanning/entry_logic.py. This file asks it, records the answer, and handles
+# everything around it: pairing, slips, violations, overrides, audit.
+# =============================================================================
 
 
+# Where the request actually came from, for the audit trail.
 def get_client_ip(request):
+    # Behind Railway's proxy REMOTE_ADDR is the proxy, not the caller. The
+    # forwarded header is a chain "client, proxy1, proxy2", so the first entry
+    # is the original client.
     x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
     if x_forwarded:
         return x_forwarded.split(',')[0].strip()
-    return request.META.get('REMOTE_ADDR')
+    return request.META.get('REMOTE_ADDR')   # on the campus half there is no proxy, so this is the real address
 
 
+# The two physical gates plus the fallback, named for the audit log. Gates are
+# editable rows now, so this is only the fast path — see _gate_label.
 GATE_DISPLAY = {'gate1': 'Gate 1', 'gate4': 'Gate 4', 'main': 'Main'}
 
 
@@ -40,31 +73,49 @@ def _gate_label(gate_id: str) -> str:
     """Human-readable gate name for audit-log details. Falls back to the dynamic
     Gate row's label so gates beyond gate1/gate4 also read nicely."""
     if gate_id in GATE_DISPLAY:
-        return GATE_DISPLAY[gate_id]
+        return GATE_DISPLAY[gate_id]             # the common case, answered without touching the database
     try:
         from .models import Gate
-        g = Gate.objects.filter(gate_id=gate_id).only('label').first()
+        g = Gate.objects.filter(gate_id=gate_id).only('label').first()   # .only(): the label is all that is wanted
         if g:
             return g.label
     except Exception:
+        # Swallowed on purpose. This is only decoration for an audit line, and
+        # a database hiccup here must never fail the scan it is describing.
         pass
-    return gate_id or 'Main'
+    return gate_id or 'Main'                     # the raw id is still readable; 'Main' covers an unattributed scan
 
 
+# Records what a guard or officer did. Deliberately unable to fail.
 def _audit(request, action, details=''):
     try:
         AuditLog.objects.create(
-            actor=request.user,
+            actor=request.user,                  # who did it
             action=action,
-            details=details,
-            ip_address=get_client_ip(request),
+            details=details,                     # the sentence a reviewer will read
+            ip_address=get_client_ip(request),   # and from where
         )
     except Exception:
+        # A gate that stops admitting vehicles because its audit table is
+        # unreachable is worse than a gate with a gap in its log. The vehicle
+        # movement itself is recorded on AccessLog, which is not this table.
         pass
 
 
 # Auto-violations are issued at most once per type per vehicle per calendar day
 # (see _auto_log_violation); the counter resets at midnight local time.
+# The three windows the state machine runs on. They exist because a camera
+# pointed at a gate sees the same car many times as it approaches, waits and
+# drives through — and every one of those frames arrives here as a scan.
+#
+#   0-3s after entry    a second scan is the same car still in frame  → ignore
+#   3-60s after entry   the car is in, but too soon to be leaving     → say so
+#   60s+ after entry    a scan now genuinely means it is going out    → exit
+#   0-60s after exit    the car is driving away past the camera       → suppress
+#
+# The gap between GRACE and BREATHING is the important one: without it, a car
+# that paused in view for four seconds would be logged in and straight back
+# out again.
 GRACE_PERIOD_SECONDS = 3             # duplicate-scan dedup window after entry (must be well below camera interval)
 EXIT_COOLDOWN_SECONDS = 60           # block new entry for this many seconds after an exit
 ENTRY_BREATHING_SECONDS = 60         # re-check within this window after entry stays informational (no exit flip)
@@ -75,44 +126,58 @@ def _log_status(entry: dict) -> str:
     statuses like 'open_entry' and 'no_pass' aren't AccessLog choices — store
     those rows as AUTHORIZED/DENIED depending on whether entry was granted."""
     if entry['status'] in AccessLog.Status.values:
-        return entry['status']
+        return entry['status']                   # a status that is already a column value passes straight through
+    # Anything else is a screen label, not a stored state. `allowed` is the
+    # only thing the row has to preserve: whether the vehicle got in.
     return AccessLog.Status.AUTHORIZED if entry['allowed'] else AccessLog.Status.DENIED
 
 
+# The heart of the file: given a plate, is it out, in, or was it just seen?
+# Every entry path calls this before deciding what a scan means.
 def _inside_state(plate_number: str):
     """
     Returns ('outside', None), ('duplicate', entry), or ('inside', entry).
     'duplicate' — plate just authorized within GRACE_PERIOD_SECONDS; ignore the re-scan.
     'inside'    — plate is in campus but past the grace period; treat re-scan as exit.
     """
+    # Scoped to TODAY, campus-local. A vehicle that never scanned out is
+    # treated as outside again tomorrow rather than staying "inside" forever —
+    # the ledger is a day's record, not a permanent occupancy flag.
     day_start, day_end = day_range(timezone.localdate())
     last_entry = AccessLog.objects.filter(
         plate_number=plate_number,
-        status=AccessLog.Status.AUTHORIZED,
+        status=AccessLog.Status.AUTHORIZED,      # only a granted entry puts a vehicle inside
         scanned_at__gte=day_start,
         scanned_at__lt=day_end,
         scanned_at__lte=timezone.now(),  # ignore future-dated rows from clock skew
-    ).order_by('-scanned_at').first()
+    ).order_by('-scanned_at').first()            # the most recent entry is the only one that describes the state now
 
     if not last_entry:
-        return ('outside', None)
+        return ('outside', None)                 # nothing today: it has not come in
 
     # Explicit paired-exit check — avoids reverse-FK isnull quirks on self-referential tables
+    #
+    # Reads "does any row point back at this entry as its exit?". Note the
+    # neighbouring _pair_entry_exit asks the same question the other way round,
+    # with `exit_log__isnull=True` on the reverse relation.
     if AccessLog.objects.filter(paired_entry=last_entry).exists():
-        return ('outside', None)
+        return ('outside', None)                 # it came in and it left again
 
     seconds_ago = (timezone.now() - last_entry.scanned_at).total_seconds()
     if seconds_ago <= GRACE_PERIOD_SECONDS:
+        # Still in frame from the entry that was just recorded. Returned as its
+        # own state, not as 'inside', so the caller ignores the scan rather
+        # than treating it as the car leaving three seconds after arriving.
         return ('duplicate', last_entry)
 
-    return ('inside', last_entry)
+    return ('inside', last_entry)                # in, and old enough that a scan now means something
 
 
 def _exit_cooldown_remaining(plate_number: str) -> int:
     """Seconds left in the post-exit cooldown, anchored to the exit row itself —
     repeated scans during the window never extend it. 0 when not in cooldown."""
     now = timezone.now()
-    cutoff = now - timedelta(seconds=EXIT_COOLDOWN_SECONDS)
+    cutoff = now - timedelta(seconds=EXIT_COOLDOWN_SECONDS)   # only exits inside the window can still be in cooldown
     last_exit = AccessLog.objects.filter(
         plate_number=plate_number,
         status=AccessLog.Status.EXITED,
@@ -120,15 +185,22 @@ def _exit_cooldown_remaining(plate_number: str) -> int:
         scanned_at__lte=now,  # future-dated rows (clock skew) must not wedge the gate
     ).order_by('-scanned_at').first()
     if not last_exit:
-        return 0
+        return 0                                 # no recent exit: not in cooldown
+    # Measured from the exit row, which is what "anchored to the exit itself"
+    # in the docstring means — the countdown runs down however many times the
+    # camera sees the car on its way out. max(0, ...) guards the boundary case
+    # where the row ages past the window between the query and this line.
     return max(0, EXIT_COOLDOWN_SECONDS - int((now - last_exit.scanned_at).total_seconds()))
 
 
+# The yes/no form, for callers that do not need to say how long is left.
 def _in_exit_cooldown(plate_number: str) -> bool:
     """True if this plate exited within EXIT_COOLDOWN_SECONDS — suppress a new entry scan."""
     return _exit_cooldown_remaining(plate_number) > 0
 
 
+# The same question _inside_state answers, reduced to a boolean — for callers
+# that only need "is it in?" and not the three-way distinction.
 def _already_inside(plate_number: str) -> bool:
     """True if the plate has an authorized entry today with no paired exit yet."""
     day_start, day_end = day_range(timezone.localdate())
@@ -141,9 +213,11 @@ def _already_inside(plate_number: str) -> bool:
     ).order_by('-scanned_at').first()
     if not last_entry:
         return False
-    return not AccessLog.objects.filter(paired_entry=last_entry).exists()
+    return not AccessLog.objects.filter(paired_entry=last_entry).exists()   # inside exactly when nothing has paired an exit to it
 
 
+# The batch form: "which of these plates are in?", in one query instead of one
+# per plate. Used by the screens that draw a list, never on the scan path.
 def _plates_inside(plates) -> set:
     """Which of `plates` are on campus right now — ONE query for the whole set.
 
@@ -155,28 +229,35 @@ def _plates_inside(plates) -> set:
     "Inside" here means the same thing the occupancy ledger means: an
     authorized entry today that no exit row points back at.
     """
-    plates = [p for p in plates if p]
+    plates = [p for p in plates if p]        # drop blanks: an unrecognized row carries no plate
     if not plates:
-        return set()
+        return set()                         # nothing to ask about — and an empty __in would match nothing anyway
 
     day_start, day_end = day_range(timezone.localdate())
+    # Every entry that HAS been closed today. Left as a queryset, not
+    # evaluated: it is used as a subquery below, so this never round-trips.
     paired = (
         AccessLog.objects
         .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,
                 scanned_at__gte=day_start, scanned_at__lt=day_end)
-        .values('paired_entry_id')
+        .values('paired_entry_id')           # just the ids, which is all the exclude needs
     )
+    # Today's entries for these plates, minus the ones already closed. The same
+    # definition _inside_state uses, expressed as set arithmetic instead of a
+    # per-plate walk.
     return set(
         AccessLog.objects
         .filter(plate_number__in=plates,
                 status=AccessLog.Status.AUTHORIZED,
                 scanned_at__gte=day_start, scanned_at__lt=day_end,
-                scanned_at__lte=timezone.now())
+                scanned_at__lte=timezone.now())   # the same clock-skew guard as everywhere else
         .exclude(pk__in=paired)
         .values_list('plate_number', flat=True)
-    )
+    )                                        # a set, so the caller tests membership per row without another query
 
 
+# Joins an exit row to the entry it closes. This link IS the occupancy ledger:
+# an entry with nothing pointing at it is a vehicle still on campus.
 def _pair_entry_exit(exit_log) -> None:
     """Link exit_log to the most recent unpaired entry for the same plate today."""
     day_start, day_end = day_range(timezone.localdate())
@@ -185,13 +266,20 @@ def _pair_entry_exit(exit_log) -> None:
         status=AccessLog.Status.AUTHORIZED,
         scanned_at__gte=day_start,
         scanned_at__lt=day_end,
-        exit_log__isnull=True,
-    ).order_by('-scanned_at').first()
+        exit_log__isnull=True,               # 'exit_log' is paired_entry's related_name, so this reads "nothing has closed it yet"
+    ).order_by('-scanned_at').first()        # the most recent open entry, so a vehicle in and out twice pairs correctly both times
     if entry:
+        # Silently does nothing when there is no open entry — an exit scanned
+        # for a vehicle with no recorded entry still stands as a row, it just
+        # closes nothing. That is the honest record of what happened.
         exit_log.paired_entry = entry
-        exit_log.save(update_fields=['paired_entry'])
+        exit_log.save(update_fields=['paired_entry'])   # one column; the rest of the exit row is already written
 
 
+# Open Campus Mode, for a plate nothing knows about. Below is the first of two
+# near-identical state machines in this file (the event one follows); both walk
+# duplicate → inside → cooldown → entry in that order, and the order is what
+# makes them correct.
 def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
     """
     Open Campus Mode: admit an unregistered plate at the gate. Runs the same
@@ -200,11 +288,13 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
     the mode is on. Rows are stored as AUTHORIZED/EXITED (vehicle=None); the
     client-facing entry status is 'open_entry', displayed as "Open Entry".
     """
-    from django.db import transaction as _tx
+    from django.db import transaction as _tx   # aliased: `transaction` is not imported at module level here
 
-    inside_status, last_entry = _inside_state(plate_number)
+    inside_status, last_entry = _inside_state(plate_number)   # the one question everything below branches on
 
     if inside_status == 'duplicate':
+        # Checked first because it is the cheapest and the most common: a
+        # camera pointed at a gate produces far more repeat frames than events.
         return {
             'status':         'duplicate',
             'allowed':        False,
@@ -215,6 +305,9 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
 
     if inside_status == 'inside':
         seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
+        # Inside, but not long enough for a scan to mean "leaving". Refused
+        # rather than logged as an exit, which is what stops a car idling in
+        # front of the camera from being recorded in and out repeatedly.
         if seconds_inside < ENTRY_BREATHING_SECONDS:
             return {
                 'status':         'already_inside',
@@ -223,8 +316,14 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
                 'vehicle':        None,
                 'already_inside': True,
             }
+        # Past the window, so this scan is the exit. Locked because two
+        # cameras — or a camera and a guard — can reach this line for the same
+        # vehicle at once, and two exit rows against one entry would make the
+        # occupancy count wrong in a way nothing later corrects.
         with _tx.atomic():
             locked_entry = AccessLog.objects.select_for_update().filter(pk=last_entry.pk).first()
+            # Re-asked while holding the lock. Whoever got here first has
+            # already written the exit; this one must not write a second.
             if not locked_entry or AccessLog.objects.filter(paired_entry=locked_entry).exists():
                 return {
                     'status':         'duplicate',
@@ -235,8 +334,11 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
                 }
             exit_log = AccessLog.objects.create(
                 plate_number=plate_number, status=AccessLog.Status.EXITED,
-                gate_id=gate_id, scanned_by=user, paired_entry=locked_entry,
+                gate_id=gate_id, scanned_by=user, paired_entry=locked_entry,   # paired here rather than via _pair_entry_exit: the entry row is already in hand and locked
             )
+        # scanned_at is auto_now_add, so the row's own timestamp is the moment
+        # it was written — the duration is measured from the rows themselves
+        # rather than from a clock read at either end.
         duration_minutes = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
         return {
             'status':           'exited',
@@ -247,6 +349,8 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
             'duration_minutes': duration_minutes,
         }
 
+    # Outside — but it may have only just left. Without this the camera would
+    # catch the car again as it drives off and admit it straight back in.
     if _in_exit_cooldown(plate_number):
         return {
             'status':         'duplicate',
@@ -256,38 +360,55 @@ def _open_campus_unknown_result(plate_number: str, gate_id: str, user) -> dict:
             'already_inside': False,
         }
 
+    # Genuinely outside and out of cooldown: this is an entry. Written with no
+    # vehicle, because in this mode there is no record of one — the plate text
+    # on the row is the whole of what is known.
     AccessLog.objects.create(
         plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
         gate_id=gate_id, scanned_by=user,
     )
     return {
+        # 'open_entry' is a screen label, not an AccessLog status — the row
+        # above was stored as AUTHORIZED. See _log_status for that split.
         'status':         'open_entry',
         'allowed':        True,
         'message':        'Open Campus Mode active — unregistered plate. Open entry granted.',
         'vehicle':        None,
-        'has_violations': False,
+        'has_violations': False,             # nothing to check: there is no vehicle record to carry violations
         'already_inside': False,
     }
 
 
+# May a supplier come in at all right now? A question about the clock and the
+# calendar only — which supplier it is does not enter into it.
 def _supplier_rule_denial() -> str | None:
     """Day/time-window check for supplier entries against the supplier
     RuleConstraint. Returns a denial message, or None when entry is allowed.
     Open Campus Mode bypasses the restriction like every other rule."""
     from vehicles.models import SystemSettings
+    # Borrowed from entry_logic rather than reimplemented, so "is today
+    # allowed" and "are we inside the hours" mean exactly what they mean for
+    # students and employees.
     from .entry_logic import _get_active_rule, _is_within_days, _is_within_window
     rule = _get_active_rule('supplier')
+    # No rule configured means no restriction — an unconfigured system admits
+    # suppliers rather than turning them all away. Open Campus overrides it the
+    # same way it overrides every other rule.
     if not rule or SystemSettings.get().open_campus_mode:
         return None
     if not _is_within_days(rule):
-        day_name = timezone.localdate().strftime('%A')
+        day_name = timezone.localdate().strftime('%A')   # the day named, so the guard can tell the driver something useful
         return f'Supplier access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.'
     if not _is_within_window(rule):
+        # The hours and the rule's name, for the same reason: a driver turned
+        # away should learn when to come back and under what rule.
         return (f'Supplier access restricted. Outside allowed hours '
                 f'({rule.start_time}–{rule.end_time}) per rule: {rule.name}.')
-    return None
+    return None                                  # None is the allow case, so callers read `if denial:`
 
 
+# Is this unknown plate here for an event? Asked before the supplier roster,
+# for the reason spelled out at the end of the docstring.
 def _event_for_unregistered_plate(plate_number: str):
     """The event an unregistered plate is to be handled under, or None.
 
@@ -305,14 +426,24 @@ def _event_for_unregistered_plate(plate_number: str):
     from .entry_logic import organizer_event_for
     event = organizer_event_for(plate_number)
     if event:
-        return event
+        return event                             # listed on an event that is under way right now
+    # Nothing current. But the vehicle may be INSIDE under an event that has
+    # since ended, and it still has to be able to drive out — so the event is
+    # recovered from the entry row that admitted it.
     inside_status, last_entry = _inside_state(plate_number)
+    # `!= 'outside'` covers both 'inside' and 'duplicate', since last_entry is
+    # non-None for both and either way the row describes the same visit.
+    # event_id, not event: this only asks whether one was recorded, without
+    # fetching it until the return.
     if (inside_status != 'outside' and last_entry.event_id
             and last_entry.entrant_category == AccessLog.Category.EVENT):
         return last_entry.event
     return None
 
 
+# The second of the two state machines. Same four steps as the open-campus one
+# above — duplicate, inside, cooldown, entry — with an event's slip and
+# category written onto the rows.
 def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
     """Entry/exit for an unregistered organizer plate during its event.
 
@@ -327,9 +458,12 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
     from .entry_logic import event_summary
     from .slips import event_slip
 
+    # Every return below is `{**base, ...}`, so these four keys are on the
+    # response whichever branch answers — the guard page can render the event
+    # banner without having to know which outcome it got.
     base = {'vehicle': None, 'is_event': True, 'organizer_event': event_summary(event),
             'has_violations': False}
-    who = f'Event organizer — {event.name}'
+    who = f'Event organizer — {event.name}'      # named once; every message below starts with it
     inside_status, last_entry = _inside_state(plate_number)
 
     if inside_status == 'duplicate':
@@ -340,6 +474,9 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
         seconds_inside = (timezone.now() - last_entry.scanned_at).total_seconds()
         if seconds_inside < ENTRY_BREATHING_SECONDS:
             window_left = int(ENTRY_BREATHING_SECONDS - seconds_inside)
+            # Unlike the open-campus version, this one tells the guard how long
+            # to wait and why — they are standing at the gate with the driver,
+            # and "try again in 40s" is actionable where a flat refusal is not.
             return {**base, 'status': 'already_inside', 'allowed': False, 'already_inside': True,
                     'retry_after_seconds': window_left,
                     'message': f'{who} just entered. Re-check in {window_left}s to record an exit.'}
@@ -351,6 +488,9 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
             exit_log = AccessLog.objects.create(
                 plate_number=plate_number, status=AccessLog.Status.EXITED,
                 gate_id=gate_id, scanned_by=user, paired_entry=locked_entry,
+                # The event the vehicle CAME IN under wins over the one passed
+                # in, so a visit that straddles the end of an event still
+                # closes against the event it began under.
                 event=locked_entry.event or event, entrant_category=AccessLog.Category.EVENT,
             )
         duration = int((exit_log.scanned_at - last_entry.scanned_at).total_seconds() / 60)
@@ -358,12 +498,17 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
                 'duration_minutes': duration,
                 'message': f'{who}. Exit recorded. Duration: {duration} min.'}
 
+    # The remaining-seconds form here, not the boolean: same reason as above,
+    # the guard is told how long rather than simply refused.
     cooldown_left = _exit_cooldown_remaining(plate_number)
     if cooldown_left:
         return {**base, 'status': 'duplicate', 'allowed': False, 'already_inside': False,
                 'retry_after_seconds': cooldown_left,
                 'message': f'Exit cooldown — entry suppressed for {cooldown_left}s more.'}
 
+    # The entry. `event` and the EVENT category are written onto the row, not
+    # re-derived later: the event's plate list can be edited afterwards, and
+    # this visit must keep saying which event admitted it.
     entry_log = AccessLog.objects.create(
         plate_number=plate_number, status=AccessLog.Status.AUTHORIZED,
         gate_id=gate_id, scanned_by=user,
@@ -377,11 +522,16 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
 def _is_standby_fetcher(user) -> bool:
     """Standby fetchers are allowed to park inside campus while waiting, so the
     fetcher max-stay limit does not apply to them (only to Drop & Go)."""
+    # bool(user) first, so an unregistered plate (no account at all) answers
+    # False without a query. Only an ACCEPTED registration counts — a pending
+    # application claiming standby must not lift the limit.
     return bool(user) and user.registrations.filter(
         status='accepted', registrant_type='fetcher', fetcher_type='standby',
     ).exists()
 
 
+# Called at EXIT, once the duration is known: did they stay longer than their
+# rule allows, and if so, issue the violation for it.
 def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
                       duration_minutes: int, gate_id: str = '', evidence_bytes=None) -> int:
     """
@@ -391,17 +541,23 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
     so one is adopted/created (unauthorized, unowned) to carry the violation.
     """
     from vehicles.models import RuleConstraint, Vehicle
+    # Three conditions on one query: the right kind of rule, switched on, and
+    # actually carrying a limit. A rule with no max_stay_minutes restricts
+    # hours and days without capping how long a visit may run.
     rule = RuleConstraint.objects.filter(
         constraint_type=constraint_type, enabled=True,
         max_stay_minutes__isnull=False,
     ).first()
     if not rule or duration_minutes <= rule.max_stay_minutes:
-        return 0
-    overstay = duration_minutes - rule.max_stay_minutes
+        return 0                                 # no limit, or inside it — 0 is the "nothing to report" answer
+    overstay = duration_minutes - rule.max_stay_minutes   # how far over, which is what the violation and the guard message both quote
     if vehicle is None:
+        # A supplier or event plate has no Vehicle row, and a violation has to
+        # hang off one. Created unowned and unauthorized, so it carries the
+        # record without granting the plate anything.
         vehicle, _ = Vehicle.objects.get_or_create(
             plate_number=plate_number,
-            defaults={'vehicle_type': 'car', 'is_authorized': False},
+            defaults={'vehicle_type': 'car', 'is_authorized': False},   # 'car' is a placeholder: the real type is unknown at the gate
         )
     try:
         _auto_log_violation(
@@ -410,11 +566,13 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
             f'(rule: {rule.name})',
             gate_id,
             vtype=Violation.Type.TIME_EXCEED,
-            evidence_bytes=evidence_bytes,
+            evidence_bytes=evidence_bytes,       # the camera frame, when the caller had one
         )
     except Exception:
+        # Swallowed so a failure to record the violation cannot block the exit
+        # itself. The vehicle is leaving either way; the gate must not hold it.
         pass
-    return overstay
+    return overstay                              # returned regardless, so the guard is told about the overstay even if logging it failed
 
 
 def _active_visitor_pass(plate_number: str):
