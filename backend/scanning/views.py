@@ -3099,6 +3099,15 @@ class ManualEntryView(APIView):
         })
 
 
+# ──────────────────────────────────────────────
+# Finding a vehicle, and vehicles with no plate
+# ──────────────────────────────────────────────
+#
+# The last group in this file covers the cases the plate machinery cannot: a
+# guard who has a name but no readable plate, a car with no plate at all, and
+# the shift bookkeeping that says which guard is on which gate.
+
+# One search box, three different kinds of thing behind it.
 class OwnerLookupView(APIView):
     """Find a vehicle by its owner's NAME, or by plate / conduction number.
 
@@ -3112,16 +3121,21 @@ class OwnerLookupView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
-    MAX_RESULTS = 12
+    MAX_RESULTS = 12                         # a barrier is not a place to scroll; 12 is what fits on the guard's screen
 
     def get(self, request):
         query = (request.query_params.get('q') or '').strip()
+        # Two characters minimum: a single letter matches most of the database
+        # and would be slow to answer and useless to read.
         if len(query) < 2:
             return Response(
                 {'error': 'Type at least 2 characters — a name, plate, or conduction number.'},
                 status=400,
             )
 
+        # The same text, normalised two ways: `identifier` for plate-shaped
+        # comparison, `query` as typed for names. Both are tried, because the
+        # guard has one box and may be typing either.
         identifier = query.upper().replace(' ', '')
         matches = (
             Vehicle.objects
@@ -3135,12 +3149,14 @@ class OwnerLookupView(APIView):
                 # the name on the pass must still find the car.
                 | Q(registrations__full_name__icontains=query)
             )
-            .distinct()
+            .distinct()                      # the registrations join can return the same vehicle more than once
+            # MAX_RESULTS + 1: fetching one extra row is how the code below
+            # learns there were MORE matches, without a second COUNT query.
             .order_by('plate_number', 'conduction_number')[:self.MAX_RESULTS + 1]
         )
         matches = list(matches)
-        truncated = len(matches) > self.MAX_RESULTS
-        matches = matches[:self.MAX_RESULTS]
+        truncated = len(matches) > self.MAX_RESULTS   # the extra row came back, so there is at least one more
+        matches = matches[:self.MAX_RESULTS]     # ...and it is dropped again before use
 
         # Today's visitors on an active pass, by the name on their slip. A
         # visitor's car is usually an unregistered plate with no owner account,
@@ -3153,11 +3169,19 @@ class OwnerLookupView(APIView):
             .filter(Q(visitor_name__icontains=query) | Q(plate_number__icontains=identifier))
             .order_by('-entered_at')[:self.MAX_RESULTS]
         )
+        # A visitor's car has a Vehicle row (the gate made one), so it can
+        # appear in BOTH lists. Dropped from the vehicle side, because the
+        # visitor entry below says more — it carries the slip.
         visitor_vehicle_ids = {p.vehicle_id for p in visitor_passes}
         matches = [v for v in matches if v.pk not in visitor_vehicle_ids]
 
+        # One query for every plate at once, rather than _inside_state per row
+        # — this is exactly the case _plates_inside exists for.
         inside = _plates_inside([v.identifier for v in matches] + [p.plate_number for p in visitor_passes])
 
+        # Built in priority order — visitors, then no-plate vehicles, then
+        # registered ones — because the list is truncated at the end, so
+        # whatever goes in first is what survives.
         results = []
         for p in visitor_passes:
             v = p.vehicle
@@ -3186,6 +3210,9 @@ class OwnerLookupView(APIView):
             AccessLog.objects
             .filter(is_unrecognized=True, status=AccessLog.Status.AUTHORIZED,
                     driver_name__icontains=query, scanned_at__gte=start, scanned_at__lt=end)
+            # Still inside, expressed the same way the occupancy ledger does
+            # it: exclude any entry an exit row points at. Both halves bounded
+            # to today, so the subquery does not scan every exit ever recorded.
             .exclude(pk__in=AccessLog.objects.filter(
                 paired_entry__isnull=False, scanned_at__gte=start, scanned_at__lt=end,
             ).values_list('paired_entry_id', flat=True))
@@ -3201,11 +3228,13 @@ class OwnerLookupView(APIView):
                 'model':             log.vehicle_model,
                 'color':             log.vehicle_color,
                 'is_authorized':     False,
+                # The driver's name AND the reference, because the name is all
+                # this vehicle has and two drivers can share one.
                 'owner_name':        f'{log.driver_name} · NP-{log.pk}',
                 'owner_type':        '',
                 'classification':    log.entrant_category or 'unknown',
-                'is_inside':         True,
-                'slip_code':         f'SLC-NOPLATE:{log.pk}',
+                'is_inside':         True,       # true by construction: the query only returned rows with no exit
+                'slip_code':         f'SLC-NOPLATE:{log.pk}',   # picking this opens the slip, the only way to close a plateless visit
             })
         for v in matches:
             owner = v.user
@@ -3225,8 +3254,10 @@ class OwnerLookupView(APIView):
                 'is_inside':         plate in inside,
             })
 
+        # Re-checked after combining: the three sources together can overflow
+        # even when the vehicle query alone did not.
         truncated = truncated or len(results) > self.MAX_RESULTS
-        results = results[:self.MAX_RESULTS]
+        results = results[:self.MAX_RESULTS]     # and the registered matches are what get cut, being last in
         return Response({
             'query':     query,
             'count':     len(results),
@@ -3262,6 +3293,9 @@ class UnrecognizedEntryView(APIView):
         AccessLog.Category.UNKNOWN,
     }
 
+    # NP-<row number> is this vehicle's stand-in for a plate: it is what the
+    # slip prints, what the guard quotes, and what the exit is recorded
+    # against. Derived from the primary key, so it is unique without a column.
     def _serialize(self, log, exit_log=None):
         data = AccessLogSerializer(log).data
         data['reference'] = 'NP-%d' % log.pk
@@ -3273,6 +3307,9 @@ class UnrecognizedEntryView(APIView):
 
     def get(self, request):
         """Unrecognized vehicles still inside — the panel the guard closes from."""
+        # No `or 'main'` fallback here, unlike the write paths: leaving gate_id
+        # None means "do not filter by gate", so a guard with no posting sees
+        # every plateless vehicle rather than only the orphan bucket's.
         gate_id = (request.query_params.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None))
         start, end = day_range(timezone.localdate())
@@ -3301,6 +3338,8 @@ class UnrecognizedEntryView(APIView):
         model       = (request.data.get('vehicle_model') or '').strip()
         note        = (request.data.get('entry_note') or '').strip()
 
+        # Collected rather than returned one at a time: the guard is filling a
+        # short form at the barrier and should see everything missing at once.
         problems = {}
         if not driver_name:
             problems['driver_name'] = "Enter the driver's name — it is the only identifier this vehicle has."
@@ -3308,6 +3347,9 @@ class UnrecognizedEntryView(APIView):
             problems['entrant_category'] = 'Choose who is entering: student, employee, fetcher, visitor, or unregistered.'
         if vtype not in Vehicle.Type.values:
             problems['vehicle_type'] = 'Choose the vehicle type.'
+        # Colour is required where MODEL is not: two silver cars are hard to
+        # tell apart, but a guard can always see a colour, and demanding a
+        # model they cannot identify would stall the barrier.
         if not color:
             problems['vehicle_color'] = 'Enter the vehicle colour — without a plate it is how this vehicle is told apart.'
         if problems:
@@ -3317,11 +3359,11 @@ class UnrecognizedEntryView(APIView):
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
         log = AccessLog.objects.create(
-            plate_number     = '',
+            plate_number     = '',               # the empty plate is the point: this row is found by reference, never by identifier
             vehicle_type     = vtype,
-            status           = AccessLog.Status.AUTHORIZED,
+            status           = AccessLog.Status.AUTHORIZED,   # a real entry, so it counts toward occupancy like any other
             entrant_category = category,
-            is_unrecognized  = True,
+            is_unrecognized  = True,             # the flag every plateless query keys on
             driver_name      = driver_name,
             vehicle_color    = color,
             vehicle_model    = model,
@@ -3345,9 +3387,16 @@ class UnrecognizedEntryView(APIView):
         return Response(data, status=201)
 
 
+# Closes a plateless visit. Note it DOES pair (paired_entry=entry) — with no
+# plate there is nothing for _pair_entry_exit to match on, so the entry row is
+# passed in directly by whoever found it.
 def _record_noplate_exit(request, entry, gate_id):
     """Log the exit of a hand-recorded, plateless vehicle. Returns
     (minutes inside, the exit AccessLog)."""
+    # The description is COPIED onto the exit row rather than read through the
+    # pairing. The Vehicle Log renders exit rows that were never merged into an
+    # entry (see _merge_access_log_visits), and one showing a blank plate and
+    # no description would be unreadable on its own.
     exit_log = AccessLog.objects.create(
         plate_number     = '',
         vehicle_type     = entry.vehicle_type,
@@ -3378,14 +3427,19 @@ class UnrecognizedExitView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
+        # Three guards, each with its own status because each means something
+        # different to the guard holding the slip.
         entry = AccessLog.objects.filter(pk=pk, is_unrecognized=True).first()
         if not entry:
-            return Response({'error': 'No unrecognized entry with that reference.'}, status=404)
+            return Response({'error': 'No unrecognized entry with that reference.'}, status=404)   # no such row, or it is an ordinary plated one
         if entry.status != AccessLog.Status.AUTHORIZED:
-            return Response({'error': 'That record is not an entry.'}, status=400)
+            return Response({'error': 'That record is not an entry.'}, status=400)   # pointed at an exit row, most likely from a stale screen
         if AccessLog.objects.filter(paired_entry=entry).exists():
-            return Response({'error': 'This vehicle has already been logged out.'}, status=409)
+            return Response({'error': 'This vehicle has already been logged out.'}, status=409)   # 409: the request was fine, the world moved
 
+        # Four fallbacks deep, and the third is the interesting one: the gate
+        # the vehicle CAME IN at, so a plateless visit closed from another
+        # terminal still lands on a sensible gate rather than the orphan.
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or entry.gate_id or 'main')
@@ -3399,6 +3453,8 @@ class UnrecognizedExitView(APIView):
         })
 
 
+# How a guard starts their shift: scan their own QR at the kiosk. This is a
+# LOGIN endpoint, so it is open — the QR token is the credential.
 class QRLoginView(APIView):
     """
     Kiosk QR scan login — validates guard's QR token, ends any active shift
@@ -3415,17 +3471,32 @@ class QRLoginView(APIView):
         if not qr_token:
             return Response({'error': 'qr_token is required.'}, status=400)
 
+        # All three conditions in one query, so a guard account that was
+        # deactivated or had its role changed cannot sign in with an old QR —
+        # and the error says nothing about which condition failed.
         try:
             guard = User.objects.get(qr_token=qr_token, role='security', is_active=True)
         except User.DoesNotExist:
             return Response({'error': 'Invalid or unrecognised QR code.'}, status=403)
 
         # Gate is selected by the guard at the login screen — that selection IS their assignment.
+        # What they picked at the kiosk, falling back to where they were last
+        # posted. Checked against ACTIVE gates only, so a retired gate cannot
+        # be signed into.
         gate = (request.data.get('gate') or '').strip() or guard.gate_assignment
         if gate not in Gate.active_ids():
             return Response({'error': 'Please select a valid gate before scanning.'}, status=400)
 
         # Persist the gate the guard logged in at on their profile.
+        #
+        # This write is what every later scan depends on: the entry, exit and
+        # override endpoints all read gate_assignment off request.user and have
+        # no other source. Without it their scans would land in the orphan
+        # 'main' bucket, visible in no gate's log.
+        #
+        # .update() rather than .save(): it writes the one column without
+        # touching anything else on the account, then the in-memory object is
+        # brought back into step for the rest of this request.
         if guard.gate_assignment != gate:
             User.objects.filter(pk=guard.pk).update(gate_assignment=gate)
             guard.gate_assignment = gate
@@ -3442,9 +3513,12 @@ class QRLoginView(APIView):
         # Audit
         _audit_ip = get_client_ip(request)
         gate_label = _gate_label(gate)
+        # Written directly rather than through _audit(), which takes its actor
+        # from request.user — and on this endpoint request.user is anonymous,
+        # because the guard is only being authenticated right now.
         try:
             AuditLog.objects.create(
-                actor=guard,
+                actor=guard,                     # the guard who scanned, not the (absent) request user
                 action=AuditLog.Action.GUARD_LOGIN,
                 details=f"Guard shift login | {gate_label} | {guard.full_name}",
                 ip_address=_audit_ip,
@@ -3480,6 +3554,8 @@ class CurrentShiftsView(APIView):
             .filter(clocked_out_at__isnull=True)
             .select_related('guard')
         )
+        # Keyed by gate, like GuardMonitorView's active_shifts: the question
+        # is "who is on this gate", and one gate has one guard at a time.
         result = {}
         for shift in active:
             result[shift.gate] = {
@@ -3495,11 +3571,15 @@ class CurrentShiftsView(APIView):
         return Response(result)
 
 
+# The shift history. Admin-only, and the last endpoint in the file.
 class GuardShiftListView(APIView):
     """Admin: paginated full shift history."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]   # authentication by the class, the admin check by hand below
 
     def get(self, request):
+        # Safe to read .role without an is_authenticated guard here, unlike
+        # GuardMonitorView: permission_classes above has already refused
+        # anonymous requests, so request.user is a real account.
         if request.user.role != 'admin':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
@@ -3521,4 +3601,7 @@ class GuardShiftListView(APIView):
             except (TypeError, ValueError):
                 pass  # ignore malformed dates rather than 500
 
+        # Capped at 100 despite the docstring saying "paginated" — there is no
+        # page parameter, so this returns the most recent 100 and no more.
+        # Stated as found; nothing changed.
         return Response(GSSer(qs[:100], many=True).data)
