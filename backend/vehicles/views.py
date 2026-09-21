@@ -3536,13 +3536,19 @@ class ProgramListView(APIView):
 # Parking Availability (for vehicle owners)
 # ──────────────────────────────────────────────
 
+# "Signed in, and an owner rather than staff." Defined here but not referenced
+# anywhere in the backend — ParkingAvailabilityView below opens itself to any
+# signed-in role instead. Recorded, not changed: this pass comments code.
 class IsVehicleOwnerRole(permissions.BasePermission):
     def has_permission(self, request, view):
+        # All three parts matter: AnonymousUser has no role, and an
+        # unauthenticated request would otherwise fail on the attribute.
         return bool(request.user and request.user.is_authenticated and request.user.role == 'vehicle_owner')
 
 
+# "Where can I park?", answered from what the cameras can currently see.
 class ParkingAvailabilityView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]   # any signed-in role, not owners alone — guards and admin read the same figures
 
     def get(self, request):
         """Live availability for the owner portal.
@@ -3561,46 +3567,56 @@ class ParkingAvailabilityView(APIView):
         per-zone name lookup used to run inside the aggregation loop, one SELECT
         per zone; it now reads the `select_related` row already in hand.
         """
-        from .capacity import category_state
+        from .capacity import category_state   # imported here, not at module level, to keep this module's import graph flat
 
+        # Optional filter. Anything other than the two known categories is
+        # ignored rather than refused — an unrecognised value simply means
+        # "show me everything", which is what the page defaults to anyway.
         category = request.query_params.get('category', '')
-        qs = ParkingSpace.objects.select_related('zone').all()
+        qs = ParkingSpace.objects.select_related('zone').all()   # the zone is read for every bay below, so it is joined in once here
         if category in ['motorcycle', 'car']:
-            qs = qs.filter(zone__vehicle_category=category)
+            qs = qs.filter(zone__vehicle_category=category)   # filtered on the zone's category: a bay belongs to whatever its zone is for
 
         # Materialise once, then serialize from the same rows. Aggregating over
         # the model objects (whose `zone` is already joined) is what removes the
         # per-zone query.
-        space_rows = list(qs)
-        spaces = ParkingSpaceSerializer(space_rows, many=True).data
+        space_rows = list(qs)                    # the query runs once, here; everything below reads this list
+        spaces = ParkingSpaceSerializer(space_rows, many=True).data   # the bay map, for the "which slot is free" view
 
-        state = category_state()
+        state = category_state()                 # the authoritative tallies, worked out once for both categories
         summary = {}
         for cat in ('car', 'motorcycle'):
+            # Both categories are computed above regardless; this only decides
+            # which of them the caller asked to be told about.
             if category in ('car', 'motorcycle') and cat != category:
                 continue
-            cat_state = state.get(cat, {})
+            cat_state = state.get(cat, {})       # {} when a category has no zones configured at all
+            # Every read is .get with a default: a partially configured campus
+            # should render a screen full of zeroes, not raise a KeyError.
             summary[cat] = {
-                'total':     cat_state.get('capacity', 0),
-                'occupied':  cat_state.get('occupied', 0),
-                'on_campus': cat_state.get('on_campus', 0),
-                'unmonitored': cat_state.get('unmonitored', 0),
+                'total':     cat_state.get('capacity', 0),      # bays declared for this category
+                'occupied':  cat_state.get('occupied', 0),      # bays a camera currently sees a vehicle in
+                'on_campus': cat_state.get('on_campus', 0),     # vehicles inside the gates per the scans — reported beside the parking figure, never subtracted from it
+                'unmonitored': cat_state.get('unmonitored', 0), # zones with no baseline, whose bays nobody can score
                 # Bays an event under way has declared it will fill. Reported
                 # separately from 'occupied' so the screen can say WHY the free
                 # count dropped instead of looking like a miscount.
                 'reserved':  cat_state.get('reserved', 0),
                 'available': cat_state.get('available', 0),
                 'is_full':   cat_state.get('is_full', False),
-                'source':    'camera_bays',
+                'source':    'camera_bays',      # says where these numbers came from, so a screen never presents a camera estimate as a count of passes
             }
 
+        # The same bays again, this time tallied per zone. Counted in Python
+        # over the rows already in hand rather than asked of the database a
+        # second time — the join above is what makes `space.zone` free here.
         zone_agg = {}  # zone_id -> bay tallies for that zone
         for space in space_rows:
             zone = space.zone
             if zone is None:
-                continue
+                continue                         # a bay not yet assigned to a zone: it belongs in no zone's tally
             entry = zone_agg.get(zone.id)
-            if entry is None:
+            if entry is None:                    # first bay seen for this zone, so start its tally
                 entry = zone_agg[zone.id] = {
                     'zone_id':   zone.id,
                     'zone_name': zone.name,
@@ -3608,20 +3624,23 @@ class ParkingAvailabilityView(APIView):
                     'total':     0,
                     'occupied':  0,
                 }
-            entry['total'] += 1
+            entry['total'] += 1                  # every bay counts toward its zone's size
             if space.is_occupied:
                 entry['occupied'] += 1
 
         zones = []
         for z in zone_agg.values():
+            # Guarded against a zone with no bays: it cannot happen through the
+            # loop above, which only creates an entry when it sees one, but the
+            # division is the kind that takes a whole page down with it.
             fill_pct = round(z['occupied'] / z['total'] * 100) if z['total'] > 0 else 0
-            zones.append({**z, 'available': z['total'] - z['occupied'],
+            zones.append({**z, 'available': z['total'] - z['occupied'],   # free bays in this specific zone
                           'fill_pct': fill_pct, 'source': 'camera_bays'})
 
         return Response({
-            "spaces":  spaces,
-            "summary": summary,
-            "zones":   zones,
+            "spaces":  spaces,                   # bay by bay: where to actually head
+            "summary": summary,                  # per category: the headline numbers
+            "zones":   zones,                    # per zone: how full each area is
             # The event holding bays back right now, so the screen can name it
             # rather than leaving the smaller free count unexplained.
             "event":   state.get('event'),
@@ -3631,6 +3650,8 @@ class ParkingAvailabilityView(APIView):
         })
 
 
+# The one row that configures the whole system, and the three ways it is
+# touched: GET reads it, PUT rewrites all of it, PATCH flips a toggle.
 class SystemSettingsView(APIView):
     """System-wide configuration. Readable by any signed-in role — screens all
     over the app need the retention, fee and event-mode values — but writable
@@ -3641,11 +3662,20 @@ class SystemSettingsView(APIView):
     the kind of quiet change a stolen session would be used for.
     """
 
+    # Permissions per method rather than one `permission_classes` list, because
+    # reading and writing are not the same risk. Instantiated, not named: DRF
+    # expects objects here, where the class attribute would take the classes.
     def get_permissions(self):
         if self.request.method == 'GET':
-            return [permissions.IsAuthenticated()]
+            return [permissions.IsAuthenticated()]   # every role reads these values somewhere
+        # Any write: CDSO only, AND a fresh step-up token. HasRecentTwoFactor
+        # exempts safe methods itself, so it would pass a GET through — the
+        # branch above is what actually keeps reads open.
         return [IsAdminOrCdso(), HasRecentTwoFactor()]
 
+    # One shape for the whole row, used by all three methods AND as the
+    # before/after snapshot the audit line is diffed from — which is why it
+    # lists every field rather than only the ones a screen happens to show.
     def _serialize(self, obj):
         return {
             "retention_years":    obj.retention_years,
@@ -3653,8 +3683,11 @@ class SystemSettingsView(APIView):
             "event_mode_parking": obj.event_mode_parking,
             "event_mode_entry":   obj.event_mode_entry,
             "open_campus_mode":   obj.open_campus_mode,
+            # ISO strings, and None when unset — dates go out as text so the
+            # form displays them without doing any date maths of its own.
             "registration_start": obj.registration_start.isoformat() if obj.registration_start else None,
             "registration_end":   obj.registration_end.isoformat()   if obj.registration_end   else None,
+            # float() for the wire only; the column and every charge stay Decimal.
             "vehicle_pass_fee":          float(obj.vehicle_pass_fee),
             "vehicle_pass_fee_employee": float(obj.vehicle_pass_fee_employee),
             "account_expiry_enabled": obj.account_expiry_enabled,
@@ -3667,14 +3700,23 @@ class SystemSettingsView(APIView):
         }
 
     def get(self, request):
-        return Response(self._serialize(SystemSettings.get()))
+        return Response(self._serialize(SystemSettings.get()))   # SystemSettings.get() creates the single row on first call, so this never 404s
 
+    # The full rewrite. Its shape is: read every value (falling back to what is
+    # already stored), validate every one of them into `errors`, refuse the
+    # whole request if anything is wrong, then write and apply the knock-on
+    # effects. Nothing is assigned to `obj` until every check has passed, so a
+    # request with one bad field cannot half-apply.
     def put(self, request):
         obj = SystemSettings.get()
-        before = self._serialize(obj)
-        errors = {}
+        before = self._serialize(obj)            # the snapshot the audit line is diffed against at the end
+        errors = {}                              # field -> message; collected rather than raised, so the form gets every problem at once
 
-        from datetime import date as date_type
+        from datetime import date as date_type   # aliased, as every datetime import in this file is (_dt, _date); the plain name is never bound here
+
+        # Every field defaults to what is already stored, which is what makes a
+        # PUT carrying only some keys leave the rest alone instead of blanking
+        # them. The values are still raw here — validation is the next block.
         retention_years      = request.data.get("retention_years",    obj.retention_years)
         scan_dedup_seconds   = request.data.get("scan_dedup_seconds", obj.scan_dedup_seconds)
         event_mode_parking   = request.data.get("event_mode_parking", obj.event_mode_parking)
@@ -3692,8 +3734,14 @@ class SystemSettingsView(APIView):
         auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
         auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
 
+        # The pattern every numeric field below follows: coerce, then range
+        # check, and record a message instead of raising. int() of a string is
+        # deliberate — a form posts "5", not 5.
         try:
             retention_years = int(retention_years)
+            # How long archived records are kept before deletion. The ceiling is
+            # as important as the floor: this is the number that decides when
+            # archived accounts are permanently removed.
             if not (1 <= retention_years <= 10):
                 errors["retention_years"] = "Must be between 1 and 10 years."
         except (TypeError, ValueError):
@@ -3701,18 +3749,23 @@ class SystemSettingsView(APIView):
 
         try:
             scan_dedup_seconds = int(scan_dedup_seconds)
+            # How long the gate ignores a repeat of the same plate. Too short
+            # and one car arriving is logged twice; too long and a car that
+            # genuinely left and returned is missed.
             if not (5 <= scan_dedup_seconds <= 300):
                 errors["scan_dedup_seconds"] = "Must be between 5 and 300 seconds."
         except (TypeError, ValueError):
             errors["scan_dedup_seconds"] = "Must be an integer."
 
+        # Handles both callers: a browser sending "2026-06-01", and the default
+        # above handing back the date object already on the row.
         def parse_date(val):
             if not val:
-                return None
+                return None                      # blank clears the date rather than being an error
             if isinstance(val, date_type):
-                return val
+                return val                       # already a date — the stored value came straight through
             from datetime import datetime
-            return datetime.strptime(str(val), "%Y-%m-%d").date()
+            return datetime.strptime(str(val), "%Y-%m-%d").date()   # strict format: raises ValueError, which the callers catch
 
         try:
             registration_start = parse_date(registration_start)
@@ -3724,9 +3777,14 @@ class SystemSettingsView(APIView):
         except ValueError:
             errors["registration_end"] = "Invalid date format. Use YYYY-MM-DD."
 
+        # Only once both parsed, and only when both are set: comparing a date
+        # against a string that failed to parse would raise here instead of
+        # reporting the parse error the applicant actually needs to see.
         if not errors and registration_start and registration_end and registration_end < registration_start:
             errors["registration_end"] = "End date must be on or after the start date."
 
+        # Decimal(str(...)), never Decimal(float): going through a float first
+        # is what turns a fee of 300.10 into 300.09999999999999. This is money.
         try:
             vehicle_pass_fee = Decimal(str(vehicle_pass_fee))
             if vehicle_pass_fee < 0:
@@ -3738,15 +3796,17 @@ class SystemSettingsView(APIView):
             vehicle_pass_fee_employee = Decimal(str(vehicle_pass_fee_employee))
             if vehicle_pass_fee_employee < 0:
                 errors["vehicle_pass_fee_employee"] = "Must be zero or greater."
-        except (TypeError, ValueError, InvalidOperation):
+        except (TypeError, ValueError, InvalidOperation):   # InvalidOperation is Decimal's own complaint about unparseable text
             errors["vehicle_pass_fee_employee"] = "Must be a number."
 
         # Expiration is not optional — the period is the only control. Whatever
         # the client sends for the flag is ignored, so no request can turn owner
         # accounts into accounts that live forever.
-        account_expiry_enabled = True
+        account_expiry_enabled = True            # overwritten unconditionally: the value read from the payload above is discarded here
         try:
             account_expiry_months = int(account_expiry_months)
+            # 0 is allowed on its own so the period can be expressed purely in
+            # days; the pair being zero together is what is refused, below.
             if not (0 <= account_expiry_months <= 120):
                 errors["account_expiry_months"] = "Must be between 0 and 120 months."
         except (TypeError, ValueError):
@@ -3757,6 +3817,10 @@ class SystemSettingsView(APIView):
                 errors["account_expiry_days"] = "Must be between 0 and 365 days."
         except (TypeError, ValueError):
             errors["account_expiry_days"] = "Must be an integer."
+        # Zero months AND zero days is a period of no length: the loop near the
+        # end of this method would date an owner's expiry to the day they
+        # joined, which is already past. Refused here rather than discovered
+        # later by accounts going dark the moment they are created.
         if not errors and account_expiry_months == 0 and account_expiry_days == 0:
             errors["account_expiry_months"] = (
                 "Account expiration cannot be switched off. Set at least 1 month or 1 day."
@@ -3764,6 +3828,8 @@ class SystemSettingsView(APIView):
 
         try:
             parked_after_seconds = int(parked_after_seconds)
+            # How long a vehicle must sit still in a bay before the camera calls
+            # it parked rather than manoeuvring.
             if not (1 <= parked_after_seconds <= 120):
                 errors["parked_after_seconds"] = "Must be between 1 and 120 seconds."
         except (TypeError, ValueError):
@@ -3777,6 +3843,10 @@ class SystemSettingsView(APIView):
         # A car cannot be badly parked before it counts as parked at all. Without
         # this the camera could issue a double-parking fine against a vehicle its
         # own occupancy logic still considers to be manoeuvring.
+        # Both guards are needed: either name still holding its raw payload
+        # value would make the comparison below meaningless, or raise on a
+        # string. Checked by key rather than on `errors` as a whole, so an
+        # unrelated bad field does not skip this rule.
         if ("parked_after_seconds" not in errors
                 and "double_park_after_seconds" not in errors
                 and double_park_after_seconds < parked_after_seconds):
@@ -3788,21 +3858,30 @@ class SystemSettingsView(APIView):
         # "off" is a real frequency, not a missing value — it is how automatic
         # backups are switched off, so it is accepted like any other choice.
         valid_freqs = {'off', 'hourly', 'daily', 'weekly', 'monthly'}
-        auto_backup_frequency = str(auto_backup_frequency or 'off').lower()
+        auto_backup_frequency = str(auto_backup_frequency or 'off').lower()   # `or 'off'` covers None and ''; .lower() so "Daily" is accepted
         if auto_backup_frequency not in valid_freqs:
             errors["auto_backup_frequency"] = "Must be one of: off, hourly, daily, weekly, monthly."
         try:
             auto_backup_keep = int(auto_backup_keep)
+            # How many backups are retained. Still range-checked when the
+            # frequency is 'off': the number stays on the row and applies again
+            # the moment somebody switches backups back on.
             if not (1 <= auto_backup_keep <= 90):
                 errors["auto_backup_keep"] = "Must be between 1 and 90 backups."
         except (TypeError, ValueError):
             errors["auto_backup_keep"] = "Must be an integer."
 
+        # All or nothing. One bad field and the row is left exactly as it was,
+        # which is why every assignment below this line and none above it.
         if errors:
             return Response(errors, status=400)
 
+        # Every field written, from the validated locals rather than from
+        # request.data — the names below hold coerced values, not what was sent.
         obj.retention_years    = retention_years
         obj.scan_dedup_seconds = scan_dedup_seconds
+        # The three booleans are the only fields with no validation of their
+        # own: bool() accepts anything, and there is no wrong answer to a toggle.
         obj.event_mode_parking = bool(event_mode_parking)
         obj.event_mode_entry   = bool(event_mode_entry)
         obj.open_campus_mode   = bool(open_campus_mode)
@@ -3820,7 +3899,8 @@ class SystemSettingsView(APIView):
 
         obj.auto_backup_frequency = auto_backup_frequency
         obj.auto_backup_keep      = auto_backup_keep
-        obj.save()
+        obj.save()                               # a full save, not update_fields: every column above was just reassigned
+        # ── Past this line the settings are stored. What follows makes them take effect. ──
 
         # Running zones share one cached copy of the thresholds; dropping it
         # makes the change land on the next frame in this process rather than up
@@ -3830,9 +3910,9 @@ class SystemSettingsView(APIView):
         # Apply a lowered keep-count now rather than at the next scheduled run.
         # An admin who reduces it is usually looking at a disk that is filling
         # up, and "it will tidy itself tomorrow" is not the answer they came for.
-        if before["auto_backup_keep"] != auto_backup_keep:
+        if before["auto_backup_keep"] != auto_backup_keep:   # only when the number actually moved; pruning on every save would be wasted work
             from accounts.backup_utils import prune_backups
-            prune_backups(auto_backup_keep)
+            prune_backups(auto_backup_keep)      # deletes everything past the newest `keep` of each rotating kind, straight away
 
         # Give an expiry date to any owner still missing one, using the duration
         # the admin just chose and counting from their join date. Owners that
@@ -3843,12 +3923,17 @@ class SystemSettingsView(APIView):
         # an account that would live forever, which is the state expiration is
         # meant to make impossible.
         from datetime import timedelta
-        from dateutil.relativedelta import relativedelta
-        from accounts.models import User as _User
+        from dateutil.relativedelta import relativedelta   # months are not a fixed number of days, so timedelta alone cannot add them
+        from accounts.models import User as _User          # aliased to stay clear of any local name in this long method
+        # Only owners, only live ones, and only those with no date yet — the
+        # `expires_at__isnull=True` filter is what makes this leave existing
+        # accounts alone rather than re-dating everyone on every save.
         owners = list(_User.objects.filter(
             role='vehicle_owner', is_active=True, is_archived=False, expires_at__isnull=True,
         ))
         for owner in owners:
+            # Counted from when they joined, not from today: a settings save is
+            # not meant to hand anybody a fresh term they did not have.
             owner.expires_at = (owner.date_joined.date()
                                 + relativedelta(months=account_expiry_months)
                                 + timedelta(days=account_expiry_days))
@@ -3856,20 +3941,29 @@ class SystemSettingsView(APIView):
             # batch_size matters here: Postgres' default is one CASE statement
             # covering every row, which stops being a query at a few thousand
             # owners. This is the one place a settings save touches many rows.
-            _User.objects.bulk_update(owners, ['expires_at'], batch_size=500)
+            _User.objects.bulk_update(owners, ['expires_at'], batch_size=500)   # one statement per 500 rows, and only the one column
 
-        after   = self._serialize(obj)
+        after   = self._serialize(obj)           # the row as it now stands, in the same shape as `before`
+        # Diffed rather than logged wholesale: the audit line names only what
+        # actually moved, so reading it later answers "what did they change?"
+        # instead of restating every setting on the system.
         changed = [f"{k}: {before[k]} -> {after[k]}" for k in after if before[k] != after[k]]
         if changed:
             audit(request, AuditLog.Action.RECORD_UPDATED,
                   f"System Settings updated | {'; '.join(changed)} | By: {request.user.full_name}")
 
-        return Response(self._serialize(obj))
+        return Response(self._serialize(obj))    # serialized a third time, from the saved row, so the form redraws from what was stored
 
+    # The toggles, on their own. A PUT would work, but it demands every other
+    # field be sent back correctly just to flip one switch — and these three are
+    # flipped from a header bar during an event, not from the settings form.
+    # Still CDSO-only with a step-up: get_permissions gates every non-GET.
     def patch(self, request):
         """Lightweight partial update — supports toggling event_mode_parking, event_mode_entry, and open_campus_mode."""
         obj = SystemSettings.get()
-        update_fields = []
+        update_fields = []                       # only the keys actually present are touched, which is what makes this partial
+        # `in request.data`, not .get(): absent means "leave it", while a
+        # present False means "turn it off", and .get() cannot tell them apart.
         if 'event_mode_parking' in request.data:
             obj.event_mode_parking = bool(request.data['event_mode_parking'])
             update_fields.append('event_mode_parking')
@@ -3879,12 +3973,12 @@ class SystemSettingsView(APIView):
         if 'open_campus_mode' in request.data:
             obj.open_campus_mode = bool(request.data['open_campus_mode'])
             update_fields.append('open_campus_mode')
-        if update_fields:
-            obj.save(update_fields=update_fields)
-            toggles = '; '.join(f"{f}: {getattr(obj, f)}" for f in update_fields)
+        if update_fields:                        # a PATCH naming none of the three writes nothing and audits nothing
+            obj.save(update_fields=update_fields)   # only the toggled columns, so this cannot clobber a PUT running alongside it
+            toggles = '; '.join(f"{f}: {getattr(obj, f)}" for f in update_fields)   # read back off the object, so the log states what was stored
             audit(request, AuditLog.Action.RECORD_UPDATED,
                   f"System Settings updated | {toggles} | By: {request.user.full_name}")
-        return Response(self._serialize(obj))
+        return Response(self._serialize(obj))    # the whole row either way, so the caller never has to merge the reply into what it had
 
 
 # ──────────────────────────────────────────────
