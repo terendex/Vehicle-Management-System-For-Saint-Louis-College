@@ -1,3 +1,16 @@
+// =============================================================================
+// Two-factor: enrollment, the paused-login challenge, and step-up.
+//
+// Three distinct moments, easy to conflate:
+//   setup/confirm   pairing an authenticator app, once per device
+//   verify          finishing a login the server paused for a code
+//   stepUp          buying ~10 minutes of authority over sensitive actions,
+//                   for a user who is ALREADY signed in
+//
+// `challenge` threads through the first two: its presence is what tells the
+// server "this is a paused login" rather than "an authenticated user is
+// changing their own settings".
+// =============================================================================
 import api from './axios'
 
 /** Where the "remember this browser" token lives.
@@ -10,8 +23,10 @@ import api from './axios'
 const DEVICE_TOKEN_KEY = 'twofa_device_token'
 
 export const deviceToken = {
-  get: () => localStorage.getItem(DEVICE_TOKEN_KEY) || '',
+  get: () => localStorage.getItem(DEVICE_TOKEN_KEY) || '',   // '' not null, so callers can send it as a header unconditionally
   set: (token) => {
+    // Guarded: storing a falsy value would overwrite a good token with the
+    // string "undefined", which the server would then reject on every login.
     if (token) localStorage.setItem(DEVICE_TOKEN_KEY, token)
   },
   clear: () => localStorage.removeItem(DEVICE_TOKEN_KEY),
@@ -35,6 +50,9 @@ export const twofaApi = {
   verify: async (challenge, { code, backupCode } = {}) => {
     const { data } = await api.post('/accounts/2fa/verify/', {
       challenge,
+      // Exactly one of the two is sent, never both — a backup code and a
+      // live code are different credentials and the server counts them
+      // differently (a backup code is consumed).
       ...(backupCode ? { backup_code: backupCode } : { code }),
     })
     return data

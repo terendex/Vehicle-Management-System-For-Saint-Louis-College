@@ -1,6 +1,12 @@
+// Vehicles, registrations, rules, parking zones, events, suppliers and the
+// reference lists — the widest module in api/, fronting most of the admin
+// screens. Written as one-line arrow functions throughout: each is a URL and
+// its parameters, and anything more interesting lives on the server.
 import api from './axios'
 
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const getVehicles       = ()     => api.get('/vehicles/')
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const getVehicleProfile = (id)   => api.get(`/vehicles/${id}/profile/`)
 // Same profile, addressed by plate or conduction number instead of row id, and
 // without recording anything — parking bays know a plate and nothing else.
@@ -10,6 +16,7 @@ export const lookupVehicleByPlate = (plate) =>
 export const getRuleConstraints = (params) => api.get('/vehicles/rules/', { params })
 export const createRuleConstraint = (data) => api.post('/vehicles/rules/', data)
 export const updateRuleConstraint = (id, data) => api.patch(`/vehicles/rules/${id}/`, data)
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const deleteRuleConstraint = (id) => api.delete(`/vehicles/rules/${id}/`)
 
 

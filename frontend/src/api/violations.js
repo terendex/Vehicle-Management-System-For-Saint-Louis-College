@@ -1,3 +1,6 @@
+// Violations: issuing, listing, and the release/lift flow. `violationsApi` is
+// the object screens use; the loose exports below it are older single-purpose
+// helpers, three of which no longer have callers.
 import api from './axios'
 
 export const violationsApi = {
@@ -8,12 +11,15 @@ export const violationsApi = {
 }
 
 // Guard — violations issued by the current guard
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const getGuardViolations = (date) =>
   api.get('/violations/guard/', { params: date ? { date } : {} })
 
 // Admin/CDSO — full CRUD
 export const getAllViolations   = ()      => api.get('/violations/')
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const releaseViolation   = (id)   => api.post(`/violations/${id}/release/`)
+// UNREFERENCED — no import anywhere in frontend/src. Recorded, not changed.
 export const unreleaseViolation = (id)   => api.post(`/violations/${id}/unrelease/`)
 export const resolveViolation   = (id)   => api.patch(`/violations/${id}/`, { is_resolved: true })
 export const createViolation = (data) => {

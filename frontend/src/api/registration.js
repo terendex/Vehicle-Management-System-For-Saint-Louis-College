@@ -1,3 +1,13 @@
+// Vehicle-pass registration, both halves of it:
+//
+//   the PUBLIC half   — what an applicant with no account can call while
+//                       filling in the form (status, slots, availability,
+//                       submit, then the payment link from their email)
+//   the CDSO half     — review, approve, reject, and the change requests
+//
+// They share this module because they share the resource, not because they
+// share permissions: the public calls work without a token, and the review
+// calls need an admin one. The server decides which is which.
 import api from './axios'
 
 export const registrationApi = {

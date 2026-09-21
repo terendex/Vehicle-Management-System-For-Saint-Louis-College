@@ -1,13 +1,19 @@
+// User administration — the calls behind the admin's User Management screen.
+// Admins are not in the list the server returns, so nothing here can reach one;
+// replacing an admin is its own endpoint.
 import api from './axios'
 
 export const usersApi = {
   /** List all non-admin users. Optional search by name, role, status. Paginated. */
   getUsers: async (search = '', page = 1, role = '', status = '', registrantType = '') => {
     const params = { page }
+    // Each filter is added only when set, rather than sent as an empty string.
+    // The server ignores unknown values, but an absent parameter is what keeps
+    // the URL readable in the network tab and the browser's cache key stable.
     if (search) params.search = search
     if (role) params.role = role
     if (status) params.status = status
-    if (registrantType) params.registrant_type = registrantType
+    if (registrantType) params.registrant_type = registrantType   // snake_case on the wire; camelCase in this file
     const { data } = await api.get('/accounts/users/', { params })
     return data
   },

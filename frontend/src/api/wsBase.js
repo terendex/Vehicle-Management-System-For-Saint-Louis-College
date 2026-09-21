@@ -12,6 +12,9 @@
  * VITE_API_URL still overrides for the case where the backend genuinely lives
  * on another host (e.g. the on-campus scanning agent).
  */
+// NOT IMPORTED ANYWHERE — only the WS_BASE constant below is used, and it is
+// computed once at module load. Kept because that constant needs it; noted so
+// nobody hunts for callers. (Recorded, not changed.)
 export function getWsBase() {
   // VITE_WS_URL is already a ws:// origin, so it is taken as-is.
   if (import.meta.env.VITE_WS_URL) {
@@ -23,12 +26,16 @@ export function getWsBase() {
     return override.replace(/^http/, 'ws')
   }
 
+  // The ordinary path in every real deployment. The window guard is for a
+  // non-browser context (a test runner, SSR) where `location` does not exist.
   if (typeof window !== 'undefined' && window.location) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}`
+    return `${proto}//${window.location.host}`   // host, not hostname: the port has to come along
   }
 
-  return 'ws://127.0.0.1:8000'
+  return 'ws://127.0.0.1:8000'                  // last resort, and only reachable outside a browser
 }
 
+// Evaluated ONCE at import. Safe because none of the inputs change during a
+// session — the page cannot move origin without a reload.
 export const WS_BASE = getWsBase()

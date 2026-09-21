@@ -1,6 +1,17 @@
+// Parking, in two generations. The file says so itself in the two section
+// headers below, and the split is the thing to understand:
+//
+//   parkingApi  the pre-zone API — bays addressed directly, no grouping
+//   zoneApi     the replacement — bays belong to zones, which carry capacity
+//
+// The migration COMPLETED: four files import zoneApi (DoubleParkingAlerts,
+// Events, ParkingManagement, SecurityParkingView) and none import parkingApi.
+// The old half was simply left behind, so it is safe to delete rather than an
+// unfinished piece of work. Recorded, not changed.
 import api from './axios'
 
 // ── Legacy parking space CRUD (no zone) ──────────────────────────
+// UNREFERENCED in full — superseded by zoneApi below.
 export const parkingApi = {
   listAll: async () => {
     const { data } = await api.get('/vehicles/parking/')
