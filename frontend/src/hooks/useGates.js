@@ -14,6 +14,10 @@ const FALLBACK = [
   { gate_id: 'gate4', label: 'Gate 4 — Side Entrance' },
 ]
 
+// Module scope, so the cache outlives any single component and is shared by
+// every screen. The three pieces work together: `cache` is the answer,
+// `inflight` collapses simultaneous first-mounts into one request, and
+// `subscribers` lets an invalidation reach components already rendered.
 let cache = null          // gates once fetched
 let inflight = null       // shared promise, so N mounts make 1 request
 const subscribers = new Set()
@@ -27,8 +31,8 @@ function load() {
         subscribers.forEach(fn => fn(cache))
         return cache
       })
-      .catch(() => FALLBACK)
-      .finally(() => { inflight = null })
+      .catch(() => FALLBACK)                  // a failed fetch still yields a usable list; cache stays null so the next mount retries
+      .finally(() => { inflight = null })      // released either way, so one failure does not permanently block reloading
   }
   return inflight
 }
@@ -50,8 +54,10 @@ export function useGates() {
 
   useEffect(() => {
     let alive = true
+    // Two signals on one channel: a list means "here are the new gates", and
+    // null means "the cache was invalidated, go and fetch again".
     const onChange = (next) => {
-      if (!alive) return
+      if (!alive) return                        // the guard that stops a setState after unmount
       if (next) setGates(next)
       else load().then(g => { if (alive) setGates(g) })
     }
@@ -69,7 +75,7 @@ export function useGates() {
     gateLabel: (id) => {
       if (!id) return ''
       const g = gates.find(x => x.gate_id === id)
-      return g ? shortGateLabel(g.label) : id
+      return g ? shortGateLabel(g.label) : id   // the slug itself for an unknown gate — see the docstring on why
     },
     /** Full label including the entrance description. */
     gateFullLabel: (id) => {

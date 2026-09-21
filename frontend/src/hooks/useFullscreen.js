@@ -20,18 +20,25 @@ import { useState, useEffect, useRef, useCallback } from 'react'
  * what keeps Esc, the OS chrome and the browser's own controls in sync.
  */
 export function useFullscreen() {
-  const [fsKey, setFsKey] = useState(null)
-  const refs = useRef({})
+  const [fsKey, setFsKey] = useState(null)      // which tile is fullscreen, or null — state, because the UI reads it
+  const refs = useRef({})                       // key -> DOM node; a ref, because changing it must not re-render
 
   useEffect(() => {
+    // The browser is the source of truth, not this hook. Esc, the OS window
+    // chrome and the browser's own controls all exit fullscreen without going
+    // through toggle() — this listener is what keeps `fsKey` honest when they do.
     const onChange = () => {
       if (!document.fullscreenElement) setFsKey(null)
     }
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
+  }, [])                                        // empty deps: one listener for the hook's lifetime
 
   // Stable per key, so it does not detach and reattach the ref every render.
+  // Curried: setRef(key) returns the actual ref callback. useCallback with
+  // empty deps keeps setRef itself stable, so `ref={fs.setRef(k)}` hands React
+  // a fresh inner function each render — which React calls with null then the
+  // node. The `delete` branch is that null, i.e. unmount.
   const setRef = useCallback(key => el => {
     if (el) refs.current[key] = el
     else delete refs.current[key]
@@ -40,7 +47,7 @@ export function useFullscreen() {
   /** Enter, leave, or move fullscreen. Resolves false when the browser blocks it. */
   const toggle = useCallback(async key => {
     const el = refs.current[key]
-    if (!el) return false
+    if (!el) return false                       // the tile is not mounted; nothing to make fullscreen
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen()
@@ -57,9 +64,13 @@ export function useFullscreen() {
       setFsKey(key)
       return true
     } catch {
+      // requestFullscreen rejects when the browser refuses — most often
+      // because the call did not come from a user gesture. Reported as false
+      // rather than thrown: a button that fails to expand is not an error
+      // worth interrupting the operator for.
       return false
     }
-  }, [fsKey])
+  }, [fsKey])                                   // depends on fsKey, for the move-between-tiles branch above
 
   const isFullscreen = useCallback(key => fsKey === key, [fsKey])
 

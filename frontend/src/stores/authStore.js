@@ -1,3 +1,23 @@
+// =============================================================================
+// WHO IS SIGNED IN — the single source of truth for the whole app.
+//
+// Three things live here, and they are easy to confuse:
+//
+//   1. the session itself      tokens + user, mirrored into localStorage so a
+//                              reload does not sign anybody out
+//   2. a refresh TIMER         one per app, at module scope, firing a minute
+//                              before the access token expires
+//   3. where an expiry GOES    /login, or nowhere at all on a public page
+//
+// (2) is why this file holds module-scope state instead of putting everything
+// in the store: a timer is not app state, and it must survive re-renders and
+// be cancellable from anywhere.
+//
+// (3) exists because of a real bug, described at PUBLIC_PATHS below.
+//
+// Four sign-in paths land here — password, two-factor, guard credentials and
+// guard badge. Only the first two share `_startSession`; see the note on it.
+// =============================================================================
 import { create } from 'zustand'
 import { authApi } from '../api/auth'
 import { deviceToken } from '../api/twofa'
@@ -17,6 +37,9 @@ const PUBLIC_PATHS = [
 
 export function onPublicPage() {
   const path = window.location.pathname
+  // Prefix match, not equality: '/reset-password' has to cover
+  // '/reset-password?uid=...' and '/registration/' its child routes. The
+  // ternary normalises the separator so '/login' cannot match '/loginfoo'.
   return path === '/' || PUBLIC_PATHS.some(p => path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`))
 }
 
@@ -26,16 +49,23 @@ export const expiredSessionRedirect = () => (onPublicPage() ? null : '/login')
 // Decode JWT payload without verifying signature (verification is the server's job)
 function _jwtExp(token) {
   try {
+    // [1] is the payload segment; the signature is never looked at. Safe
+    // because this value only schedules a timer — a forged exp would make the
+    // browser refresh at the wrong moment, and the SERVER still decides
+    // whether the token is any good.
     const payload = JSON.parse(atob(token.split('.')[1]))
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null   // JWT exp is seconds; JS wants ms
   } catch {
-    return null
+    return null                                 // malformed token: no timer, and the next 401 handles it
   }
 }
 
 // How far ahead of expiry (ms) to proactively refresh
 const _REFRESH_AHEAD_MS = 60_000 // 1 minute
 
+// ONE timer for the whole application, at module scope. A second sign-in
+// replaces it rather than adding to it, which is what stops two guards' timers
+// racing at a shared gate terminal.
 let _refreshTimer = null
 
 function _clearTimer() {
@@ -46,13 +76,15 @@ function _clearTimer() {
 }
 
 function _scheduleRefresh(accessToken, refreshFn, logoutFn) {
-  _clearTimer()
+  _clearTimer()                                 // always first, so every caller is safe to invoke without cancelling by hand
   const exp = _jwtExp(accessToken)
-  if (!exp) return
+  if (!exp) return                              // unreadable token: leave it to the interceptor's reactive 401 path
 
   const delay = exp - Date.now() - _REFRESH_AHEAD_MS
   if (delay <= 0) {
     // Already expired or about to — refresh immediately
+    // Happens on a reload after the laptop has been asleep, and on a token
+    // that was already short-lived when it arrived.
     refreshFn()
     return
   }
@@ -61,29 +93,43 @@ function _scheduleRefresh(accessToken, refreshFn, logoutFn) {
 }
 
 const useAuthStore = create((set, get) => {
+  // The PROACTIVE half of session keeping. The axios interceptor is the
+  // reactive half — it refreshes after a 401. Both exist: this one means a
+  // long-idle screen does not have to fail a request first, which at a gate
+  // terminal is the difference between a scan working and a scan retrying.
   const _doRefresh = async () => {
     const refreshToken = localStorage.getItem('refresh_token')
     if (!refreshToken) {
-      get().logout(expiredSessionRedirect())
+      get().logout(expiredSessionRedirect())    // nothing to refresh with: end it now rather than at the next request
       return
     }
     try {
+      // Dynamic import for the same reason as in axios.js: that module imports
+      // this one, and a static import back would be a cycle.
       const { default: api } = await import('../api/axios')
       const { data } = await api.post('/auth/refresh/', { refresh: refreshToken })
       const newAccess = data.access
       localStorage.setItem('access_token', newAccess)
       if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
       set({ accessToken: newAccess })
-      _scheduleRefresh(newAccess, _doRefresh, get().logout)
+      _scheduleRefresh(newAccess, _doRefresh, get().logout)   // re-arm from the NEW token's expiry, so the chain continues indefinitely
     } catch {
+      // Any failure ends the session. A refresh token the server has rejected
+      // will not start working on a retry.
       get().logout(expiredSessionRedirect())
     }
   }
 
   return {
-    user: JSON.parse(localStorage.getItem('user') || 'null'),
+    // Initial state read straight from localStorage, so a reload restores the
+    // session synchronously — without this the app would flash its signed-out
+    // shell on every refresh before rehydrating.
+    user: JSON.parse(localStorage.getItem('user') || 'null'),   // 'null' string as the default, so JSON.parse cannot throw
     accessToken: localStorage.getItem('access_token') || null,
     refreshToken: localStorage.getItem('refresh_token') || null,
+    // Presence of a token, not its validity — the server decides that. An
+    // expired token here means the first request 401s and the interceptor
+    // refreshes or logs out.
     isAuthenticated: !!localStorage.getItem('access_token'),
     isLoading: false,
     error: null,
@@ -101,6 +147,12 @@ const useAuthStore = create((set, get) => {
      * same things — including the `device_token` that lets this browser skip
      * the code next time, which is the whole mechanism behind the weekly rule.
      */
+    // NOTE: only `login` and `completeTwoFactorLogin` call this. The three
+    // guard paths below (`guardLogin`, `qrLogin`, and the dead `guardQrLogin`)
+    // each repeat the same six lines inline instead — four copies in one file.
+    // Not a defect today: those endpoints return neither `device_token` nor
+    // `step_up_token`, so the two things this helper does beyond the copies
+    // have nothing to act on. Recorded as duplication, not a bug.
     _startSession: (data) => {
       const user = data.user
       const accessToken = data.access
@@ -175,6 +227,10 @@ const useAuthStore = create((set, get) => {
      * QR-based guard login: logs out any currently active guard session and logs in the new one.
      * Called from the guard QR login page at the gate station.
      */
+    // ⚠ DEAD — no component calls this. It posts to
+    // /accounts/guard-qr-login/, which is not a route; its backend view is
+    // unrouted too. The live badge path is `qrLogin` further down.
+    // Recorded, not changed.
     guardQrLogin: async (qr_data) => {
       set({ isLoading: true, error: null })
       try {
@@ -211,8 +267,10 @@ const useAuthStore = create((set, get) => {
       }
     },
 
+    // The single exit. Every failure path funnels here so the timer, the
+    // storage and the step-up token can never be cleaned up by halves.
     logout: (redirectTo = '/login') => {
-      _clearTimer()
+      _clearTimer()                             // first, so a timer cannot fire mid-teardown and re-arm the session
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('user')
@@ -263,10 +321,13 @@ const useAuthStore = create((set, get) => {
     },
 
     /** Guard QR scan login — replaces the current session with the scanned guard's session. */
+    // THE live guard badge sign-in — the one a gate terminal actually uses.
+    // Not to be confused with `guardQrLogin` above, which is the dead
+    // `SLC-GUARD:` scheme. This one sends qr_token + gate to /auth/qr-login/.
     qrLogin: async (qr_token, gate) => {
       set({ isLoading: true, error: null })
       try {
-        const { qrLogin: qrLoginApi } = await import('../api/scanning')
+        const { qrLogin: qrLoginApi } = await import('../api/scanning')   // renamed on import to avoid shadowing this action
         const { data } = await qrLoginApi(qr_token, gate)
 
         const user         = data.user
