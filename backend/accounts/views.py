@@ -1260,27 +1260,38 @@ class ChangePasswordView(APIView):
     is anyone still completing their first-login enrollment, since a confirmed
     device is what arms the check.
     """
+    # Both, not either: authenticated AND a fresh second factor where the
+    # account carries one. The docstring explains why the current password is
+    # not sufficient on its own.
     permission_classes = [permissions.IsAuthenticated, HasRecentTwoFactor]
 
     def post(self, request):
-        user = request.user
+        user = request.user                  # always the caller's own account; no id is accepted
         current_password = request.data.get('current_password', '').strip()
         new_password = request.data.get('new_password', '').strip()
         confirm_password = request.data.get('confirm_password', '').strip()
 
+        # The order of these five checks is deliberate: cheapest first, and the
+        # one that costs a hash comparison only once there is something to
+        # compare. Each returns immediately, so exactly one message comes back.
         if not current_password:
             return Response({'error': 'Current password is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not user.check_password(current_password):
+        if not user.check_password(current_password):   # constant-time comparison inside Django; never compare hashes by hand
             return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_400_BAD_REQUEST)
         if not new_password:
             return Response({'error': 'New password is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if new_password != confirm_password:
             return Response({'error': 'New passwords do not match.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Compared as plaintext because both are in hand here. Rejected so a
+        # forced change cannot be satisfied by re-entering what was issued.
         if current_password == new_password:
             return Response({'error': 'New password must be different from current password.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Validate strength
         import re
+        # Collected, not returned one at a time — unlike the checks above.
+        # Somebody choosing a password should see every rule they missed in one
+        # go rather than discovering them one submission at a time.
         errors = []
         if len(new_password) < 8:
             errors.append('Password must be at least 8 characters.')
@@ -1301,10 +1312,13 @@ class ChangePasswordView(APIView):
         # welcome. Every later change gets the security notice instead.
         was_first_change = user.must_change_password
 
-        user.set_password(new_password)
-        user.must_change_password = False
+        user.set_password(new_password)      # hashes it; the plaintext is never stored
+        user.must_change_password = False    # whatever forced this change is now satisfied
         user.save(update_fields=['password', 'must_change_password'])
 
+        # Sent after the save, so the notice only goes out for a change that
+        # actually took. Not backgrounded: the caller should learn here if the
+        # security notice for their own password change could not be sent.
         notify_password_set(user, was_first_change)
         return Response({'message': 'Password changed successfully.'})
 
@@ -1318,10 +1332,18 @@ class MyRegistrationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # Role checked in the body rather than by a permission class — there is
+        # no IsVehicleOwnerRole in this file (one exists in vehicles/views.py
+        # but is itself unused). Same effect, different place.
         if request.user.role != 'vehicle_owner':
             return Response({'error': 'Only vehicle owners can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
         from vehicles.models import VehicleRegistration
         from vehicles.serializers import VehicleRegistrationSerializer
+        # The FK or the email, newest-reviewed first — the same query
+        # vehicles.views._accepted_registration_for runs, and it has to resolve
+        # to the same row the owner sees on their dashboard. The email arm
+        # covers rows filed before the account existed, since the FK is only
+        # set at approval.
         registration = (
             VehicleRegistration.objects
             .filter(Q(user=request.user) | Q(email=request.user.email), status='accepted')
@@ -1350,9 +1372,11 @@ class MyPlateSwapView(APIView):
         from vehicles.views import _plate_conflict
         from scanning.ml.validator import is_valid_ph_plate
 
-        new_plate = _normalize_plate(request.data.get('plate_number') or '')
+        new_plate = _normalize_plate(request.data.get('plate_number') or '')   # stored shape: upper-cased, no spaces
         if not new_plate:
             return Response({'plate_number': 'A plate number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Format-checked because this is self-service: nobody reviews it, so a
+        # typo here would put a plate on the pass that no gate can ever match.
         if not is_valid_ph_plate(new_plate):
             return Response({'plate_number': 'Enter a valid Philippine plate number.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1367,32 +1391,47 @@ class MyPlateSwapView(APIView):
                             status=status.HTTP_404_NOT_FOUND)
         # Only a conduction-only registration is eligible; once a real plate is set
         # the option is spent and must not run again.
+        # Two conditions, and together they are what makes this ONE-TIME:
+        # having a plate already, or never having had a conduction number,
+        # both disqualify. After a successful swap the row satisfies the first,
+        # so a second attempt cannot get past this line.
         if registration.plate_number or not registration.conduction_number:
             return Response({'error': 'This account already has a plate number on file.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
         # The new plate must not belong to anyone else (active registration or owned vehicle).
+        # .exclude(pk=...) so the owner's own registration is not counted as a
+        # clash with itself. Reuses the same helper the public form and the
+        # CDSO review use, so self-service cannot be a looser door.
         active = (VehicleRegistration.objects
                   .filter(status__in=['pending', 'accepted']).exclude(pk=registration.pk))
         conflict = _plate_conflict(new_plate, active)
         if conflict:
             return Response({'plate_number': conflict}, status=status.HTTP_400_BAD_REQUEST)
 
-        old_conduction = registration.conduction_number
+        old_conduction = registration.conduction_number   # captured before the write, for the audit line
+        # Both rows move together. Half-applied, the gate and the pass would
+        # disagree about what identifies this car — which is the state the
+        # whole swap exists to avoid.
         with transaction.atomic():
             vehicle = registration.vehicle
-            if vehicle is not None:
+            if vehicle is not None:          # an accepted registration normally has one, but the swap still works without
                 vehicle.plate_number = new_plate
                 vehicle.conduction_number = ''
                 vehicle.save(update_fields=['plate_number', 'conduction_number'])
             registration.plate_number = new_plate
-            registration.conduction_number = ''
+            registration.conduction_number = ''   # cleared, which is what spends the one-time option
             registration.save()  # normalizes and persists
 
+        # Written directly rather than through log_action, and note the
+        # difference that follows: log_action also records ip_address, so this
+        # row has none. Stated as found; nothing changed.
         AuditLog.objects.create(
             actor=request.user,
             action=AuditLog.Action.USER_UPDATED,
-            target_user=request.user,
+            target_user=request.user,        # actor and target are the same person: this is a self-service change
+            # Both identifiers in the line, so the trail shows what the plate
+            # replaced rather than only what it became.
             details=(f"Plate number set by owner | Conduction {old_conduction} -> Plate {new_plate} | "
                      f"{request.user.email}"),
         )
@@ -1404,6 +1443,33 @@ class MyPlateSwapView(APIView):
 #  Guard QR Login (passwordless, for gate stations)
 # ──────────────────────────────────────────────
 
+# ⚠ NOT ROUTED — the dead half of a live/dead pair. Do not re-route as-is.
+#
+# There are TWO complete guard-badge schemes in this codebase, and this is the
+# one nothing reaches:
+#
+#                        LIVE                          DEAD (here)
+#   secret field         User.qr_token                 User.guard_qr_secret
+#   issued by            GuardQRView                   GuardQrCodeView (below,
+#                        (users/<int:pk>/qr/,          also unrouted)
+#                         ADMIN ONLY)
+#   consumed by          accounts QRLoginView          this class
+#   on sign-in           opens a GuardShift AND        neither
+#                        persists gate_assignment
+#
+# Both model fields still exist, so this class would work the moment somebody
+# added a route — and that is the hazard. Sign-ins through here create NO
+# shift and persist NO gate, so every subsequent scan by that guard would fall
+# to the orphan 'main' bucket, invisible in any gate's log. It does keep the
+# must_change_password gate below, which scanning's dead QRLoginView twin does
+# not — the two dead classes regress differently, so neither can be judged
+# from the other.
+#
+# If this is wanted, port the live view's shift and gate handling into it
+# BEFORE routing it. If it is not wanted, delete it rather than leaving a
+# working-looking login endpoint one line away from being live.
+#
+# Recorded, not changed: this pass comments code.
 class GuardQrLoginView(APIView):
     """
     Authenticate a security guard by scanning their QR badge.
@@ -1421,11 +1487,16 @@ class GuardQrLoginView(APIView):
             return Response({'detail': 'Invalid QR code.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            # maxsplit=2, so a secret containing a colon would survive intact —
+            # a UUID never does, but splitting greedily would be a latent bug.
             _, user_code, secret_str = qr_data.split(':', 2)
-            secret = _uuid.UUID(secret_str)
+            secret = _uuid.UUID(secret_str)   # parsed here so a malformed secret is a 400, not a database error below
         except (ValueError, AttributeError):
             return Response({'detail': 'Malformed QR code.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # All four conditions in one query, and one message for every failure:
+        # a caller holding a guessed code learns nothing about which part was
+        # wrong. (The live path does the same with qr_token.)
         try:
             user = User.objects.get(user_code=user_code, guard_qr_secret=secret, role='security', is_active=True)
         except User.DoesNotExist:
@@ -1439,12 +1510,18 @@ class GuardQrLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Claims packed into the token so the frontend can render the right
+        # shell without a second request. Note what is NOT here and IS in the
+        # live view: no GuardShift is opened and no gate is persisted.
         refresh = RefreshToken.for_user(user)
         refresh['role'] = user.role
         refresh['full_name'] = user.full_name
         refresh['email'] = user.email
         refresh['must_change_password'] = user.must_change_password
 
+        # Written directly rather than through log_action, and correctly so:
+        # log_action takes its actor from request.user, which is anonymous on a
+        # login endpoint. The guard being authenticated is the actor.
         AuditLog.objects.create(
             actor=user,
             action=AuditLog.Action.GUARD_LOGIN,
@@ -1467,6 +1544,19 @@ class GuardQrLoginView(APIView):
         })
 
 
+# ⚠ NOT ROUTED — the issuing half of the dead pair described above.
+#
+# Its live counterpart is GuardQRView (`users/<int:pk>/qr/`), which returns
+# `qr_token` and is **admin only**. This one differs in two ways that matter
+# if it is ever routed:
+#
+#   * it lets the GUARD THEMSELVES fetch their own badge payload, where the
+#     live view restricts issuing to an admin
+#   * it MINTS the secret on a GET — a write on a safe method, so merely
+#     viewing this endpoint changes the account
+#
+# Same instruction as its partner: port the live view's rules before routing
+# it, or delete it. Recorded, not changed.
 class GuardQrCodeView(APIView):
     """
     Generate (or retrieve) a guard's QR secret.
@@ -1479,7 +1569,10 @@ class GuardQrCodeView(APIView):
         import uuid as _uuid
 
         if request.user.role == 'admin':
-            user = get_object_or_404(User, pk=pk, role='security')
+            user = get_object_or_404(User, pk=pk, role='security')   # role= in the lookup, so an admin cannot pull a non-guard's badge
+        # The self-service arm the live GuardQRView does not have. int(pk) is
+        # safe only while the route declares <int:pk>; there is no route at
+        # all today, so whoever adds one must keep that converter.
         elif request.user.pk == int(pk) and request.user.role == 'security':
             user = request.user
         else:
@@ -1491,9 +1584,13 @@ class GuardQrCodeView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Minted on first request and then reused, so the payload is stable
+        # across calls — a badge already printed keeps working. But this IS a
+        # write inside a GET, which is the second of the two departures noted
+        # above the class.
         if not user.guard_qr_secret:
             user.guard_qr_secret = _uuid.uuid4()
-            User.objects.filter(pk=user.pk).update(guard_qr_secret=user.guard_qr_secret)
+            User.objects.filter(pk=user.pk).update(guard_qr_secret=user.guard_qr_secret)   # one column, and the in-memory object already matches
 
         qr_payload = f'SLC-GUARD:{user.user_code}:{user.guard_qr_secret}'
         return Response({
