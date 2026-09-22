@@ -13,14 +13,30 @@ import './ReportExportBar.css'
 // a page that also wants a counts-only summary should not need a second date
 // picker that can silently disagree with this one. Each entry is
 // { key, label, fileBase?, fetch(params) -> Promise<Blob> }.
-export default function ReportExportBar({ label = 'Report', fetchBlob, extraReports = [] }) {
+// `filters` carries the screen's own active filters into every export, so a
+// report downloaded while the table is narrowed to Employees contains
+// employees. Without it the export only ever carried the date range, and a
+// filtered page still produced an unfiltered report - which reads as the
+// report being wrong rather than as the filter not having been sent.
+// `activeFilterSummary` names them on the bar, so it is clear before clicking
+// what the file will contain.
+export default function ReportExportBar({ label = 'Report', fetchBlob, extraReports = [], filters = {}, activeFilterSummary = '' }) {
   const [from, setFrom] = useState('')
   const [to, setTo]     = useState('')
   const [busy, setBusy] = useState(null) // 'pdf' | 'excel' | null
   const today = new Date().toISOString().slice(0, 10)
 
   const dateParams = () => {
+    // Filters first, dates second: the date pickers belong to this bar and
+    // must win if a screen ever passes a date of its own.
     const params = {}
+    for (const [key, value] of Object.entries(filters)) {
+      // 'all' is the screens' own "no filter" value and '' is an empty box;
+      // neither should travel as a real query parameter.
+      if (value !== undefined && value !== null && value !== '' && value !== 'all') {
+        params[key] = value
+      }
+    }
     if (from) params.date_from = from
     if (to)   params.date_to   = to
     return params
@@ -60,7 +76,14 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
 
   return (
     <div className="report-bar">
-      <span className="report-bar-label"><FileBarChart2 size={14} /> {label}</span>
+      <span className="report-bar-label">
+        <FileBarChart2 size={14} /> {label}
+        {activeFilterSummary && (
+          <span className="report-bar-filters" title="These filters are applied to the exported report">
+            {activeFilterSummary}
+          </span>
+        )}
+      </span>
       <div className="report-bar-dates">
         <Calendar size={13} />
         <input

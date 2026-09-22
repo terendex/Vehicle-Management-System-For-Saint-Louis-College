@@ -4763,6 +4763,17 @@ def _filter_registrations_report(request):
     date_to   = request.query_params.get('date_to', '').strip()
     status_f  = request.query_params.get('status', '').strip()
     search    = request.query_params.get('search', '').strip()
+    # The management screen's other two knobs. They were missing here, which is
+    # why a report downloaded while the page was filtered to Employees still
+    # came back with every registrant on it - the export only ever carried the
+    # date range. 'all' is the screen's own "no filter" value, so it is treated
+    # as absent rather than matched literally against nothing.
+    type_f    = request.query_params.get('registrant_type', '').strip()
+    payment_f = request.query_params.get('payment_status', '').strip()
+    if type_f == 'all':
+        type_f = ''
+    if payment_f == 'all':
+        payment_f = ''
     # Campus-local dates, inclusive at both ends, and an unparseable date is
     # ignored rather than raising — see filter_local_date_range, which exists
     # because the plain `__date__gte` form both defeated the index and turned
@@ -4772,6 +4783,12 @@ def _filter_registrations_report(request):
         # Not checked against the choices: an unknown status simply matches
         # nothing, and an empty report for a filter nobody set is harmless.
         qs = qs.filter(status=status_f)
+    if type_f:
+        # Same reasoning as status above: an unrecognised value matches nothing
+        # rather than raising.
+        qs = qs.filter(registrant_type=type_f)
+    if payment_f:
+        qs = qs.filter(payment_status=payment_f)
     if search:
         # Plate or name, the two things somebody looking for one registration
         # actually has to hand.
@@ -4780,12 +4797,18 @@ def _filter_registrations_report(request):
     # `desc` is the filter written out for the report's subtitle, so a printed
     # copy says on its face what it was filtered to — a page of numbers with no
     # statement of what was excluded is the kind of report that gets misread.
-    status_labels = dict(VehicleRegistration.Status.choices)
+    status_labels  = dict(VehicleRegistration.Status.choices)
+    type_labels    = dict(VehicleRegistration.RegistrantType.choices)
+    payment_labels = dict(VehicleRegistration.PaymentStatus.choices)
     desc = []
     if date_from or date_to:
         desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")   # names the open end, rather than leaving a blank
     if status_f:
         desc.append(f"Status: {status_labels.get(status_f, status_f)}")   # the readable label, falling back to the raw value for an unknown one
+    if type_f:
+        desc.append(f"Registrant type: {type_labels.get(type_f, type_f)}")
+    if payment_f:
+        desc.append(f"Payment: {payment_labels.get(payment_f, payment_f)}")
     if search:
         desc.append(f"Search: '{search}'")
     return qs.order_by('-created_at'), desc      # newest first, and the description alongside — both callers need both
@@ -4794,6 +4817,7 @@ def _filter_registrations_report(request):
 # Turns registration rows into the flat list of cells both report formats take.
 def _registration_report_rows(qs):
     from django.utils import timezone as tz
+    from report_utils import sentence_case
     # The label maps are built once, outside the loop: a get_..._display() call
     # per row would do this lookup thousands of times over.
     reg_labels    = dict(VehicleRegistration.RegistrantType.choices)
@@ -4809,7 +4833,11 @@ def _registration_report_rows(qs):
             r.plate_number or '—',
             r.full_name or '—',
             reg_labels.get(r.registrant_type, r.registrant_type or '—'),   # falls back to the stored value, then to a dash
-            r.vehicle_type or '—',
+            # Free text typed on the form, so it arrives as "sedan", "Sedan"
+            # and "SUV" all at once. sentence_case raises only the first
+            # character, which is what makes the column read consistently
+            # without turning the acronym into "Suv".
+            sentence_case(r.vehicle_type),
             status_labels.get(r.status, r.status),   # status always has a value, so no dash case here
         ])
     return rows
@@ -5022,6 +5050,55 @@ class RegistrationSummaryView(APIView):
         })
 
 
+def _vehicle_category_breakdown(qs, counts):
+    """Count the same rows by vehicle category x registrant type.
+
+    The summary already cross-tabs registrant type against status and against
+    payment. Neither answers "how many tricycles", which is the question the
+    CDSO is actually asked about capacity - so this is the third axis.
+
+    VehicleRegistration.vehicle_type is free text (Vehicle.Type is the fixed
+    list; this column is what the applicant typed), so "sedan", "Sedan" and
+    " SEDAN " are one category entered three ways. They are folded on a
+    case-insensitive key and displayed through sentence_case, which raises the
+    first letter without turning "SUV" into "Suv".
+
+    Rows are ordered by count, largest first: the point of the table is which
+    categories dominate, and alphabetical order buries that.
+    """
+    from report_utils import sentence_case
+    reg_types   = counts['types']            # already carries the Other bucket when it has rows
+    type_labels = counts['type_labels']
+
+    buckets = {}
+    for row in qs.values('vehicle_type', 'registrant_type').annotate(n=Count('pk')):
+        label = sentence_case(row['vehicle_type'])
+        bucket = buckets.setdefault(label.casefold(),
+                                    {'label': label,
+                                     'by_reg': {t: 0 for t in reg_types},
+                                     'total': 0})
+        # A registrant type outside the enum lands in the same Other column the
+        # rest of this report uses, so the columns still sum to the row total.
+        key = row['registrant_type'] if row['registrant_type'] in bucket['by_reg'] else OTHER_KEY
+        if key in bucket['by_reg']:
+            bucket['by_reg'][key] += row['n']
+        bucket['total'] += row['n']
+
+    ordered = sorted(buckets.values(), key=lambda b: (-b['total'], b['label']))
+    headers = ['Vehicle Category'] + [type_labels.get(t, t) for t in reg_types] + ['Total']
+    rows = [[b['label']] + [b['by_reg'][t] for t in reg_types] + [b['total']]
+            for b in ordered]
+    # The margin row, on the same figure the other two tables total to.
+    rows.append(['ALL CATEGORIES']
+                + [sum(b['by_reg'][t] for b in ordered) for t in reg_types]
+                + [counts['total']])
+
+    n = len(reg_types)
+    # Same width arithmetic as section() above: 267mm printable, 60 for the
+    # category name and 30 for the total, the rest shared evenly.
+    return headers, rows, [60] + [(267 - 60 - 30) / n if n else 0] * n + [30]
+
+
 class RegistrationSummaryReportPdfView(APIView):
     """Branded PDF of how many registered, broken down by registrant type and status."""
     permission_classes = [IsAdminOrCdso]
@@ -5064,6 +5141,9 @@ class RegistrationSummaryReportPdfView(APIView):
             counts['statuses'], counts['status_labels'], counts['grid'], counts['by_status'])
         pay_headers, pay_rows, pay_widths = section(
             counts['payments'], counts['payment_labels'], counts['pay_grid'], counts['by_payment'])
+        # The third axis - sedans, tricycles, motorcycles - which neither of the
+        # two above can answer.
+        cat_headers, cat_rows, cat_widths = _vehicle_category_breakdown(qs, counts)
 
         subtitle = (('; '.join(desc) if desc else 'All records')
                     + f" · {counts['total']} registrations")
@@ -5076,12 +5156,20 @@ class RegistrationSummaryReportPdfView(APIView):
             headers=status_headers,
             rows=status_rows,
             col_widths_mm=status_widths,
-            extra_tables=[{
-                'title': 'Vehicle Pass Fee — by registrant type',
-                'headers': pay_headers,
-                'rows': pay_rows,
-                'col_widths_mm': pay_widths,
-            }],
+            extra_tables=[
+                {
+                    'title': 'Vehicle Pass Fee — by registrant type',
+                    'headers': pay_headers,
+                    'rows': pay_rows,
+                    'col_widths_mm': pay_widths,
+                },
+                {
+                    'title': 'Vehicle category — by registrant type',
+                    'headers': cat_headers,
+                    'rows': cat_rows,
+                    'col_widths_mm': cat_widths,
+                },
+            ],
         )
 
 

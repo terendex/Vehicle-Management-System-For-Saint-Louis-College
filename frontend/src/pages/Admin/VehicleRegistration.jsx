@@ -35,6 +35,20 @@ const PAYMENT_LABELS = {
   exempt: 'Exempt',
 }
 
+/* Used only to name the active filters on the export bar, so a reviewer can
+   see what a report will contain before generating it. */
+const REG_STATUS_LABELS = {
+  pending:  'Pending',
+  accepted: 'Accepted',
+  rejected: 'Rejected',
+  expired:  'Expired',
+}
+const REG_TYPE_LABELS = {
+  student:  'Student',
+  employee: 'Employee',
+  fetcher:  'Fetcher / Drop & Go',
+}
+
 function formatSchedule(entity) {
   // The days are the source of truth; `schedule` is the label for a known
   // rotation. So spell the days out whenever there is no rotation code to name
@@ -418,6 +432,24 @@ export default function VehicleRegistration() {
   const hasActiveFilters = typeFilter !== 'all' || paymentFilter !== 'all' || search.trim() !== ''
   const clearFilters = () => { setTypeFilter('all'); setPaymentFilter('all'); setSearch(''); setRegPage(1) }
 
+  /* What an exported report is filtered to. statusFilter belongs here as much
+     as the other three: the table is LOADED by status, so a report taken from
+     a page showing only Pending applications has to contain only those, or the
+     file disagrees with the screen it was downloaded from. ReportExportBar
+     drops 'all' and empty values, so they never reach the query string. */
+  const reportFilters = {
+    status: statusFilter,
+    registrant_type: typeFilter,
+    payment_status: paymentFilter,
+    search: search.trim(),
+  }
+  const reportFilterSummary = [
+    statusFilter && statusFilter !== 'all' ? REG_STATUS_LABELS[statusFilter] || statusFilter : '',
+    typeFilter !== 'all' ? REG_TYPE_LABELS[typeFilter] || typeFilter : '',
+    paymentFilter !== 'all' ? PAYMENT_LABELS[paymentFilter] || paymentFilter : '',
+    search.trim() ? `“${search.trim()}”` : '',
+  ].filter(Boolean).join(' · ')
+
   return (
     <>
       <div className="vehicle-registration-page">
@@ -434,6 +466,8 @@ export default function VehicleRegistration() {
         <ReportExportBar
           label="Registrations Report"
           fileBase="registrations-report"
+          filters={reportFilters}
+          activeFilterSummary={reportFilterSummary}
           fetchBlob={registrationApi.exportRegistrationsReport}
           extraReports={[{
             key: 'summary',

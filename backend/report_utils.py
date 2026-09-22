@@ -28,6 +28,27 @@ LH_ACCRED      = ('•  Center of Excellence in Teacher Education        '
                   '•  CHED Deregulated Status')
 
 
+def sentence_case(value, blank='—'):
+    """Upper-case the first character of a value and leave the rest alone.
+
+    Deliberately NOT str.capitalize() or str.title(). Both rewrite the whole
+    string, and the values this is applied to are free text typed by whoever
+    filled the form in: "SUV" becomes "Suv", "Drop&Go" becomes "Drop&Go" under
+    title(), and an acronym is wrong in a way a reader notices immediately.
+    Raising only the first character is the whole of the rule that was asked
+    for - reports should read consistently - and it cannot damage a value it
+    does not understand.
+
+    Empty, None and whitespace all collapse to an em dash, so a gap in a
+    printed table reads as "nothing recorded" rather than as a column that
+    failed to render.
+    """
+    text = ('' if value is None else str(value)).strip()
+    if not text:
+        return blank
+    return text[:1].upper() + text[1:]
+
+
 def report_filename(report_name, ext):
     """Filesystem-safe, human-readable report filename with date + time.
 

@@ -88,3 +88,20 @@
 @keyframes report-bar-spin {
   to { transform: rotate(360deg); }
 }
+
+/* The active filters, named on the bar so it is clear before clicking what
+   the exported file will contain. Muted and secondary: it reports state, it
+   is not a control. */
+.report-bar-filters {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #EDF2F7;
+  color: #4A6B85;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30ch;
+}
