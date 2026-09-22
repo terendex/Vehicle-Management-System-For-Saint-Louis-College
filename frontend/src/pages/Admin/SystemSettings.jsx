@@ -464,15 +464,13 @@ export default function SystemSettings() {
     }
   }
 
-  const isDwellDirty = form.parked_after_seconds !== saved.parked_after_seconds
-    || form.double_park_after_seconds !== saved.double_park_after_seconds
-  const isDirty      = form.retention_years !== saved.retention_years || form.scan_dedup_seconds !== saved.scan_dedup_seconds
-    || form.vehicle_pass_fee !== saved.vehicle_pass_fee || form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee
-    || form.account_expiry_months !== saved.account_expiry_months
-    || form.account_expiry_days !== saved.account_expiry_days
-    || form.auto_backup_frequency !== saved.auto_backup_frequency
-    || form.auto_backup_keep !== saved.auto_backup_keep
-    || isDwellDirty
+  /* Derived from the form's own keys rather than written out field by field.
+     The hand-written chain this replaces had to be extended every time a
+     setting was added, and forgetting to is silent in the worst way: the
+     control renders and accepts input, but isDirty never flips, so the save
+     bar never appears and the value cannot be saved at all. Keying off
+     FORM_DEFAULTS means a new field is covered the moment it has a default. */
+  const isDirty      = Object.keys(FORM_DEFAULTS).some((k) => form[k] !== saved[k])
   // Tabs carrying an unsaved edit, so the save bar's "unsaved changes" is
   // findable from any tab instead of sending the admin hunting through four.
   const dirtyTabs = new Set(
