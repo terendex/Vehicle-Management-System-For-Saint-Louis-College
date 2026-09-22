@@ -1,3 +1,24 @@
+# =============================================================================
+#  Violations - the HTTP surface
+#
+#  What a violation IS, and what it costs, lives in models.py and penalty.py.
+#  This file is only the ways in and out of that: issuing one at the gate,
+#  listing them for a guard or an owner, exporting them, and the confiscation
+#  machinery that a third offence triggers.
+#
+#  Three audiences read from here and they see different things, which is the
+#  single rule that shapes most of the file:
+#
+#    staff (admin/CDSO, security)  every violation, and the evidence photos
+#    a vehicle owner               only violations against their own plates
+#    nobody else                   nothing
+#
+#  The owner case is the awkward one throughout. A violation outlives the
+#  vehicle it was issued against - the FK is SET_NULL so the record survives
+#  archiving and account deletion - so "is this mine?" cannot be answered from
+#  the foreign key alone, and every owner-facing query here also matches on the
+#  plate string that was snapshotted onto the row.
+# =============================================================================
 import logging
 from decimal import Decimal
 from rest_framework import viewsets, permissions
@@ -21,8 +42,15 @@ from time_utils import day_range, filter_local_date_range
 logger = logging.getLogger(__name__)
 
 
+# The two permission classes this module uses. They are separate because
+# issuing and reviewing are not the same authority: a guard at the gate writes
+# violations all day and must never be able to lift one.
 class IsStaffRole(permissions.BasePermission):
-    """Allow access only to the CDSO (admin) or security roles."""
+    """Allow access only to the CDSO (admin) or security roles.
+
+    The wide one: anybody working the system rather than owning a vehicle.
+    Used for issuing, listing and exporting - the day-to-day of the module.
+    """
     def has_permission(self, request, view):
         return (
             request.user
@@ -32,6 +60,15 @@ class IsStaffRole(permissions.BasePermission):
 
 
 class IsCDSOOrAdmin(permissions.BasePermission):
+    """CDSO only - which is the same thing as admin, and why this tests one role.
+
+    The name reads as two roles and the check names one. That is not a bug:
+    the separate `cdso` role was removed and the admin role relabelled to CDSO
+    (accounts migration 0024), so 'admin' IS the CDSO. The name survives
+    because it reads correctly at the endpoints that are about CDSO work -
+    lifting a confiscation, deciding whether a plate may register again -
+    which are exactly the decisions a guard must not be able to make.
+    """
     def has_permission(self, request, view):
         return (
             request.user
