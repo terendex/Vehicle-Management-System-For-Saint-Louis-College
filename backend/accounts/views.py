@@ -1182,12 +1182,22 @@ class SystemRestoreView(APIView):
         # actually happened. The record count and the source file are both in
         # the line, because "a restore was performed" on its own would not let
         # anyone reconstruct what the system was made to look like.
+        # The displaced count belongs in the trail as much as the record
+        # count: archiving a live account to free the address a restored one
+        # needs is a real change to who can sign in, and it must not be a
+        # thing the system did quietly. Named only when it happened, so the
+        # usual line stays short.
+        displaced_note = (f', {result.displaced} existing row(s) archived to free unique values'
+                          if result.displaced else '')
         log_action(request, AuditLog.Action.RECORD_UPDATED,
-                   details=f'System restore from backup ({result.records} records, source: {source})')
+                   details=f'System restore from backup ({result.records} records{displaced_note}, '
+                           f'source: {source})')
         # The snapshot name is returned on SUCCESS too, not just on failure: a
         # restore that worked mechanically can still be the wrong restore, and
         # this is the handle for undoing it.
-        return Response({'restored': result.records, 'safety_backup': safety_name},
+        return Response({'restored': result.records,
+                         'displaced': result.displaced,
+                         'safety_backup': safety_name},
                         status=status.HTTP_200_OK)
 
 

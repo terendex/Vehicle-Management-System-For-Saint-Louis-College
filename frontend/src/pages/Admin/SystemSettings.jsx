@@ -453,7 +453,13 @@ export default function SystemSettings() {
       const res = target.file
         ? await usersApi.restoreBackup(target.file)
         : await usersApi.restoreSavedBackup(target.name)
-      toast.success(`Restore complete — ${res.restored} records loaded. A safety snapshot was saved first.`)
+      // The displaced count is named whenever it is non-zero. Archiving a
+      // live account to free the email address a restored one needs changes
+      // who can sign in, so it must not be something the restore did quietly.
+      const displaced = res.displaced
+        ? ` ${res.displaced} existing record${res.displaced === 1 ? ' was' : 's were'} archived to free a unique value.`
+        : ''
+      toast.success(`Restore complete — ${res.restored} records loaded.${displaced} A safety snapshot was saved first.`)
       fetchNotices()
       fetchGates()
       fetchBackups()   // the safety snapshot the restore just took

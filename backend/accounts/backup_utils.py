@@ -19,7 +19,8 @@ from django.conf import settings
 from django.core import serializers
 from django.core.management import call_command
 from django.core.management.color import no_style
-from django.db import DEFAULT_DB_ALIAS, connections
+from django.db import DEFAULT_DB_ALIAS, IntegrityError, connections
+from django.db.models import Q, UniqueConstraint
 from django.db.models.constants import OnConflict
 from django.utils import timezone as tz
 
@@ -264,8 +265,122 @@ def _upsert(model, objs, using):
         )
 
 
+def _attnames(model, names):
+    """Field names as the COLUMNS they are stored in.
+
+    attname, not name, and the difference is not cosmetic for a foreign key:
+    `obj.registration` is the related object, so reading it off a freshly
+    deserialized row goes to the database for a parent that has not been
+    loaded yet and raises DoesNotExist. `obj.registration_id` is the value the
+    unique index is actually built on and is already in hand.
+    """
+    out = []
+    for name in names:
+        try:
+            out.append(model._meta.get_field(name).attname)
+        except Exception:
+            out.append(name)             # not a concrete field; use it as given
+    return tuple(out)
+
+
+def _unique_keys(model):
+    """Every non-primary-key unique key a row of `model` can collide on.
+
+    Returns (column_names, condition) pairs. `condition` is the Q of a partial
+    constraint, or None for a total one - it matters because only the rows
+    satisfying it are in the index, so only those can be in the way.
+    """
+    keys = [((f.attname,), None)
+            for f in model._meta.concrete_fields
+            if f.unique and not f.primary_key]
+    keys += [(_attnames(model, c.fields), getattr(c, 'condition', None))
+             for c in model._meta.constraints
+             if isinstance(c, UniqueConstraint) and c.fields]
+    keys += [(_attnames(model, ut), None) for ut in model._meta.unique_together]
+    return keys
+
+
+def _archive_displaced_rows(model, objs, using):
+    """Free unique values that incoming rows need but live rows are holding.
+
+    _upsert writes INSERT ... ON CONFLICT (pk) DO UPDATE, which resolves a
+    collision on the PRIMARY KEY and on nothing else. A restore onto a fresh
+    install hits the other kind every single time: migration 0005 seeds
+    admin@slc.edu.ph at pk=1, a backup taken from a running system carries the
+    same address at pk=2, and the insert trips uniq_active_user_email - a
+    constraint ON CONFLICT (pk) does not cover. Postgres raises, the
+    transaction rolls back, and the restore fails whole. Rebuilding onto a
+    fresh install is the most important thing a restore is for, and it was the
+    one case that could never work.
+
+    The live row is displaced, not wrong, so it is ARCHIVED rather than
+    deleted. uniq_active_user_email is partial - unique WHERE is_archived =
+    false - so archiving lifts that row out of the index and frees the address
+    without removing anything. A restore stays a merge that deletes nothing,
+    exactly as SystemRestoreView documents it.
+
+    Rows whose pk is already in the file are skipped: those are the ordinary
+    overwrite case that ON CONFLICT (pk) handles, and archiving a row the
+    restore is about to rewrite anyway would be wrong.
+
+    A NULL never collides in a unique index (Postgres allows many), so a key
+    with any NULL part is not looked for at all.
+
+    A model with no is_archived flag cannot be resolved this way. Rather than
+    delete anything, that raises with the model, the field and the value
+    named - which is still far more use than the bare IntegrityError from the
+    database that this replaces.
+    """
+    incoming_pks = {o.pk for o in objs if o.pk is not None}
+    displaced, reason = set(), None
+
+    for fields, condition in _unique_keys(model):
+        wanted = []
+        for obj in objs:
+            values = {f: getattr(obj, f, None) for f in fields}
+            if any(v is None for v in values.values()):
+                continue                     # a NULL part cannot collide
+            wanted.append(values)
+        if not wanted:
+            continue
+
+        match = Q()
+        for values in wanted:
+            match |= Q(**values)
+        rows = model._base_manager.using(using).filter(match)
+        if condition is not None:
+            rows = rows.filter(condition)    # partial: only indexed rows are in the way
+        for pk, in rows.exclude(pk__in=incoming_pks).values_list('pk'):
+            displaced.add(pk)
+            if reason is None:
+                reason = fields
+
+    if not displaced:
+        return 0
+
+    if not hasattr(model, 'is_archived'):
+        raise IntegrityError(
+            f"Cannot restore {model._meta.label}: "
+            f"{len(displaced)} existing row(s) hold a unique "
+            f"{'/'.join(reason or ())} value that the backup needs, and this "
+            f"model has no archive flag to move them aside with. "
+            f"Remove or edit those rows and restore again."
+        )
+
+    update = {'is_archived': True}
+    if any(f.name == 'archived_at' for f in model._meta.concrete_fields):
+        update['archived_at'] = tz.now()
+    return (model._base_manager.using(using)
+            .filter(pk__in=displaced)
+            .update(**update))
+
+
 class LoadResult(NamedTuple):
     records: int
+    # Live rows archived to free a unique value the file needed - see
+    # _archive_displaced_rows. Reported so a restore can say it moved something
+    # aside rather than doing it silently.
+    displaced: int
     # `model_name` for each model the load wrote to, which is the same name
     # `realtime.signals` broadcasts under. The caller needs them because bulk
     # writes fire no signals of their own — see below.
@@ -309,6 +424,7 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
     by_model: dict[type, dict] = {}
     m2m_pending = []
     total = 0
+    archived = 0        # live rows moved aside to free a unique value
     for obj in serializers.deserialize('json', payload, using=using):
         model = obj.object.__class__
         by_model.setdefault(model, {})[obj.object.pk] = obj.object
@@ -318,7 +434,12 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
 
     with connection.constraint_checks_disabled():
         for model, rows in by_model.items():
-            _upsert(model, list(rows.values()), using)
+            objs = list(rows.values())
+            # Before the upsert, not after: the insert below fails outright on
+            # a unique value another live row is holding, because ON CONFLICT
+            # names the primary key and nothing else. See _archive_displaced_rows.
+            archived += _archive_displaced_rows(model, objs, using)
+            _upsert(model, objs, using)
 
         # Many-to-many rows live in their own tables and are untouched by the
         # upserts above. Nothing in a backup currently carries any — the only
@@ -350,4 +471,4 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
             with connection.cursor() as cursor:
                 cursor.execute('\n'.join(sql))
 
-    return LoadResult(total, [m._meta.model_name for m in by_model])
+    return LoadResult(total, archived, [m._meta.model_name for m in by_model])

@@ -347,6 +347,72 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
                 'fields': {'gate_id': gate_id, 'label': label, 'is_active': True,
                            'created_at': stamp.isoformat()}}
 
+    def test_a_row_holding_a_needed_unique_value_is_archived_not_deleted(self):
+        """The case a restore onto a fresh install hits every single time.
+
+        A new install seeds admin@slc.edu.ph at pk=1; a backup taken from a
+        running system carries the same address at a different pk. The upsert
+        says ON CONFLICT (pk), so it does not see a collision on the separate
+        partial index over email - Postgres raised, the transaction rolled
+        back, and the restore failed whole. Rebuilding onto a fresh install is
+        the most important thing a restore is for, and it was the one case
+        that could never work.
+
+        The live row is displaced, not wrong, so it is archived: the index is
+        partial (unique WHERE is_archived = false), so archiving lifts it out
+        and frees the address while the row itself survives. A restore still
+        deletes nothing.
+        """
+        squatter = User.objects.create_user(
+            email='shared@slc.edu.ph', full_name='SEEDED PLACEHOLDER',
+            password='SecurePassword123!', role='admin')
+
+        resp = self.restore([{
+            'model': 'accounts.user', 'pk': squatter.pk + 500,
+            'fields': {
+                'password': '!', 'last_login': None, 'is_superuser': False,
+                'first_name': '', 'last_name': '', 'is_staff': False,
+                'is_active': True, 'date_joined': tz.now().isoformat(),
+                'full_name': 'THE RESTORED ACCOUNT', 'email': 'shared@slc.edu.ph',
+                'role': 'admin', 'is_archived': False,
+            },
+        }])
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['displaced'], 1)      # reported, never silent
+
+        squatter.refresh_from_db()
+        self.assertTrue(squatter.is_archived)            # moved aside...
+        self.assertTrue(User.objects.filter(pk=squatter.pk).exists())   # ...and still here
+
+        restored = User.objects.get(pk=squatter.pk + 500)
+        self.assertEqual(restored.email, 'shared@slc.edu.ph')
+        self.assertFalse(restored.is_archived)
+
+    def test_nothing_is_displaced_when_the_primary_keys_already_line_up(self):
+        """The ordinary overwrite must not archive the row it is about to
+        rewrite: same pk, same email, so ON CONFLICT (pk) handles it and there
+        is nothing in the way."""
+        user = User.objects.create_user(
+            email='same@slc.edu.ph', full_name='BEFORE',
+            password='SecurePassword123!', role='admin')
+
+        resp = self.restore([{
+            'model': 'accounts.user', 'pk': user.pk,
+            'fields': {
+                'password': '!', 'last_login': None, 'is_superuser': False,
+                'first_name': '', 'last_name': '', 'is_staff': False,
+                'is_active': True, 'date_joined': tz.now().isoformat(),
+                'full_name': 'AFTER', 'email': 'same@slc.edu.ph',
+                'role': 'admin', 'is_archived': False,
+            },
+        }])
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['displaced'], 0)
+
+        user.refresh_from_db()
+        self.assertFalse(user.is_archived)
+        self.assertEqual(user.full_name, 'AFTER')
+
     def test_a_restore_overwrites_matching_rows_and_inserts_the_rest(self):
         """The merge semantics the endpoint promises: update by primary key,
         insert what is missing, delete nothing."""
