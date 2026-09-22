@@ -388,6 +388,48 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
         self.assertEqual(restored.email, 'shared@slc.edu.ph')
         self.assertFalse(restored.is_archived)
 
+    def test_a_model_with_no_archive_flag_has_the_value_moved_instead(self):
+        """The other half of the same rule, for a model that cannot be archived.
+
+        A fresh install seeds vehicles.Camera with cam_number=1 and a real
+        backup carries its own camera 1 at a different pk. Camera has no
+        is_archived flag, so the contested VALUE is moved instead: the row
+        keeps everything else and simply stops holding the number the backup
+        needs. Still nothing deleted.
+        """
+        from vehicles.models import Camera
+
+        # 77, not 1: migration 0026 already seeds a camera on cam_number 1, so
+        # creating a second one here would collide in the test's own setup
+        # rather than in the restore this is about.
+        squatter = Camera.objects.create(
+            cam_number=77, name='SEEDED', ip='10.0.0.1', device_id='seed',
+            rtsp_url='rtsp://seed', assignment='entry')
+
+        # Every concrete column, the way dumpdata writes it - created_at and
+        # updated_at included, because the load inserts raw and an auto_now
+        # column is no longer filled in for it (see gate_row above).
+        stamp = tz.make_aware(datetime.datetime(2026, 1, 1, 8, 0, 0)).isoformat()
+        resp = self.restore([{
+            'model': 'vehicles.camera', 'pk': squatter.pk + 500,
+            'fields': {'cam_number': 77, 'name': 'THE REAL CAMERA',
+                       'ip': '10.184.63.63', 'device_id': 'real', 'password': '',
+                       'rtsp_url': 'rtsp://real', 'assignment': 'entry',
+                       'gate_id': None, 'is_active': True,
+                       'created_at': stamp, 'updated_at': stamp},
+        }])
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['displaced'], 1)
+
+        squatter.refresh_from_db()
+        self.assertTrue(Camera.objects.filter(pk=squatter.pk).exists())   # not deleted
+        self.assertNotEqual(squatter.cam_number, 77)                      # moved aside
+        self.assertEqual(squatter.name, 'SEEDED')                         # nothing else touched
+
+        restored = Camera.objects.get(pk=squatter.pk + 500)
+        self.assertEqual(restored.cam_number, 77)
+        self.assertEqual(restored.name, 'THE REAL CAMERA')
+
     def test_nothing_is_displaced_when_the_primary_keys_already_line_up(self):
         """The ordinary overwrite must not archive the row it is about to
         rewrite: same pk, same email, so ON CONFLICT (pk) handles it and there

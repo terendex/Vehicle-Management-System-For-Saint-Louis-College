@@ -20,7 +20,7 @@ from django.core import serializers
 from django.core.management import call_command
 from django.core.management.color import no_style
 from django.db import DEFAULT_DB_ALIAS, IntegrityError, connections
-from django.db.models import Q, UniqueConstraint
+from django.db.models import Max, Q, UniqueConstraint
 from django.db.models.constants import OnConflict
 from django.utils import timezone as tz
 
@@ -210,6 +210,11 @@ def latest_auto_backup() -> dict | None:
 # the same rows — this is still a merge by primary key, nothing is deleted —
 # but the several minutes collapse to a couple of seconds.
 
+# Returned by _free_value_for when a column is of a kind it will not invent a
+# value for. A sentinel rather than None, because None IS a valid answer:
+# a nullable column is freed by setting it NULL.
+_NO_FREE_VALUE = object()
+
 _MAX_BIND_PARAMS = 30000
 
 
@@ -300,7 +305,43 @@ def _unique_keys(model):
     return keys
 
 
-def _archive_displaced_rows(model, objs, using):
+def _free_value_for(model, field, using, avoid):
+    """A value for `field` that no row and nothing incoming is using.
+
+    Tried in order of how little is invented:
+
+      1. NULL, where the column allows it. Postgres lets a unique index hold
+         many NULLs, so nothing is made up at all.
+      2. One past the highest number in use, for an integer column.
+      3. The old text with a suffix, for a character column, trimmed to fit
+         max_length and stepped until it is free.
+
+    Returns _NO_FREE_VALUE when the column is none of those, which is the
+    caller's signal to refuse rather than guess.
+    """
+    if field.null:
+        return None
+
+    rows = model._base_manager.using(using)
+    internal = field.get_internal_type()
+
+    if 'Integer' in internal or 'AutoField' in internal:
+        highest = rows.aggregate(_m=Max(field.attname))['_m'] or 0
+        return max([highest] + [v for v in avoid if isinstance(v, int)]) + 1
+
+    if 'Char' in internal or 'Text' in internal:
+        limit = getattr(field, 'max_length', None) or 255
+        for n in range(1, 1000):
+            candidate = f'displaced-{n}'[:limit]
+            if candidate in avoid:
+                continue
+            if not rows.filter(**{field.attname: candidate}).exists():
+                return candidate
+
+    return _NO_FREE_VALUE
+
+
+def _resolve_displaced_rows(model, objs, using):
     """Free unique values that incoming rows need but live rows are holding.
 
     _upsert writes INSERT ... ON CONFLICT (pk) DO UPDATE, which resolves a
@@ -313,34 +354,40 @@ def _archive_displaced_rows(model, objs, using):
     fresh install is the most important thing a restore is for, and it was the
     one case that could never work.
 
-    The live row is displaced, not wrong, so it is ARCHIVED rather than
-    deleted. uniq_active_user_email is partial - unique WHERE is_archived =
-    false - so archiving lifts that row out of the index and frees the address
-    without removing anything. A restore stays a merge that deletes nothing,
-    exactly as SystemRestoreView documents it.
+    The live row is in the way, not wrong, so it is moved aside and never
+    deleted. Two ways, in this order:
+
+      * ARCHIVED, when the model has the flag. uniq_active_user_email is
+        partial - unique WHERE is_archived = false - so archiving lifts the row
+        out of the index and frees the address without touching its data.
+      * Otherwise the contested VALUE is moved instead, via _free_value_for:
+        the row keeps everything else and simply stops holding the one value
+        the backup needs. vehicles.Camera is the case that needs this - a
+        fresh install seeds cam_number=1 and a real backup carries its own
+        camera 1 - and it has no flag to archive with.
+
+    Either way the row survives, so a restore stays a merge that deletes
+    nothing, exactly as SystemRestoreView documents it.
 
     Rows whose pk is already in the file are skipped: those are the ordinary
-    overwrite case that ON CONFLICT (pk) handles, and archiving a row the
-    restore is about to rewrite anyway would be wrong.
+    overwrite that ON CONFLICT (pk) handles, and moving a row the restore is
+    about to rewrite anyway would be wrong.
 
-    A NULL never collides in a unique index (Postgres allows many), so a key
-    with any NULL part is not looked for at all.
-
-    A model with no is_archived flag cannot be resolved this way. Rather than
-    delete anything, that raises with the model, the field and the value
-    named - which is still far more use than the bare IntegrityError from the
-    database that this replaces.
+    A NULL never collides in a unique index, so a key with any NULL part is
+    not looked for at all.
     """
     incoming_pks = {o.pk for o in objs if o.pk is not None}
-    displaced, reason = set(), None
+    by_key: dict[tuple, set] = {}
 
     for fields, condition in _unique_keys(model):
-        wanted = []
+        wanted, claimed = [], []
         for obj in objs:
             values = {f: getattr(obj, f, None) for f in fields}
             if any(v is None for v in values.values()):
                 continue                     # a NULL part cannot collide
             wanted.append(values)
+            if len(fields) == 1:
+                claimed.append(values[fields[0]])
         if not wanted:
             continue
 
@@ -350,35 +397,52 @@ def _archive_displaced_rows(model, objs, using):
         rows = model._base_manager.using(using).filter(match)
         if condition is not None:
             rows = rows.filter(condition)    # partial: only indexed rows are in the way
-        for pk, in rows.exclude(pk__in=incoming_pks).values_list('pk'):
-            displaced.add(pk)
-            if reason is None:
-                reason = fields
+        hits = set(rows.exclude(pk__in=incoming_pks).values_list('pk', flat=True))
+        if hits:
+            by_key.setdefault((fields, tuple(claimed)), set()).update(hits)
 
-    if not displaced:
+    if not by_key:
         return 0
 
-    if not hasattr(model, 'is_archived'):
-        raise IntegrityError(
-            f"Cannot restore {model._meta.label}: "
-            f"{len(displaced)} existing row(s) hold a unique "
-            f"{'/'.join(reason or ())} value that the backup needs, and this "
-            f"model has no archive flag to move them aside with. "
-            f"Remove or edit those rows and restore again."
-        )
+    every_pk = set().union(*by_key.values())
 
-    update = {'is_archived': True}
-    if any(f.name == 'archived_at' for f in model._meta.concrete_fields):
-        update['archived_at'] = tz.now()
-    return (model._base_manager.using(using)
-            .filter(pk__in=displaced)
-            .update(**update))
+    # Preferred: archive, which changes no data at all.
+    if hasattr(model, 'is_archived'):
+        update = {'is_archived': True}
+        if any(f.name == 'archived_at' for f in model._meta.concrete_fields):
+            update['archived_at'] = tz.now()
+        model._base_manager.using(using).filter(pk__in=every_pk).update(**update)
+        return len(every_pk)
+
+    # Otherwise move the contested value itself.
+    for (fields, claimed), pks in by_key.items():
+        field = None
+        for name in fields:                  # the first column that can take a free value
+            candidate = model._meta.get_field(name)
+            if _free_value_for(model, candidate, using, set(claimed)) is not _NO_FREE_VALUE:
+                field = candidate
+                break
+        if field is None:
+            raise IntegrityError(
+                f"Cannot restore {model._meta.label}: "
+                f"{len(pks)} existing row(s) hold a unique "
+                f"{'/'.join(fields)} value that the backup needs, and none of "
+                f"those columns can be given a free value automatically. "
+                f"Remove or edit those rows and restore again."
+            )
+        # One row at a time: each needs its own free value, and the previous
+        # one is now taken.
+        for pk in sorted(pks):
+            value = _free_value_for(model, field, using, set(claimed))
+            model._base_manager.using(using).filter(pk=pk).update(**{field.attname: value})
+
+    return len(every_pk)
 
 
 class LoadResult(NamedTuple):
     records: int
     # Live rows archived to free a unique value the file needed - see
-    # _archive_displaced_rows. Reported so a restore can say it moved something
+    # _resolve_displaced_rows. Reported so a restore can say it moved something
     # aside rather than doing it silently.
     displaced: int
     # `model_name` for each model the load wrote to, which is the same name
@@ -437,8 +501,8 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
             objs = list(rows.values())
             # Before the upsert, not after: the insert below fails outright on
             # a unique value another live row is holding, because ON CONFLICT
-            # names the primary key and nothing else. See _archive_displaced_rows.
-            archived += _archive_displaced_rows(model, objs, using)
+            # names the primary key and nothing else. See _resolve_displaced_rows.
+            archived += _resolve_displaced_rows(model, objs, using)
             _upsert(model, objs, using)
 
         # Many-to-many rows live in their own tables and are untouched by the
