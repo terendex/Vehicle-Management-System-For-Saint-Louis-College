@@ -32,6 +32,11 @@ def receipt_file(name='receipt.jpg', size=64):
     return SimpleUploadedFile(name, b'x' * size, content_type='image/jpeg')
 
 
+# Sentinel for pay(receipt=...): None is a real argument there, meaning "post
+# no photograph at all", so it cannot double as "caller said nothing".
+_DEFAULT = object()
+
+
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL='slccdso@gmail.com',
                    PUBLIC_SITE_URL='https://slc.example.edu')
 class PaymentTestCase(TestCase):
@@ -80,21 +85,21 @@ class PaymentTestCase(TestCase):
         self.assertEqual(res.status_code, 201, res.data)
         return VehicleRegistration.objects.get(pk=res.data['id'])
 
-    def pay(self, reg, or_number='1380093', **over):
-        # DPO: the OR number alone, sent as JSON — the receipt
-        # image is not collected any more. See pay_with_file below for what a
-        # browser still running the previous bundle does.
+    def pay(self, reg, or_number='1380093', receipt=_DEFAULT, **over):
+        """The normal step: the number AND the photograph behind it.
+
+        Multipart, because the receipt travels with the number. Pass
+        receipt=None to post without one - which the endpoint refuses, and
+        which is the whole point of the test that does it.
+        """
         payload = {'token': str(reg.payment_token), 'or_number': or_number}
+        if receipt is _DEFAULT:
+            receipt = receipt_file()
+        if receipt is not None:
+            payload['or_receipt_image'] = receipt
         payload.update(over)
         return self.client.post('/api/vehicles/register/payment/', payload,
-                                format='json')
-
-    def pay_with_file(self, reg, or_number='1380093', receipt=None):
-        """What a stale bundle still posts: multipart, with a receipt attached."""
-        return self.client.post('/api/vehicles/register/payment/', {
-            'token': str(reg.payment_token), 'or_number': or_number,
-            'receipt': receipt if receipt is not None else receipt_file(),
-        }, format='multipart')
+                                format='multipart')
 
     def accept(self, reg, **body):
         self.client.force_authenticate(user=self.admin)
@@ -158,9 +163,10 @@ class ReceiptUploadTests(PaymentTestCase):
         self.assertEqual(reg.or_number, '1380093')
         self.assertIsNotNone(reg.paid_at)
         self.assertEqual(reg.amount_paid, SystemSettings.get().vehicle_pass_fee)
-        # DPO: no image is kept — the CDSO checks the paper
-        # receipt at the counter instead.
-        self.assertFalse(reg.or_receipt_image)
+        # The photograph is kept: an OR number with nothing behind it is a
+        # claim, and the review screen shows this image beside it.
+        self.assertTrue(reg.or_receipt_image)
+        self.addCleanup(reg.or_receipt_image.delete, save=False)
 
     def test_the_amount_is_snapshotted_not_looked_up(self):
         """A later fee change must not rewrite what this applicant paid."""
@@ -176,16 +182,32 @@ class ReceiptUploadTests(PaymentTestCase):
         self.assertEqual(reg.amount_paid, original,
                          'raising the fee retroactively rewrote a past payment')
 
-    def test_a_receipt_photo_is_no_longer_required(self):
-        """Data Privacy Office. The number is the whole step."""
+    def test_a_receipt_photo_is_required(self):
+        """The number on its own is a claim, so it is not enough on its own.
+
+        The Data Privacy Office had this photograph removed and the number
+        made the whole step; it is collected again because nothing on the
+        review screen backed the number the applicant typed.
+        """
         reg = self.submit()
-        res = self.client.post('/api/vehicles/register/payment/',
-                               {'token': str(reg.payment_token), 'or_number': '1380093'},
-                               format='multipart')
+        res = self.pay(reg, receipt=None)
+        self.assertEqual(res.status_code, 400, res.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.payment_status, PS.UNPAID)   # nothing recorded
+        self.assertEqual(reg.or_number, '')
+
+    def test_a_second_filing_may_reuse_the_photo_already_on_file(self):
+        """Correcting a mistyped number must not mean photographing again."""
+        reg = self.submit()
+        self.assertEqual(self.pay(reg, or_number='1111111').status_code, 200)
+        reg.refresh_from_db()
+        self.addCleanup(reg.or_receipt_image.delete, save=False)
+
+        res = self.pay(reg, or_number='2222222', receipt=None)
         self.assertEqual(res.status_code, 200, res.data)
         reg.refresh_from_db()
-        self.assertEqual(reg.payment_status, PS.PAID)
-        self.assertFalse(reg.or_receipt_image)
+        self.assertEqual(reg.or_number, '2222222')
+        self.assertTrue(reg.or_receipt_image)
 
     def test_an_or_number_is_required(self):
         reg = self.submit()
@@ -203,20 +225,25 @@ class ReceiptUploadTests(PaymentTestCase):
     def test_an_attached_file_is_ignored_rather_than_stored(self):
         """Data Privacy Office.
 
-        A browser still running the previous bundle posts multipart with a file.
-        The payment must still go through — the applicant did pay — but nothing
-        of the file may reach storage, whatever it turns out to be.
+        A photograph is accepted; anything that is not one of the types the
+        model's own validator allows is refused outright, and refused BEFORE
+        the payment is recorded - an executable renamed to .exe must not be
+        written to storage on the way to a 200.
         """
-        for upload in (receipt_file(),
-                       SimpleUploadedFile('receipt.exe', b'MZ',
-                                          content_type='application/octet-stream')):
-            with self.subTest(name=upload.name):
-                reg = self.submit()
-                res = self.pay_with_file(reg, receipt=upload)
-                self.assertEqual(res.status_code, 200, res.data)
-                reg.refresh_from_db()
-                self.assertEqual(reg.payment_status, PS.PAID)
-                self.assertFalse(reg.or_receipt_image)
+        reg = self.submit()
+        res = self.pay(reg, receipt=receipt_file())
+        self.assertEqual(res.status_code, 200, res.data)
+        reg.refresh_from_db()
+        self.assertTrue(reg.or_receipt_image)
+        self.addCleanup(reg.or_receipt_image.delete, save=False)
+
+        other = self.submit()
+        bad = self.pay(other, receipt=SimpleUploadedFile(
+            'receipt.exe', b'MZ', content_type='application/octet-stream'))
+        self.assertEqual(bad.status_code, 400, bad.data)
+        other.refresh_from_db()
+        self.assertEqual(other.payment_status, PS.UNPAID)
+        self.assertFalse(other.or_receipt_image)
 
     def test_a_receipt_can_be_replaced_while_pending(self):
         """A mistyped first number must not lock the applicant out."""

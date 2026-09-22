@@ -52,10 +52,20 @@ export const registrationApi = {
   // DPO: the OR number alone — no photo of the receipt is
   // collected, so this is plain JSON rather than a multipart upload. CDSO checks
   // the paper receipt at the counter instead of an image on the review screen.
-  submitPaymentReceipt: async (token, orNumber) => {
-    const { data } = await api.post('/vehicles/register/payment/', {
-      token, or_number: orNumber,
-    })
+  // Multipart rather than JSON, because the receipt photo travels with the
+  // number. The OR number on its own is a claim; the photograph is what CDSO
+  // checks it against on the review screen. The file is never emailed - see
+  // the note on RegistrationPaymentView.
+  submitPaymentReceipt: async (token, orNumber, receiptFile) => {
+    const form = new FormData()
+    form.append('token', token)
+    form.append('or_number', orNumber)
+    // Omitted when the applicant is only correcting a number they already
+    // filed: the backend keeps the photo already on the row.
+    if (receiptFile) form.append('or_receipt_image', receiptFile)
+    // No explicit Content-Type: the browser has to set the multipart boundary
+    // itself, and naming the type here strips it.
+    const { data } = await api.post('/vehicles/register/payment/', form)
     return data
   },
 

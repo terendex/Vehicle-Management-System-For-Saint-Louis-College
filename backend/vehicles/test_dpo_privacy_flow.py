@@ -18,6 +18,7 @@ from decimal import Decimal
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from accounts.models import User
@@ -131,9 +132,16 @@ class TrialFlowTestCase(TestCase):
         return VehicleRegistration.objects.get(pk=res.data['id'])
 
     def pay(self, reg, or_number='1380093'):
+        # Multipart with the photograph: the receipt image the DPO removed is
+        # collected again, because an OR number with nothing behind it gave
+        # the reviewer nothing to check. The other withheld columns - address,
+        # contact number, age, the ID numbers - are untouched by that and are
+        # still asserted empty throughout this file.
         return self.client.post('/api/vehicles/register/payment/', {
             'token': str(reg.payment_token), 'or_number': or_number,
-        }, format='json')
+            'or_receipt_image': SimpleUploadedFile(
+                'receipt.jpg', b'x' * 64, content_type='image/jpeg'),
+        }, format='multipart')
 
     def accept(self, reg, **body):
         self.client.force_authenticate(user=self.admin)
@@ -240,12 +248,13 @@ class TheWholePathStillRunsTests(TrialFlowTestCase):
         for label in ('Address', 'Contact No.', 'Student ID'):
             self.assertNotIn(label, body)
 
-        # 2. The applicant files the OR number. No file, no receipt image.
+        # 2. The applicant files the OR number, with the receipt photo behind it.
         self.assertEqual(self.pay(reg).status_code, 200)
         reg.refresh_from_db()
         self.assertEqual(reg.payment_status, VehicleRegistration.PaymentStatus.PAID)
         self.assertEqual(reg.or_number, '1380093')
-        self.assertFalse(reg.or_receipt_image)
+        self.assertTrue(reg.or_receipt_image)
+        self.addCleanup(reg.or_receipt_image.delete, save=False)
         # 3. …and is told the fee landed.
         self.assertIn('Official Receipt Received', mail.outbox[-1].subject)
 

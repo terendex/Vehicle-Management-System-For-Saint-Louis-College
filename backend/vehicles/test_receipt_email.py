@@ -103,7 +103,7 @@ class ReceiptReceivedEmailTests(TestCase):
         r = self.client.post('/api/vehicles/register/payment/', {
             'token': str(reg.payment_token),
             'or_number': '9998887',
-            'receipt': SimpleUploadedFile('r.jpg', _jpeg(), content_type='image/jpeg'),
+            'or_receipt_image': SimpleUploadedFile('r.jpg', _jpeg(), content_type='image/jpeg'),
         })
         self.assertEqual(r.status_code, 200, r.content)
         reg.refresh_from_db()

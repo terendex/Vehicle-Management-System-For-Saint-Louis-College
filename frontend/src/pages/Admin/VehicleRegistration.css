@@ -1949,3 +1949,52 @@ button.vr-stat.active .vr-stat-chip { background: #FFFFFF; }
     flex: 1 1 100%;
   }
 }
+
+/* ── Official Receipt evidence ──────────────────────────────────
+   The photograph behind the OR number, shown where the number is checked.
+   Small on purpose: it is a verification aid next to a field, not a gallery. */
+.or-receipt-thumb {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  text-decoration: none;
+}
+
+.or-receipt-thumb img {
+  max-width: 190px;
+  max-height: 150px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+  background: #F7FAFC;
+  object-fit: contain;
+}
+
+.or-receipt-thumb span {
+  font-size: 11px;
+  color: #64839C;
+}
+
+.or-receipt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #03396C;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Rows filed while the photo was not being collected, and anything approved
+   on the number alone. Stated plainly rather than left blank, so a reviewer
+   knows the difference between "no evidence" and "not loaded yet". */
+.or-receipt-missing {
+  display: block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #A05A00;
+}

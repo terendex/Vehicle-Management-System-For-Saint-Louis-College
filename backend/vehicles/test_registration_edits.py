@@ -18,6 +18,7 @@ from datetime import timedelta
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from accounts.models import AuditLog, Notification, User
@@ -86,8 +87,10 @@ class EditFlowTestCase(TestCase):
         """
         reg = self.submit(payload)
         self.client.post('/api/vehicles/register/payment/',
-                         {'token': str(reg.payment_token), 'or_number': or_number},
-                         format='json')
+                         {'token': str(reg.payment_token), 'or_number': or_number,
+                          'or_receipt_image': SimpleUploadedFile(
+                              'receipt.jpg', b'x' * 64, content_type='image/jpeg')},
+                         format='multipart')
         self.accept(reg, or_number=or_number)
         owner = User.objects.get(email=reg.email)
         mail.outbox.clear()
@@ -310,7 +313,10 @@ class PendingSelfEditTests(EditFlowTestCase):
         reg = self.submit()
         paid = self.client.post('/api/vehicles/register/payment/',
                                 {'token': str(reg.payment_token),
-                                 'or_number': '1380093'}, format='json')
+                                 'or_number': '1380093',
+                                 'or_receipt_image': SimpleUploadedFile(
+                                     'receipt.jpg', b'x' * 64, content_type='image/jpeg')},
+                                format='multipart')
         self.assertEqual(paid.status_code, 200, paid.data)
         res = self.self_edit(reg, vehicle_color='GREEN')
         self.assertEqual(res.status_code, 200, res.data)

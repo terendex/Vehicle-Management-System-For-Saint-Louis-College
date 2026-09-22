@@ -861,6 +861,37 @@ export default function VehicleRegistration() {
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <div className="detail-label">Official Receipt (OR) No.</div>
                   <div className="detail-value token-link" style={{ fontWeight: 700, color: '#0F7A5A' }}>{selectedReg.or_number}</div>
+                  {/* The evidence behind that number, shown where it is checked.
+                      Without it the OR number is a claim the reviewer has no way
+                      to test. A PDF gets a link rather than a thumbnail, since it
+                      will not render in an <img>. */}
+                  {selectedReg.or_receipt_image ? (
+                    /\.pdf($|\?)/i.test(selectedReg.or_receipt_image) ? (
+                      <a
+                        href={selectedReg.or_receipt_image}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="or-receipt-link"
+                      >
+                        <Receipt size={13} /> Open the receipt (PDF)
+                      </a>
+                    ) : (
+                      <a
+                        href={selectedReg.or_receipt_image}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="or-receipt-thumb"
+                        title="Open the full-size receipt"
+                      >
+                        <img src={selectedReg.or_receipt_image} alt="Official Receipt" />
+                        <span>Click to enlarge</span>
+                      </a>
+                    )
+                  ) : (
+                    <span className="or-receipt-missing">
+                      No receipt photo on file — this number is unverified.
+                    </span>
+                  )}
                 </div>
               )}
 

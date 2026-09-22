@@ -419,3 +419,43 @@
 @media (prefers-reduced-motion: reduce) {
   .paypage-spinner { animation-duration: 2.4s; }
 }
+
+/* Receipt photo picker. The default file input is unstyleable and looks
+   nothing like the text field above it, which on a phone reads as a broken
+   control rather than an optional-looking one. */
+.paypage-file {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px dashed #C7D6E5;
+  border-radius: 10px;
+  background: #F7FAFC;
+  font-family: inherit;
+  font-size: 0.88rem;
+  color: #2B4257;
+  cursor: pointer;
+}
+
+.paypage-file:focus {
+  outline: none;
+  border-color: #03396C;
+  background: #fff;
+}
+
+.paypage-file::file-selector-button {
+  margin-right: 10px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: #03396C;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.paypage-hint-inline {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #4A6B85;
+}

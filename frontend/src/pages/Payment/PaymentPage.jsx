@@ -11,10 +11,17 @@ import {
 import './PaymentPage.css'
 import BrandLogos from '../../components/BrandLogos'
 
-/* Data Privacy Office.
-   The receipt photo is no longer collected: this page files the OR number
-   alone, and the CDSO checks the paper receipt at the counter instead of an
-   image on the review screen. */
+/* The receipt photo IS collected here, and the history is worth keeping.
+   The Data Privacy Office had it removed, on the reasoning that CDSO could
+   check the paper receipt at the counter against the number on file. In
+   practice an OR number typed into a box is a claim with nothing behind it -
+   the review screen shows no evidence at all - so the photograph is collected
+   again and shown beside the number when CDSO reviews the application.
+
+   It is deliberately not emailed. Attaching a payment document to the receipt
+   confirmation would send it through an external mail provider, which is a
+   much wider exposure than showing it in the app to the one office that has
+   to verify it. */
 
 const TYPE_LABEL = {
   student:  'Student',
@@ -53,6 +60,7 @@ export default function PaymentPage() {
   const [loadError, setLoadError] = useState(null)
 
   const [orNumber, setOrNumber] = useState('')
+  const [receiptFile, setReceiptFile] = useState(null)
 
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
@@ -86,15 +94,20 @@ export default function PaymentPage() {
   // leaving the application impossible to approve from either side.
   const orValid = /^\d{6,7}$/.test(orNumber)
 
+  // Already on file counts as satisfied: somebody coming back to correct a
+  // mistyped number should not have to photograph the receipt a second time.
+  const needsPhoto = !receiptFile && !details?.has_receipt
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     const problems = [...fieldProblems(e.currentTarget)]
     if (!orValid) problems.push('Enter the Official Receipt number — 6 or 7 digits, numbers only.')
+    if (needsPhoto) problems.push('Attach a photo of the Official Receipt.')
     if (await notify.validation(problems, { title: 'Receipt not submitted' })) return
 
     setSubmitting(true)
     try {
-      await registrationApi.submitPaymentReceipt(token, orNumber)
+      await registrationApi.submitPaymentReceipt(token, orNumber, receiptFile)
       setSubmitted(true)
     } catch (err) {
       notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
@@ -299,8 +312,35 @@ export default function PaymentPage() {
               </span>
             </div>
 
+            <div className="paypage-field">
+              <label className="paypage-label" htmlFor="or-photo">
+                Photo of the Receipt{' '}
+                {details?.has_receipt
+                  ? <span className="paypage-hint-inline">(already on file)</span>
+                  : <span className="paypage-req">*</span>}
+              </label>
+              <input
+                id="or-photo"
+                type="file"
+                /* capture hints a phone at its camera rather than the gallery;
+                   desktop browsers ignore it and show the file picker. */
+                capture="environment"
+                accept="image/*,.pdf,.heic,.heif"
+                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                disabled={submitting}
+                className="paypage-file"
+              />
+              <span className="paypage-hint">
+                {receiptFile
+                  ? `Selected: ${receiptFile.name}`
+                  : details?.has_receipt
+                    ? 'A photo is already on file. Choose another only to replace it.'
+                    : 'Photograph the whole receipt so the number is readable. CDSO checks it against the number above.'}
+              </span>
+            </div>
+
             <button type="submit" className="paypage-btn-submit" disabled={submitting}>
-              {submitting ? 'Submitting…' : 'Submit Receipt Number'}
+              {submitting ? 'Submitting…' : 'Submit Receipt'}
             </button>
           </form>
         </div>

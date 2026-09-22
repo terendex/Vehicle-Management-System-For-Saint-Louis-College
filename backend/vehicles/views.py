@@ -2817,6 +2817,25 @@ def _payment_registration(token):
         return None
 
 
+# How big a receipt photo may be. Phone cameras routinely produce 5-8 MB, so
+# the cap is set above that rather than at it - a rejected upload at this point
+# means an applicant who has already paid cannot file their number.
+RECEIPT_IMAGE_MAX_BYTES = 12 * 1024 * 1024
+
+
+def _receipt_image_extensions():
+    """What the model's own validator allows, read from the field.
+
+    Repeating the list here is how the form and the column drift apart; this
+    way adding an extension on the model is enough.
+    """
+    for validator in VehicleRegistration._meta.get_field('or_receipt_image').validators:
+        allowed = getattr(validator, 'allowed_extensions', None)
+        if allowed:
+            return {e.lower() for e in allowed}
+    return set()
+
+
 class RegistrationPaymentView(APIView):
     """The applicant's own proof-of-payment step.
 
@@ -2824,10 +2843,18 @@ class RegistrationPaymentView(APIView):
     email to file the Official Receipt number themselves, instead of a reviewer
     re-keying it at a counter.
 
-    DPO: the receipt photo that used to accompany the number is
-    no longer collected. CDSO checks the paper receipt the applicant brings
-    against the number on file, rather than an image on the review screen. A file
-    sent by a browser still running the previous bundle is ignored, not stored.
+    The receipt photo IS collected, and the history matters. The DPO had it
+    removed, on the reasoning that CDSO could check the paper receipt the
+    applicant brings against the number on file. In practice an OR number
+    typed into a box is a claim rather than evidence - nothing on the review
+    screen backs it - so the photograph is collected again and shown beside
+    the number at review time.
+
+    It is deliberately NOT emailed anywhere. Attaching a payment document to
+    the receipt confirmation would put it through an external mail provider
+    (Brevo on Railway, Gmail on campus), which is a far wider exposure than
+    showing it inside the app to the one office that has to verify it. That is
+    the narrowest form of this reversal that still answers the problem.
 
     Authorised by the unguessable payment_token alone. The (id, email) pair the
     document upload uses is not a secret any more: school addresses are now
@@ -2889,6 +2916,7 @@ class RegistrationPaymentView(APIView):
             )
 
         or_number = (request.data.get('or_number') or '').strip()   # what the Accounting Office printed on their receipt
+        receipt_image = request.FILES.get('or_receipt_image')       # the evidence behind that number
 
         # Same shape the accept flow has always enforced, applied at the point
         # the number is actually typed instead of days later at the counter.
@@ -2902,6 +2930,35 @@ class RegistrationPaymentView(APIView):
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # The photo is required, because the number alone is exactly what this
+        # is meant to stop being sufficient. Already having one on file counts:
+        # somebody returning to the link to correct a mistyped number should
+        # not have to photograph the receipt a second time.
+        if receipt_image is None and not registration.or_receipt_image:
+            return Response(
+                {"error": "A photo of the Official Receipt is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if receipt_image is not None:
+            # The allowed list is read off the model's own validator rather
+            # than repeated here, so the two cannot drift apart.
+            allowed = _receipt_image_extensions()
+            ext = receipt_image.name.rsplit('.', 1)[-1].lower() if '.' in receipt_image.name else ''
+            if ext not in allowed:
+                return Response(
+                    {"error": "The receipt must be an image or PDF ("
+                              + ', '.join(sorted(allowed)) + ")."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Checked before anything is written: phone cameras produce large
+            # files and this endpoint is reachable by anyone holding the link.
+            if receipt_image.size > RECEIPT_IMAGE_MAX_BYTES:
+                return Response(
+                    {"error": "The receipt photo is too large (maximum "
+                              f"{RECEIPT_IMAGE_MAX_BYTES // (1024 * 1024)} MB)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Four fields together record the payment; written in one save so a
         # row can never be left half-paid.
         registration.or_number        = or_number
@@ -2909,11 +2966,13 @@ class RegistrationPaymentView(APIView):
         registration.amount_paid      = registration.pass_fee()
         registration.paid_at          = timezone.now()   # when it was filed, which is not necessarily when they paid the cashier
         registration.payment_status   = VehicleRegistration.PaymentStatus.PAID   # what moves it into the CDSO review queue
+        written = ['or_number', 'amount_paid', 'paid_at', 'payment_status']
+        if receipt_image is not None:
+            registration.or_receipt_image = receipt_image
+            written.append('or_receipt_image')
         # update_fields, so this cannot overwrite anything a reviewer changed on
         # the row while the applicant had the page open.
-        registration.save(update_fields=[
-            'or_number', 'amount_paid', 'paid_at', 'payment_status',
-        ])
+        registration.save(update_fields=written)
 
         # The receipt number is what completes the registration form, so this is
         # the mail that carries it: the PDF the CDSO files. Backgrounded like the
