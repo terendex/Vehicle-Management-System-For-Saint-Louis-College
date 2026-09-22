@@ -5,7 +5,7 @@ from django.contrib.auth.hashers import make_password
 def seed_demo_users(apps, schema_editor):
     User = apps.get_model('accounts', 'User')
     admin_data = {
-        'email': 'admin@slc.edu.ph',
+        'email': 'cdso.slc.sflu@gmail.com',
         'full_name': 'System Admin',
         'role': 'admin',
         'is_staff': True,

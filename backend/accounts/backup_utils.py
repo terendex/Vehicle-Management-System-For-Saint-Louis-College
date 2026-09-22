@@ -347,12 +347,12 @@ def _resolve_displaced_rows(model, objs, using):
     _upsert writes INSERT ... ON CONFLICT (pk) DO UPDATE, which resolves a
     collision on the PRIMARY KEY and on nothing else. A restore onto a fresh
     install hits the other kind every single time: migration 0005 seeds
-    admin@slc.edu.ph at pk=1, a backup taken from a running system carries the
-    same address at pk=2, and the insert trips uniq_active_user_email - a
-    constraint ON CONFLICT (pk) does not cover. Postgres raises, the
-    transaction rolls back, and the restore fails whole. Rebuilding onto a
-    fresh install is the most important thing a restore is for, and it was the
-    one case that could never work.
+    cdso.slc.sflu@gmail.com at pk=1, a backup taken from a running system
+    carries the same address at pk=2, and the insert trips
+    uniq_active_user_email - a constraint ON CONFLICT (pk) does not cover.
+    Postgres raises, the transaction rolls back, and the restore fails whole.
+    Rebuilding onto a fresh install is the most important thing a restore is
+    for, and it was the one case that could never work.
 
     The live row is in the way, not wrong, so it is moved aside and never
     deleted. Two ways, in this order:

@@ -350,8 +350,8 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
     def test_a_row_holding_a_needed_unique_value_is_archived_not_deleted(self):
         """The case a restore onto a fresh install hits every single time.
 
-        A new install seeds admin@slc.edu.ph at pk=1; a backup taken from a
-        running system carries the same address at a different pk. The upsert
+        A new install seeds cdso.slc.sflu@gmail.com at pk=1; a backup taken
+        from a running system carries the same address at a different pk. The upsert
         says ON CONFLICT (pk), so it does not see a collision on the separate
         partial index over email - Postgres raised, the transaction rolled
         back, and the restore failed whole. Rebuilding onto a fresh install is

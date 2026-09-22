@@ -118,7 +118,7 @@ class NotificationBellTests(TestCase):
 
     def setUp(self):
         from rest_framework.test import APIClient
-        # Note: migration 0005 seeds admin@slc.edu.ph — use a distinct email
+        # Note: migration 0005 seeds cdso.slc.sflu@gmail.com — use a distinct email
         self.admin = User.objects.create_user(
             email='bell-admin@test.local', full_name='Admin', password='Passw0rd!23', role='admin',
         )

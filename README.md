@@ -699,7 +699,7 @@ through the app.
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | `admin@slc.edu.ph` | set on first setup — see below |
+| Admin | `cdso.slc.sflu@gmail.com` | set on first setup — see below |
 
 Passwords are intentionally **not** listed here: this is a public repository and
 the deployment is reachable on the public internet, so a working credential in
@@ -709,7 +709,7 @@ this file is a live account anyone could use.
 log in at `/login`:
 
 ```bash
-cd backend && python manage.py changepassword admin@slc.edu.ph
+cd backend && python manage.py changepassword cdso.slc.sflu@gmail.com
 ```
 
 On Railway, run that from the service's **Console** tab. Locally, run it from an
