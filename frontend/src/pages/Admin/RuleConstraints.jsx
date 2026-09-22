@@ -601,7 +601,7 @@ export default function RuleConstraints() {
                 const editing = periodEditor.mode === 'edit'
                 /* An older window's label is no longer in the rolling option list,
                    and a running window's start date is in the past — neither may
-                   be dropped just because the form was reopened to move the end
+                   be dropped just because the form was reopened to extend the end
                    date, so both are carried into the inputs as they stand. */
                 const rolling = periodLabelOptions()
                 const labelOptions = periodForm.label && !rolling.includes(periodForm.label)
@@ -611,7 +611,7 @@ export default function RuleConstraints() {
                   <div className="rc-period-form">
                     <p className="rc-period-form-title">
                       {editing
-                        ? <><Pencil size={13} /> Editing period</>
+                        ? <><CalendarDays size={13} /> Extending period</>
                         : <><Plus size={13} /> New registration period</>}
                     </p>
                     <div className="rc-period-form-fields">
@@ -654,8 +654,8 @@ export default function RuleConstraints() {
                       <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
                         {savingPeriod
                           ? <Loader2 size={14} className="rc-spin" />
-                          : editing ? <Pencil size={14} /> : <Plus size={14} />}
-                        {savingPeriod ? 'Saving…' : editing ? 'Save Changes' : 'Save & Activate'}
+                          : editing ? <CalendarDays size={14} /> : <Plus size={14} />}
+                        {savingPeriod ? 'Saving…' : editing ? 'Save New Dates' : 'Save & Activate'}
                       </button>
                     </div>
                   </div>
@@ -699,16 +699,18 @@ export default function RuleConstraints() {
                             </td>
                             <td>
                               <div className="rc-period-actions">
-                                {/* Editable while it is still running — a deadline
-                                    that has to move is the whole reason to touch a
-                                    live window, and archiving to re-create one only
-                                    leaves a duplicate row behind. */}
+                                {/* Open while it is still running, and named for the
+                                    one thing it is really for: a deadline that has to
+                                    move. Archiving to re-create the window instead
+                                    only leaves a duplicate row behind. It was called
+                                    "Edit", which described the form rather than the
+                                    decision anyone actually comes here to make. */}
                                 {!ended && (
                                   <button
                                     className="rc-btn rc-btn-secondary rc-btn-sm"
                                     onClick={() => openEditPeriod(p)}
                                   >
-                                    <Pencil size={12} /> Edit
+                                    <CalendarDays size={12} /> Extend Duration
                                   </button>
                                 )}
                                 {ended ? null : isActive ? (
