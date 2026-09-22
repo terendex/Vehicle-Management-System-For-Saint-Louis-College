@@ -526,6 +526,7 @@ class ViolationReportPdfView(APIView):
             report_title='Violations Report',
             subtitle=_violation_report_subtitle(request, desc, len(rows)),
             generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=VIOLATION_REPORT_HEADERS,
             rows=rows,
             # Owner names ran past their column while Issued By sat mostly

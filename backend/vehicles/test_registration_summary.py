@@ -272,16 +272,24 @@ class BrandedPdfExtraTablesTests(TestCase):
 
     def test_an_extra_table_is_actually_laid_out(self):
         """PDF text is glyph-encoded, so presence is pinned structurally: rows
-        that need three pages must still need three pages when they are handed
-        to the second table instead of the first. A silently ignored
-        extra_tables would leave this on one page."""
+        that need several pages in the first table must still need several when
+        they are handed to the second instead. A silently ignored extra_tables
+        would leave this on one page, which is what the comparison catches.
+
+        Not equality. The second table carries a section title and its own
+        spacers that the first does not, and every report now ends with a
+        signature block - so the extra version legitimately needs at least as
+        much room, and sometimes one page more. Pinning it to exactly equal
+        was measuring the slack left on the last page rather than whether the
+        rows were laid out at all.
+        """
         big = [[f'Row {i}', i, i] for i in range(60)]
         primary = self.pdf(headers=self.HEADERS, rows=big)
         extra = self.pdf(headers=self.HEADERS, rows=[['x', 1, 2]], extra_tables=[
             {'title': 'Second', 'headers': self.HEADERS, 'rows': big,
              'col_widths_mm': self.WIDTHS}])
         self.assertGreater(self.page_count(primary), 1)
-        self.assertEqual(self.page_count(extra), self.page_count(primary))
+        self.assertGreaterEqual(self.page_count(extra), self.page_count(primary))
 
     def test_both_tables_may_be_empty(self):
         content = self.pdf(headers=self.HEADERS, rows=[], extra_tables=[

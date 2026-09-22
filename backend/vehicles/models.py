@@ -872,6 +872,35 @@ class SystemSettings(models.Model):
                   "Pre-restore snapshots are never rotated away.",
     )
 
+    # ── Report signatories ──
+    # Every branded PDF ends with a "Prepared by / Approved by" block, because
+    # a report that leaves the office as a paper document needs to say who
+    # stands behind it. The preparer is not stored here - it is whoever is
+    # signed in and pressed the button, which is the only honest answer. The
+    # approver is, because the head of office does not sign in to generate
+    # every report and the post changes hands.
+    #
+    # The captions are settings too. "Prepared by" and "Approved by" are the
+    # usual wording, but an office that files these under "Submitted by" or
+    # "Noted by" should not need a code change to say so.
+    report_approver_name     = models.CharField(
+        max_length=150, blank=True, default='',
+        help_text="Name printed under 'Approved by' on every PDF report. "
+                  "Left blank, the report prints a ruled line to sign on.",
+    )
+    report_approver_position = models.CharField(
+        max_length=150, blank=True, default='Head, Campus Development and Security Office',
+        help_text="Position printed beneath the approver's name.",
+    )
+    report_prepared_by_label = models.CharField(
+        max_length=60, default='Prepared by',
+        help_text="Caption above the signature of whoever generated the report.",
+    )
+    report_approved_by_label = models.CharField(
+        max_length=60, default='Approved by',
+        help_text="Caption above the approver's signature.",
+    )
+
     class Meta:
         db_table = 'tbl_system_settings'
         verbose_name        = "System Settings"      # stop Django's admin calling it "System Settingss"

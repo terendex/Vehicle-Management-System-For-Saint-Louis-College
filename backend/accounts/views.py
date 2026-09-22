@@ -886,6 +886,7 @@ class AuditLogPdfExportView(APIView):
             report_title='Audit Log Report',
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
             # Date & Time needs 91pt but only had 86pt, so every single row

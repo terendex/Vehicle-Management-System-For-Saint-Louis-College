@@ -231,7 +231,7 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
 
 
 def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows,
-                         col_widths_mm, extra_tables=()):
+                         col_widths_mm, extra_tables=(), generated_by_role=''):
     """Build a landscape A4 PDF with the SLC letterhead, brand table and footer.
 
     `extra_tables` appends further titled tables below the first, each a dict of
@@ -244,7 +244,8 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle, Paragraph,
+                                    Spacer, KeepTogether)
 
     _register_letterhead_fonts()
     brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
@@ -308,5 +309,67 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         story.append(Paragraph(esc(extra['title']), section_style))
         story.append(Spacer(1, 3 * mm))
         story.append(build_table(extra['headers'], extra['rows'], extra['col_widths_mm']))
+
+    # ── Signatories ──────────────────────────────────────────────────────
+    # A report that leaves the office as a paper document has to say who
+    # stands behind it. The preparer is whoever is signed in and pressed the
+    # button - the only honest answer, so it is never a setting. The approver
+    # IS configured, in System Settings, because the head of office does not
+    # sign in to generate every report and the post changes hands.
+    #
+    # Imported here rather than at module scope: report_utils is imported by
+    # four apps' views, and reaching for a model at import time would tie this
+    # module to app loading order for no gain.
+    from vehicles.models import SystemSettings
+    cfg = SystemSettings.get()
+
+    sig_label = ParagraphStyle('siglabel', fontName='Helvetica', fontSize=8.5,
+                               textColor=colors.HexColor('#666666'), leading=11)
+    sig_name  = ParagraphStyle('signame', fontName='Helvetica-Bold', fontSize=9.5,
+                               textColor=navy, leading=12)
+    sig_pos   = ParagraphStyle('sigpos', fontName='Helvetica', fontSize=8,
+                               textColor=colors.HexColor('#666666'), leading=10)
+
+    # 267mm of printable width (A4 landscape less the 15mm margins), split into
+    # two signature columns with a gutter between them so the two ruled lines
+    # never read as one.
+    sig_col = (267 - 47) / 2
+    # A space, not an empty string: a Paragraph with no content collapses to
+    # zero height and takes the ruled line above it with it, which is exactly
+    # the case that matters - an approver who has not been named yet and needs
+    # a blank line to sign on.
+    def sig_cell(text, style):
+        return Paragraph(esc(text) if str(text).strip() else '&nbsp;', style)
+
+    sig_table = Table(
+        [
+            [sig_cell(cfg.report_prepared_by_label, sig_label), '',
+             sig_cell(cfg.report_approved_by_label, sig_label)],
+            ['', '', ''],                                   # the space signed into
+            [sig_cell(generated_by, sig_name), '',
+             sig_cell(cfg.report_approver_name, sig_name)],
+            [sig_cell(generated_by_role, sig_pos), '',
+             sig_cell(cfg.report_approver_position, sig_pos)],
+        ],
+        colWidths=[sig_col * mm, 47 * mm, sig_col * mm],
+        rowHeights=[None, 13 * mm, None, None],             # row 1 is the signing space
+    )
+    sig_table.setStyle(TableStyle([
+        ('VALIGN',        (0, 0), (-1, -1), 'BOTTOM'),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 0),
+        ('TOPPADDING',    (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        # The rule sits above the NAME row, so it reads as a line signed over
+        # whether or not a name is printed beneath it.
+        ('LINEABOVE',     (0, 2), (0, 2), 0.6, navy),
+        ('LINEABOVE',     (2, 2), (2, 2), 0.6, navy),
+    ]))
+    # KeepTogether: a signature block split across a page break leaves the
+    # captions on one page and the lines on the next, which is worse than a
+    # short final page.
+    story.append(Spacer(1, 12 * mm))
+    story.append(KeepTogether(sig_table))
+
     doc.build(story, onFirstPage=draw_frame, onLaterPages=draw_frame)
     return resp

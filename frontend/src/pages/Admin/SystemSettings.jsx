@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw, UserCog, SquareParking } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw, UserCog, SquareParking, FileSignature } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
@@ -7,6 +7,7 @@ import { getGates, createGate, updateGate } from '../../api/scanning'
 import { invalidateGates } from '../../hooks/useGates'
 import { usersApi } from '../../api/users'
 import useTwofaStore from '../../stores/twofaStore'
+import useAuthStore from '../../stores/authStore'
 import { pickSaveLocation, saveBlobTo, discardSaveLocation } from '../../utils/saveFile'
 import './SystemSettings.css'
 
@@ -16,7 +17,17 @@ import './SystemSettings.css'
 const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
   account_expiry_months: 12, account_expiry_days: 0,
   parked_after_seconds: 8, double_park_after_seconds: 12,
-  auto_backup_frequency: 'off', auto_backup_keep: 10 }
+  auto_backup_frequency: 'off', auto_backup_keep: 10,
+  report_approver_name: '', report_approver_position: '',
+  report_prepared_by_label: 'Prepared by', report_approved_by_label: 'Approved by' }
+
+// The same labels the backend's get_role_display() prints on the report, so
+// the preview on the Report Signatories tab is not a polite approximation.
+const ROLE_LABELS = {
+  admin: 'CDSO',
+  security: 'Security Personnel',
+  vehicle_owner: 'Registered Vehicle Owner',
+}
 
 const hasExpiryPeriod = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
 
@@ -37,6 +48,13 @@ function normalizeSettings(data) {
     double_park_after_seconds: data.double_park_after_seconds ?? 12,
     auto_backup_frequency: data.auto_backup_frequency ?? 'off',
     auto_backup_keep:      data.auto_backup_keep      ?? 10,
+    // ?? '' rather than ?? a caption: a blank approver is a real, chosen
+    // state (the report prints a line to sign on), so it must survive the
+    // round trip instead of being refilled with a default.
+    report_approver_name:     data.report_approver_name     ?? '',
+    report_approver_position: data.report_approver_position ?? '',
+    report_prepared_by_label: data.report_prepared_by_label ?? 'Prepared by',
+    report_approved_by_label: data.report_approved_by_label ?? 'Approved by',
   }
 }
 
@@ -110,6 +128,7 @@ const TABS = [
   { id: 'gates',    label: 'Gates & Scanning',  icon: DoorOpen },
   { id: 'parking',  label: 'Parking',           icon: SquareParking },
   { id: 'data',     label: 'Data & Backup',     icon: Database },
+  { id: 'reports',  label: 'Report Signatories', icon: FileSignature },
 ]
 
 // Which tab each editable field belongs to, so the dot on a tab and the jump on
@@ -120,6 +139,8 @@ const FIELD_TAB = {
   scan_dedup_seconds: 'gates',
   parked_after_seconds: 'parking', double_park_after_seconds: 'parking',
   retention_years: 'data', auto_backup_frequency: 'data', auto_backup_keep: 'data',
+  report_approver_name: 'reports', report_approver_position: 'reports',
+  report_prepared_by_label: 'reports', report_approved_by_label: 'reports',
 }
 
 export default function SystemSettings() {
@@ -128,6 +149,9 @@ export default function SystemSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [tab, setTab]         = useState('accounts')
+  // Only ever read, and only for the signatory preview below: the PDF takes
+  // the preparer from the request that generated it, never from this screen.
+  const { user } = useAuthStore()
   const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
   const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
 
@@ -980,6 +1004,139 @@ export default function SystemSettings() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+              </section>
+            </>
+          ) : tab === 'reports' ? (
+            <>
+              {/* -- Report Signatories ---------------------------------- */}
+              <section className="ss-section">
+                <div className="ss-section-head">
+                  <div className="ss-section-icon ss-icon-blue">
+                    <FileSignature size={15} />
+                  </div>
+                  <div>
+                    <h2 className="ss-section-title">Report Signatories</h2>
+                    <p className="ss-section-desc">
+                      Every exported PDF report ends with a signature block. <strong>Prepared by</strong> is
+                      always whoever generated that particular report and is never set here &mdash; it is
+                      taken from whoever is signed in at the time. <strong>Approved by</strong> is set
+                      here, because the head of office does not sign in to run every report and the
+                      post changes hands.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_approver_name">Approver&rsquo;s name</label>
+                      <span className="ss-row-hint">
+                        Printed beneath the approval line on every PDF report. Leave it blank to print
+                        an empty ruled line to be signed by hand.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_approver_name"
+                        name="report_approver_name"
+                        type="text"
+                        maxLength={150}
+                        value={form.report_approver_name}
+                        onChange={handleChange}
+                        placeholder="e.g. JUAN DELA CRUZ"
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_approver_position">Approver&rsquo;s position</label>
+                      <span className="ss-row-hint">
+                        The line under the approver&rsquo;s name &mdash; their office or title.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_approver_position"
+                        name="report_approver_position"
+                        type="text"
+                        maxLength={150}
+                        value={form.report_approver_position}
+                        onChange={handleChange}
+                        placeholder="e.g. Head, Campus Development and Security Office"
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_prepared_by_label">Preparer&rsquo;s caption</label>
+                      <span className="ss-row-hint">
+                        The wording above the preparer&rsquo;s signature. An office that files these as
+                        &ldquo;Submitted by&rdquo; can say so here.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_prepared_by_label"
+                        name="report_prepared_by_label"
+                        type="text"
+                        maxLength={60}
+                        value={form.report_prepared_by_label}
+                        onChange={handleChange}
+                        placeholder="Prepared by"
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_approved_by_label">Approver&rsquo;s caption</label>
+                      <span className="ss-row-hint">
+                        The wording above the approval signature &mdash; &ldquo;Noted by&rdquo;, for instance.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_approved_by_label"
+                        name="report_approved_by_label"
+                        type="text"
+                        maxLength={60}
+                        value={form.report_approved_by_label}
+                        onChange={handleChange}
+                        placeholder="Approved by"
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* A rehearsal of the block that will actually be printed. The
+                    whole point of this tab is that the wording is configurable,
+                    and a field called "caption" is far easier to get right when
+                    the line it lands on is visible while typing. */}
+                <div className="ss-sig-preview">
+                  <p className="ss-sig-preview-caption">As it will appear on every PDF report</p>
+                  <div className="ss-sig-preview-cols">
+                    <div className="ss-sig-preview-col">
+                      <div className="ss-sig-preview-label">{form.report_prepared_by_label || '\u00a0'}</div>
+                      <div className="ss-sig-preview-rule">
+                        <div className="ss-sig-preview-name">{user?.full_name || '\u00a0'}</div>
+                        <div className="ss-sig-preview-position">{ROLE_LABELS[user?.role] || '\u00a0'}</div>
+                      </div>
+                    </div>
+                    <div className="ss-sig-preview-col">
+                      <div className="ss-sig-preview-label">{form.report_approved_by_label || '\u00a0'}</div>
+                      <div className="ss-sig-preview-rule">
+                        <div className="ss-sig-preview-name">{form.report_approver_name || '\u00a0'}</div>
+                        <div className="ss-sig-preview-position">{form.report_approver_position || '\u00a0'}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>

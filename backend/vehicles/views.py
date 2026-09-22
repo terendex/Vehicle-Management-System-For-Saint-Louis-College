@@ -3701,6 +3701,13 @@ class SystemSettingsView(APIView):
             "double_park_after_seconds": obj.double_park_after_seconds,
             "auto_backup_frequency": obj.auto_backup_frequency,
             "auto_backup_keep":      obj.auto_backup_keep,
+            # Report signatories. There is deliberately no preparer name here:
+            # that is whoever is signed in and generated the report, which the
+            # PDF builder reads from the request, not from settings.
+            "report_approver_name":     obj.report_approver_name,
+            "report_approver_position": obj.report_approver_position,
+            "report_prepared_by_label": obj.report_prepared_by_label,
+            "report_approved_by_label": obj.report_approved_by_label,
         }
 
     def get(self, request):
@@ -3737,6 +3744,10 @@ class SystemSettingsView(APIView):
         double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
         auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
         auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
+        report_approver_name      = request.data.get("report_approver_name",     obj.report_approver_name)
+        report_approver_position  = request.data.get("report_approver_position", obj.report_approver_position)
+        report_prepared_by_label  = request.data.get("report_prepared_by_label", obj.report_prepared_by_label)
+        report_approved_by_label  = request.data.get("report_approved_by_label", obj.report_approved_by_label)
 
         # The pattern every numeric field below follows: coerce, then range
         # check, and record a message instead of raising. int() of a string is
@@ -3875,6 +3886,24 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError):
             errors["auto_backup_keep"] = "Must be an integer."
 
+        # The signatory strings. They are free text, so the only thing that can
+        # be wrong is the length: each column is sized for a name or a caption,
+        # and anything longer would be truncated by the database rather than
+        # reported back. Blank is allowed throughout - an approver who has not
+        # been named yet prints a ruled line to sign on, which is the point.
+        _signatory_limits = {
+            "report_approver_name":     (report_approver_name,     150),
+            "report_approver_position": (report_approver_position, 150),
+            "report_prepared_by_label": (report_prepared_by_label, 60),
+            "report_approved_by_label": (report_approved_by_label, 60),
+        }
+        signatories = {}
+        for _field, (_value, _limit) in _signatory_limits.items():
+            _text = ('' if _value is None else str(_value)).strip()
+            if len(_text) > _limit:
+                errors[_field] = f"Must be at most {_limit} characters."
+            signatories[_field] = _text
+
         # All or nothing. One bad field and the row is left exactly as it was,
         # which is why every assignment below this line and none above it.
         if errors:
@@ -3903,6 +3932,11 @@ class SystemSettingsView(APIView):
 
         obj.auto_backup_frequency = auto_backup_frequency
         obj.auto_backup_keep      = auto_backup_keep
+
+        obj.report_approver_name     = signatories["report_approver_name"]
+        obj.report_approver_position = signatories["report_approver_position"]
+        obj.report_prepared_by_label = signatories["report_prepared_by_label"]
+        obj.report_approved_by_label = signatories["report_approved_by_label"]
         obj.save()                               # a full save, not update_fields: every column above was just reassigned
         # ── Past this line the settings are stored. What follows makes them take effect. ──
 
@@ -4833,6 +4867,7 @@ class RegistrationReportPdfView(APIView):
             report_title='Vehicle Registrations Report',
             subtitle=_registration_report_subtitle(desc, len(rows)),
             generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
             # Millimetres, summing to 237 of the 267 available (A4 landscape
@@ -5037,6 +5072,7 @@ class RegistrationSummaryReportPdfView(APIView):
             report_title='Vehicle Registration Summary Report',
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=status_headers,
             rows=status_rows,
             col_widths_mm=status_widths,

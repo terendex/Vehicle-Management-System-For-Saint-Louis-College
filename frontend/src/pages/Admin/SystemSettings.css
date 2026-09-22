@@ -295,6 +295,74 @@
   box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.08);
 }
 
+/* Signatory fields hold names and captions, not two-digit numbers, so they
+   need room to show what was typed. The 720px rule further down already
+   stretches every .ss-input to the full line, so this only shapes desktop. */
+.ss-input--text {
+  width: 264px;
+  font-weight: 500;
+}
+
+/* ── Signature preview ──────────────────────────────────────────
+   A rehearsal of the block the PDF will carry. The whole point of the
+   Report Signatories tab is that the wording is configurable, and a field
+   called "caption" is far easier to get right when the line it lands on is
+   visible while typing. Dashed, so it never reads as part of the form. */
+.ss-sig-preview {
+  margin-top: 1.15rem;
+  padding: 1.1rem 1.25rem 1.35rem;
+  border: 1.5px dashed #D3E1EC;
+  border-radius: 10px;
+  background: #F7FAFC;
+}
+
+.ss-sig-preview-caption {
+  margin: 0 0 1rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4A6B85;
+}
+
+.ss-sig-preview-cols {
+  display: flex;
+  gap: 3rem;
+  flex-wrap: wrap;
+}
+
+.ss-sig-preview-col {
+  flex: 1 1 210px;
+  min-width: 0;
+}
+
+.ss-sig-preview-label {
+  font-size: 0.78rem;
+  color: #4A6B85;
+}
+
+/* The rule sits above the name, so it reads as a line signed over whether or
+   not a name is printed beneath it — exactly as the PDF draws it. */
+.ss-sig-preview-rule {
+  margin-top: 2.2rem;
+  padding-top: 4px;
+  border-top: 1.2px solid #03396C;
+}
+
+.ss-sig-preview-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #0B2340;
+  min-height: 1.2em;
+  overflow-wrap: anywhere;
+}
+
+.ss-sig-preview-position {
+  font-size: 0.75rem;
+  color: #4A6B85;
+  min-height: 1.2em;
+  overflow-wrap: anywhere;
+}
+
 .ss-unit {
   font-size: 0.82rem;
   color: #4A6B85;

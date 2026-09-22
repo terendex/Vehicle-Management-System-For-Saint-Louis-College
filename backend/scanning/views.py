@@ -2135,6 +2135,7 @@ class VehicleLogPdfExportView(APIView):
             report_title='Vehicle Log Report',
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
             # 267mm of printable width on landscape A4, and it must still total
