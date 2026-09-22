@@ -845,6 +845,34 @@ function Write-Log {
     if ($App.LogWriter) { try { $App.LogWriter.WriteLine("$stamp  $Text") } catch { } }
 }
 
+# The log file is deliberately NOT tied to the server's lifetime.
+#
+# Clear-Server used to dispose this writer, so Write-Log's file branch above
+# went dead the moment the server stopped - and the whole update runs in
+# exactly that window. "Updating from origin/main..." was written while the
+# server was still up and reached the file; everything after it (git's own
+# output, "Update failed. The previous version is untouched.", "Updated.
+# Restarting the server") was written after Clear-Server and reached the
+# window only. An update that went wrong therefore left no trace at all in
+# the file the operator is asked to send in, which is why "it will not
+# update" was not diagnosable from the logs.
+#
+# Opening the file here and holding it for the life of the window fixes that.
+# Called again on every start so the file rolls over at midnight.
+function Open-LogFile {
+    $path = Join-Path $LogDir ("campus-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
+    if ($App.LogWriter -and $App.LogPath -eq $path) { return }   # already on today's file
+    if ($App.LogWriter) { try { $App.LogWriter.Flush(); $App.LogWriter.Dispose() } catch { }; $App.LogWriter = $null }
+    $App.LogPath = $path
+    try {
+        # UTF-8 without a BOM, to match what we now read from the child.
+        $App.LogWriter = New-Object System.IO.StreamWriter($path, $true, (New-Object System.Text.UTF8Encoding($false)))
+        # Deliberately NOT AutoFlush. That would be one flush syscall per line;
+        # Update-LogView flushes once per tick instead.
+        $App.LogWriter.AutoFlush = $false
+    } catch { $App.LogWriter = $null }
+}
+
 # Called once per tick, not once per line. The trim is amortised: it runs only
 # after 400 lines have accumulated past the cap, so the per-line cost of keeping
 # the list bounded is constant.
@@ -1327,14 +1355,7 @@ function Start-Server {
     Set-State 'Starting' 'Preparing the environment. A first run installs dependencies and can take several minutes.'
     Set-Pill 'Db' 'checking' 'none'; Set-Pill 'Cam' 'checking' 'none'; Set-Pill 'Rt' 'checking' 'none'
 
-    $App.LogPath = Join-Path $LogDir ("campus-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
-    try {
-        # UTF-8 without a BOM, to match what we now read from the child.
-        $App.LogWriter = New-Object System.IO.StreamWriter($App.LogPath, $true, (New-Object System.Text.UTF8Encoding($false)))
-        # Deliberately NOT AutoFlush. That would be one flush syscall per line;
-        # Update-LogView flushes once per tick instead.
-        $App.LogWriter.AutoFlush = $false
-    } catch { $App.LogWriter = $null }
+    Open-LogFile        # already open from launch; this only rolls the date over
 
     $script = Join-Path $PSScriptRoot 'run-campus.ps1'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -1379,6 +1400,12 @@ function Stop-Server {
     param([switch]$Quiet)
     if (-not $App.Proc -or $App.Proc.HasExited) {
         Clear-Server
+        # An update that asked for this stop has to be picked back up HERE.
+        # The tick loop normally resumes it when it sees the process exit, but
+        # this branch has just cleared $App.Proc, so that test can never fire
+        # again - the update would stall with Restarting left true and the
+        # pull would never run, which looks exactly like "it will not update".
+        if ($App.Restarting) { Complete-Update; return }
         if (-not $Quiet) { Set-State 'Stopped' 'Press Start to bring the gate terminal up.' }
         return
     }
@@ -1399,7 +1426,9 @@ function Stop-Server {
 function Clear-Server {
     foreach ($sub in $App.Subs) { try { Unregister-Event -SubscriptionId $sub.Id -ErrorAction SilentlyContinue } catch { } }
     $App.Subs = @()
-    if ($App.LogWriter) { try { $App.LogWriter.Flush(); $App.LogWriter.Dispose() } catch { }; $App.LogWriter = $null }
+    # Flush but do NOT dispose - see Open-LogFile. Closing the writer here is
+    # what made every line the update path writes invisible in the log file.
+    if ($App.LogWriter) { try { $App.LogWriter.Flush() } catch { } }
     $App.Proc = $null
     $App.Origin = ''
 }
@@ -1468,9 +1497,23 @@ function Start-UpdateCheck {
 }
 
 function Complete-UpdateCheck {
+    # $FetchOk is false when the background fetch itself failed. Without it an
+    # outage looks exactly like "Up to date": `fetch --quiet` prints nothing
+    # when it fails, and the rev-list below then compares HEAD against
+    # whatever origin/<branch> was left pointing at the last time it worked.
+    param([bool]$FetchOk = $true)
     $App.FetchProc = $null
     $App.LastCheck = Get-Date
     $ui.LastCheckText.Text = "last checked " + $App.LastCheck.ToString('HH:mm')
+
+    if (-not $FetchOk) {
+        # Deliberately not fatal. Objects from an earlier successful fetch are
+        # still in the local store, so the comparison below is still worth
+        # doing and the update button must stay available - it just may be
+        # showing a stale answer. Say so instead of presenting it as fresh.
+        Write-Log "Could not fetch origin/$($cfg.Branch) - showing the last known state." 'warn'
+        $ui.LastCheckText.Text += ' (offline)'
+    }
 
     $count = Invoke-Git @('rev-list', '--count', "HEAD..origin/$($cfg.Branch)")
     if (-not $count.Ok) {
@@ -1762,7 +1805,9 @@ $timer.Add_Tick({
     }
 
     # 3. did the background fetch finish?
-    if ($App.FetchProc -and $App.FetchProc.HasExited) { Complete-UpdateCheck }
+    if ($App.FetchProc -and $App.FetchProc.HasExited) {
+        Complete-UpdateCheck -FetchOk:($App.FetchProc.ExitCode -eq 0)
+    }
 
     # 4. time for another check?
     $every = [int]$cfg.UpdatePollMinutes
@@ -1859,6 +1904,7 @@ $win.Add_ContentRendered({
 
     Set-LogoImage 36
     Set-State 'Stopped'
+    Open-LogFile    # from here on every line reaches the file, server or not
     Write-Log 'Smart Parking and Vehicle Verification System - campus launcher' 'note'
     Write-Log "Repository: $($App.Repo)" 'dim'
 
@@ -1881,6 +1927,10 @@ $win.Add_Closing({
     $timer.Stop()
     if ($App.Proc -and -not $App.Proc.HasExited) { Stop-Server -Quiet }
     Clear-Server
+
+    # Nothing writes to the log after this point, so the writer that
+    # Clear-Server now deliberately leaves open can finally be closed.
+    if ($App.LogWriter) { try { $App.LogWriter.Flush(); $App.LogWriter.Dispose() } catch { }; $App.LogWriter = $null }
 
     # Take the kiosk window with us. A full-screen browser with no address bar,
     # left pointing at a server that just stopped, is the worst thing to leave
