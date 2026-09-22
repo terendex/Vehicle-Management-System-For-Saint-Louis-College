@@ -640,7 +640,14 @@ class ViolationReportExcelView(APIView):
         from django.utils import timezone as tz
         from report_utils import branded_excel_response, report_filename
         qs, desc = _filter_violations_report(request)
+        # Capped at 5,000, and the slice is applied to the QUERYSET so it
+        # reaches the database as a LIMIT - 100,000 rows are never fetched and
+        # thrown away. len(rows) therefore counts what is actually in the file,
+        # which is what the subtitle goes on to state.
         rows = _violation_report_rows(qs[:5000])
+        # The Excel subtitle carries who generated it and when; the PDF below
+        # does not, because branded_pdf_response takes generated_by as its own
+        # argument and prints it into the letterhead itself.
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "
                     + _violation_report_subtitle(request, desc, len(rows)))
@@ -684,7 +691,13 @@ class ViolationReportPdfView(APIView):
 # the penalty is a fresh offence. The list is read-only for guards and
 # actionable for the CDSO.
 
+# One shape for a confiscated account, used by all three endpoints below so
+# the list and the two actions cannot describe the same account differently.
 def _confiscation_payload(user):
+    # hasattr rather than a bare attribute read: this is also called with the
+    # User returned by an action, and a related manager is not guaranteed on
+    # every object that reaches here. An account with no vehicles is a normal
+    # state, not an error.
     plates = list(
         user.vehicles.values_list('plate_number', flat=True)
     ) if hasattr(user, 'vehicles') else []
@@ -694,6 +707,9 @@ def _confiscation_payload(user):
         'full_name':           user.full_name,
         'email':               user.email,
         'owner_type':          user.owner_type,
+        # Empty strings dropped: an e-bike or a brand-new car can be on file
+        # with no plate, and a blank chip in the guard's list reads as a
+        # rendering fault rather than as "this vehicle has no plate".
         'plates':              [p for p in plates if p],
         'confiscation_level':  user.confiscation_level,
         'confiscated_at':      user.confiscated_at,
@@ -701,6 +717,10 @@ def _confiscation_payload(user):
         'days_left':           user.confiscation_days_left,
         'reason':              user.confiscation_reason,
         'registration_banned': user.registration_banned,
+        # Sent as its own flag rather than left for the client to infer from a
+        # null date. "No end date" and "the date failed to load" look identical
+        # on the wire, and the two mean opposite things to a guard deciding
+        # whether to let a car through.
         'is_indefinite':       user.confiscated_until is None,
     }
 
@@ -735,6 +755,8 @@ class LiftConfiscationView(APIView):
         if not user.confiscation_level:
             return Response({'detail': 'This account is not confiscated.'},
                             status=http_status.HTTP_400_BAD_REQUEST)
+        # Read before clearing: the audit line states which rung was lifted,
+        # and clear_confiscation is what erases that number.
         was = user.confiscation_level
         user.clear_confiscation()
         audit(request, AuditLog.Action.RECORD_UPDATED,
@@ -755,6 +777,11 @@ class RegistrationPermissionView(APIView):
     def post(self, request, pk):
         from accounts.models import User
         user = get_object_or_404(User, pk=pk)
+        # Noted, with no code changed: the default is True, so a POST with no
+        # body GRANTS permission rather than withdrawing it. That is the
+        # permissive direction for a flag the 3rd strike sets - the screen
+        # always sends the value explicitly, so it has never mattered, but the
+        # safer default for a block being lifted would be the block staying on.
         allow = bool(request.data.get('allow', True))
         user.registration_banned = not allow
         user.save(update_fields=['registration_banned'])
