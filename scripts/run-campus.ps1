@@ -398,10 +398,15 @@ $tlsEndpoint = $null
 if ($TlsPort -gt 0) {
     $tlsDir = Join-Path $env:LOCALAPPDATA 'SLC-VMS\tls'
     try {
-        # Checked up front: daphne with an ssl endpoint and no pyOpenSSL dies at
-        # startup and takes the plain port down with it.
-        $tlsLibs = (& $python -c "import OpenSSL, service_identity; print('ok')" 2>&1 | Select-Object -Last 1)
-        if ("$tlsLibs" -ne 'ok') { throw 'pyOpenSSL/service_identity are not installed (pip install "twisted[tls]")' }
+        # Checked up front, and NOT just "does pyOpenSSL import". daphne with
+        # an ssl endpoint and no pyOpenSSL dies at startup and takes the plain
+        # port down with it - but an *incompatible* pyOpenSSL is worse, because
+        # the port listens and drops every handshake instead. That looked like
+        # a healthy HTTPS port that browsers silently refused, and read as "the
+        # camera does not work". campus-tls-check.py makes the same call
+        # Twisted makes per connection and reports what happened.
+        $tlsLibs = (& $python (Join-Path $PSScriptRoot 'campus-tls-check.py') 2>&1 | Select-Object -Last 1)
+        if ("$tlsLibs" -ne 'ok') { throw "$tlsLibs" }
         $made = (& $python (Join-Path $PSScriptRoot 'campus-tls-cert.py') $tlsDir $lan 2>&1 | Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0) { throw "$made" }
         # Twisted endpoint strings treat ':' and '\' as syntax, so a Windows
@@ -410,7 +415,12 @@ if ($TlsPort -gt 0) {
         $tlsEndpoint = "ssl:${TlsPort}:privateKey=$(& $esc (Join-Path $tlsDir 'key.pem')):certKey=$(& $esc (Join-Path $tlsDir 'cert.pem'))"
         Say "HTTPS certificate $made for $lan." 'DarkGray'
     } catch {
-        Write-Host "WARNING: HTTPS is off - could not create the certificate ($($_.Exception.Message.Trim())). Other devices will not get the camera." -ForegroundColor Yellow
+        # The reason is whatever failed - a certificate that could not be
+        # written, or a TLS stack that cannot serve - so it is quoted rather
+        # than assumed. Turning the port OFF is deliberate: a dead HTTPS port
+        # still advertises a "secure page" link in the UI, and a link that
+        # leads nowhere is worse than no link at all.
+        Write-Host "WARNING: HTTPS is off - $($_.Exception.Message.Trim()). Other devices will not get the camera." -ForegroundColor Yellow
         $TlsPort = 0
     }
 }

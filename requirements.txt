@@ -111,6 +111,23 @@ channels-redis~=4.2
 daphne~=4.1
 # [tls] brings pyOpenSSL + service_identity: the campus HTTPS port (run-campus.ps1 -TlsPort) needs them.
 twisted[tls]~=24.11
+# pyOpenSSL is held below 26 on purpose, and it is not cosmetic. 26 added a
+# guard that refuses to mutate an SSL.Context once it has created a Connection,
+# while Twisted 24.11 sets the ALPN callback on EVERY new connection
+# (_sslverify._setAcceptableProtocols). Every handshake on the campus HTTPS
+# port then died with
+#     ValueError: Context has already been used to create a Connection
+# and the socket was dropped mid-handshake. daphne still logged "Listening on
+# TCP address 0.0.0.0:8443", so the port looked healthy while refusing every
+# connection - which is why this read as "the webcam does not work" rather than
+# as an HTTPS fault: browsers only allow the camera on a secure page, and the
+# secure page was the thing that had stopped answering.
+#
+# Verified with the same daphne, certificate and endpoint string: 26.4.0 fails
+# every handshake, 25.3.0 completes all of them. Lift this pin only together
+# with a Twisted that sets ALPN once per context rather than once per
+# connection.
+pyOpenSSL<26
 autobahn~=24.4
 django-redis~=5.4
 # Serves the built React bundle + Django static files from the app process, so
