@@ -37,6 +37,51 @@ export function downloadBlob(blob, filename) {
 }
 
 /**
+ * Open a generated PDF in a new tab for viewing, rather than downloading it.
+ *
+ * Reports are read far more often than they are filed, and a straight
+ * download meant every look at one left a file behind in the downloads
+ * folder. The viewer's own toolbar still offers Save and Print, so nothing is
+ * lost by showing it first.
+ *
+ * Two details make this more than a `window.open`:
+ *
+ *   1. The blob does not exist yet when the button is clicked - it is
+ *      generated server-side and fetched. A `window.open` after that await has
+ *      spent the user gesture and Chrome blocks it as a popup. So the tab is
+ *      opened EMPTY, synchronously, inside the click handler, and navigated
+ *      once the bytes arrive. Call this first, then do the fetch.
+ *   2. The blob is re-typed as application/pdf. With `responseType: 'blob'`
+ *      the type comes from whatever Content-Type the server sent, and
+ *      anything other than application/pdf makes the browser download the
+ *      file instead of previewing it - which is the exact behaviour being
+ *      replaced here.
+ *
+ * `show()` returns false when the popup was blocked, which is the caller's
+ * signal to fall back to `downloadBlob` rather than lose the report entirely.
+ */
+export function openReportTab() {
+  const tab = typeof window !== 'undefined' ? window.open('', '_blank') : null
+  return {
+    show(blob) {
+      if (!tab) return false                    // popup blocked - caller falls back to a download
+      const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }))
+      tab.location.href = url
+      // NOT revoked immediately: the tab has not started loading yet, and
+      // releasing the URL now would cancel it. A minute is long past the point
+      // the viewer has read the bytes, and leaves nothing pinned for the
+      // lifetime of the session.
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+      return true
+    },
+    /** Close the blank tab when the report failed, so no stray tab is left. */
+    close() {
+      try { tab?.close() } catch { /* already gone, or never opened */ }
+    },
+  }
+}
+
+/**
  * Ask where to save. Call this synchronously from the click handler.
  *
  * Returns a target to hand to `saveBlobTo`, or `null` if the person cancelled

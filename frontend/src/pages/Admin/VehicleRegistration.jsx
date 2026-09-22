@@ -7,6 +7,7 @@ import { format } from 'date-fns'
 import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, SlidersHorizontal, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
+import { openReportTab, downloadBlob } from '../../utils/saveFile'
 import { TableLoaderRow } from '../../components/TableLoader'
 import { plateLabel, vehicleIdentifier, vehicleQrPayload } from '../../utils/plateFormat'
 import './VehicleRegistration.css'
@@ -317,17 +318,22 @@ export default function VehicleRegistration() {
      opening the modal, so there is no selected registration to read back. */
   const printRegistration = async (reg) => {
     if (!reg) return
+    // Opened for viewing rather than downloaded - this is a reprint someone
+    // reads or sends to a printer, not a file they mean to keep. The tab has
+    // to be opened here, before the await, while the click is still a user
+    // gesture, or the browser blocks it as a popup.
+    const tab = openReportTab()
     setPrintingRegId(reg.id)
     try {
       const blob = await registrationApi.getRegistrationPdf(reg.id)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `SLC Vehicle Registration - ${reg.plate_number || reg.full_name}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-      showResult('Registration PDF downloaded.', 'success')
+      if (tab.show(blob)) {
+        showResult('Registration PDF opened in a new tab.', 'success')
+      } else {
+        downloadBlob(blob, `SLC Vehicle Registration - ${reg.plate_number || reg.full_name}.pdf`)
+        showResult('Registration PDF downloaded.', 'success')
+      }
     } catch (err) {
+      tab.close()                 // nothing to show; do not leave a blank tab
       // responseType 'blob' means an error body arrives as a Blob, not JSON —
       // read it back or the message would only ever be the generic one.
       let message = 'Failed to generate the registration PDF.'

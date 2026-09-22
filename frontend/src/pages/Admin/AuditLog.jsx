@@ -6,6 +6,7 @@ import {
   RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
 } from 'lucide-react'
 import { reportFileName } from '../../utils/reportName'
+import { openReportTab } from '../../utils/saveFile'
 import './AuditLog.css'
 
 // Must stay in step with AuditLog.Action on the backend. Vehicle-owner gate
@@ -170,14 +171,17 @@ export default function AuditLog() {
     }
   }
 
-  // Server-generated branded PDF report of ALL rows matching the current filters
+  // Server-generated branded PDF report of ALL rows matching the current
+  // filters. Opened for viewing rather than downloaded - openReportTab must be
+  // called before the await, while the click is still a user gesture.
   const exportPdf = async () => {
+    const tab = openReportTab()
     setExportingPdf(true)
     try {
       const blob = await usersApi.exportAuditLogsPdf(buildExportParams())
-      downloadBlob(blob, 'pdf')
+      if (!tab.show(blob)) downloadBlob(blob, 'pdf')   // popup blocked: still hand the report over
     } catch {
-      // download failed silently
+      tab.close()                                     // no report to show; do not leave a blank tab
     } finally {
       setExportingPdf(false)
     }
@@ -232,7 +236,7 @@ export default function AuditLog() {
               <ClipboardList size={16} />
               <span>{totalCount} events</span>
             </div>
-            <button className="al-export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Download all filtered entries as a branded PDF report">
+            <button className="al-export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Open all filtered entries as a branded PDF report">
               <FileText size={14} />
               <span>{exportingPdf ? 'Exporting…' : 'Export PDF'}</span>
             </button>

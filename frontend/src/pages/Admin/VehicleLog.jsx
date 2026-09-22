@@ -3,6 +3,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { getAccessLogs, exportVehicleLogExcel, exportVehicleLogPdf } from '../../api/scanning'
 import { useGates } from '../../hooks/useGates'
 import { reportFileName } from '../../utils/reportName'
+import { openReportTab } from '../../utils/saveFile'
 import { notify } from '../../components/Feedback/notify'
 import {
   Search, Car, Filter, RefreshCw, ChevronLeft, ChevronRight,
@@ -221,10 +222,16 @@ export default function VehicleLog() {
   }
 
   const runExport = async (fn, ext, setBusy) => {
+    // A PDF is opened for reading; a spreadsheet has nothing to preview and
+    // still downloads. The tab has to be opened here, before the await, or the
+    // click's user gesture is spent and the popup is blocked.
+    const tab = ext === 'pdf' ? openReportTab() : null
     setBusy(true)
     try {
-      downloadBlob(await fn(buildExportParams()), ext)
+      const blob = await fn(buildExportParams())
+      if (!tab || !tab.show(blob)) downloadBlob(blob, ext)
     } catch {
+      tab?.close()
       notify.error('The report could not be generated. Please try again.')
     } finally {
       setBusy(false)

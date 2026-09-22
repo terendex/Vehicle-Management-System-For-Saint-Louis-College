@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { FileText, Download, Calendar, Loader2, FileBarChart2 } from 'lucide-react'
 import { toast } from './Feedback/notify'
 import { reportFileName } from '../utils/reportName'
+import { openReportTab, downloadBlob } from '../utils/saveFile'
 import './ReportExportBar.css'
 
 // Reusable report controls: Date From / Date To (validated) + branded PDF/Excel
@@ -25,18 +26,25 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
     return params
   }
 
+  // A PDF is opened for reading, an Excel file still downloads - there is
+  // nothing to preview in a spreadsheet. openReportTab has to run before the
+  // await below, while the click is still a user gesture, or the popup is
+  // blocked; `isPdf` is decided from the filename so both callers of this
+  // helper (the two format buttons and each extraReports entry) get it right.
   const download = async (key, fetch, fileName, successLabel) => {
+    const isPdf = fileName.toLowerCase().endsWith('.pdf')
+    const tab   = isPdf ? openReportTab() : null
     setBusy(key)
     try {
       const blob = await fetch(dateParams())
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success(`${successLabel} downloaded.`)
+      if (tab && tab.show(blob)) {
+        toast.success(`${successLabel} opened in a new tab.`)
+      } else {
+        downloadBlob(blob, fileName)
+        toast.success(`${successLabel} downloaded.`)
+      }
     } catch {
+      tab?.close()
       toast.error('Failed to generate report.')
     } finally {
       setBusy(null)
