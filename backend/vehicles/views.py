@@ -1705,7 +1705,7 @@ class RegistrationPdfView(APIView):
 #   1. Is it still pending?                      (nothing to approve twice)
 #   2. Does any identifier now clash?            (plate, email, licence, IDs)
 #   3. Has the applicant been banned since?      (re-checked, not trusted from submission)
-#   4. Payment: exempt, receipted, or approved unpaid with a stated reason
+#   4. Payment: exempt or receipted — an unsettled fee refuses the approval
 #   5. Is the plate flagged from a 3rd offence?  (CDSO must acknowledge)
 #   6. Campus-day overrides, and whether they exceed the normal allowance
 #   7. ── transaction ── account + vehicle + system ID + the registration row
@@ -1779,17 +1779,26 @@ class AcceptRegistrationView(APIView):
         elif or_number and (not or_number.isdigit() or len(or_number) > 7):
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Approving with no receipt at all is allowed, but never silently: the
-        # reason is stored on the registration so a pass issued against an
-        # unsettled fee always carries its own justification.
-        unpaid        = not exempt and not or_number   # owed, but no receipt on file
-        unpaid_reason = (request.data.get('unpaid_accept_reason') or '').strip()
-        if unpaid and not unpaid_reason:             # approving anyway requires saying why
+        # An outstanding fee is a HARD block on approval.
+        #
+        # This used to be permitted as long as CDSO typed a justification into
+        # unpaid_accept_reason, which meant a pass could be issued - and open
+        # the gate - against money that had never been collected. The field is
+        # kept and the rows written while the old rule stood keep their text,
+        # but nothing writes to it any more.
+        #
+        # "Settled" is deliberately wider than payment_status == PAID. An OR
+        # number typed at the counter is the same proof as an uploaded
+        # receipt, and the save below records it as PAID either way; a
+        # fee-exempt applicant never owed anything to begin with.
+        settled = bool(exempt or or_number
+                       or registration.payment_status == VehicleRegistration.PaymentStatus.PAID)
+        if not settled:
             return Response(
-                {"error": "unpaid_acceptance_requires_reason",
-                 "detail": f"{registration.full_name} has not submitted an Official Receipt. "
-                           f"Enter the OR number, or give a reason for approving this "
-                           f"application while the fee is still unpaid."},
+                {"error": "unpaid_registration_cannot_be_accepted",
+                 "detail": f"{registration.full_name} has not settled the Vehicle Pass fee. "
+                           f"Enter the Official Receipt number to approve this application, "
+                           f"or mark the applicant fee-exempt if nothing is owed."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1890,13 +1899,10 @@ class AcceptRegistrationView(APIView):
             _assign_system_id(registration)          # sets the field; the save() below writes it
 
             registration.or_number = or_number
-            if unpaid:
-                # payment_status stays UNPAID on purpose. The pass is issued, but
-                # the fee is still owed — flipping it to paid here would erase the
-                # one fact Accounting needs to chase, and the reason would then be
-                # the only trace that money never changed hands.
-                registration.unpaid_accept_reason = unpaid_reason
-            elif not exempt and registration.payment_status != VehicleRegistration.PaymentStatus.PAID:
+            # No unpaid branch here any more: the settled check above refuses
+            # the request outright, so anything reaching this point either paid
+            # or was exempt.
+            if not exempt and registration.payment_status != VehicleRegistration.PaymentStatus.PAID:
                 # An OR number reached us without going through the applicant's
                 # upload — a walk-in who brought the paper to the counter. Same
                 # proof, so it is recorded the same way; only the receipt image
@@ -1937,12 +1943,10 @@ class AcceptRegistrationView(APIView):
             # before writing it, so the in-memory instance already carries it.
             # Re-reading the row cost a round trip to fetch what we just set.
             # A bare "OR: " told a later reader nothing about why a pass was
-            # issued without a receipt. This is the permanent record of that
-            # decision, so it says which of the two reasons applied.
+            # issued without a receipt. Only two cases can reach this point now
+            # that an unsettled fee is refused, and the note names which.
             if exempt:
                 or_note = 'OR: n/a (fee exempt)'     # nothing was ever owed
-            elif unpaid:
-                or_note = f'OR: none — approved unpaid: {unpaid_reason}'   # owed, issued anyway, and why
             else:
                 or_note = f'OR: {or_number}'         # paid, with the receipt number
             audit(request, AuditLog.Action.RECORD_UPDATED,

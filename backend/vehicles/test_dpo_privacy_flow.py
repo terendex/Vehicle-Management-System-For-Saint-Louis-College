@@ -298,15 +298,21 @@ class TheWholePathStillRunsTests(TrialFlowTestCase):
         self.assertTrue(User.objects.filter(
             email='maria.reyes@slc-sflu.edu.ph', role='vehicle_owner').exists())
 
-    def test_an_unpaid_approval_still_demands_a_stated_reason(self):
-        """The DPO removed the receipt image, not the accountability."""
+    def test_an_unpaid_approval_is_refused_with_or_without_a_reason(self):
+        """The DPO removed the receipt image, not the fee.
+
+        Erasing the uploaded receipt must not become a way to get a pass
+        issued for free: with no OR number on the row the application is
+        unsettled, and a stated reason no longer buys an approval.
+        """
         reg = self.submit(student_payload())
         refused = self.accept(reg)
         self.assertEqual(refused.status_code, 400)
-        self.assertEqual(refused.data['error'], 'unpaid_acceptance_requires_reason')
+        self.assertEqual(refused.data['error'], 'unpaid_registration_cannot_be_accepted')
 
-        allowed = self.accept(reg, unpaid_accept_reason='Receipt shown at the counter.')
-        self.assertEqual(allowed.status_code, 200, allowed.data)
+        still_refused = self.accept(reg, unpaid_accept_reason='Receipt shown at the counter.')
+        self.assertEqual(still_refused.status_code, 400, still_refused.data)
+        self.assertEqual(still_refused.data['error'], 'unpaid_registration_cannot_be_accepted')
 
     def test_a_rejected_application_still_tells_the_applicant_why(self):
         reg = self.submit(student_payload())

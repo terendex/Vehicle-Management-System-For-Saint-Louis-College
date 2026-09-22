@@ -56,6 +56,10 @@ class AcceptanceEmailAttachmentTests(TestCase):
         self.assertEqual(len(_pdfs(mail.outbox[0])), 1)
 
     def test_unpaid_registration_gets_no_pdf_yet(self):
+        # The accept view refuses an unsettled fee outright now, so a row in
+        # this state can only have been approved under the older rule. The
+        # mail still has to behave for those rows, and this builds one
+        # directly rather than going through the view to reach that state.
         reg = _registration(payment_status='unpaid',
                             unpaid_accept_reason='Brought the OR to the counter later.')
         send_acceptance_email(reg, 'Temp!234', user_code='SLC-OWN-000003')

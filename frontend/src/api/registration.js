@@ -148,12 +148,11 @@ export const registrationApi = {
   // specialCaseReason is required when campusDaysOverride adds days not in the original request
   // acknowledgeBlock: pass true to accept a plate flagged by a prior 3rd-offense
   // violation (the backend returns 409 registration_blocked until acknowledged)
-  // unpaidAcceptReason is required by the backend when the registration has no
-  // Official Receipt on file at all — a pass may still be granted, but never
-  // without a stated reason.
-  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason, acknowledgeBlock, unpaidAcceptReason) => {
+  // There is deliberately no unpaid-acceptance argument. An unsettled fee is a
+  // hard block on the backend now: it refuses the approval rather than taking
+  // a written justification, so there is nothing for a caller to send.
+  acceptRegistration: async (id, orNumber, campusDaysOverride, specialCaseReason, acknowledgeBlock) => {
     const payload = { or_number: orNumber }
-    if (unpaidAcceptReason) payload.unpaid_accept_reason = unpaidAcceptReason
     if (campusDaysOverride && campusDaysOverride.length > 0) payload.campus_days = campusDaysOverride
     if (specialCaseReason) payload.special_case_reason = specialCaseReason
     if (acknowledgeBlock) payload.acknowledge_block = true

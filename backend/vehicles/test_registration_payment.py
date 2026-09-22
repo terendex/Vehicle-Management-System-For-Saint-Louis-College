@@ -305,26 +305,33 @@ class AcceptancePaymentGateTests(PaymentTestCase):
         self.assertIsNotNone(reg.paid_at)
         self.assertEqual(reg.amount_paid, SystemSettings.get().vehicle_pass_fee)
 
-    def test_approving_with_no_receipt_needs_a_reason(self):
+    def test_approving_with_no_receipt_is_refused(self):
         reg = self.submit()
         res = self.accept(reg)
         self.assertEqual(res.status_code, 400)
-        self.assertEqual(res.data['error'], 'unpaid_acceptance_requires_reason')
+        self.assertEqual(res.data['error'], 'unpaid_registration_cannot_be_accepted')
 
         reg.refresh_from_db()
         self.assertEqual(reg.status, VehicleRegistration.Status.PENDING)
 
-    def test_an_unpaid_approval_keeps_saying_unpaid(self):
-        """The debt has to outlive the approval, or nobody chases it."""
+    def test_a_reason_no_longer_buys_an_unpaid_approval(self):
+        """The old escape hatch is closed.
+
+        Approving an outstanding fee used to be allowed as long as CDSO typed
+        a justification. A pass issued that way opened the gate against money
+        that had never been collected, so the reason is no longer accepted as
+        a substitute for a receipt - it is simply ignored and the approval is
+        refused like any other unsettled one.
+        """
         reg = self.submit()
         res = self.accept(reg, unpaid_accept_reason='Accounting system down; OR to follow.')
-        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.status_code, 400, res.data)
+        self.assertEqual(res.data['error'], 'unpaid_registration_cannot_be_accepted')
 
         reg.refresh_from_db()
-        self.assertEqual(reg.status, VehicleRegistration.Status.ACCEPTED)
+        self.assertEqual(reg.status, VehicleRegistration.Status.PENDING)
         self.assertEqual(reg.payment_status, PS.UNPAID)
-        self.assertEqual(reg.unpaid_accept_reason,
-                         'Accounting system down; OR to follow.')
+        self.assertEqual(reg.unpaid_accept_reason, '')   # nothing writes to it any more
         self.assertIsNone(reg.paid_at)
 
     def test_an_exempt_applicant_is_never_asked_for_a_receipt(self):

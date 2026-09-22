@@ -131,9 +131,6 @@ export default function VehicleRegistration() {
   const [orNumber, setOrNumber] = useState('')
   const [daysOverride, setDaysOverride] = useState([])   // admin-chosen campus days
   const [specialCaseReason, setSpecialCaseReason] = useState('')
-  // Required by the backend when the application has no Official Receipt on
-  // file at all — a pass may still be granted, but never without a reason.
-  const [unpaidReason, setUnpaidReason] = useState('')
   const [scheduleSlots, setScheduleSlots] = useState(null) // per-day remaining student slots
 
   const orValid = orNumber.trim().length >= 6 && orNumber.trim().length <= 7
@@ -267,7 +264,6 @@ export default function VehicleRegistration() {
         daysOverride.length > 0 ? daysOverride : undefined,
         tooManyDays && specialCaseReason.trim() ? specialCaseReason.trim() : undefined,
         acknowledgeBlock,
-        unpaidReason.trim() || undefined,
       )
       setBlockPrompt(null)
       setIsViewModalOpen(false)
@@ -357,7 +353,6 @@ export default function VehicleRegistration() {
     setOrNumber(reg.or_number || '')
     setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
     setSpecialCaseReason('')
-    setUnpaidReason('')
     // Per-day remaining student slots — so the admin can see capacity before
     // assigning campus days (same slot counts shown on the public register form).
     setScheduleSlots(null)
@@ -878,20 +873,23 @@ export default function VehicleRegistration() {
               // Fee-exempt applicants were never issued a receipt, so demanding
               // an OR number used to mean inventing one to enable the button.
               const feeExempt    = selectedReg.payment_status === 'exempt'
-              // No receipt at all: the pass can still be granted, but only with
-              // a stated reason, and the row keeps saying unpaid afterwards.
+              const feePaid      = selectedReg.payment_status === 'paid'
+              // No receipt on file and nothing settled. This is now a hard
+              // block rather than something a written reason could unlock:
+              // the backend refuses the approval outright, so the button stays
+              // disabled instead of revealing a justification box.
               // The backend falls back to the OR already on the row when the
-              // field is left blank, so a cleared box is not an unpaid approval.
+              // field is left blank, so a cleared box is not an unsettled fee.
               const storedOr     = (selectedReg.or_number || '').trim()
-              const acceptUnpaid = !feeExempt && !orNumber.trim() && !storedOr
+              const feeUnsettled = !feeExempt && !feePaid && !orNumber.trim() && !storedOr
               // Leaving the prefilled number untouched is always allowed. Older
               // rows (and walk-ins) can carry an OR shorter than 6 digits, which
               // orValid rejects — without this the reviewer could neither fix it
               // nor approve it, and the application was stuck for good.
               const orUnchanged  = !!storedOr && orNumber.trim() === storedOr
               const orAcceptable = orValid || orUnchanged
-              const canAccept    = (feeExempt || orAcceptable || acceptUnpaid)
-                && (!acceptUnpaid || unpaidReason.trim())
+              const canAccept    = !feeUnsettled
+                && (feeExempt || feePaid || orAcceptable)
                 && (!tooManyDays || specialCaseReason.trim())
               return (
                 <div className="accept-inline-section">
@@ -909,7 +907,7 @@ export default function VehicleRegistration() {
                   {!feeExempt && (
                     <div className="form-group">
                       <label className="form-label">
-                        Official Receipt (OR) Number {!acceptUnpaid && <span className="required">*</span>}
+                        Official Receipt (OR) Number {!feePaid && <span className="required">*</span>}
                       </label>
                       <input
                         type="text"
@@ -929,25 +927,17 @@ export default function VehicleRegistration() {
                     </div>
                   )}
 
-                  {acceptUnpaid && (
+                  {feeUnsettled && (
                     <div className="form-group special-case-reason-group">
                       <label className="form-label special-case-reason-label">
                         <AlertCircle size={13} />
-                        Reason for Approving Unpaid <span className="required">*</span>
+                        Fee Not Settled
                       </label>
                       <p className="form-hint special-case-added-hint">
-                        No Official Receipt is on file. The pass will be issued, but the
-                        application stays marked <strong>Unpaid</strong> so the fee can still be
-                        collected — give a reason for approving it now.
+                        No Official Receipt is on file, so this application cannot be
+                        accepted. Enter the OR number once the fee has been paid, or set
+                        the payment to <strong>Exempt</strong> if nothing is owed.
                       </p>
-                      <textarea
-                        className="form-textarea"
-                        rows={2}
-                        value={unpaidReason}
-                        onChange={(e) => setUnpaidReason(e.target.value)}
-                        placeholder="e.g. Accounting Office closed; OR to be presented on Monday…"
-                        disabled={submitting}
-                      />
                     </div>
                   )}
 
@@ -1031,9 +1021,9 @@ export default function VehicleRegistration() {
                       onClick={() => setShowAcceptConfirm(true)}
                       disabled={submitting || !canAccept}
                       title={
-                        acceptUnpaid && !unpaidReason.trim()
-                          ? 'Enter the OR number, or give a reason for approving this application unpaid'
-                          : !feeExempt && !acceptUnpaid && !orAcceptable
+                        feeUnsettled
+                          ? 'The fee is unsettled — enter the OR number, or mark the applicant exempt'
+                          : !feeExempt && !feePaid && !orAcceptable
                             ? 'Enter a valid OR number to enable'
                             : tooManyDays && !specialCaseReason.trim()
                               ? 'Provide a reason for granting more than 3 days'
