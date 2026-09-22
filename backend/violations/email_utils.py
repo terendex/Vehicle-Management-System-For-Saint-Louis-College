@@ -1,6 +1,5 @@
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
-from email.mime.image import MIMEImage
 
 # These templates are f-strings, not Django templates, so nothing auto-escapes.
 # Owner names and CDSO-typed notes both reach the HTML body verbatim otherwise.
@@ -34,77 +33,19 @@ _FOOTER = """
 """
 
 
-def _evidence_url(violation):
-    """Absolute URL of the evidence photo, or None to fall back to a cid attachment.
-
-    With USE_R2 on — which production requires — the photo already lives at a
-    public https URL, so the email can simply link it. That matters because the
-    Railway half sends over Brevo's HTTP API, which has no Content-ID field: a
-    `cid:` reference there renders as a broken image. A plain URL renders on both
-    transports, and keeps the message small enough not to trip size limits.
-
-    Local storage yields a relative path (`/media/...`) that means nothing in a
-    mail client, so those still go out as an inline attachment.
-    """
-    evidence = getattr(violation, 'evidence', None)
-    if not evidence:
-        return None
-    try:
-        url = evidence.url
-    except Exception:
-        return None
-    return url if url and url.startswith(('http://', 'https://')) else None
-
-
-def _evidence_html(violation):
-    """Evidence-photo block — empty when there is no photo."""
-    if not getattr(violation, 'evidence', None):
-        return ''
-    src = _evidence_url(violation) or 'cid:evidence'
-    return (
-        '<div style="margin:0 0 20px;">'
-        '<p style="font-size:13px;color:#5A5F72;margin:0 0 8px;font-weight:600;">Evidence Photo</p>'
-        f'<img src="{src}" alt="violation evidence" '
-        'style="max-width:100%;border-radius:10px;border:1px solid #E2E6EE;display:block;" />'
-        '</div>'
-    )
-
-
 def _send_violation_email(subject, text, html, recipient, violation=None):
-    """Send a violation email, inlining the evidence photo when one exists."""
+    """Send a violation email. Never raises — a mail failure must not roll back
+    the violation and the penalty that are already recorded.
+
+    `violation` is still taken so every caller keeps one shape; nothing reads
+    it now that the message carries no photo.
+    """
     try:
         msg = EmailMultiAlternatives(
             subject=subject, body=text,
             from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient],
         )
         msg.attach_alternative(html, 'text/html')
-        evidence = getattr(violation, 'evidence', None)
-        if evidence:
-            try:
-                evidence.open('rb')
-                data = evidence.read()
-                evidence.close()
-                is_png  = (evidence.name or '').lower().endswith('.png')
-                subtype = 'png' if is_png else 'jpeg'
-
-                if _evidence_url(violation):
-                    # The HTML links the photo by URL, which is what renders it
-                    # in the body. Attach a plain copy anyway: mail clients block
-                    # remote images by default, and some networks block the R2
-                    # public domain outright, so the linked copy cannot be the
-                    # only one. No Content-ID here — it is a separate file, not
-                    # the inline image.
-                    msg.attach(f'evidence.{subtype if is_png else "jpg"}',
-                               data, f'image/{subtype}')
-                else:
-                    # No public URL (local storage): fall back to a cid inline
-                    # image, which the HTML above already points at.
-                    img = MIMEImage(data, _subtype=subtype)
-                    img.add_header('Content-ID', '<evidence>')
-                    img.add_header('Content-Disposition', 'inline', filename='evidence.jpg')
-                    msg.attach(img)
-            except Exception:
-                pass
         msg.send(fail_silently=True)
     except Exception:
         pass
@@ -181,7 +122,6 @@ def send_confiscation_email(violation, penalty):
                 {notes_row}
               </table>
             </div>
-            {_evidence_html(violation)}
             <div style="background:{tint};border-left:4px solid {accent};border-radius:6px;padding:12px 16px;margin-bottom:20px;">
               <p style="margin:0;font-size:14px;color:{accent};">{consequence}</p>
             </div>
@@ -262,7 +202,6 @@ def send_violation_notified_email(violation):
                 {notes_row}
               </table>
             </div>
-            {_evidence_html(violation)}
             <p style="color:#5A5F72;font-size:14px;margin:0;">
               Please contact or visit the CDSO office to address this violation. This record is now visible on your vehicle owner portal.
             </p>

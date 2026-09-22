@@ -131,7 +131,6 @@ class Violation(models.Model):
         null=True, blank=True, related_name='on_duty_violations',
         help_text="Guard clocked in at the gate when this violation was auto-logged.",
     )
-    evidence       = models.ImageField(upload_to='violations/evidence/', blank=True, null=True)   # the photo that supports it
 
     # Offense tracking (new-style violations only — null for legacy)
     offense_number       = models.PositiveSmallIntegerField(null=True, blank=True)   # 1, 2 or 3: which rung of the ladder
@@ -193,6 +192,48 @@ class Violation(models.Model):
             self.owner_email = owner.email or ''
             if self.owner_id is None:
                 self.owner = owner                   # only if the caller did not already name an account
+            return
+
+        # No account behind the plate — a visitor on a gate-issued pass, or a
+        # vehicle a guard recorded by hand. There IS a name for that person;
+        # it just does not live on a User row, so every list screen showed a
+        # dash where the offender's name belongs. Read it from whichever record
+        # the gate wrote when they came in.
+        self.owner_name = self._gate_recorded_name() or ''
+
+    # The name the gate took down for someone with no account, newest first.
+    def _gate_recorded_name(self) -> str:
+        """Visitor or driver name for an unregistered vehicle, or '' if none.
+
+        Imported inside the method: scanning imports violations on the hot scan
+        path, so naming it at module scope here would close the circle.
+        """
+        from scanning.models import AccessLog, VisitorPass
+
+        plate = self.plate_number or ''
+        pass_ = (VisitorPass.objects
+                 .filter(vehicle=self.vehicle)
+                 .exclude(visitor_name='')
+                 .order_by('-entered_at')
+                 .values_list('visitor_name', flat=True)
+                 .first())
+        if pass_:
+            return pass_
+
+        # A plateless or unreadable vehicle the guard wrote up by hand. Matched
+        # on the plate rather than the vehicle FK because those rows are
+        # recorded against the plate text the guard typed.
+        if plate:
+            driver = (AccessLog.objects
+                      .filter(plate_number=plate, is_unrecognized=True)
+                      .exclude(driver_name='')
+                      .order_by('-scanned_at')
+                      .values_list('driver_name', flat=True)
+                      .first())
+            if driver:
+                return driver
+        return ''
+
 
     # Takes that snapshot exactly once, when the row is first created.
     def save(self, *args, **kwargs):

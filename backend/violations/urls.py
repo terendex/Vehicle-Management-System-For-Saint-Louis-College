@@ -6,9 +6,6 @@ router = DefaultRouter()
 router.register('', views.ViolationViewSet, basename='violation')
 
 urlpatterns = [
-    # Must precede the router: the router's detail route would otherwise
-    # swallow '<pk>/evidence/'.
-    path('<int:pk>/evidence/', views.ViolationEvidenceView.as_view(), name='violation-evidence'),
     path('my/', views.MyViolationsView.as_view(), name='my-violations'),
     path('guard/', views.GuardViolationsView.as_view(), name='guard-violations'),
     path('confiscated/', views.ConfiscatedAccountsView.as_view(), name='confiscated-accounts'),

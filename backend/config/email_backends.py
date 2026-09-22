@@ -217,10 +217,11 @@ class _HttpApiEmailBackend(BaseEmailBackend):
     def _decode_attachment(attachment):
         """Normalise one Django attachment to (filename, bytes, mimetype, cid).
 
-        Django allows two shapes and both are used here: the approval email
-        attaches a `(filename, bytes, mimetype)` tuple for the registration PDF,
-        while violation emails attach a raw MIMEImage carrying a Content-ID so
-        the evidence photo renders inline from `cid:evidence`.
+        Django allows two shapes: the approval email attaches a
+        `(filename, bytes, mimetype)` tuple for the registration PDF, and a raw
+        MIMEBase carrying a Content-ID would arrive as an inline image. Nothing
+        sends the second shape now that violation emails carry no photo; it is
+        handled anyway, because the transport should not care who attached what.
         """
         if isinstance(attachment, tuple):
             filename, content, mimetype = attachment
@@ -298,9 +299,8 @@ class BrevoEmailBackend(_HttpApiEmailBackend):
             if content_id:
                 # Delivered, but it will not render inline: the HTML's
                 # `cid:` reference has nothing to bind to. Logged rather than
-                # dropped so the evidence photo still reaches the recipient,
-                # and so the cause is findable if someone reports a broken
-                # image in a violation email.
+                # dropped, so the file still reaches the recipient and the
+                # cause is findable if someone reports a broken image.
                 log.warning(
                     'Brevo cannot inline attachment %r (Content-ID %r); sending it '
                     'as a normal attachment. Reference the image by its public URL '

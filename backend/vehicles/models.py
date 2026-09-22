@@ -875,14 +875,29 @@ class SystemSettings(models.Model):
     # ── Report signatories ──
     # Every branded PDF ends with a "Prepared by / Approved by" block, because
     # a report that leaves the office as a paper document needs to say who
-    # stands behind it. The preparer is not stored here - it is whoever is
-    # signed in and pressed the button, which is the only honest answer. The
-    # approver is, because the head of office does not sign in to generate
-    # every report and the post changes hands.
+    # stands behind it. The approver is stored here because the head of office
+    # does not sign in to generate every report and the post changes hands.
+    #
+    # The preparer defaults to whoever is signed in and pressed the button -
+    # the only honest answer, and what these two fields print when they are
+    # blank. Named here, they override it, for the office that files every
+    # report under one person's signature no matter who ran it. The PDF footer
+    # still records the account that generated it either way, so overriding
+    # the signature line never erases who actually pressed the button.
     #
     # The captions are settings too. "Prepared by" and "Approved by" are the
     # usual wording, but an office that files these under "Submitted by" or
     # "Noted by" should not need a code change to say so.
+    report_preparer_name     = models.CharField(
+        max_length=150, blank=True, default='',
+        help_text="Name printed under 'Prepared by' on every PDF report. "
+                  "Left blank, the report names whoever generated it.",
+    )
+    report_preparer_position = models.CharField(
+        max_length=150, blank=True, default='',
+        help_text="Position printed beneath the preparer's name. "
+                  "Left blank, the report prints the generator's role.",
+    )
     report_approver_name     = models.CharField(
         max_length=150, blank=True, default='',
         help_text="Name printed under 'Approved by' on every PDF report. "

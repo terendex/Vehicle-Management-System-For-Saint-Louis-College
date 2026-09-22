@@ -333,16 +333,25 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
 
     # ── Signatories ──────────────────────────────────────────────────────
     # A report that leaves the office as a paper document has to say who
-    # stands behind it. The preparer is whoever is signed in and pressed the
-    # button - the only honest answer, so it is never a setting. The approver
-    # IS configured, in System Settings, because the head of office does not
-    # sign in to generate every report and the post changes hands.
+    # stands behind it. The approver is configured in System Settings, because
+    # the head of office does not sign in to generate every report and the post
+    # changes hands. The preparer defaults to whoever is signed in and pressed
+    # the button, and can be overridden there as well, for the office that
+    # files every report under one signature.
     #
     # Imported here rather than at module scope: report_utils is imported by
     # four apps' views, and reaching for a model at import time would tie this
     # module to app loading order for no gain.
     from vehicles.models import SystemSettings
     cfg = SystemSettings.get()
+
+    # `or`, not a ternary on the pair: the two override independently, so an
+    # office can fix the name and still let the role follow the account that
+    # ran the report. Note this only moves what the SIGNATURE line says - the
+    # footer above still reads "Generated ... by <generated_by>", so the
+    # account behind the export stays on the page.
+    preparer_name     = cfg.report_preparer_name     or generated_by
+    preparer_position = cfg.report_preparer_position or generated_by_role
 
     sig_label = ParagraphStyle('siglabel', fontName='Helvetica', fontSize=8.5,
                                textColor=colors.HexColor('#666666'), leading=11)
@@ -367,9 +376,9 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
             [sig_cell(cfg.report_prepared_by_label, sig_label), '',
              sig_cell(cfg.report_approved_by_label, sig_label)],
             ['', '', ''],                                   # the space signed into
-            [sig_cell(generated_by, sig_name), '',
+            [sig_cell(preparer_name, sig_name), '',
              sig_cell(cfg.report_approver_name, sig_name)],
-            [sig_cell(generated_by_role, sig_pos), '',
+            [sig_cell(preparer_position, sig_pos), '',
              sig_cell(cfg.report_approver_position, sig_pos)],
         ],
         colWidths=[sig_col * mm, 47 * mm, sig_col * mm],

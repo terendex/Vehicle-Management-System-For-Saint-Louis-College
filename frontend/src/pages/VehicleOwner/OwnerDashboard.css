@@ -1161,44 +1161,6 @@
   color: #6B8CA6;
 }
 
-/* ── Evidence thumbnail (owner dashboard) ────────────────────────────────── */
-
-.od-evidence-thumb-btn {
-  position: relative;
-  display: inline-flex;
-  border: 1.5px solid #D3E1EC;
-  border-radius: 6px;
-  overflow: hidden;
-  cursor: pointer;
-  background: none;
-  padding: 0;
-  transition: border-color 0.15s;
-}
-.od-evidence-thumb-btn:hover { border-color: #03396C; }
-
-.od-evidence-thumb {
-  width: 44px;
-  height: 32px;
-  object-fit: cover;
-  display: block;
-}
-
-.od-evidence-zoom {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  color: #fff;
-  background: rgba(0,0,0,0.55);
-  border-radius: 3px;
-  padding: 1px;
-}
-
-.od-no-evidence {
-  display: inline-flex;
-  align-items: center;
-  color: #BDD4E5;
-}
-
 .od-outstanding-banner {
   display: flex;
   align-items: center;

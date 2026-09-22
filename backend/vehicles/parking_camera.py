@@ -524,8 +524,8 @@ class _StreamReader(threading.Thread):
         A single zone gets the published array as-is: cap.read() allocates a
         fresh one each time, so the frame being scored is never the frame being
         written. Once a second zone joins they would be handed the *same* array,
-        and one zone drawing on it — evidence rendering, an in-place OpenCV op
-        deep in the detector — would corrupt what the other is scoring. So a
+        and one zone drawing on it — any in-place OpenCV op, of the kind that
+        lives deep in the detector — would corrupt what the other is scoring. So a
         shared reader hands out copies. One memcpy per zone per scored frame is
         far cheaper than the second RTSP decode this whole change removes, and
         the single-zone path, which is the common one, pays nothing.
@@ -622,10 +622,6 @@ class ParkingCameraThread(threading.Thread):
         # there — and because a check must not depend on the reporter having
         # written its own guard condition.
         self._reported: set[tuple[int, ...]] = set()
-        # Boxed evidence JPEG captured at detection time (car box + straddled
-        # bays drawn), so a guard attributing the plate later gets the scene as
-        # it was, not a frame after the car has moved.
-        self._alert_evidence: dict[tuple[int, ...], bytes] = {}
 
         # Cached zone layout (see LAYOUT_TTL_SECONDS).
         self._spaces      = []
@@ -1166,46 +1162,13 @@ class ParkingCameraThread(threading.Thread):
             self._straddling_tracks = tracks
             for key in [k for k in self._alerts if k not in straddling]:
                 self._alerts.pop(key, None)
-                self._alert_evidence.pop(key, None)
 
-    def _render_double_park_evidence(self, frame, det_bbox, spaces) -> "bytes | None":
-        """Draw the offending car's box (red) and the straddled bays (amber) onto
-        a copy of the frame and return JPEG bytes — the evidence photo a guard and
-        the owner see. Falls back to the plain latest JPEG on any error."""
-        try:
-            img = frame.copy()
-            h, w = img.shape[:2]
-            for sp in spaces:
-                pts = getattr(sp, 'points', None)
-                if pts:
-                    poly = np.array([[int(x * w), int(y * h)] for x, y in pts], dtype=np.int32)
-                    cv2.polylines(img, [poly], True, (0, 191, 255), 2)
-                elif sp.x1 is not None:
-                    cv2.rectangle(img, (int(sp.x1 * w), int(sp.y1 * h)),
-                                  (int(sp.x2 * w), int(sp.y2 * h)), (0, 191, 255), 2)
-            if det_bbox:
-                x1, y1 = int(det_bbox["x"] * w), int(det_bbox["y"] * h)
-                x2 = int((det_bbox["x"] + det_bbox["width"]) * w)
-                y2 = int((det_bbox["y"] + det_bbox["height"]) * h)
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                cv2.putText(img, "DOUBLE PARKING", (x1, max(20, y1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            ok, buf = cv2.imencode('.jpg', img)
-            return buf.tobytes() if ok else self.get_jpeg()
-        except Exception:
-            log.exception("[ParkingCam] evidence render failed zone %d", self.zone_id)
-            return self.get_jpeg()
-
-    def pop_alert(self, space_ids) -> "bytes | None":
-        """Remove a double-parking alert (a guard has handled it) and return its
-        captured boxed-evidence JPEG, or the latest frame if none was stored."""
+    def pop_alert(self, space_ids) -> None:
+        """Remove a double-parking alert — a guard has handled it, so its card
+        should disappear from every screen."""
         key = tuple(sorted(int(s) for s in space_ids))
         with self._lock:
             self._alerts.pop(key, None)
-            evidence = self._alert_evidence.pop(key, None)
-        # Kept outside the block: get_jpeg() now goes to the shared reader and
-        # may encode a frame, which is not work to do holding this zone's lock.
-        return evidence or self.get_jpeg()
 
     def _read_plate(self, frame, bbox: dict) -> str:
         """Best-effort plate read from inside a straddling vehicle's box.
@@ -1268,18 +1231,7 @@ class ParkingCameraThread(threading.Thread):
 
         label = ", ".join(codes) if codes else ", ".join(str(i) for i in space_ids)
 
-        # Render the boxed evidence photo once, at detection, from the frame that
-        # triggered the alert — used for the auto-violation and stashed for a
-        # guard who attributes the plate later (by then the car may have moved).
         bbox = getattr(vehicle_track, 'bbox', None)
-
-        evidence = None
-        if frame is not None:
-            evidence = self._render_double_park_evidence(frame, bbox, space_objs)
-        if not evidence:
-            evidence = self.get_jpeg()   # may encode — do it before taking self._lock
-        with self._lock:
-            self._alert_evidence[space_ids] = evidence
 
         plate, vehicle, violation_id = '', None, None
         if bbox is not None:
@@ -1298,13 +1250,11 @@ class ParkingCameraThread(threading.Thread):
                 from violations.models import Violation
                 from scanning.views import _auto_log_violation
                 # Reuses the gate path: one per vehicle per day, offence
-                # numbering, the confiscation penalty, evidence image and owner
-                # email.
+                # numbering, the confiscation penalty and the owner email.
                 _auto_log_violation(
                     vehicle,
                     f"Double parking detected by camera across bays {label}",
                     vtype=Violation.Type.DOUBLE_PARKING,
-                    evidence_bytes=evidence or self.get_jpeg(),
                 )
                 violation_id = (Violation.objects
                                 .filter(vehicle=vehicle,

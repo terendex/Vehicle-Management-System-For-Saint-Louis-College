@@ -176,7 +176,7 @@ class FrameHandoffTests(SimpleTestCase):
         self.assertEqual(seq, 1)
 
     def test_sharing_zones_each_get_their_own_copy(self):
-        """Otherwise one zone drawing evidence boxes would corrupt what the
+        """Otherwise one zone drawing onto the frame would corrupt what the
         other is scoring off the same array."""
         reader = self._reader_with_frame(refs=2)
         a, _ = reader.wait_for_frame(0, timeout=0.1)

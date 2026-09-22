@@ -4,7 +4,7 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   User, Car, KeyRound, ShieldCheck, Eye, EyeOff, Check,
   Circle, AlertTriangle, Copy, LogOut, RefreshCw, AlertCircle,
-  ParkingCircle, Bike, Loader2, Megaphone, Image, X, ZoomIn, Maximize2, CalendarDays,
+  ParkingCircle, Bike, Loader2, Megaphone, X, Maximize2, CalendarDays,
   Pencil, Clock3, Hourglass
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
@@ -37,14 +37,6 @@ const SCHEDULE_LABELS = {
   ALL:   'Mon – Sat',
 }
 
-
-// Evidence is served by the API rather than a public storage URL, so the
-// request must carry a token — an <img> cannot send an Authorization header.
-function evidenceSrc(url) {
-  if (!url) return null
-  const token = localStorage.getItem('access_token') || ''
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url
-}
 
 const VIOLATION_TYPE_LABELS = {
   unauthorized_entry:   'Unauthorized Entry',
@@ -98,7 +90,6 @@ export default function OwnerDashboard() {
   const [violations, setViolations] = useState([])
   const [violationsLoading, setViolationsLoading] = useState(false)
   const [violationsError, setViolationsError] = useState(null)
-  const [evidenceLightbox, setEvidenceLightbox] = useState(null)
 
   /* ── parking availability ── */
   const [parking, setParking] = useState(null)  // { spaces, summary, zones }
@@ -984,21 +975,6 @@ export default function OwnerDashboard() {
                 </div>
               ) : (
                 <>
-                  {evidenceLightbox && (
-                    <div
-                      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-                      onClick={() => setEvidenceLightbox(null)}
-                    >
-                      <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
-                        <img src={evidenceLightbox} alt="violation evidence" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 10, display: 'block', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }} />
-                        <button
-                          onClick={() => setEvidenceLightbox(null)}
-                          style={{ position: 'absolute', top: -12, right: -12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}
-                        ><X size={14} /></button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* ── Active violations ── */}
                   {(() => {
                     const active = violations.filter(v => !v.is_resolved && v.status !== 'cleared')
@@ -1030,7 +1006,6 @@ export default function OwnerDashboard() {
                                   <th>Offense</th>
                                   <th>Notes</th>
                                   <th>Fine</th>
-                                  <th>Evidence</th>
                                   <th>Date Issued</th>
                                   <th>Status</th>
                                 </tr>
@@ -1048,16 +1023,6 @@ export default function OwnerDashboard() {
                                     <td className="od-viol-notes">{v.notes || '—'}</td>
                                     <td className="od-viol-fine">
                                       {parseFloat(v.fine_amount) > 0 ? `₱${parseFloat(v.fine_amount).toFixed(2)}` : <span style={{ color: '#64839C' }}>₱0</span>}
-                                    </td>
-                                    <td>
-                                      {v.evidence_url ? (
-                                        <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
-                                          <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
-                                          <ZoomIn size={11} className="od-evidence-zoom" />
-                                        </button>
-                                      ) : (
-                                        <span className="od-no-evidence"><Image size={12} /></span>
-                                      )}
                                     </td>
                                     <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                                     <td>
@@ -1094,7 +1059,6 @@ export default function OwnerDashboard() {
                                 <th>Violation</th>
                                 <th>Notes</th>
                                 <th>Fine</th>
-                                <th>Evidence</th>
                                 <th>Date Issued</th>
                                 <th>Status</th>
                               </tr>
@@ -1105,16 +1069,6 @@ export default function OwnerDashboard() {
                                   <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
                                   <td className="od-viol-notes">{v.notes || '—'}</td>
                                   <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
-                                  <td>
-                                    {v.evidence_url ? (
-                                      <button className="od-evidence-thumb-btn" onClick={() => setEvidenceLightbox(evidenceSrc(v.evidence_url))} title="View evidence">
-                                        <img src={evidenceSrc(v.evidence_url)} alt="evidence" className="od-evidence-thumb" />
-                                        <ZoomIn size={11} className="od-evidence-zoom" />
-                                      </button>
-                                    ) : (
-                                      <span className="od-no-evidence"><Image size={12} /></span>
-                                    )}
-                                  </td>
                                   <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                                   <td>
                                     <span className="od-viol-badge resolved">Resolved</span>

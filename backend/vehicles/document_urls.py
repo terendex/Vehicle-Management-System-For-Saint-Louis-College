@@ -17,9 +17,9 @@ So the URL is signed against the S3 API endpoint instead. It works whether or
 not the bucket is public, it is unguessable, and it stops working on its own.
 
 Deliberately scoped to these three fields rather than switched on globally
-(`AWS_QUERYSTRING_AUTH`). Violation-evidence photos are embedded in emails by
-their URL, and a signed link would go dead in the recipient's inbox hours after
-it was sent — a mail already delivered cannot be re-signed.
+(`AWS_QUERYSTRING_AUTH`). Other stored images are referenced from emails by
+their plain URL, and a signed link would go dead in the recipient's inbox hours
+after it was sent — a mail already delivered cannot be re-signed.
 """
 import logging
 import threading

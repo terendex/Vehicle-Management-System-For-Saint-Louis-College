@@ -207,6 +207,82 @@
 }
 .em-visitor-extend:hover { background: #EEF4F9; }
 
+/* ─── Overstaying panel ────────────────────────────────────────────
+   Amber, not red: an overstay is a rule being broken, but the guard is
+   being asked to judge it, not told something has already gone wrong.
+   Red is reserved for the refusals. */
+
+.em-overstay-panel { border-color: #F0D9A0; }
+
+.em-count-warn {
+  background: #FDF0BE;
+  color: #8A6B00;
+}
+
+.em-overstay-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #5C7B92;
+}
+
+.em-overstay-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #FEF9E4;
+  border: 1px solid #F0D9A0;
+}
+
+.em-overstay-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.em-overstay-over {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8A6B00;
+  white-space: nowrap;
+}
+
+/* The row wraps on a narrow guard terminal, and the description should take
+   the whole second line rather than sit beside a button. */
+.em-overstay-row .em-visitor-sub { flex: 1 1 100%; }
+
+.em-overstay-ack {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #C62828;
+  background: #C62828;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.em-overstay-ack:hover:not(:disabled) { background: #A51D1D; border-color: #A51D1D; }
+.em-overstay-ack:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.em-overstay-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B8CA6;
+  white-space: nowrap;
+  cursor: help;
+}
+
+
 /* ─── On Duty guard panel ──────────────────────────────────────── */
 .em-on-duty {
   display: flex;
@@ -338,6 +414,34 @@
   background: #F5FAFE;
   outline: none;
 }
+
+/* A vehicle whose account is confiscated. The row stays clickable on purpose:
+   picking it runs the ordinary check, which refuses it and writes the refusal
+   to the access log. Hiding it would leave the guard with no record of having
+   looked. */
+.em-lookup-row.is-denied {
+  border-color: #F3C0C0;
+  background: #FCEDED;
+}
+.em-lookup-row.is-denied:hover,
+.em-lookup-row.is-denied:focus-visible {
+  border-color: #C62828;
+  background: #FADEDE;
+}
+
+.em-tag-denied {
+  background: #FADEDE;
+  color: #9B1C1C;
+}
+
+.em-lookup-denied {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #9B1C1C;
+}
+
 
 .em-lookup-main {
   display: flex;

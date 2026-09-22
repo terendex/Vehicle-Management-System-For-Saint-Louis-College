@@ -1114,9 +1114,8 @@ class IsSecurityRole(permissions.BasePermission):
 
 class AttributeDoubleParkingView(APIView):
     """A guard names the vehicle behind a double-parking alert. Resolves the plate
-    or conduction number, issues a DOUBLE_PARKING violation using the boxed
-    evidence photo captured at detection, and clears the alert so its card
-    disappears."""
+    or conduction number, issues a DOUBLE_PARKING violation and clears the alert
+    so its card disappears."""
     permission_classes = [IsSecurityRole]
 
     def post(self, request):
@@ -1132,11 +1131,10 @@ class AttributeDoubleParkingView(APIView):
             return Response({'error': 'No vehicle found for that plate or conduction number.'},
                             status=status.HTTP_404_NOT_FOUND)   # nothing to attribute the violation to
 
-        # Pull the evidence captured when the straddle was detected and clear the alert.
+        # Clear the alert, so the card disappears from every guard screen.
         thread = parking_camera.get_thread(int(zone_id))
-        # pop_alert does both jobs at once: hands back the photo AND removes the
-        # alert, so the card disappears from the guard's screen.
-        evidence = thread.pop_alert(space_ids) if thread is not None else None
+        if thread is not None:
+            thread.pop_alert(space_ids)
 
         from scanning.views import _auto_log_violation   # the shared "raise a violation" helper
         from violations.models import Violation
@@ -1146,7 +1144,6 @@ class AttributeDoubleParkingView(APIView):
             f"Double parking attributed by guard {request.user.full_name}",   # names who decided, in the record
             gate_id=gate_id,
             vtype=Violation.Type.DOUBLE_PARKING,
-            evidence_bytes=evidence,                 # the boxed photo taken when it was detected
         )
 
         try:
@@ -3760,9 +3757,11 @@ class SystemSettingsView(APIView):
             "double_park_after_seconds": obj.double_park_after_seconds,
             "auto_backup_frequency": obj.auto_backup_frequency,
             "auto_backup_keep":      obj.auto_backup_keep,
-            # Report signatories. There is deliberately no preparer name here:
-            # that is whoever is signed in and generated the report, which the
-            # PDF builder reads from the request, not from settings.
+            # Report signatories. The preparer pair is normally blank, and
+            # blank is what makes the PDF name whoever is signed in and
+            # generated it; filled in, it overrides that signature line.
+            "report_preparer_name":     obj.report_preparer_name,
+            "report_preparer_position": obj.report_preparer_position,
             "report_approver_name":     obj.report_approver_name,
             "report_approver_position": obj.report_approver_position,
             "report_prepared_by_label": obj.report_prepared_by_label,
@@ -3803,6 +3802,8 @@ class SystemSettingsView(APIView):
         double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
         auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
         auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
+        report_preparer_name      = request.data.get("report_preparer_name",     obj.report_preparer_name)
+        report_preparer_position  = request.data.get("report_preparer_position", obj.report_preparer_position)
         report_approver_name      = request.data.get("report_approver_name",     obj.report_approver_name)
         report_approver_position  = request.data.get("report_approver_position", obj.report_approver_position)
         report_prepared_by_label  = request.data.get("report_prepared_by_label", obj.report_prepared_by_label)
@@ -3948,9 +3949,13 @@ class SystemSettingsView(APIView):
         # The signatory strings. They are free text, so the only thing that can
         # be wrong is the length: each column is sized for a name or a caption,
         # and anything longer would be truncated by the database rather than
-        # reported back. Blank is allowed throughout - an approver who has not
-        # been named yet prints a ruled line to sign on, which is the point.
+        # reported back. Blank is allowed throughout, and means two different
+        # right things: an approver who has not been named yet prints a ruled
+        # line to sign on, and a blank preparer falls back to whoever generated
+        # the report. Both are chosen states, so neither is refilled here.
         _signatory_limits = {
+            "report_preparer_name":     (report_preparer_name,     150),
+            "report_preparer_position": (report_preparer_position, 150),
             "report_approver_name":     (report_approver_name,     150),
             "report_approver_position": (report_approver_position, 150),
             "report_prepared_by_label": (report_prepared_by_label, 60),
@@ -3992,6 +3997,8 @@ class SystemSettingsView(APIView):
         obj.auto_backup_frequency = auto_backup_frequency
         obj.auto_backup_keep      = auto_backup_keep
 
+        obj.report_preparer_name     = signatories["report_preparer_name"]
+        obj.report_preparer_position = signatories["report_preparer_position"]
         obj.report_approver_name     = signatories["report_approver_name"]
         obj.report_approver_position = signatories["report_approver_position"]
         obj.report_prepared_by_label = signatories["report_prepared_by_label"]

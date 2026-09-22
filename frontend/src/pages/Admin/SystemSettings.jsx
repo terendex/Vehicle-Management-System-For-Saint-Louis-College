@@ -18,6 +18,7 @@ const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass
   account_expiry_months: 12, account_expiry_days: 0,
   parked_after_seconds: 8, double_park_after_seconds: 12,
   auto_backup_frequency: 'off', auto_backup_keep: 10,
+  report_preparer_name: '', report_preparer_position: '',
   report_approver_name: '', report_approver_position: '',
   report_prepared_by_label: 'Prepared by', report_approved_by_label: 'Approved by' }
 
@@ -48,9 +49,12 @@ function normalizeSettings(data) {
     double_park_after_seconds: data.double_park_after_seconds ?? 12,
     auto_backup_frequency: data.auto_backup_frequency ?? 'off',
     auto_backup_keep:      data.auto_backup_keep      ?? 10,
-    // ?? '' rather than ?? a caption: a blank approver is a real, chosen
-    // state (the report prints a line to sign on), so it must survive the
+    // ?? '' rather than ?? a caption: blank is a real, chosen state on all
+    // four of these - a blank approver prints a line to sign on, and a blank
+    // preparer means "whoever generated the report". Both must survive the
     // round trip instead of being refilled with a default.
+    report_preparer_name:     data.report_preparer_name     ?? '',
+    report_preparer_position: data.report_preparer_position ?? '',
     report_approver_name:     data.report_approver_name     ?? '',
     report_approver_position: data.report_approver_position ?? '',
     report_prepared_by_label: data.report_prepared_by_label ?? 'Prepared by',
@@ -139,6 +143,7 @@ const FIELD_TAB = {
   scan_dedup_seconds: 'gates',
   parked_after_seconds: 'parking', double_park_after_seconds: 'parking',
   retention_years: 'data', auto_backup_frequency: 'data', auto_backup_keep: 'data',
+  report_preparer_name: 'reports', report_preparer_position: 'reports',
   report_approver_name: 'reports', report_approver_position: 'reports',
   report_prepared_by_label: 'reports', report_approved_by_label: 'reports',
 }
@@ -149,8 +154,9 @@ export default function SystemSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [tab, setTab]         = useState('accounts')
-  // Only ever read, and only for the signatory preview below: the PDF takes
-  // the preparer from the request that generated it, never from this screen.
+  // Only ever read, and only for the signatory preview below: with the
+  // preparer fields blank, the PDF names whoever generated it, so the preview
+  // stands in the signed-in account to show what that would print.
   const { user } = useAuthStore()
   const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
   const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
@@ -1023,16 +1029,61 @@ export default function SystemSettings() {
                   <div>
                     <h2 className="ss-section-title">Report Signatories</h2>
                     <p className="ss-section-desc">
-                      Every exported PDF report ends with a signature block. <strong>Prepared by</strong> is
-                      always whoever generated that particular report and is never set here &mdash; it is
-                      taken from whoever is signed in at the time. <strong>Approved by</strong> is set
-                      here, because the head of office does not sign in to run every report and the
-                      post changes hands.
+                      Every exported PDF report ends with a signature block. <strong>Approved by</strong> is
+                      set here, because the head of office does not sign in to run every report and the
+                      post changes hands. <strong>Prepared by</strong> is normally whoever generated
+                      that particular report &mdash; leave its two fields blank and it stays that way.
+                      Fill them in to sign every report with one name instead. Either way the report
+                      footer still records the account that exported it.
                     </p>
                   </div>
                 </div>
 
                 <div className="ss-rows">
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_preparer_name">Preparer&rsquo;s name</label>
+                      <span className="ss-row-hint">
+                        Printed beneath the preparer&rsquo;s line on every PDF report. Leave it blank to
+                        name whoever generated the report instead.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_preparer_name"
+                        name="report_preparer_name"
+                        type="text"
+                        maxLength={150}
+                        value={form.report_preparer_name}
+                        onChange={handleChange}
+                        placeholder={user?.full_name || 'e.g. JUAN DELA CRUZ'}
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="report_preparer_position">Preparer&rsquo;s position</label>
+                      <span className="ss-row-hint">
+                        The line under the preparer&rsquo;s name. Leave it blank to print the role of
+                        whoever generated the report.
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <input
+                        id="report_preparer_position"
+                        name="report_preparer_position"
+                        type="text"
+                        maxLength={150}
+                        value={form.report_preparer_position}
+                        onChange={handleChange}
+                        placeholder={ROLE_LABELS[user?.role] || 'e.g. CDSO'}
+                        className="ss-input ss-input--text"
+                      />
+                    </div>
+                  </div>
+
                   <div className="ss-row">
                     <div className="ss-row-text">
                       <label className="ss-row-label" htmlFor="report_approver_name">Approver&rsquo;s name</label>
@@ -1130,8 +1181,11 @@ export default function SystemSettings() {
                     <div className="ss-sig-preview-col">
                       <div className="ss-sig-preview-label">{form.report_prepared_by_label || '\u00a0'}</div>
                       <div className="ss-sig-preview-rule">
-                        <div className="ss-sig-preview-name">{user?.full_name || '\u00a0'}</div>
-                        <div className="ss-sig-preview-position">{ROLE_LABELS[user?.role] || '\u00a0'}</div>
+                        {/* The same fallback report_utils applies: the field when
+                            set, otherwise the account that generates the report,
+                            which on this screen is the admin reading it. */}
+                        <div className="ss-sig-preview-name">{form.report_preparer_name || user?.full_name || '\u00a0'}</div>
+                        <div className="ss-sig-preview-position">{form.report_preparer_position || ROLE_LABELS[user?.role] || '\u00a0'}</div>
                       </div>
                     </div>
                     <div className="ss-sig-preview-col">

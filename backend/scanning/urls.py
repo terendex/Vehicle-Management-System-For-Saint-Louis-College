@@ -32,6 +32,10 @@ urlpatterns = [
     path('manual-entry/',           views.ManualEntryView.as_view(),       name='manual-entry'),
     # Look a vehicle up by owner name, plate, or conduction number.
     path('owner-lookup/',           views.OwnerLookupView.as_view(),       name='owner-lookup'),
+    # Vehicles still on campus past their rule's maximum stay, and the guard
+    # acknowledging one (which issues the time-exceed violation immediately).
+    path('overstaying/',            views.OverstayingListView.as_view(),   name='overstaying'),
+    path('overstaying/acknowledge/', views.AcknowledgeOverstayView.as_view(), name='overstay-acknowledge'),
     # Plateless vehicles the guard records by hand (entry + its exit).
     path('unrecognized/',           views.UnrecognizedEntryView.as_view(), name='unrecognized-entry'),
     path('unrecognized/<int:pk>/exit/', views.UnrecognizedExitView.as_view(), name='unrecognized-exit'),

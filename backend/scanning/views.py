@@ -533,7 +533,7 @@ def _is_standby_fetcher(user) -> bool:
 # Called at EXIT, once the duration is known: did they stay longer than their
 # rule allows, and if so, issue the violation for it.
 def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
-                      duration_minutes: int, gate_id: str = '', evidence_bytes=None) -> int:
+                      duration_minutes: int, gate_id: str = '') -> int:
     """
     Enforce the RuleConstraint max-stay limit for this constraint type at exit
     time. Returns overstay minutes (0 if none/no limit) and auto-issues a
@@ -566,7 +566,6 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
             f'(rule: {rule.name})',
             gate_id,
             vtype=Violation.Type.TIME_EXCEED,
-            evidence_bytes=evidence_bytes,       # the camera frame, when the caller had one
         )
     except Exception:
         # Swallowed so a failure to record the violation cannot block the exit
@@ -591,7 +590,7 @@ def _active_visitor_pass(plate_number: str):
 # The exit half: closes the pass and reports how long they overstayed. Called
 # from the guard's exit paths — see the note in ScanView about which paths do
 # NOT call it.
-def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None) -> int:
+def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
     """
     Mark today's ACTIVE visitor pass for this plate as exited — called from every
     exit path (camera toggle, manual Record Exit, QR scan) so passes don't stay
@@ -624,7 +623,6 @@ def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
-                evidence_bytes=evidence_bytes,
             )
         except Exception:
             # Same rule as everywhere on this path: the visitor is leaving, and
@@ -634,34 +632,11 @@ def _close_active_pass(plate_number: str, gate_id: str = '', evidence_bytes=None
     return 0                                     # left on time
 
 
-# The camera frame that came with this request, read WITHOUT consuming it.
-def _request_image_bytes(request):
-    """Bytes of the frame the guard's device posted with this scan, or None.
-
-    Read non-destructively: the same upload is also saved as the AccessLog
-    snapshot, and consuming the stream without rewinding leaves whichever
-    consumer runs second with an empty file.
-    """
-    # getattr first: a JSON request has no FILES at all, and this helper is
-    # called from paths that may or may not be multipart.
-    f = getattr(request, 'FILES', None) and request.FILES.get('image')
-    if not f:
-        return None
-    try:
-        pos = f.tell()                           # remember where the other reader left off
-        f.seek(0)
-        data = f.read()
-        f.seek(pos)                              # and put it back — this is the "non-destructive" part of the docstring
-        return data or None                      # an empty upload reads as no evidence rather than as b''
-    except Exception:
-        return None                              # evidence is a nicety; never let it break the scan
-
-
 # Issues a violation from the gate, with no human deciding to. Everything here
 # is about NOT issuing too many: one car in front of a camera generates scans
 # continuously, and each one would otherwise be another offence.
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
-                        evidence_bytes=None, entry_status: str = ''):
+                        entry_status: str = ''):
     """
     Auto-issue a violation at the gate — at most ONE violation of each type per
     vehicle per calendar day, no matter how often it is scanned or detected that
@@ -736,28 +711,6 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         is_released          = True,  # visible to the owner immediately
         on_duty_guard        = active_guard_for_gate(gate_id),   # who was on the gate, so the record is attributable even though no human issued it
     )
-    # Last resort: no frame was handed in, so take the newest one the gate
-    # camera has. A violation with no photo is one nobody can contest or
-    # confirm later, which is exactly what the lift flow needs to judge.
-    if not evidence_bytes:
-        try:
-            from .gate_frames import latest_jpeg_for_gate
-            evidence_bytes = latest_jpeg_for_gate(gate_id)   # whatever that gate's camera has most recently held
-        except Exception:
-            evidence_bytes = None                # still better to issue the violation with no photo than not at all
-
-    # Attach the camera frame as evidence (shown in admin table + owner email)
-    if evidence_bytes:
-        try:
-            from django.core.files.base import ContentFile
-            violation.evidence.save(
-                # Plate plus a unix timestamp, so two violations for the same
-                # car on the same day cannot overwrite each other's evidence.
-                f"auto_{vehicle.plate_number}_{int(timezone.now().timestamp())}.jpg",
-                ContentFile(evidence_bytes), save=True,
-            )
-        except Exception:
-            pass                                 # storage (R2) being unreachable must not undo the violation itself
     # Impose the ladder, then tell the owner. Both are best-effort: the
     # violation itself is already recorded and must not be rolled back by a
     # mail server being down.
@@ -1097,7 +1050,7 @@ class ScanView(APIView):
             # asks for one: day, hours, confiscation, registration status. This
             # file records what entry_logic decides; it does not decide.
             entry = check_entry(vehicle)
-            has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()   # shown as a flag to the guard; does not itself refuse entry
+            has_violations = _has_open_violations(vehicle)   # a flag for the guard; the refusal itself comes from check_entry
             already_inside = _already_inside(plate)   # re-asked as a plain boolean for the response body
 
             # Written whatever the decision was. A refusal is as much a part
@@ -1119,8 +1072,7 @@ class ScanView(APIView):
             # not been issued a pass yet has done nothing wrong.
             if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
                 _auto_log_violation(vehicle, entry['message'], gate_id,
-                                    evidence_bytes=_request_image_bytes(request),   # read non-destructively: the snapshot above uses the same upload
-                                    entry_status=entry['status'])   # lets the helper tell "confiscated" apart from ordinary refusal
+                                entry_status=entry['status'])   # lets the helper tell "confiscated" apart from ordinary refusal
 
             resp = {
                 'plate_number':    plate,
@@ -1576,7 +1528,6 @@ def _record_visitor_exit(request, pass_, gate_id):
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
-                evidence_bytes=_request_image_bytes(request),
             )
         except Exception:
             pass
@@ -3059,7 +3010,7 @@ class ManualEntryView(APIView):
         # there; this one has to ask entry_logic for the day, the hours, the
         # confiscation state and the registration.
         entry = check_entry(vehicle)
-        has_violations = Violation.objects.filter(vehicle=vehicle, is_resolved=False).exists()   # shown to the guard as a flag; does not itself refuse entry
+        has_violations = _has_open_violations(vehicle)   # a flag for the guard; the refusal itself comes from check_entry
 
         # UI-only statuses (e.g. 'no_pass', 'open_entry') aren't valid AccessLog statuses
         AccessLog.objects.create(
@@ -3077,11 +3028,7 @@ class ManualEntryView(APIView):
         # done nothing wrong.
         if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
             _auto_log_violation(vehicle, entry['message'], gate_id,
-                                    # Typed entries rarely carry a frame, so
-                                    # this is usually None and the helper falls
-                                    # back to the gate camera's latest.
-                                    evidence_bytes=_request_image_bytes(request),
-                                    entry_status=entry['status'])
+                                entry_status=entry['status'])
 
         return Response({
             'plate_number':    plate_number,
@@ -3109,6 +3056,280 @@ class ManualEntryView(APIView):
 # the shift bookkeeping that says which guard is on which gate.
 
 # One search box, three different kinds of thing behind it.
+# ── Overstaying, while it is still happening ─────────────────────────────────
+# The stay limit used to be enforced only at EXIT: _check_stay_limit runs once
+# the duration is known, so a car sitting on campus three hours past its rule
+# was invisible to the guard until it drove out — by which time the only thing
+# left to do is record it.
+#
+# These endpoints put the same rule on the guard's screen while the vehicle is
+# still there (who is over, and by how much), and let the guard act on it.
+
+# Owner type -> the rule that caps how long they may stay. Visitors are absent
+# on purpose: their limit is the allowance printed on their pass, not a
+# RuleConstraint, and the Active Visitors panel already counts that down.
+_STAY_RULE_FOR_OWNER_TYPE = {
+    User.OwnerType.STUDENT:  'student_vehicle',
+    User.OwnerType.EMPLOYEE: 'employee',
+    User.OwnerType.FETCHER:  'fetcher',
+}
+
+
+def _stay_limits() -> dict:
+    """Enabled rules that actually cap a stay, as {constraint_type: (minutes, name)}.
+
+    A rule with no max_stay_minutes restricts days and hours without limiting
+    how long a visit may run, so it is not a stay limit and is left out.
+    """
+    from vehicles.models import RuleConstraint
+    return {
+        r.constraint_type: (r.max_stay_minutes, r.name)
+        for r in RuleConstraint.objects.filter(enabled=True, max_stay_minutes__isnull=False)
+    }
+
+
+def _open_entries_today():
+    """Today's authorized entries that no exit row points back at.
+
+    The same definition of "inside" the occupancy ledger and _plates_inside
+    use, but returning the ROWS rather than the plates — an overstay is
+    measured from the entry time carried on the row.
+    """
+    day_start, day_end = day_range(timezone.localdate())
+    paired = (
+        AccessLog.objects
+        .filter(status=AccessLog.Status.EXITED, paired_entry__isnull=False,
+                scanned_at__gte=day_start, scanned_at__lt=day_end)
+        .values('paired_entry_id')
+    )
+    return (
+        AccessLog.objects
+        .filter(status=AccessLog.Status.AUTHORIZED,
+                scanned_at__gte=day_start, scanned_at__lt=day_end,
+                scanned_at__lte=timezone.now())   # the same clock-skew guard as everywhere else
+        .exclude(pk__in=paired)
+        .select_related('vehicle', 'vehicle__user')
+        .order_by('-scanned_at')                  # newest first, so the dedup below keeps the current visit
+    )
+
+
+def _struck_today(vehicle) -> bool:
+    """Has a ladder-bearing violation already been issued today for this vehicle,
+    or for the account behind it?
+
+    Mirrors the per-day cap inside _auto_log_violation, so the card can say up
+    front that acknowledging would change nothing rather than leaving the guard
+    to press a button that silently does nothing.
+    """
+    if vehicle is None:
+        return False
+    day_start, day_end = day_range(timezone.localdate())
+    q = Q(vehicle=vehicle)
+    if vehicle.user_id:
+        q = Q(owner_id=vehicle.user_id) | q
+    return Violation.objects.filter(
+        q, violation_type__in=NEW_STYLE_TYPES,
+        issued_at__gte=day_start, issued_at__lt=day_end,
+    ).exists()
+
+
+def _overstaying_now(gate_id: str = '') -> list:
+    """Every vehicle currently inside that is past its rule's maximum stay.
+
+    One query for the open entries, one for the rules, and one per candidate
+    for the already-struck flag. Polled by every guard terminal, so the first
+    two are deliberately not per-vehicle; the third only runs for vehicles that
+    are actually over, which is a short list or an empty one.
+    """
+    limits = _stay_limits()
+    if not limits:
+        return []                                # no rule caps a stay: nothing can be an overstay
+
+    now = timezone.now()
+    rows, seen = [], set()
+    for log in _open_entries_today():
+        plate = log.plate_number
+        if not plate or plate in seen:
+            continue                             # one row per plate — the newest open entry is the live visit
+        seen.add(plate)
+
+        vehicle = log.vehicle
+        owner   = vehicle.user if vehicle is not None else None
+
+        if owner is not None:
+            if owner.owner_type == User.OwnerType.VISITOR:
+                continue                         # a visitor's limit is their pass, not a rule
+            ctype = _STAY_RULE_FOR_OWNER_TYPE.get(owner.owner_type)
+            # Standby fetchers are allowed to wait on campus — that is what the
+            # registration type means — so they can never be overstaying.
+            if ctype == 'fetcher' and _is_standby_fetcher(owner):
+                continue
+        else:
+            # No account behind the plate. A supplier is the one kind of
+            # unowned entrant that carries a stay limit of its own.
+            ctype = 'supplier'
+        if ctype not in limits:
+            continue                             # this kind of entrant has no cap
+
+        max_minutes, rule_name = limits[ctype]
+        inside_minutes = int((now - log.scanned_at).total_seconds() // 60)
+        if inside_minutes <= max_minutes:
+            continue                             # still inside the allowance
+
+        rows.append({
+            'access_log_id':  log.pk,
+            'plate_number':   plate,
+            'vehicle_id':     vehicle.pk if vehicle is not None else None,
+            'owner_name':     owner.full_name if owner else '',
+            'owner_type':     owner.owner_type if owner else 'supplier',
+            'entered_at':     log.scanned_at,
+            'gate_id':        log.gate_id,
+            'inside_minutes': inside_minutes,
+            'max_minutes':    max_minutes,
+            'over_minutes':   inside_minutes - max_minutes,
+            'rule_name':      rule_name,
+            'already_issued': _struck_today(vehicle),
+        })
+
+    # A blank gate_id on the row means the entry was posted without one; those
+    # are shown at every gate rather than hidden from all of them.
+    if gate_id:
+        rows = [r for r in rows if not r['gate_id'] or r['gate_id'] == gate_id]
+    rows.sort(key=lambda r: r['over_minutes'], reverse=True)   # worst offender first
+    return rows
+
+
+class IsGuardOrAdmin(permissions.BasePermission):
+    """Acknowledging an overstay issues a violation, so it is a guard's act (or
+    the CDSO's), not something any signed-in account may do."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated
+                    and request.user.role in ('security', 'admin'))
+
+
+class OverstayingListView(APIView):
+    """Vehicles on campus right now that are past their rule's maximum stay."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        gate_id = (request.query_params.get('gate_id') or '').strip()
+        rows = _overstaying_now(gate_id)
+        return Response({'count': len(rows), 'results': rows})
+
+
+class AcknowledgeOverstayView(APIView):
+    """The guard acknowledges an overstay, which issues the violation there and then.
+
+    Issuing here rather than waiting for the exit is the point of the card: the
+    ladder runs while the vehicle is still on campus, so the owner is told
+    during the offence instead of after it. The exit path is unchanged and
+    still calls _check_stay_limit — the per-day cap inside _auto_log_violation
+    is what stops the two from counting the same overstay twice.
+    """
+    permission_classes = [IsGuardOrAdmin]
+
+    def post(self, request):
+        plate = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
+        if not plate:
+            return Response({'error': 'plate_number is required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Re-derived rather than trusted from the request body: the card may
+        # have been on screen for a while, and the vehicle may have left or
+        # been dealt with since it was drawn.
+        match = next((r for r in _overstaying_now() if r['plate_number'] == plate), None)
+        if match is None:
+            return Response(
+                {'error': f'{plate} is no longer overstaying — it may have exited already.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Already struck today: _auto_log_violation would cap it and write
+        # nothing, so saying "acknowledged" would claim an offence that was
+        # not recorded. The card shows this state too, but it can go stale
+        # between the poll and the tap, so it is re-checked here.
+        if match['already_issued']:
+            return Response({'status': 'already_recorded', 'plate_number': plate,
+                             'over_minutes': match['over_minutes'],
+                             'detail': f'{plate} already has a violation recorded today. '
+                                       'One offence per vehicle per day.'})
+
+        vehicle = Vehicle.objects.filter(pk=match['vehicle_id']).first() if match['vehicle_id'] else None
+        if vehicle is None:
+            # A supplier or event plate carries no Vehicle row, and a violation
+            # has to hang off one. Created unowned and unauthorized, exactly as
+            # _check_stay_limit does it at exit.
+            vehicle, _ = Vehicle.objects.get_or_create(
+                plate_number=plate,
+                defaults={'vehicle_type': 'car', 'is_authorized': False},
+            )
+
+        gate_id = match['gate_id'] or getattr(request.user, 'gate_assignment', None) or 'main'
+        _auto_log_violation(
+            vehicle,
+            f"Overstay acknowledged at the gate: {match['inside_minutes']} min inside, "
+            f"exceeding the allowed {match['max_minutes']} min by {match['over_minutes']} min "
+            f"(rule: {match['rule_name']})",
+            gate_id,
+            vtype=Violation.Type.TIME_EXCEED,
+        )
+
+        _audit(request, AuditLog.Action.RECORD_UPDATED,
+               f"Overstay acknowledged | {plate} | over by {match['over_minutes']} min | "
+               f"By: {request.user.full_name}")
+
+        # Every open guard screen drops the card without waiting for its poll.
+        try:
+            from realtime.broadcast import broadcast_change
+            broadcast_change('violation', 'overstay_acknowledged', plate_number=plate)
+        except Exception:
+            logger.exception('overstay acknowledgement broadcast failed')   # the violation still stands
+
+        return Response({'status': 'acknowledged', 'plate_number': plate,
+                         'over_minutes': match['over_minutes']})
+
+
+
+# The penalty an account is serving, in the three fields a guard screen needs.
+# Built from the owner object the caller already has, so it costs no query:
+# is_confiscated and confiscation_days_left are computed from stored columns.
+#
+# The gate refuses a confiscated account in check_entry() and always has. This
+# is the same fact carried into the LOOKUP, because a guard searching a name
+# or a conduction number used to get a row that looked ordinary and only
+# learned the account was barred after pressing the entry button.
+# Open (unresolved) violations against this vehicle OR against the account
+# behind it. Keyed on both because the two are not the same question: the
+# offence ladder counts per ACCOUNT, so an owner on their second strike who
+# drives their other registered car used to show a clean flag at the gate.
+# The entry decision was never wrong — check_entry reads the owner — but the
+# flag beside it said the opposite, which is worse than not showing one.
+def _has_open_violations(vehicle) -> bool:
+    q = Q(vehicle=vehicle)
+    if vehicle is not None and vehicle.user_id:
+        q |= Q(owner_id=vehicle.user_id)
+    return Violation.objects.filter(q, is_resolved=False).exists()
+
+
+def _penalty_flags(owner) -> dict:
+    if owner is None or not owner.is_confiscated:
+        return {"is_confiscated": False, "confiscation_level": 0,
+                "confiscation_days_left": None, "denied_reason": ""}
+    days = owner.confiscation_days_left
+    when = f'{days} day(s) left' if days is not None else 'until the CDSO lifts it'
+    return {
+        "is_confiscated":         True,
+        "confiscation_level":     owner.confiscation_level,
+        "confiscation_days_left": days,
+        # Worded exactly as entry_logic.check_entry words it, so the lookup
+        # row and the refusal the guard gets on picking it read the same.
+        "denied_reason": (f'Entry denied — account confiscated ({when}). '
+                          f'Offence {owner.confiscation_level} of 3. '
+                          'Report to the CDSO office.'),
+    }
+
+
 class OwnerLookupView(APIView):
     """Find a vehicle by its owner's NAME, or by plate / conduction number.
 
@@ -3202,6 +3423,7 @@ class OwnerLookupView(APIView):
                 # Picking this opens the slip (inside? record exit? reprint?)
                 # rather than running a plate check.
                 'slip_code':         p.qr_payload,   # the newest printed copy's code
+                **_penalty_flags(v.user),
             })
 
         # No-plate vehicles still inside today, by the driver's name. They
@@ -3236,6 +3458,7 @@ class OwnerLookupView(APIView):
                 'classification':    log.entrant_category or 'unknown',
                 'is_inside':         True,       # true by construction: the query only returned rows with no exit
                 'slip_code':         f'SLC-NOPLATE:{log.pk}',   # picking this opens the slip, the only way to close a plateless visit
+                **_penalty_flags(None),
             })
         for v in matches:
             owner = v.user
@@ -3253,6 +3476,7 @@ class OwnerLookupView(APIView):
                 'owner_type':        owner.owner_type if owner else '',
                 'classification':    classify_entrant(v, plate),
                 'is_inside':         plate in inside,
+                **_penalty_flags(owner),
             })
 
         # Re-checked after combining: the three sources together can overflow

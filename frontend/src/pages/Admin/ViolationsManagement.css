@@ -282,19 +282,17 @@
   /* Fixed layout + <colgroup> keeps every row on the same grid — without it
      the long Notes text steals width from Owner/Issued row by row. */
   table-layout: fixed;
-  min-width: 1240px;
+  min-width: 1080px;
 }
 
 /* Column widths (sum = 100%) */
-.vm-col-plate    { width: 8%; }
-.vm-col-owner    { width: 15%; }
-.vm-col-type     { width: 13%; }
-.vm-col-fine     { width: 7%; }
-.vm-col-notes    { width: 19%; }
-.vm-col-evidence { width: 7%; }
-.vm-col-issued   { width: 12%; }
+.vm-col-plate    { width: 9%; }
+.vm-col-owner    { width: 20%; }
+.vm-col-type     { width: 15%; }
+.vm-col-notes    { width: 20%; }
+.vm-col-issued   { width: 14%; }
 .vm-col-status   { width: 10%; }
-.vm-col-actions  { width: 9%; }
+.vm-col-actions  { width: 12%; }
 
 .vm-table th {
   background: #F4F8FB;
@@ -408,6 +406,7 @@
 
 .vm-type-no_sticker           { background: #FDF0BE; color: #8A6B00; }
 .vm-type-expired_registration { background: #FADEDE; color: #9B1C1C; }
+.vm-type-confiscated_activity { background: #FADEDE; color: #9B1C1C; }
 .vm-type-unauthorized         { background: #FDF0BE; color: #8A6B00; }
 .vm-type-unauthorized_entry   { background: #FDF0BE; color: #8A6B00; }
 .vm-type-time_exceed          { background: #DCE9F2; color: #084A85; }
@@ -662,94 +661,6 @@
 }
 .vm-drop-text span { color: #03396C; font-weight: 600; text-decoration: underline; }
 
-/* ── Evidence preview (in modal) ────────────────────────────────────────────── */
-
-.vm-evidence-preview {
-  position: relative;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.vm-evidence-img {
-  max-width: 100%;
-  max-height: 160px;
-  border-radius: 8px;
-  border: 1.5px solid #D3E1EC;
-  object-fit: contain;
-}
-
-.vm-evidence-remove {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1.5px solid #F3C0C0;
-  background: #FCEDED;
-  color: #C62828;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.vm-evidence-remove:hover { background: #FADEDE; }
-
-/* ── Evidence thumbnail (in table) ─────────────────────────────────────────── */
-
-.vm-evidence-thumb-btn {
-  position: relative;
-  display: inline-flex;
-  border: 1.5px solid #D3E1EC;
-  border-radius: 6px;
-  overflow: hidden;
-  cursor: pointer;
-  background: none;
-  padding: 0;
-  transition: border-color 0.15s;
-}
-.vm-evidence-thumb-btn:hover { border-color: #03396C; }
-
-.vm-evidence-thumb {
-  width: 48px;
-  height: 36px;
-  object-fit: cover;
-  display: block;
-  /* A broken/slow image otherwise renders its alt text at full width and
-     shoves the column open. */
-  background: #EEF4F9;
-  overflow: hidden;
-  font-size: 0;
-  color: transparent;
-}
-
-.vm-evidence-zoom {
-  position: absolute;
-  bottom: 3px;
-  right: 3px;
-  color: #fff;
-  background: rgba(0,0,0,0.55);
-  border-radius: 3px;
-  padding: 1px;
-}
-
-.vm-no-evidence {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: #BDD4E5;
-}
-
-/* "Unavailable" is a fault to chase, not the neutral "None" — a photo was
-   captured and storage will not give it back. Coloured so it does not read as
-   the same absence. */
-.vm-evidence-broken {
-  color: #B58100;
-  cursor: help;
-}
-
 /* ── Pagination ────────────────────────────────────────────────── */
 
 .vm-pagination {
@@ -990,13 +901,23 @@
 .vm-or-input:focus { border-color: #03396C; }
 
 /* ── Responsive ──────────────────────────────────────────────────
-   The nine-column table already carries its own min-width and scrolls
-   inside .vm-card, so it needs no help. The work is the toolbar — five
-   filter buttons, a period switcher, a search box and a refresh — which
-   is what actually falls apart first as the screen narrows. */
+   The seven-column table carries its own min-width and scrolls inside
+   .vm-card, so the narrow screens only tighten that grid. The rest of
+   the work is the toolbar — five filter buttons, a period switcher, a
+   search box and a refresh — which is what falls apart first. */
 
 /* --- Tablet --- */
 @media (max-width: 900px) {
+  /* Tighter cells before the columns start clipping their pills. */
+  .vm-table {
+    min-width: 980px;
+  }
+
+  .vm-table th,
+  .vm-table td {
+    padding: 11px 11px;
+  }
+
   .vm-page {
     gap: 1.25rem;
   }
@@ -1047,6 +968,26 @@
 
 /* --- Mobile --- */
 @media (max-width: 640px) {
+  .vm-table {
+    min-width: 840px;
+    font-size: 0.8rem;
+  }
+
+  .vm-table th,
+  .vm-table td {
+    padding: 10px 9px;
+  }
+
+  /* Two lines of notes on a phone, three on a desktop — the row is
+     already the tallest thing on the screen. */
+  .vm-notes {
+    -webkit-line-clamp: 2;
+  }
+
+  .vm-owner-email {
+    font-size: 10px;
+  }
+
   .vm-title {
     font-size: 20px;
   }

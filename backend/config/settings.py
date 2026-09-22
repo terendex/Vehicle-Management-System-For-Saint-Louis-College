@@ -420,7 +420,7 @@ if os.getenv('USE_R2', 'false').lower() == 'true' and not _TESTING:
     AWS_S3_FILE_OVERWRITE   = False
     AWS_QUERYSTRING_AUTH    = False
     # R2 public files are served from the bucket's r2.dev (or custom) domain, not
-    # the S3 API endpoint. Point .url() at that public host so evidence images
+    # the S3 API endpoint. Point .url() at that public host so stored images
     # load in the browser. R2_PUBLIC_URL may already include the scheme.
     _r2_public_host         = os.getenv('R2_PUBLIC_URL', '').replace('https://', '').replace('http://', '').strip('/')
     AWS_S3_CUSTOM_DOMAIN    = _r2_public_host
@@ -432,7 +432,7 @@ else:
     }
     if not DEBUG and not _TESTING:
         # Railway containers have an ephemeral filesystem: every redeploy wipes
-        # MEDIA_ROOT, taking licence photos and violation evidence with it.
+        # MEDIA_ROOT, taking licence photos and registration documents with it.
         print('[settings] WARNING: USE_R2=false in production - uploaded files '
               'will be lost on every redeploy. Set USE_R2=true.')
 

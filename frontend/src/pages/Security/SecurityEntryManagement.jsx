@@ -4,7 +4,7 @@ import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
-  VideoOff, RefreshCw, Printer, Ticket,
+  VideoOff, RefreshCw, Printer, Ticket, Timer, ShieldOff,
 } from 'lucide-react'
 import notify, { toast, useFeedbackStore } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -19,6 +19,7 @@ import {
   getVisitorPasses, extendVisitorPass,
   confirmVisitorSlipPrinted, lookupSlip, exitSlip,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
+  getOverstaying, acknowledgeOverstay,
 } from '../../api/scanning'
 import { getSystemSettings } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -511,7 +512,8 @@ function OwnerLookupModal({ data, onPick, onClose }) {
         <div className="em-modal-body">
           <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
             Pick the vehicle at the barrier. The usual entry check runs on it —
-            choosing from this list does not grant entry by itself.
+            choosing from this list does not grant entry by itself. A row marked
+            Entry denied is serving a violation penalty and will be refused.
           </p>
           <div className="em-lookup-list">
             {results.map(m => {
@@ -520,12 +522,17 @@ function OwnerLookupModal({ data, onPick, onClose }) {
                 <button
                   type="button"
                   key={m.vehicle_id}
-                  className="em-lookup-row"
+                  className={`em-lookup-row${m.is_confiscated ? ' is-denied' : ''}`}
                   onClick={() => onPick(m)}
                 >
                   <div className="em-lookup-main">
                     <span className="em-lookup-plate">{m.identifier || 'No plate on file'}</span>
                     <span className={`em-class-tag ${cm.cls}`}>{cm.label}</span>
+                    {m.is_confiscated && (
+                      <span className="em-class-tag em-tag-denied">
+                        <Ban size={9} style={{ verticalAlign: -1 }} /> Entry denied · offence {m.confiscation_level} of 3
+                      </span>
+                    )}
                     {m.is_inside && (
                       <span className="em-class-tag cls-unknown">
                         <LogOut size={9} style={{ verticalAlign: -1 }} /> Inside — next check logs the exit
@@ -538,6 +545,11 @@ function OwnerLookupModal({ data, onPick, onClose }) {
                       <> · {[m.color, m.vehicle_type, m.model].filter(Boolean).join(' ')}</>
                     )}
                   </div>
+                  {m.is_confiscated && (
+                    // The same sentence the gate gives when this row is picked —
+                    // the guard should not have to press the button to learn it.
+                    <div className="em-lookup-denied">{m.denied_reason}</div>
+                  )}
                 </button>
               )
             })}
@@ -1111,6 +1123,8 @@ export default function SecurityEntryManagement() {
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
+  const [overstaying, setOverstaying] = useState([])    // still inside, past their rule
+  const [ackBusy, setAckBusy]         = useState(null)  // plate currently being acknowledged
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
   const [dedupSeconds, setDedupSeconds] = useState(5)
   const [openCampus, setOpenCampus]     = useState(false)
@@ -1271,18 +1285,61 @@ export default function SecurityEntryManagement() {
       })
     }).catch(() => {})
 
+  // Vehicles past their stay rule that are STILL INSIDE. The exit sweep catches
+  // an overstay after the fact; this asks the same rule while the guard can
+  // still do something about it.
+  const refreshOverstaying = () =>
+    getOverstaying(gateId).then(r => setOverstaying(r.data?.results ?? [])).catch(() => {})
+
+  // Acknowledging issues the Time Exceed violation there and then, which runs
+  // the offence ladder — a first offence costs the owner a week of campus
+  // access. Too expensive for a single unconfirmed tap.
+  const handleAcknowledgeOverstay = async (row) => {
+    const who = row.owner_name ? `${row.plate_number} — ${row.owner_name}` : row.plate_number
+    if (!(await notify.confirm({
+      title: 'Record this overstay?',
+      message: `${who} has been inside ${fmtMinutes(row.inside_minutes)}, which is `
+             + `${fmtMinutes(row.over_minutes)} past the allowed `
+             + `${fmtMinutes(row.max_minutes)} (${row.rule_name}).`,
+      description: 'This issues a Time Exceed violation now and applies the sanction '
+                 + 'for their offence number. They may still leave, but they cannot '
+                 + 'come back in until the confiscation ends.',
+      confirmLabel: 'Record violation',
+    }))) return
+    setAckBusy(row.plate_number)
+    try {
+      const { data } = await acknowledgeOverstay(row.plate_number)
+      // One offence per vehicle per day. If the cap swallowed it, say so —
+      // reporting a violation that was not written is worse than saying none.
+      if (data?.status === 'already_recorded') {
+        toast.info(data.detail || `${row.plate_number} was already recorded today.`)
+      } else {
+        toast.success(`Overstay recorded for ${row.plate_number}.`)
+      }
+      refreshOverstaying()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to record the overstay.')
+    } finally {
+      setAckBusy(null)
+    }
+  }
+
+
   const refreshUnrecognized = () =>
     getUnrecognizedInside(gateId).then(r => setUnrecognized(r.data ?? [])).catch(() => {})
 
-  const refreshAll = () => { refreshLogs(); refreshPasses(); refreshUnrecognized() }
+  const refreshAll = () => {
+    refreshLogs(); refreshPasses(); refreshUnrecognized(); refreshOverstaying()
+  }
 
   // Instant refresh on new gate scans / visitor-pass changes
   useLiveUpdates(refreshAll)
 
   useEffect(() => {
+    refreshOverstaying()
     refreshPasses()
     refreshUnrecognized()
-    const t = setInterval(refreshPasses, 30000)
+    const t = setInterval(() => { refreshPasses(); refreshOverstaying() }, 30000)
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1865,6 +1922,52 @@ export default function SecurityEntryManagement() {
                 </div>
               </section>
             )}
+
+            {/* Overstaying — still inside, past their rule's maximum stay */}
+            {overstaying.length > 0 && (
+              <section className="cm-panel em-overstay-panel">
+                <div className="cm-panel-head">
+                  <span className="cm-panel-title"><Timer size={14} /> Overstaying</span>
+                  <div className="cm-panel-end"><span className="cm-count em-count-warn">{overstaying.length}</span></div>
+                </div>
+                <p className="em-overstay-note">
+                  Past their allowed stay and still on campus. Recording one issues
+                  the violation now — they may still leave, but not return until the
+                  confiscation ends.
+                </p>
+                <div className="em-side-list">
+                  {overstaying.map(row => (
+                    <div key={row.access_log_id} className="em-overstay-row">
+                      <div className="em-overstay-main">
+                        <span className="em-visitor-plate">{row.plate_number}</span>
+                        <span className="em-overstay-over">+{fmtShort(row.over_minutes)} over</span>
+                      </div>
+                      <div className="em-visitor-sub">
+                        {row.owner_name || 'No owner on file'}
+                        {' · '}{fmtShort(row.inside_minutes)} inside of {fmtShort(row.max_minutes)}
+                        {' · '}{row.rule_name}
+                      </div>
+                      {row.already_issued ? (
+                        <span className="em-overstay-done" title="A violation has already been issued for this vehicle today">
+                          <ShieldOff size={11} /> Recorded today
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="em-overstay-ack"
+                          disabled={ackBusy === row.plate_number}
+                          onClick={() => handleAcknowledgeOverstay(row)}
+                          title="Issue the Time Exceed violation for this overstay"
+                        >
+                          {ackBusy === row.plate_number ? 'Recording…' : 'Acknowledge'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
 
             {/* Active visitors — time remaining / overstay */}
             <section className="cm-panel">

@@ -131,56 +131,6 @@ class DeletedAccountTests(TestCase):
             VehicleRegistrationSerializer.build_block_counts([_Row()]).get('GONE001'), None)
 
 
-class EvidenceEndpointTests(APITestCase):
-    """Evidence is served by the API, not from a public bucket URL, so the
-    access rules are ours to enforce."""
-
-    def setUp(self):
-        self.owner = _owner('ev-owner@slc.edu.ph', 'CRUZ, PEDRO')
-        self.stranger = _owner('ev-other@slc.edu.ph', 'LIM, JOSE')
-        self.guard = User.objects.create_user(
-            email='ev-guard@slc.edu.ph', full_name='GUARD', password='x', role='security')
-        self.vehicle = Vehicle.objects.create(
-            plate_number='EVID001', vehicle_type=Vehicle.Type.CAR, user=self.owner)
-        self.violation = Violation.objects.create(
-            vehicle=self.vehicle, violation_type=Violation.Type.UNAUTHORIZED_ENTRY)
-        self.url = f'/api/violations/{self.violation.pk}/evidence/'
-
-    def test_anonymous_is_refused(self):
-        self.assertIn(self.client.get(self.url).status_code, (401, 403))
-
-    def test_another_owner_cannot_read_someone_elses_evidence(self):
-        self.client.force_authenticate(self.stranger)
-        self.assertEqual(self.client.get(self.url).status_code, 403)
-
-    def test_staff_reach_the_endpoint(self):
-        """No file is attached, so a 404 is the correct answer — the point is
-        that it is not a 403."""
-        self.client.force_authenticate(self.guard)
-        self.assertEqual(self.client.get(self.url).status_code, 404)
-
-    def test_owner_reaches_their_own(self):
-        self.client.force_authenticate(self.owner)
-        self.assertEqual(self.client.get(self.url).status_code, 404)
-
-    def test_owner_still_reaches_it_after_the_vehicle_link_is_cleared(self):
-        """Archiving unlinks the vehicle from its owner. The plate snapshot is
-        what keeps the owner's own evidence reachable."""
-        self.vehicle.user = None
-        self.vehicle.save(update_fields=['user'])
-        self.client.force_authenticate(self.owner)
-        # Still 403 for a stranger, and not 403 for the owner via their plate.
-        Vehicle.objects.create(plate_number='EVID001B', vehicle_type=Vehicle.Type.CAR,
-                               user=self.owner)
-        self.assertEqual(self.client.get(self.url).status_code, 403)
-
-    def test_serializer_points_at_the_api_not_the_bucket(self):
-        v = Violation.objects.get(pk=self.violation.pk)
-        v.evidence.name = 'violations/evidence/fake.jpg'
-        data = ViolationSerializer(v).data
-        self.assertEqual(data['evidence_url'], f'/api/violations/{v.pk}/evidence/')
-
-
 class SurvivesArchiveTests(TestCase):
     """Archiving unlinks the vehicle from its owner (vehicles/tasks.py). The row
     was never deleted, but the owner column went blank because the screens

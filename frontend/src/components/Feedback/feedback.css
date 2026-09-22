@@ -3,9 +3,9 @@
 
    The z-index is deliberately far above every other layer in the app.
    These dialogs are usually raised *by* an overlay — the step-up gate
-   (9500), the owner evidence lightbox (9999), the page's own form
-   modals (1000) — and a message that opens behind the thing that
-   raised it is worse than no message at all: the button looks dead.
+   (9500), the page's own form modals (1000) — and a message that opens
+   behind the thing that raised it is worse than no message at all: the
+   button looks dead.
 
    If a new overlay is ever added above this, the dialog silently stops
    being visible, so keep this the highest number in the codebase.

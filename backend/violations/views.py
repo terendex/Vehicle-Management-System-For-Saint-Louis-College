@@ -9,7 +9,7 @@
 #  Three audiences read from here and they see different things, which is the
 #  single rule that shapes most of the file:
 #
-#    staff (admin/CDSO, security)  every violation, and the evidence photos
+#    staff (admin/CDSO, security)  every violation on record
 #    a vehicle owner               only violations against their own plates
 #    nobody else                   nothing
 #
@@ -35,8 +35,6 @@ from .serializers import ViolationSerializer
 from vehicles.models import Vehicle, VehicleRegistration
 from accounts.audit import audit
 from accounts.models import AuditLog
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from time_utils import day_range, filter_local_date_range
 
 logger = logging.getLogger(__name__)
@@ -71,93 +69,6 @@ class IsCDSOOrAdmin(permissions.BasePermission):
             and request.user.is_authenticated
             and request.user.role == 'admin'
         )
-
-
-class _QueryParamJWTAuthentication(JWTAuthentication):
-    """JWT taken from ?token= instead of the Authorization header.
-
-    Only used by the evidence endpoint. Browsers cannot attach headers to an
-    <img> request, so a header-only endpoint can never render a thumbnail.
-    Returns None rather than raising when the parameter is absent, which lets
-    the normal header authenticators run for ordinary API callers.
-    """
-
-    def authenticate(self, request):
-        raw = request.GET.get('token', '')
-        if not raw:
-            return None
-        try:
-            validated = self.get_validated_token(raw)
-        except (InvalidToken, TokenError):
-            return None
-        return self.get_user(validated), validated
-
-
-class ViolationEvidenceView(APIView):
-    """Stream a violation's evidence photo through the API.
-
-    Replaces linking the browser straight at the object-storage URL, for two
-    reasons.
-
-    It works. The stored file is reachable with the app's own credentials — the
-    public bucket URL is a separate thing that has to be enabled, is rate
-    limited, and silently serves nothing when it is not, which is exactly how a
-    thumbnail ends up broken while the file is sitting there intact.
-
-    And it is private. A violation photo shows someone's vehicle at a named
-    place and time, attached to a disciplinary record. On a public bucket URL
-    anyone holding the link can open it, forever, with no login. Here the same
-    permission rules as the rest of the module apply: staff see any evidence,
-    an owner sees only their own.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_authenticators(self):
-        """Also accept ?token=<JWT>, because an <img> tag cannot send an
-        Authorization header.
-
-        The same reason the parking MJPEG stream does it. Without this the
-        endpoint is only reachable by fetch(), and the thumbnail this exists to
-        render would get a 401.
-        """
-        return [_QueryParamJWTAuthentication()] + list(super().get_authenticators())
-
-    def get(self, request, pk):
-        from django.http import FileResponse, Http404
-
-        violation = get_object_or_404(Violation, pk=pk)
-
-        role = getattr(request.user, 'role', None)
-        if role not in ('admin', 'security'):
-            # An owner may see their own. Matched on the identity snapshot as
-            # well as the live FK, so an archived owner (whose vehicle link is
-            # cleared) can still open evidence issued against their plate.
-            owner_id = violation.vehicle.user_id if violation.vehicle_id else None
-            own_plates = set(
-                Vehicle.objects.filter(user=request.user)
-                .values_list('plate_number', flat=True)
-            )
-            own_plates.discard('')
-            is_owner = (owner_id == request.user.id) or (
-                violation.plate_number and violation.plate_number in own_plates)
-            if not is_owner:
-                return Response({'detail': 'Not permitted.'},
-                                status=http_status.HTTP_403_FORBIDDEN)
-
-        if not violation.evidence:
-            raise Http404('No evidence attached to this violation.')
-
-        try:
-            handle = violation.evidence.open('rb')
-        except Exception:
-            # The row references a file the storage backend cannot produce —
-            # a wiped ephemeral disk, a bucket rotation. A 404 lets the UI show
-            # "unavailable"; a 500 would read as the whole page being broken.
-            logger.warning("[violations] evidence unreadable for violation %s (%s)",
-                           violation.pk, violation.evidence.name)
-            raise Http404('Evidence file is no longer available.')
-
-        return FileResponse(handle, content_type='image/jpeg')
 
 
 # Issuing, listing and settling violations.
@@ -553,32 +464,80 @@ class MyViolationsView(APIView):
 VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation', 'Fee (PHP)', 'Status', 'Issued By']
 
 
+# A violation stops counting in three different ways, because three endpoints
+# end one: clearing sets CLEARED, lifting sets LIFTED, and the plain resolve
+# PATCH only flips is_resolved and leaves the status at 'warning'. Anything that
+# asks "is this still standing?" has to test all three or it counts a resolved
+# warning as an active one.
+_SETTLED_Q = Q(is_resolved=True) | Q(status__in=(Violation.Status.CLEARED,
+                                                 Violation.Status.LIFTED))
+
+# The management screen's status buttons are buckets, not raw model statuses:
+# "Cleared / Resolved" spans the three endings above, and "Confiscated (3rd)" is
+# a rung of the offence ladder rather than a status at all. FEE_IMPOSED is only
+# in that test so a legacy row that escaped migration 0016 still lands
+# somewhere; nothing has set it since the fine system was removed.
+_STATUS_GROUPS = {
+    'warning':     (~_SETTLED_Q & Q(status=Violation.Status.WARNING),
+                    'Active warnings'),
+    'confiscated': (~_SETTLED_Q & (Q(offense_number=3)
+                                   | Q(status=Violation.Status.FEE_IMPOSED)),
+                    'Confiscated (3rd offence)'),
+    'resolved':    (_SETTLED_Q, 'Cleared / resolved'),
+}
+
+
 def _filter_violations_report(request):
-    """Filter the violations for a report — same knobs as the management page."""
+    """Filter the violations for a report — same knobs as the management page.
+
+    Every filter on that screen has to be readable here, or a narrowed table
+    still exports the whole list and the file reads as wrong rather than as
+    unfiltered.
+    """
     qs = Violation.objects.select_related('vehicle', 'vehicle__user', 'issued_by').all()
     date_from = request.query_params.get('date_from', '').strip()
     date_to   = request.query_params.get('date_to', '').strip()
     status_f  = request.query_params.get('status', '').strip()
+    type_f    = request.query_params.get('violation_type', '').strip()
     search    = request.query_params.get('search', '').strip()
+
+    status_labels = dict(Violation.Status.choices)
+    type_labels   = dict(Violation.Type.choices)
+    desc = []
+
     qs = filter_local_date_range(qs, 'issued_at', date_from, date_to)
+    if date_from or date_to:
+        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+
     if status_f:
-        qs = qs.filter(status=status_f)
+        group = _STATUS_GROUPS.get(status_f)
+        if group is not None:
+            condition, label = group
+        else:
+            # A raw model status still works, so an older saved link keeps
+            # resolving to the same rows it always did.
+            condition = Q(status=status_f)
+            label     = status_labels.get(status_f, status_f)
+        qs = qs.filter(condition)
+        desc.append(f"Status: {label}")
+
+    if type_f:
+        qs = qs.filter(violation_type=type_f)
+        desc.append(f"Type: {type_labels.get(type_f, type_f)}")
+
     if search:
         # Searches the identity snapshot, so a violation whose vehicle or owner
         # account has since been removed is still findable by the plate and name
-        # it was issued under.
+        # it was issued under. Email and notes are here because the screen's own
+        # search box matches them — a term that narrows the table to four rows
+        # must not export forty.
         qs = qs.filter(Q(plate_number__icontains=search) |
                        Q(conduction_number__icontains=search) |
-                       Q(owner_name__icontains=search))
-
-    status_labels = dict(Violation.Status.choices)
-    desc = []
-    if date_from or date_to:
-        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
-    if status_f:
-        desc.append(f"Status: {status_labels.get(status_f, status_f)}")
-    if search:
+                       Q(owner_name__icontains=search) |
+                       Q(owner_email__icontains=search) |
+                       Q(notes__icontains=search))
         desc.append(f"Search: '{search}'")
+
     return qs.order_by('-issued_at'), desc
 
 

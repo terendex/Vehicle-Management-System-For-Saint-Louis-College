@@ -125,6 +125,17 @@ export const getShifts = (params) => api.get('/scan/shifts/', { params })
 // result and the normal plate check runs on it — searching never skips a rule.
 export const lookupOwner = (q) => api.get('/scan/owner-lookup/', { params: { q } })
 
+// Vehicles still on campus past their rule's maximum stay. Until this existed
+// an overstay was only ever detected at EXIT, so a car sitting hours over its
+// limit was invisible to the guard until it drove out.
+export const getOverstaying = (gate_id) =>
+  api.get('/scan/overstaying/', { params: gate_id ? { gate_id } : {} })
+
+// The guard acknowledges one, which issues the time-exceed violation now and
+// runs the offence ladder — rather than waiting for the exit sweep to do it.
+export const acknowledgeOverstay = (plate_number) =>
+  api.post('/scan/overstaying/acknowledge/', { plate_number })
+
 // Plateless vehicles the guard records by hand
 export const getUnrecognizedInside = (gate_id) =>
   api.get('/scan/unrecognized/', { params: gate_id ? { gate_id } : {} })

@@ -44,7 +44,6 @@ from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer   # base class for a JSON WebSocket endpoint
 
-from .gate_frames import set_latest_gate_frame  # publishes the newest frame per gate, for evidence photos
 from .ml.detection import detect_plates, is_gpu_available   # the vehicle/plate detector
 from vehicles.lens_layout import detect_across_lenses
 from .ml.database import save_record as db_save_record
@@ -209,13 +208,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         except Exception as exc:
             await self.send_json({"type": "error", "message": str(exc)})   # malformed frame: tell the browser, stay connected
             return
-
-        # Keep the latest frame — attached as evidence when a scan auto-issues a violation
-        self._last_frame_jpeg = image_bytes
-        # Also publish it per-gate so violations raised outside this socket
-        # (the REST scan endpoints, overstay sweeps) can still attach a photo.
-        # Without this they were the only violations landing with no evidence.
-        set_latest_gate_frame(getattr(self, '_gate_id', 'main'), image_bytes)
 
         # FPS accounting
         # Measured over every 10 frames rather than each one, so the number the
@@ -735,7 +727,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from .views import (_inside_state, _in_exit_cooldown, _already_inside,
                             _auto_log_violation, _close_active_pass, _gate_label,
                             _check_stay_limit, _log_status, _open_campus_unknown_result,
-                            _is_standby_fetcher)
+                            _is_standby_fetcher, _has_open_violations)
         from .entry_logic import is_open_campus
         close_old_connections()                        # worker thread: drop any connection left from a previous task
 
@@ -896,15 +888,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             delta = exit_log.scanned_at - last_entry.scanned_at
             duration_minutes = int(delta.total_seconds() / 60)   # how long they were inside, whole minutes
             # Closing any visitor pass may itself reveal an overstay.
-            overstay_minutes = _close_active_pass(
-                plate_number, gate_id,
-                evidence_bytes=getattr(self, '_last_frame_jpeg', None))   # the live frame becomes the violation's photo
+            overstay_minutes = _close_active_pass(plate_number, gate_id)
             # Drop-and-go fetchers have a maximum stay; standby fetchers are
             # allowed to wait, so they are excluded from the check.
             if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(   # keep whichever overstay is larger
-                    plate_number, vehicle, 'fetcher', duration_minutes, gate_id,
-                    evidence_bytes=getattr(self, '_last_frame_jpeg', None)))
+                    plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
             overstay_note = f" Overstayed by {overstay_minutes} min." if overstay_minutes else ""   # only mentioned when it happened
             owner_name = vehicle.user.full_name if vehicle.user else 'Unknown'   # the vehicle may have lost its owner
             return {
@@ -963,9 +952,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
                     "already_inside": False,
                 }
 
-        has_violations = Violation.objects.filter(     # so the guard's screen can flag a vehicle with open cases
-            vehicle=vehicle, is_resolved=False
-        ).exists()
+        # Vehicle OR account — see _has_open_violations; the ladder is per account.
+        has_violations = _has_open_violations(vehicle)
         already_inside = _already_inside(plate_number)  # shown to the guard; does not change the decision here
 
         # The scan is recorded whatever was decided: refusals matter as much as
@@ -985,7 +973,6 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             try:
                 _auto_log_violation(
                     vehicle, entry["message"], gate_id,
-                    evidence_bytes=getattr(self, '_last_frame_jpeg', None),   # attach the frame as evidence
                     entry_status=entry["status"])
             except Exception:
                 pass                                   # a violation that cannot be raised must not lose the scan record
@@ -1114,8 +1101,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             # Suppliers have their own maximum stay; None is passed where a
             # Vehicle would go, because a supplier plate has no vehicle record.
             overstay_minutes = _check_stay_limit(
-                plate_number, None, 'supplier', duration_minutes, gate_id,
-                evidence_bytes=getattr(self, '_last_frame_jpeg', None))
+                plate_number, None, 'supplier', duration_minutes, gate_id)
             overstay_note = f" Overstayed by {overstay_minutes} min — violation issued." if overstay_minutes else ""
             return {
                 "status":           "exited",
@@ -1820,8 +1806,6 @@ class RtspStreamConsumer(AsyncJsonWebsocketConsumer):
     # came from an IP camera rather than the browser: detect, track, queue OCR,
     # and let the shared presence code decide whether anything is announced.
     async def _detect_and_scan(self, jpeg_bytes: bytes):
-        # Keep the latest frame — attached as evidence when a scan auto-issues a violation
-        self._last_frame_jpeg = jpeg_bytes
         loop = asyncio.get_running_loop()
         try:
             detections = await loop.run_in_executor(None, self._run_detection, jpeg_bytes)   # heavy work off the event loop

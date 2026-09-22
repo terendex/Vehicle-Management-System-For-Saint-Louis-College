@@ -15,7 +15,6 @@ class ViolationSerializer(serializers.ModelSerializer):
     issued_by_name  = serializers.CharField(source='issued_by.full_name', read_only=True, default='')
     issued_by_code  = serializers.CharField(source='issued_by.user_code', read_only=True, default='')
     on_duty_guard_name = serializers.CharField(source='on_duty_guard.full_name', read_only=True, default='')
-    evidence_url    = serializers.SerializerMethodField()
 
     class Meta:
         model  = Violation
@@ -36,29 +35,27 @@ class ViolationSerializer(serializers.ModelSerializer):
         return obj.identifier
 
     def get_owner_name(self, obj):
+        """Who this was issued against — never blank on a row that has a plate.
+
+        The snapshot is taken at issue time and is the authoritative answer
+        (see Violation._snapshot_identity). The live account is the fallback
+        for rows written before the snapshot existed, and rows for a visitor
+        or a hand-recorded vehicle whose name the gate never captured end on a
+        label rather than an empty cell: a dash in the Owner column reads as
+        data that failed to load, when the truth is that nobody is registered
+        against the plate.
+        """
         if obj.owner_name:
             return obj.owner_name
         owner = obj.vehicle.user if obj.vehicle_id else None
-        return owner.full_name if owner else ''
+        if owner:
+            return owner.full_name
+        recorded = obj._gate_recorded_name()
+        return recorded or 'Unregistered vehicle'
+
 
     def get_owner_email(self, obj):
         if obj.owner_email:
             return obj.owner_email
         owner = obj.vehicle.user if obj.vehicle_id else None
         return owner.email if owner else ''
-
-    def get_evidence_url(self, obj):
-        """Point at our own endpoint, not the storage backend's URL.
-
-        `obj.evidence.url` on R2 is the public bucket address, which has to be
-        separately enabled and serves nothing when it is not — the file is
-        intact and the thumbnail is broken anyway. It is also world-readable by
-        anyone holding the link, which a disciplinary photo should not be.
-
-        Relative on purpose: the browser resolves it against whatever origin
-        the app is served from, so it works behind the dev proxy, a tunnel, and
-        production without knowing which it is in.
-        """
-        if not obj.evidence:
-            return None
-        return f'/api/violations/{obj.pk}/evidence/'
