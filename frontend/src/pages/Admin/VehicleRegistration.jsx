@@ -389,7 +389,7 @@ export default function VehicleRegistration() {
       const q = search.trim().toLowerCase()
       if (
         !r.full_name?.toLowerCase().includes(q) &&
-        !r.plate_number?.toLowerCase().includes(q) &&
+        !vehicleIdentifier(r).toLowerCase().includes(q) &&
         !r.registrant_type?.toLowerCase().includes(q)
       ) return false
     }
@@ -635,7 +635,7 @@ export default function VehicleRegistration() {
                 <tr>
                   <th>Name</th>
                   <th>Type</th>
-                  <th>Plate Number</th>
+                  <th>Plate Number / Conduction Number</th>
                   <th>Schedule</th>
                   <th>Submitted</th>
                   <th>Payment</th>
@@ -649,7 +649,7 @@ export default function VehicleRegistration() {
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td className="capitalize">{r.registrant_type}</td>
-                    <td className="token-link">{r.plate_number}</td>
+                    <td className="token-link">{vehicleIdentifier(r)}</td>
                     <td>{formatSchedule(r)}</td>
                     <td>{format(new Date(r.created_at), 'PP')}</td>
                     <td>
