@@ -480,6 +480,10 @@ class ViolationViewSet(viewsets.ModelViewSet):
         return Response(ViolationSerializer(violation, context={'request': request}).data)
 
 
+# What one guard wrote, for their own shift review - "what did I issue today".
+# Scoped by issued_by rather than by role, so it answers the same question for
+# whoever asks it; a CDSO calling this sees the violations they personally
+# issued, which is normally none.
 class GuardViolationsView(APIView):
     """Returns violations issued by the currently authenticated security guard."""
     permission_classes = [IsStaffRole]
@@ -493,12 +497,22 @@ class GuardViolationsView(APIView):
                 from datetime import date as _date
                 d = _date.fromisoformat(date_str)
                 _start, _end = day_range(d)
+                # day_range, not a bare __date lookup: the column is UTC and
+                # the guard means their own local day, so the boundaries are
+                # computed in campus time and compared as a half-open range.
                 qs = qs.filter(issued_at__gte=_start, issued_at__lt=_end)
             except ValueError:
+                # An unparseable ?date= falls through to the unfiltered list
+                # rather than erroring. The parameter is a convenience on a
+                # read-only view, and a shift review that returns everything is
+                # more use than one that returns a 400.
                 pass
         return Response(ViolationSerializer(qs, many=True, context={'request': request}).data)
 
 
+# The owner's own list, and the awkward case the module header warns about.
+# "Mine" cannot be answered from the foreign key alone, so this asks it twice -
+# once by FK and once by plate - and unions the two.
 class MyViolationsView(APIView):
     """Returns violations visible to the authenticated vehicle owner."""
     permission_classes = [permissions.IsAuthenticated]
@@ -516,6 +530,11 @@ class MyViolationsView(APIView):
 
         # New-style: always visible (is_released=True on create)
         # Legacy: show released + all resolved/cleared (history stays visible)
+        #
+        # The OR is what keeps an owner's history honest. A legacy row that was
+        # never released would otherwise vanish the moment it was settled,
+        # leaving somebody who HAS been penalised with a clean-looking page and
+        # no way to see what they were told about.
         violations = Violation.objects.filter(
             vehicle__in=vehicles,
         ).filter(
@@ -525,6 +544,12 @@ class MyViolationsView(APIView):
 
 
 # ── Violations Report (CDSO/admin — branded PDF & Excel) ─────────────────────
+#
+# The three helpers below exist so the PDF and the Excel cannot disagree. Both
+# report views call the same filter, the same row builder and the same subtitle,
+# so two files downloaded from one screen describe the same set of rows and
+# state the same thing about what was excluded. The same arrangement is used by
+# the registration and audit reports.
 VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation', 'Fee (PHP)', 'Status', 'Issued By']
 
 
@@ -557,15 +582,27 @@ def _filter_violations_report(request):
     return qs.order_by('-issued_at'), desc
 
 
+# Turns rows into the flat cells both report formats take.
 def _violation_report_rows(qs):
     from django.utils import timezone as tz
+    # Built once outside the loop: get_..._display() per row would repeat this
+    # lookup for every violation in the file.
     type_labels   = dict(Violation.Type.choices)
     status_labels = dict(Violation.Status.choices)
     rows = []
     for i, v in enumerate(qs, start=1):
+        # Snapshot first, live record second, dash last - in that order on
+        # purpose. A violation outlives the vehicle and the account it was
+        # issued against (both FKs are SET_NULL), so the name and plate written
+        # onto the row at the time are the only ones guaranteed to survive; the
+        # live objects are the fallback for older rows that predate the
+        # snapshot, not the other way round.
         plate     = v.identifier or '—'
         owner     = v.owner_name or (v.vehicle.user.full_name
                                      if (v.vehicle and v.vehicle.user) else '') or '—'
+        # 'System' rather than a dash: a row with no issuer was written by the
+        # detector, not by a person, and a reader should not be left wondering
+        # whose name went missing.
         issued_by = v.issued_by.full_name if v.issued_by else 'System'
         rows.append([
             i,
@@ -579,6 +616,16 @@ def _violation_report_rows(qs):
     return rows
 
 
+# The one line under the report title that says what is in it. 'All records'
+# rather than an empty string when nothing was filtered: the subtitle should
+# still assert something, and the count is what a reader checks the table
+# against.
+#
+# Noted, with no code changed: `request` is never read and the `tz` import is
+# never used. Both are left over from when this line carried "Generated <when>
+# by <who>" itself; branded_pdf_response takes generated_by as its own argument
+# and prints it, and the Excel builder composes its own. Harmless, but the
+# signature promises a dependency this function does not have.
 def _violation_report_subtitle(request, desc, count):
     from django.utils import timezone as tz
     body = ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
