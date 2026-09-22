@@ -45,12 +45,10 @@ logger = logging.getLogger(__name__)
 # The two permission classes this module uses. They are separate because
 # issuing and reviewing are not the same authority: a guard at the gate writes
 # violations all day and must never be able to lift one.
+# The wide one: anybody working the system rather than owning a vehicle. Used
+# for issuing, listing and exporting - the day-to-day of the module.
 class IsStaffRole(permissions.BasePermission):
-    """Allow access only to the CDSO (admin) or security roles.
-
-    The wide one: anybody working the system rather than owning a vehicle.
-    Used for issuing, listing and exporting - the day-to-day of the module.
-    """
+    """Allow access only to the CDSO (admin) or security roles."""
     def has_permission(self, request, view):
         return (
             request.user
@@ -59,16 +57,14 @@ class IsStaffRole(permissions.BasePermission):
         )
 
 
+# CDSO only - which is the same thing as admin, and why this tests one role.
+# The name reads as two roles and the check names one. That is not a bug: the
+# separate `cdso` role was removed and the admin role relabelled to CDSO
+# (accounts migration 0024), so 'admin' IS the CDSO. The name survives because
+# it reads correctly at the endpoints that are about CDSO work - lifting a
+# confiscation, deciding whether a plate may register again - which are exactly
+# the decisions a guard must not be able to make.
 class IsCDSOOrAdmin(permissions.BasePermission):
-    """CDSO only - which is the same thing as admin, and why this tests one role.
-
-    The name reads as two roles and the check names one. That is not a bug:
-    the separate `cdso` role was removed and the admin role relabelled to CDSO
-    (accounts migration 0024), so 'admin' IS the CDSO. The name survives
-    because it reads correctly at the endpoints that are about CDSO work -
-    lifting a confiscation, deciding whether a plate may register again -
-    which are exactly the decisions a guard must not be able to make.
-    """
     def has_permission(self, request, view):
         return (
             request.user
@@ -164,27 +160,25 @@ class ViolationEvidenceView(APIView):
         return FileResponse(handle, content_type='image/jpeg')
 
 
+# Issuing, listing and settling violations.
+#
+# Two kinds of violation live behind this one set of endpoints, and telling
+# them apart is what most of perform_create is doing.
+#
+# NEW_STYLE_TYPES are the offence ladder: a first, second and third strike
+# against the OWNER rather than against the vehicle, each one counted by
+# compute_offense_number and each carrying a penalty the third of which holds
+# their registration. Those rows care about who owns the plate.
+#
+# Everything else is the older per-incident kind, where the row carries a fine
+# amount and nothing accumulates. They are kept because the records already
+# exist and still have to be listed, corrected and settled; nothing issues a
+# new one deliberately.
+#
+# Who may do what is split three ways and is not the same as who may read:
+# only a guard ISSUES (perform_create refuses anyone else), only the CDSO
+# SETTLES (the actions below carry IsCDSOOrAdmin), and both can list.
 class ViolationViewSet(viewsets.ModelViewSet):
-    """Issuing, listing and settling violations.
-
-    Two kinds of violation live behind this one set of endpoints, and telling
-    them apart is what most of perform_create is doing.
-
-    NEW_STYLE_TYPES are the offence ladder: a first, second and third strike
-    against the OWNER rather than against the vehicle, each one counted by
-    compute_offense_number and each carrying a penalty the third of which
-    holds their registration. Those rows care about who owns the plate.
-
-    Everything else is the older per-incident kind, where the row carries a
-    fine amount and nothing accumulates. They are kept because the records
-    already exist and still have to be listed, corrected and settled; nothing
-    issues a new one deliberately.
-
-    Who may do what is split three ways and is not the same as who may read:
-    only a guard ISSUES (perform_create refuses anyone else), only the CDSO
-    SETTLES (the actions below carry IsCDSOOrAdmin), and both can list.
-    """
-
     # issued_by / on_duty_guard are read by the serializer too — without them
     # here each row costs an extra user lookup.
     queryset           = Violation.objects.select_related(
@@ -196,13 +190,12 @@ class ViolationViewSet(viewsets.ModelViewSet):
     def get_serializer_context(self):
         return {**super().get_serializer_context(), 'request': self.request}
 
+    # Issue a violation. Guard only, and the plate has to resolve first.
+    #
+    # The order here is the point: refuse the wrong role, then find the
+    # vehicle, THEN write. A violation that named no vehicle would be a record
+    # nobody could act on and nobody could appeal.
     def perform_create(self, serializer):
-        """Issue a violation. Guard only, and the plate has to resolve first.
-
-        The order here is the point: refuse the wrong role, then find the
-        vehicle, THEN write. A violation that named no vehicle would be a
-        record nobody could act on and nobody could appeal.
-        """
         # Issuing a violation is the guard's job — the admin (CDSO) handles events,
         # parking-box placement, and clearing/lifting violations, but does not
         # issue them. (CDSO management actions live on separate endpoints.)
@@ -276,26 +269,24 @@ class ViolationViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
+    # The exception is logged rather than swallowed, unlike the mail-only helper
+    # below: apply_penalty is what confiscates a pass and holds a registration,
+    # so a failure here leaves the ladder out of step with the row and somebody
+    # has to be able to find out why.
     def _notify_new_offense(self, instance):
         """Impose the penalty, then tell the owner. Both are best-effort — the
         violation is already recorded and must not be rolled back because a mail
-        server is down.
-
-        The exception is logged rather than swallowed, unlike the mail-only
-        helpers below: apply_penalty is what confiscates a pass and holds a
-        registration, so a failure here leaves the ladder out of step with the
-        row and somebody has to be able to find out why.
-        """
+        server is down."""
         try:
             penalty = apply_penalty(instance)
             notify_owner(instance, penalty)
         except Exception:
             logger.exception('Could not apply penalty for violation %s', instance.pk)
 
+    # Tell the owner their violation is settled. Mail only, so failure is
+    # swallowed: the row is already correct, and a dead SMTP host must not turn
+    # a successful settlement into an error the CDSO has to retry.
     def _notify_resolved(self, instance):
-        """Tell the owner their violation is settled. Mail only, so failure is
-        swallowed: the row is already correct, and a dead SMTP host must not
-        turn a successful settlement into an error the CDSO has to retry."""
         try:
             from .email_utils import send_violation_resolved_email
             send_violation_resolved_email(instance)
