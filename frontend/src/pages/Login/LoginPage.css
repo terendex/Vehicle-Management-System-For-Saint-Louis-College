@@ -526,8 +526,22 @@
 
 /* --- Terms --- */
 .terms-row {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   padding-top: 8px;
+}
+
+/* A phone is too narrow for both links on one line, and a wrapped row leaves
+   the dot hanging off the end of the first link. Stack them and drop the dot. */
+@media (max-width: 480px) {
+  .terms-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .terms-divider {
+    display: none;
+  }
 }
 
 .terms-link {
