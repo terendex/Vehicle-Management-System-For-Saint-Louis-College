@@ -132,3 +132,12 @@ installer/assets/
 # installer can read unaided - which means anyone who gets it can read them too.
 # The repository is PUBLIC; pushing this would publish the production database.
 installer/credentials.dat
+
+# Manual-capture working files. The web raw captures are reproducible - re-run
+# capture.mjs against the demo database - so only the desktop ones are kept:
+# the installer and launcher screens would need the installer walked again.
+docs/user-manual/capture/shots/node_modules/
+docs/user-manual/capture/shots/raw/0[1-4]-*
+docs/user-manual/capture/*.log
+docs/user-manual/capture/__pycache__/
+docs/user-manual/capture/figures-clean/

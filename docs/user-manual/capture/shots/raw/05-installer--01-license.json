@@ -1,0 +1,48 @@
+{
+  "id": "05-installer--01-license",
+  "out": "05-installer/01-license.png",
+  "section": "Installing the Campus System",
+  "title": "Step 1 · License Agreement",
+  "caption": "Run SLC-Smart-Parking-Campus-Setup.exe on the campus computer and accept the license to continue.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "License text",
+      "desc": "Read the terms for installing the system.",
+      "box": {
+        "x": 41,
+        "y": 144,
+        "w": 516,
+        "h": 216
+      }
+    },
+    {
+      "n": 2,
+      "label": "Accept",
+      "desc": "Select \"I accept the agreement\". Next stays disabled until you do.",
+      "box": {
+        "x": 41,
+        "y": 371,
+        "w": 516,
+        "h": 37
+      }
+    },
+    {
+      "n": 3,
+      "label": "Next / Cancel",
+      "desc": "Next continues. Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 427,
+        "y": 430,
+        "w": 160,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

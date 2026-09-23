@@ -678,3 +678,114 @@ def set_gpu_enabled(enabled: bool = True):
             log.info("[DETECT] %s GPU enabled", name)
         except Exception as exc:
             log.warning("[DETECT] GPU enable failed for %s: %s", name, exc)
+
+
+# ── People (optional, off unless a person-capable model is configured) ─────────
+#
+# The campus detector cannot see a person and never could: it is trained on two
+# classes, and _parse_boxes drops everything else. That is the right model for
+# the gate and for occupancy, but parking occupancy has one question it cannot
+# answer without people — whether the change in an empty bay is a vehicle
+# arriving or somebody standing in it, which read identically to a baseline
+# comparison.
+#
+# So this is a SEPARATE model, not a new class on the campus one, and it is off
+# until someone points PARKING_PERSON_WEIGHTS at local weights that have a
+# "person" class (any COCO checkpoint does). Off, `detect_persons` returns [] and
+# every caller degrades to its no-people behaviour.
+#
+# Deliberately not auto-downloading the way scanning/ml/auto_label.py does:
+# that is an offline labelling tool and may fetch what it likes, while this
+# would be a network call on a campus box mid-shift.
+PERSON_CLASS_NAMES = {"person", "people", "pedestrian"}
+
+_person_model = None
+_person_load_attempted = False
+
+
+def _person_weights_path():
+    """Configured person-model weights, or None when the feature is off."""
+    try:
+        from django.conf import settings
+
+        raw = getattr(settings, "PARKING_PERSON_WEIGHTS", None)
+    except Exception:
+        raw = None
+    if not raw:
+        return None
+    p = Path(raw)
+    return p if p.exists() else None
+
+
+def person_model_configured() -> bool:
+    """Whether person suppression has a model to run on. Reported by the
+    parking diagnostics so an inactive rule cannot look like a passing one."""
+    return _person_weights_path() is not None
+
+
+def _get_person_yolo():
+    """Lazy-load the optional person model. Tries once; permanent None on
+    failure, so a bad path cannot cost an inference attempt per frame."""
+    global _person_model, _person_load_attempted
+    if _person_load_attempted:
+        return _person_model
+    _person_load_attempted = True
+
+    path = _person_weights_path()
+    if path is None:
+        log.info("[DETECT] No person model configured — parking person "
+                 "suppression is inactive (set PARKING_PERSON_WEIGHTS to enable).")
+        return None
+
+    try:
+        from ultralytics import YOLO
+
+        candidate = YOLO(str(path))
+        names = {n.lower() for n in candidate.names.values()}
+        if not (names & PERSON_CLASS_NAMES):
+            log.error("[DETECT] %s has no person class (%s) — person suppression "
+                      "stays off.", path, sorted(names)[:8])
+            return None
+        if is_gpu_available():
+            candidate.to("cuda")
+        _person_model = candidate
+        log.info("[DETECT] Person model loaded: %s", path)
+    except Exception as exc:
+        log.error("[DETECT] Person model failed to load (%s): %s", path, exc)
+        _person_model = None
+    return _person_model
+
+
+def detect_persons(img: np.ndarray, conf: float = 0.5) -> list[dict]:
+    """Person boxes, in the same normalised dict form as detect_vehicles().
+
+    Returns [] when no person model is configured, which is the default. Callers
+    must treat that as "no information about people", not as "nobody is there".
+    """
+    model = _get_person_yolo()
+    if model is None:
+        return []
+
+    h, w = img.shape[:2]
+    gpu = is_gpu_available()
+    out = []
+    try:
+        with _INFER_LOCK:
+            res = model.predict(img, conf=conf, verbose=False, max_det=100,
+                                half=gpu, imgsz=960)
+        for r in res:
+            for box in getattr(r, "boxes", []):
+                name = model.names.get(int(box.cls[0]), "").lower()
+                if name not in PERSON_CLASS_NAMES:
+                    continue
+                x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+                out.append({
+                    "class_name": "person",
+                    "score": float(box.conf[0]),
+                    "bbox": {"x": x1 / w, "y": y1 / h,
+                             "width": (x2 - x1) / w, "height": (y2 - y1) / h},
+                })
+    except Exception as exc:
+        log.warning("[DETECT] Person inference failed: %s", exc)
+        return []
+    return out

@@ -1,0 +1,48 @@
+{
+  "id": "05-installer--04-deployment-options",
+  "out": "05-installer/04-deployment-options.png",
+  "section": "Installing the Campus System",
+  "title": "Step 4 · Deployment options",
+  "caption": "Choose the network port the system is served on.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Update branch",
+      "desc": "This computer follows the branch the installer was built for and updates from it. It cannot be changed here.",
+      "box": {
+        "x": 41,
+        "y": 103,
+        "w": 516,
+        "h": 61
+      }
+    },
+    {
+      "n": 2,
+      "label": "Port to serve on",
+      "desc": "Guards open http://<this computer’s address>:<port>. Keep 8000 unless another program already uses it.",
+      "box": {
+        "x": 41,
+        "y": 174,
+        "w": 516,
+        "h": 41
+      }
+    },
+    {
+      "n": 3,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

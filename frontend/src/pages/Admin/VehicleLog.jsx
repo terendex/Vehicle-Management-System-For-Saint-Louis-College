@@ -4,6 +4,7 @@ import { getAccessLogs, exportVehicleLogExcel, exportVehicleLogPdf } from '../..
 import { useGates } from '../../hooks/useGates'
 import { reportFileName } from '../../utils/reportName'
 import { openReportTab } from '../../utils/saveFile'
+import { confirmPdfExport } from '../../utils/confirmReport'
 import { notify } from '../../components/Feedback/notify'
 import {
   Search, Car, Filter, RefreshCw, ChevronLeft, ChevronRight,
@@ -222,6 +223,20 @@ export default function VehicleLog() {
   }
 
   const runExport = async (fn, ext, setBusy) => {
+    // PDFs only, and asked before the tab is opened below - cancelling after
+    // the window.open would leave a blank tab sitting there. Excel is left
+    // alone: it lands in Downloads and can just be deleted.
+    if (ext === 'pdf') {
+      const summary = [
+        gateFilter ? gateLabel(gateFilter) : '',
+        statusFilter ? (STATUS_FILTERS.find(f => f.value === statusFilter)?.label || statusFilter) : '',
+        categoryFilter ? (CATEGORY_FILTERS.find(f => f.value === categoryFilter)?.label || categoryFilter) : '',
+        search ? `“${search}”` : '',
+      ].filter(Boolean).join(' · ')
+      if (!(await confirmPdfExport({
+        label: 'Vehicle Log Report', summary, from: dateFrom, to: dateTo, count: totalCount,
+      }))) return
+    }
     // A PDF is opened for reading; a spreadsheet has nothing to preview and
     // still downloads. The tab has to be opened here, before the await, or the
     // click's user gesture is spent and the popup is blocked.

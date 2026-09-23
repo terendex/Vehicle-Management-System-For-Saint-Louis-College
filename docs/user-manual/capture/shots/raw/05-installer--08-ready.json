@@ -1,0 +1,60 @@
+{
+  "id": "05-installer--08-ready",
+  "out": "05-installer/08-ready.png",
+  "section": "Installing the Campus System",
+  "title": "Step 8 · Ready to install",
+  "caption": "Check the summary, then click Install. The launcher opens when Setup finishes.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Summary",
+      "desc": "Install type, destination, components and tasks. Click Back to change anything.",
+      "box": {
+        "x": 41,
+        "y": 144,
+        "w": 516,
+        "h": 260
+      }
+    },
+    {
+      "n": 2,
+      "label": "Back / Install / Cancel",
+      "desc": "Install continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "patches": [
+    {
+      "x": 43,
+      "y": 147,
+      "w": 330,
+      "h": 15,
+      "text": "New installation of version 1.0.0",
+      "bg": "#F0F0F0",
+      "color": "#000000",
+      "fontSize": 12,
+      "padLeft": 1
+    },
+    {
+      "x": 60,
+      "y": 193,
+      "w": 480,
+      "h": 16,
+      "text": "C:\\Smart Parking and Vehicle Verification System",
+      "bg": "#F0F0F0",
+      "color": "#000000",
+      "fontSize": 12,
+      "padLeft": 2
+    }
+  ],
+  "width": 598,
+  "height": 464,
+  "redact": []
+}

@@ -1,0 +1,48 @@
+{
+  "id": "05-installer--05-prerequisites",
+  "out": "05-installer/05-prerequisites.png",
+  "section": "Installing the Campus System",
+  "title": "Step 5 · Prerequisites check",
+  "caption": "Setup shows what the computer already has before anything is installed.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Detected software",
+      "desc": "[installed] means it is already present; \"will install\" means Setup downloads it through winget.",
+      "box": {
+        "x": 41,
+        "y": 144,
+        "w": 516,
+        "h": 70
+      }
+    },
+    {
+      "n": 2,
+      "label": "What happens next",
+      "desc": "On first launch the launcher downloads the application (about 300 MB) and builds a Python environment (about 5.7 GB). This takes a while; keep the computer online.",
+      "box": {
+        "x": 41,
+        "y": 220,
+        "w": 516,
+        "h": 80
+      }
+    },
+    {
+      "n": 3,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

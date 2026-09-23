@@ -1,0 +1,48 @@
+{
+  "id": "05-installer--06-start-menu",
+  "out": "05-installer/06-start-menu.png",
+  "section": "Installing the Campus System",
+  "title": "Step 6 · Start Menu folder",
+  "caption": "Where the launcher, repair and uninstall shortcuts are placed.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Folder name",
+      "desc": "The Start Menu folder for the shortcuts. The default is fine.",
+      "box": {
+        "x": 41,
+        "y": 172,
+        "w": 516,
+        "h": 24
+      }
+    },
+    {
+      "n": 2,
+      "label": "No Start Menu folder",
+      "desc": "Tick to skip creating Start Menu shortcuts.",
+      "box": {
+        "x": 41,
+        "y": 390,
+        "w": 516,
+        "h": 17
+      }
+    },
+    {
+      "n": 3,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

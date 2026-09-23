@@ -32,6 +32,20 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
     # single list of what the review process owns.
     DOCUMENT_FIELDS = ('drivers_license_image', 'assessment_form', 'or_receipt_image')
 
+    # The one document the Data Privacy Office's removal was reversed for, and
+    # the reversal is only as wide as the problem it answers: an OR number typed
+    # into a box is a claim, and CDSO had nothing to check it against. So this
+    # slot is filled for the reviewer and for nobody else.
+    #
+    # "Nobody else" is enforced here rather than left to which view happens to
+    # pass a request. Three screens read this serializer - the CDSO queue, the
+    # owner portal (accounts.MyRegistrationView) and the vehicle profile a guard
+    # can open (VehicleViewSet._profile_payload) - and today only the first
+    # passes one. That is a property of those call sites, not a rule, and adding
+    # `context={'request': request}` to either of the others is an ordinary
+    # thing to do for an unrelated reason. The role is therefore checked.
+    REVIEWER_ONLY_DOCUMENTS = ('or_receipt_image',)
+
     # Data Privacy Office. The columns still exist (the schema
     # is shared with the other branches and must not move), and rows filed before
     # this change still hold values in them, but nothing this API serves may carry
@@ -119,12 +133,26 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
         # instance.department is a FK: without select_related('department') on
         # the queryset this line is a separate SELECT for every row.
         data['department_name'] = instance.department.name if instance.department else ''
-        # DPO: what is stored is an object key, and what the
-        # reviewer's browser used to get back was a signed URL for it (see
-        # document_urls). Nothing is uploaded any more, so every slot is reported
-        # empty instead — a legacy row's file is not handed out either.
+        # DPO: what is stored is an object key, and what a browser needs is a
+        # URL it can fetch (see document_urls for why that is not the bucket's
+        # public path). The licence photo and the assessment form are not
+        # collected any more, so their slots are reported empty — a legacy row's
+        # file is not handed out either.
+        #
+        # The OR receipt is collected again, for the reviewer alone, so it is
+        # signed for CDSO and blanked for everyone else. An anonymous or
+        # unauthenticated caller falls through to None like any other non-CDSO
+        # reader, which is why this reads the role rather than just testing that
+        # a request is present.
+        request  = self.context.get('request')
+        user     = getattr(request, 'user', None)
+        reviewer = bool(getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) == 'admin')
         for name in self.DOCUMENT_FIELDS:
-            data[name] = None
+            data[name] = (
+                signed_document_url(getattr(instance, name), request)
+                if reviewer and name in self.REVIEWER_ONLY_DOCUMENTS
+                else None
+            )
         for name in self.WITHHELD_FIELDS:
             data.pop(name, None)
         # A fetcher's students used to each carry their own enrolment proof,

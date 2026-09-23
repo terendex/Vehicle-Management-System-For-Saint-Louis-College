@@ -971,7 +971,7 @@ export default function VehicleRegistration() {
                     {feeExempt
                       ? <>No Vehicle Pass fee is due from <strong>{selectedReg.full_name}</strong> — their department is exempt.</>
                       : selectedReg.payment_status === 'paid'
-                        ? <>Check the Official Receipt against the photo <strong>{selectedReg.full_name}</strong> uploaded under Submitted Documents, then approve.</>
+                        ? <>Check the Official Receipt against the photo <strong>{selectedReg.full_name}</strong> uploaded, shown with the OR number above, then approve.</>
                         : <><strong>{selectedReg.full_name}</strong> has not submitted a receipt. Enter their OR number if they brought it to the counter.</>}
                   </p>
 
@@ -992,7 +992,11 @@ export default function VehicleRegistration() {
                       />
                       <p className="form-hint">
                         {selectedReg.payment_status === 'paid'
-                          ? 'Prefilled from the receipt the applicant uploaded — correct it only if it does not match the receipt under Submitted Documents.'
+                          // "Submitted Documents" was where the licence photo and the
+                          // assessment form used to sit. The DPO removed both, and the
+                          // receipt photo that came back is rendered with the OR number
+                          // in the details above — so that is where the reviewer is sent.
+                          ? 'Prefilled from the receipt the applicant uploaded — correct it only if it does not match the photo shown with the OR number above.'
                           : `Issued by the Accounting Office upon payment of ₱${selectedReg.registrant_type === 'employee' ? '150.00 (50% employee discount)' : '300.00'}`}
                       </p>
                     </div>

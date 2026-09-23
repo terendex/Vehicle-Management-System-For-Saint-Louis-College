@@ -183,6 +183,10 @@ export default function ViolationsManagement() {
   const [typeFilter, setTypeFilter]       = useState('all')
   const [search, setSearch]               = useState('')
   const [datePeriod, setDatePeriod]       = useState('all')
+  // The report bar's own Date From / Date To. Held here, not just inside the
+  // bar, because the table has to narrow to the same range the export will -
+  // otherwise the screen shows rows and hands back an empty file.
+  const [exportRange, setExportRange]     = useState({ from: '', to: '' })
   const [actionLoading, setActionLoading] = useState(null)
   const [confirmAction, setConfirmAction] = useState(null)
   const [orModal, setOrModal]             = useState(null)   // violation waiting for OR
@@ -221,15 +225,35 @@ export default function ViolationsManagement() {
 
     if (typeFilter !== 'all') list = list.filter(v => v.violation_type === typeFilter)
 
-    if (datePeriod !== 'all') {
+    // Same precedence the export uses: an explicit date in the report bar wins
+    // over the period buttons, and the buttons apply when the box is empty.
+    // Parsed as `T00:00:00` / `T23:59:59.999` so the bounds are local days -
+    // `new Date('2026-09-22')` is UTC midnight, which in Manila drops eight
+    // hours of the day the admin picked. The server reads them as local dates
+    // too (filter_local_date_range), so both sides cut at the same instant.
+    if (exportRange.from) {
+      const start = new Date(`${exportRange.from}T00:00:00`)
+      list = list.filter(v => new Date(v.issued_at) >= start)
+    } else if (datePeriod !== 'all') {
       const cutoff = getPeriodStart(datePeriod)
       list = list.filter(v => new Date(v.issued_at) >= cutoff)
+    }
+    if (exportRange.to) {
+      const end = new Date(`${exportRange.to}T23:59:59.999`)
+      list = list.filter(v => new Date(v.issued_at) <= end)
     }
 
     const q = search.trim().toLowerCase()
     if (q) {
+      // conduction_number is searched separately from plate_number even though
+      // the serialized plate_number already falls back to it: that fallback
+      // only applies when there is no plate, so a vehicle carrying both would
+      // be findable by its conduction number in the exported file and not in
+      // this table. The report endpoint searches both columns, and the two
+      // have to narrow to the same rows.
       list = list.filter(v =>
         v.plate_number?.toLowerCase().includes(q) ||
+        v.conduction_number?.toLowerCase().includes(q) ||
         v.owner_name?.toLowerCase().includes(q) ||
         v.owner_email?.toLowerCase().includes(q) ||
         v.notes?.toLowerCase().includes(q)
@@ -238,9 +262,9 @@ export default function ViolationsManagement() {
 
     list.sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at))
     return list
-  }, [violations, filter, typeFilter, datePeriod, search])
+  }, [violations, filter, typeFilter, datePeriod, search, exportRange])
 
-  useEffect(() => { setPage(1) }, [filter, typeFilter, datePeriod, search])
+  useEffect(() => { setPage(1) }, [filter, typeFilter, datePeriod, search, exportRange])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -470,6 +494,8 @@ export default function ViolationsManagement() {
           filters={reportFilters}
           activeFilterSummary={reportFilterSummary}
           fetchBlob={exportViolationsReport}
+          onRangeChange={setExportRange}
+          recordCount={filtered.length}
         />
 
         <div className="vm-toolbar">

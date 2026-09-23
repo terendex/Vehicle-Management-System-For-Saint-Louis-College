@@ -29,6 +29,7 @@ Public API (called from views.py):
 import logging
 import threading
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -37,7 +38,20 @@ from vehicles.vehicle_tracker import VehicleTracker
 
 log = logging.getLogger(__name__)
 
-OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
+# Consecutive scoring frames a bay must look changed before it is claimed.
+#
+# Paired with BASELINE_CLAIM_SECONDS below, and which of the two actually binds
+# depends on the frame rate. The loop paces itself at ~10fps (see the sleep at
+# the end of run()), and the per-frame cost measured on this hardware is 13ms of
+# scoring at 1920x1080 with 24 bays — so the sleep dominates and the real rate
+# is 8.7-9.5fps. Three frames is 0.34s there, well inside the 0.8s seconds-gate,
+# which is therefore the one that decides when a bay claims.
+#
+# The frames gate only starts to bind below 3/0.8 = 3.75fps. A zone running
+# that slowly should drop this to 2; `fps` on the diagnostics endpoint reports
+# the rate each camera is actually achieving, because it is a property of the
+# camera and the host, not something that can be settled from here.
+OCCUPY_THR = 3
 
 # How long an occupied bay stays occupied after the last time it looked
 # filled. Every frame that sees the bay changed from its baseline restarts the
@@ -47,21 +61,93 @@ OCCUPY_THR = 4   # consecutive frames with vehicle inside → mark occupied
 # shadow, a person stepping in front, a frame the scorer read badly — flipped a
 # plainly taken bay to free. A miss is the costlier error here — it sends
 # someone to a space that is not there — while a car that really left only
-# reads taken for an extra thirty seconds. (Was a full minute; shortened so a
-# freed bay is offered to the next driver sooner.)
-OCCUPIED_GRACE_SECONDS = 30.0
+# reads taken for an extra few seconds. (A full minute, then thirty seconds,
+# now ten.)
+#
+# Ten is only safe because the detector now backs the grace up rather than the
+# grace having to carry every dropout alone: a bay a stationary vehicle is
+# sitting in has its release clock held open frame by frame (see
+# RELEASE_HOLD_STILL_SECONDS), so the thing thirty seconds was really insuring
+# against — a parked car the scorer loses for a while — is now covered by
+# evidence instead of by waiting. What is left for the grace to cover is a bay
+# with no vehicle detection behind it at all, and ten seconds of continuous
+# emptiness is a lot of frames for that.
+OCCUPIED_GRACE_SECONDS = 10.0
 
 # How long a bay must look different from its empty baseline, without a break,
 # before it is claimed. The comparison has no idea what changed, so a person
 # walking through or a cart pushed past reads exactly like a vehicle for as long
-# as it is there. Two seconds — the same beat as the detector — picks up a
-# parked vehicle quickly while still ignoring a single-frame flicker; the
-# detector pass that follows every claim (see _process_frame) is what then
-# checks the new arrival for double parking.
-BASELINE_CLAIM_SECONDS = 2.0
+# as it is there.
+#
+# Two seconds was that ignorance priced in: with nothing able to say what had
+# moved, the only defence against a transient was to outwait it. The tracker now
+# says so directly — a bay whose change belongs to a person, or to a vehicle
+# still moving, has its claim suppressed frame by frame (see
+# PERSON_SUPPRESS_COVERAGE and PASSING_MOVE_WINDOW) — so the wait no longer has
+# to stand in for that evidence and can be set for how fast a genuinely settled
+# bay should be reported. 0.8s, with OCCUPY_THR frames on top, puts a claim
+# inside one second of the vehicle coming to rest.
+BASELINE_CLAIM_SECONDS = 0.8
 
 # Sampling density for the space-coverage test (see _space_coverage).
 COVERAGE_GRID = 6
+
+# ── Tracker holds and suppressions ───────────────────────────────────────────
+#
+# One rule governs all of these: the detector may HOLD a bay occupied or
+# SUPPRESS a claim, but it may never CLAIM one. Claiming stays baseline-only,
+# because the boxes this model puts on potted plants, stairs and air
+# conditioners in a cluttered campus scene are exactly the false positives the
+# baseline comparison was brought in to replace. Holding and suppressing are
+# both moves toward "leave the bay as it is", so a wrong box costs a few
+# seconds of staleness rather than a bay that does not exist.
+
+# A tracked vehicle still for this long, sitting in a bay, holds that bay's
+# release clock open. Shorter than PARKED_AFTER_SECONDS on purpose: this does
+# not assert the vehicle is parked, only that something solid is in the bay and
+# is not currently moving, which is all a hold needs to be worth more than a
+# scorer that has momentarily lost it.
+RELEASE_HOLD_STILL_SECONDS = 3.0
+
+# Confidence a person box needs before it may suppress a claim. Higher than
+# OCCUPANCY_CONF because a false person is not a harmless extra box here — it
+# stops a real vehicle being reported.
+PERSON_CONF = 0.5
+
+# How much of an unclaimed bay a person must cover to suppress its claim. The
+# same 0.30 the straddle test uses: enough of the bay for the person to be what
+# the scorer is reacting to.
+PERSON_SUPPRESS_COVERAGE = 0.30
+
+# A vehicle that has moved within this many seconds is still manoeuvring, and a
+# bay it overlaps must not claim on its account. Measured through the tracker's
+# own anchor logic — `stationary_for()` is seconds since the box last moved more
+# than STILL_RADIUS from where it settled — so "moved" means the same thing here
+# as everywhere else in the parking loop.
+#
+# Short by design. A car pulling in slows to under the still radius as it
+# settles, so this lifts about half a second after it stops and the 0.8s claim
+# gate then runs its course: the vehicle is reported roughly a second after it
+# comes to rest, while a car crossing the bay never stops and never claims it.
+PASSING_MOVE_WINDOW = 0.5
+
+# How recently a track must have been observed for its stillness to be believed.
+#
+# `still_since` is only ever updated when the detector runs, so a track's
+# "seconds stationary" keeps growing between passes whether the vehicle stopped
+# or not. Anything older than this is not evidence of stillness — it is just an
+# old position — and the claim side treats it as movement.
+TRACK_FRESH_SECONDS = PASSING_MOVE_WINDOW
+
+# Any overlap at all, for the "is a vehicle in this bay" questions that are not
+# about how much of it. Grid-sampled like every other coverage figure here, so
+# an overlap thinner than one sample cell reads as none.
+ANY_OVERLAP = 0.0
+
+# How often a bay's learned noise stats are written back. The numbers are a
+# rolling average over hundreds of readings and move slowly; this loop runs ten
+# times a second against a database a round trip away.
+STATS_SAVE_SECONDS = 60.0
 
 # How much of a vehicle must sit inside a bay before that bay counts as one the
 # vehicle is genuinely in. Paired with the bay-side thresholds below, so both
@@ -176,6 +262,16 @@ MIN_VEHICLE_BAY_RATIO = 0.12
 # pure waste.
 DETECT_INTERVAL_SECONDS = 2.0
 
+# ...and how often it runs while a bay is part-way through claiming, where a
+# two-second-old box is worse than useless — see _process_frame.
+#
+# Comfortably inside TRACK_FRESH_SECONDS so a genuinely stopped vehicle is
+# re-observed as stopped before its freshness lapses, with room for a slow
+# frame. At 91ms of inference (measured, GPU) this adds roughly three passes
+# across a 0.8s claim, which leaves the loop near 6fps for that window — still
+# far above the OCCUPY_THR / BASELINE_CLAIM_SECONDS floor of 3.75fps.
+CLAIM_DETECT_INTERVAL_SECONDS = 0.25
+
 # A vehicle unseen for this long is treated as gone. It has to stay well clear
 # of the slowest observation cadence — on the classic path the detector runs
 # only every DETECT_INTERVAL_SECONDS — or a car would be re-identified as a new
@@ -269,6 +365,36 @@ def _space_coverage(sp, box: dict, grid: int = COVERAGE_GRID) -> float:
                 inside_both += 1
 
     return (inside_both / inside_space) if inside_space else 0.0
+
+
+def _bay_bounds(sp) -> "tuple | None":
+    """The bay's normalised bounding box, whatever tool drew it."""
+    if sp.points:
+        xs = [p[0] for p in sp.points]
+        ys = [p[1] for p in sp.points]
+        return min(xs), min(ys), max(xs), max(ys)
+    if sp.x1 is None or sp.x2 is None:
+        return None
+    return (min(sp.x1, sp.x2), min(sp.y1, sp.y2),
+            max(sp.x1, sp.x2), max(sp.y1, sp.y2))
+
+
+def _may_overlap(sp, box: dict) -> bool:
+    """Cheap rejection before the grid test.
+
+    Occupancy asks the coverage question every frame now, not every two seconds
+    as double parking did, and across every (bay, vehicle) pair. Most of those
+    pairs are a bay and a car nowhere near it, and answering those with 36 point
+    tests — each walking a polygon's vertices — is the kind of cost that only
+    shows up once a lot is busy. Two rectangle comparisons settle them instead.
+    """
+    b = _bay_bounds(sp)
+    if b is None:
+        return False
+    sx1, sy1, sx2, sy2 = b
+    bx1, by1 = box["x"], box["y"]
+    bx2, by2 = bx1 + box["width"], by1 + box["height"]
+    return not (bx2 <= sx1 or bx1 >= sx2 or by2 <= sy1 or by1 >= sy2)
 
 
 def _vehicle_share(sp, box: dict, grid: int = COVERAGE_GRID) -> float:
@@ -638,6 +764,22 @@ class ParkingCameraThread(threading.Thread):
         # camera instead of guessing at them twice.
         self._signals     = {}
 
+        # Why each bay was last held occupied or stopped from claiming.
+        self._reasons     = {}
+
+        # Newest person boxes, from the same detector pass as the vehicles.
+        # Empty unless a person model is configured — see detect_persons().
+        self._persons     = []
+
+        # Scoring frames per second, measured rather than assumed: OCCUPY_THR
+        # is only the right number if the frames it counts actually fit inside
+        # the second a claim is supposed to take.
+        self._frame_times = deque(maxlen=60)
+
+        # When each bay's noise stats were last written back, so a zone that has
+        # been quiet all afternoon is not rewriting the same rows every frame.
+        self._stats_saved_at = 0.0
+
         # When the detector last ran, for the classic path's slower cadence.
         self._last_detect = 0.0
 
@@ -773,13 +915,18 @@ class ParkingCameraThread(threading.Thread):
 
         return detect_across_lenses(frame, detect_vehicles, conf=OCCUPANCY_CONF)
 
-    def _classic_hits(self, frame, spaces, cfg) -> "dict | None":
+    def _classic_hits(self, frame, spaces, cfg, now=None, blocked=()) -> "dict | None":
         """{space_id: occupied} from baseline comparison, or None when this zone
         cannot be scored yet.
 
         None rather than an empty result so the caller leaves every bay exactly
         as it is: a zone without a baseline has not been set up, which is not
         the same statement as "every bay is free".
+
+        `blocked` are bays something is standing in or near. They are scored
+        normally — the verdict is the baseline's — but they cannot count toward
+        a bay being confidently empty, which is what the live baseline is
+        allowed to learn from.
         """
         from vehicles import bay_occupancy
 
@@ -788,7 +935,7 @@ class ParkingCameraThread(threading.Thread):
             return None
 
         try:
-            signals = bay_occupancy.evaluate(prepared, frame)
+            signals = bay_occupancy.evaluate(prepared, frame, now, blocked)
         except Exception as exc:
             log.warning("[ParkingCam] classic scoring failed zone %d: %s", self.zone_id, exc)
             return None
@@ -800,7 +947,7 @@ class ParkingCameraThread(threading.Thread):
         return {sp.id: signals[sp.id]['occupied'] for sp in spaces if sp.id in signals}
 
     def _apply_hits(self, spaces, hits: dict, now: "float | None" = None,
-                    claim_after: float = 0.0) -> None:
+                    claim_after: float = 0.0, holds=(), suppress=None) -> None:
         """Run the occupancy hysteresis and persist any transitions.
 
         Claiming counts frames: OCCUPY_THR in a row, reset by any miss, so a
@@ -812,27 +959,58 @@ class ParkingCameraThread(threading.Thread):
         Releasing counts time: OCCUPIED_GRACE_SECONDS since the bay last looked
         filled, restarted by every hit.
 
+        The detector's two inputs arrive here, and neither can claim a bay:
+
+        `holds`     bay ids a settled vehicle is sitting in. Counted as a hit
+                    for the RELEASE clock only — the bay stays taken — and
+                    ignored entirely by the claim side, so a box on a plant can
+                    keep a bay occupied a few seconds longer but can never
+                    invent one.
+        `suppress`  {bay id: reason} for bays whose change is explained by
+                    something that is not a parked vehicle. The frame's hit
+                    does not count toward claiming.
+
+        A suppressed frame freezes the frame streak where it is and restarts the
+        seconds clock, rather than resetting both. Freezing is what stops a car
+        that crawls in over ten seconds from banking those seconds and claiming
+        the instant it stops; restarting the clock is what makes the claim land
+        about `claim_after` after the suppression lifts, which for a car pulling
+        in is about a second after it comes to rest.
+
         Returns the ids of bays claimed by this call.
         """
         now = time.monotonic() if now is None else now
+        suppress = suppress or {}
         claimed: set[int] = set()
 
         for sp in spaces:
             if sp.id not in hits:
                 continue
 
+            held = sp.id in holds
+
             if sp.is_occupied:
                 # A bay found occupied with no clock yet — marked by a guard,
                 # or taken before this worker started — gets a full grace from
                 # the moment it is first seen, not an instant release.
-                if hits[sp.id] or sp.id not in self._last_filled:
+                if hits[sp.id] or held or sp.id not in self._last_filled:
                     self._last_filled[sp.id] = now
+                    if held and not hits[sp.id]:
+                        self._note_reason(sp.id, 'held', 'stationary vehicle in bay', now)
             else:
                 # Dropped while free, so a stale time from an earlier episode
                 # can never cut a later one's grace short.
                 self._last_filled.pop(sp.id, None)
 
             if hits[sp.id]:
+                reason = suppress.get(sp.id)
+                if reason is not None and not sp.is_occupied:
+                    # Evidence that the change is not a vehicle coming to rest.
+                    # The streak is left where it is; only the clock restarts.
+                    self._changed_since[sp.id] = now
+                    self._note_reason(sp.id, 'suppressed', reason, now)
+                    continue
+
                 since = self._changed_since.setdefault(sp.id, now)
                 nxt = min(self._hyst.get(sp.id, 0) + 1, OCCUPY_THR)
                 self._hyst[sp.id] = nxt
@@ -848,6 +1026,110 @@ class ParkingCameraThread(threading.Thread):
                         and now - self._last_filled[sp.id] >= OCCUPIED_GRACE_SECONDS):
                     self._set_occupied(sp, False)
         return claimed
+
+    def _learn_baseline(self, frame, now: float) -> None:
+        """Let confidently-empty bays teach themselves, and write what they learn.
+
+        Three things, all of them gated inside bay_occupancy on the same idea of
+        "confidently empty" — no hit this frame, nothing standing in the bay,
+        and enough light to judge by:
+
+          * collect this frame's readings as noise samples,
+          * blend the current scene into the live baseline of any bay whose
+            five unbroken minutes are up,
+          * persist the resulting stats, so a bay keeps its thresholds across a
+            restart and an existing deployment grows out of the fallback pair.
+
+        Errors are logged and swallowed: a bay that fails to learn scores on
+        what it already had, which is the behaviour of the whole system before
+        any of this existed.
+        """
+        from vehicles import bay_occupancy as bo
+
+        prepared = self._prepared
+        if prepared is None:
+            return
+        try:
+            bo.sample_noise(prepared, self._signals)
+            due = bo.refresh_due(prepared, now)
+            if due:
+                blended = bo.refresh_live(prepared, frame, due, now)
+                log.debug("[ParkingCam] Zone %d refreshed %d live baseline(s)",
+                          self.zone_id, blended)
+            self._persist_noise_stats(prepared, now)
+        except Exception as exc:
+            log.warning("[ParkingCam] Baseline learning failed zone %d: %s",
+                        self.zone_id, exc)
+
+    def _persist_noise_stats(self, prepared, now: float) -> None:
+        """Write each bay's learned noise back, and re-derive its thresholds.
+
+        Throttled hard. The stats move slowly — a rolling window of a few
+        hundred readings — and this runs on a loop doing ten frames a second
+        against a database a round trip away, so writing per frame would cost
+        far more than the numbers are worth.
+
+        Written with `.update()`, never `.save()`. ParkingSpace.updated_at is
+        auto_now and feeds bay_occupancy.layout_signature: saving the model
+        would rebuild the prepared zone, throwing away every bay's live baseline
+        and restarting the very five-minute window that produced these stats.
+        """
+        if now - self._stats_saved_at < STATS_SAVE_SECONDS:
+            return
+
+        from django.db import close_old_connections
+        from vehicles.models import ParkingSpace
+
+        pending = [(b, b.noise.summary()) for b in prepared.bays if b.noise.usable]
+        if not pending:
+            # Nothing to write yet — no bay has enough samples. Return WITHOUT
+            # stamping the throttle: stamping here would spend the interval on a
+            # call that wrote nothing, so the first real write of a zone's life
+            # would be held back a further STATS_SAVE_SECONDS for no reason.
+            return
+        self._stats_saved_at = now
+
+        close_old_connections()
+        for bay, summary in pending:
+            summary['updated_at'] = time.time()
+            try:
+                ParkingSpace.objects.filter(pk=bay.space_id).update(noise_stats=summary)
+            except Exception as exc:
+                log.warning("[ParkingCam] Noise stats write failed for bay %s: %s",
+                            bay.space_id, exc)
+                continue
+            # Only after a successful write, so the thresholds in force and the
+            # thresholds on record cannot disagree.
+            bay.apply_stats(summary)
+
+    def reset_live_baseline(self, space_id: "int | None" = None) -> int:
+        """Throw away learned drift and score against the captured baseline again.
+
+        The admin's undo for this whole mechanism. Something *can* go wrong that
+        no condition here catches — a bay re-drawn over a spot that is never
+        empty, a camera nudged a few degrees — and the honest answer to that is
+        a button, not another threshold.
+        """
+        from vehicles import bay_occupancy as bo
+
+        prepared = self._prepared
+        if prepared is None:
+            return 0
+        n = bo.reset_live_baseline(prepared, space_id)
+        log.info("[ParkingCam] Zone %d live baseline reset for %d bay(s)",
+                 self.zone_id, n)
+        return n
+
+    def _note_reason(self, space_id: int, kind: str, reason: str, now: float) -> None:
+        """Remember why a bay was held or suppressed, for the diagnostics.
+
+        A bay that will not claim, or will not free, is the hardest thing in
+        this file to explain from the outside — the numbers all look reasonable
+        and the verdict still does not move. This is the missing sentence.
+        """
+        with self._lock:
+            self._reasons[space_id] = {'kind': kind, 'reason': reason,
+                                       'at': round(now, 2)}
 
     def _load_zone_config(self) -> dict:
         """The zone's baseline, re-read at most every TTL.
@@ -936,10 +1218,74 @@ class ParkingCameraThread(threading.Thread):
                  self.zone_id, len(self._prepared.bays))
         return self._prepared
 
-    def get_signals(self) -> dict:
-        """Latest per-bay classic scores, for the tuning readout."""
+    def measured_fps(self) -> "float | None":
+        """Scoring frames per second over the recent window, or None too early.
+
+        The number OCCUPY_THR has to be chosen against: the frames gate only
+        binds below OCCUPY_THR / BASELINE_CLAIM_SECONDS, and whether a given
+        camera on a given box is above or below that is not answerable anywhere
+        but here.
+        """
         with self._lock:
-            return dict(self._signals)
+            times = list(self._frame_times)
+        if len(times) < 2:
+            return None
+        span = times[-1] - times[0]
+        return round((len(times) - 1) / span, 2) if span > 0 else None
+
+    def get_signals(self) -> dict:
+        """Latest per-bay classic scores, for the tuning readout.
+
+        The scores alone stopped being enough once the thresholds went per-bay
+        and the baseline started moving: "mad 31" means nothing without the
+        threshold it was compared against, and a bay reading free with a car in
+        it now has three possible explanations — the reading, the threshold that
+        reading was judged by, or a live baseline that has drifted. All three
+        are here, plus the reason the bay was last held or suppressed, which is
+        the only way a bay that will not claim can explain itself.
+        """
+        prepared = self._prepared
+        bays = {b.space_id: b for b in prepared.bays} if prepared is not None else {}
+        now  = time.monotonic()
+
+        with self._lock:
+            signals = {k: dict(v) for k, v in self._signals.items()}
+            reasons = dict(self._reasons)
+
+        for space_id, row in signals.items():
+            bay = bays.get(space_id)
+            # Reported as "how long ago", not as the monotonic stamp it is
+            # stored as: that clock counts from an arbitrary origin and means
+            # nothing at all to somebody reading this screen.
+            event = reasons.get(space_id)
+            if event is not None:
+                event = {'kind': event['kind'], 'reason': event['reason'],
+                         'ago': round(now - event['at'], 1)}
+            row['last_event'] = event
+            if bay is None:
+                continue
+            row['noise'] = bay.noise.summary()
+            row['threshold_source'] = 'adaptive' if bay.adaptive else 'fallback'
+            # Whether the shadow veto is armed on this bay, and why not when it
+            # is not. A bay still claiming on shadows is nearly always one of
+            # these two, and neither is visible from the readings alone.
+            row['shadow_veto_armed'] = bay.veto_thr > 0.0
+            if bay.veto_thr <= 0.0:
+                row['shadow_veto_off_because'] = (
+                    'ground has too little texture to correlate'
+                    if bay.noise.ncc_base else 'still measuring this bay')
+            row['live_baseline'] = {
+                'blends':           bay.blends,
+                # Seconds since the last blend, and since this bay's current
+                # unbroken empty run began — between them they say whether a
+                # baseline is drifting, holding, or has never been allowed to.
+                'refreshed_ago':    (None if bay.refreshed_at is None
+                                     else round(now - bay.refreshed_at, 1)),
+                'clear_for':        (None if bay.clear_since is None
+                                     else round(now - bay.clear_since, 1)),
+                'drifted':          bay.blends > 0,
+            }
+        return signals
 
     def get_tracked_vehicles(self) -> list[dict]:
         """Vehicles the zone is currently following, and how long each has been
@@ -1011,8 +1357,33 @@ class ParkingCameraThread(threading.Thread):
         dets = self._detect(frame)
         keep, ignored = self._split_plausible(dets)
         vehicles = self._tracker.update(keep, now)
+        self._persons = self._detect_people(frame)
         self._remember(vehicles, ignored, now)
         return vehicles
+
+    def _detect_people(self, frame: np.ndarray) -> list:
+        """Person boxes, when a person model is configured.
+
+        Empty otherwise, and that is the default: the campus detector is trained
+        on plates and vehicles, and _parse_boxes drops every other class — there
+        has never been a person box in this pipeline. Person suppression is
+        therefore inert until PARKING_PERSON_WEIGHTS points at weights with a
+        person class, and the surrounding logic is written so that "no person
+        information" and "no person present" lead to the same, pre-existing
+        behaviour rather than to a bay that will not claim.
+
+        Not size-filtered through _split_plausible: that rule is calibrated on
+        how big a *vehicle* is against a bay, and a person is legitimately far
+        smaller than the smallest thing it lets through.
+        """
+        from scanning.ml.detection import detect_persons
+
+        try:
+            return detect_persons(frame, conf=PERSON_CONF)
+        except Exception as exc:
+            log.warning("[ParkingCam] Person detection failed zone %d: %s",
+                        self.zone_id, exc)
+            return []
 
     def _remember(self, vehicles: list, ignored: list, now: float) -> None:
         """Keep the newest boxes where the API can read them.
@@ -1063,6 +1434,113 @@ class ParkingCameraThread(threading.Thread):
                 'age': round(time.monotonic() - at, 1) if at else None,
             }
 
+    def _claim_pending(self, spaces) -> bool:
+        """Is any bay part-way through claiming?
+
+        Read from the hysteresis state left by the previous frame, which is a
+        frame behind and deliberately so: the alternative is running the
+        detector before scoring in order to decide whether to run the detector.
+        One frame of lag at ~9fps is ~0.1s of a 0.8s gate.
+        """
+        return any(not sp.is_occupied and self._hyst.get(sp.id, 0) > 0
+                   for sp in spaces)
+
+    def _tracker_effects(self, spaces, now: float) -> tuple:
+        """(holds, suppressions, blocked) for this frame.
+
+        Read from the tracker's CURRENT state, every frame, rather than only on
+        the frames the detector runs. The tracks persist between passes, so this
+        costs geometry and no inference — and the alternative, only consulting
+        the detector every DETECT_INTERVAL_SECONDS, would leave the claim gate
+        unsuppressed on four frames out of five.
+
+        The boxes can be older than this frame, and the two questions tolerate
+        that very differently.
+
+        Holding tolerates it. A stale box says a vehicle was in the bay a moment
+        ago; the worst that follows is a bay held taken for one more interval
+        after its car drove off, which is the safe direction.
+
+        Suppressing does not, and assuming otherwise was a bug. `still_since`
+        only moves when the detector runs, so between passes `stationary_for`
+        grows for every track — including one belonging to a car driving
+        straight across the bay. At the ordinary two-second cadence that car
+        looked stationary within half a second and claimed the bay it was
+        crossing. So the claim side believes stillness only from a track
+        observed within TRACK_FRESH_SECONDS, and `_claim_pending` keeps the
+        detector running frame by frame while any claim is forming so that
+        freshness is actually available when it counts.
+        """
+        tracks  = list(self._tracker.tracks.values())
+        persons = list(self._persons)
+
+        holds:   set = set()
+        suppress: dict = {}
+        blocked: set = set()
+
+        for sp in spaces:
+            near = [t for t in tracks if _may_overlap(sp, t.bbox)]
+            overlapping = [t for t in near
+                           if _space_coverage(sp, t.bbox) > ANY_OVERLAP]
+
+            people = [p for p in persons
+                      if _may_overlap(sp, p['bbox'])
+                      and _space_coverage(sp, p['bbox']) >= PERSON_SUPPRESS_COVERAGE]
+
+            # A bay may not learn from a frame while anything is standing in it
+            # — nor while it is claimed at all. The scorer's per-frame verdict
+            # is not the same statement as the bay's state: a claimed bay whose
+            # vehicle the scorer has momentarily lost reads free for that frame,
+            # and without this that frame would count toward the five minutes of
+            # emptiness that let the car be blended in.
+            if overlapping or people or sp.is_occupied:
+                blocked.add(sp.id)
+
+            # ── Hold: a settled vehicle genuinely in this bay ────────────────
+            # The same two-sided coverage test double parking uses, so "in the
+            # bay" means the same thing to both: enough of the bay covered, and
+            # enough of the vehicle inside it.
+            for t in overlapping:
+                if (t.has_settled(now, RELEASE_HOLD_STILL_SECONDS)
+                        and _space_coverage(sp, t.bbox) >= DOUBLE_PARK_COVERAGE
+                        and _vehicle_share(sp, t.bbox) >= DOUBLE_PARK_VEHICLE_SHARE):
+                    holds.add(sp.id)
+                    break
+
+            # ── Suppression: the change is explained by something else ───────
+            # A person standing in an empty bay reads to the scorer exactly like
+            # a vehicle arriving in it. The vehicle exception is the point of
+            # the second clause: a rider astride a motorbike, or a tricycle
+            # driver, is a person over a bay that genuinely is taken, and
+            # suppressing those would make every two-wheeler slow to report.
+            if people and not overlapping:
+                suppress[sp.id] = (
+                    f"person over bay ({max(p['score'] for p in people):.2f})")
+                continue
+
+            # A vehicle that has moved recently is still manoeuvring. Note the
+            # asymmetry with the hold above: no track over the bay at all means
+            # NO suppression, so a detector that simply missed the car leaves
+            # the baseline to claim it exactly as it did before.
+            #
+            # Stillness has to be OBSERVED, not merely inferred from a clock. A
+            # track carries `still_since` from its last observation, so between
+            # detector passes a car that is driving across the bay accumulates
+            # stillness it never had — two seconds of it, at the detector's
+            # ordinary cadence — and the suppression lifts on a vehicle that has
+            # not stopped at all. That is what let a car crossing a bay claim
+            # it. So a track counts as stopped only while it is fresh; a stale
+            # one is treated as still moving, and `_claim_pending` below keeps
+            # the detector running frame by frame for as long as any of this
+            # actually matters.
+            moving = [t for t in overlapping
+                      if not (now - t.last_seen <= TRACK_FRESH_SECONDS
+                              and t.stationary_for(now) >= PASSING_MOVE_WINDOW)]
+            if moving:
+                suppress[sp.id] = "vehicle still moving"
+
+        return holds, suppress, blocked
+
     def _process_frame(self, frame: np.ndarray) -> None:
         spaces = self._load_spaces()
         if not spaces:
@@ -1070,16 +1548,27 @@ class ParkingCameraThread(threading.Thread):
 
         cfg = self._load_zone_config()
         now = time.monotonic()
+        # Under the lock: measured_fps() lists this from a request thread, and a
+        # bounded deque pops as it appends, so an unguarded read can land
+        # mid-mutation.
+        with self._lock:
+            self._frame_times.append(now)
+
+        # What the detector has to say, before the verdict rather than after it:
+        # holds and suppressions both change how this frame's hits are applied.
+        holds, suppress, blocked = self._tracker_effects(spaces, now)
 
         # Occupancy comes from the empty baseline and nothing else. A zone with
         # no baseline yet is simply not scored: falling back to the detector
         # here used to let its boxes on potted plants, stairs and air
         # conditioners claim bays — the false positives the baseline replaced.
         # The screens say "not set up" for such a zone instead.
-        hits = self._classic_hits(frame, spaces, cfg)
+        hits = self._classic_hits(frame, spaces, cfg, now, blocked)
         claimed = set()
         if hits is not None:
-            claimed = self._apply_hits(spaces, hits, now, BASELINE_CLAIM_SECONDS)
+            claimed = self._apply_hits(spaces, hits, now, BASELINE_CLAIM_SECONDS,
+                                       holds=holds, suppress=suppress)
+            self._learn_baseline(frame, now)
 
         # The detector's one job: a vehicle lying across two bays, which a
         # per-bay comparison reads exactly like two correctly parked vehicles.
@@ -1087,7 +1576,22 @@ class ParkingCameraThread(threading.Thread):
         # every DETECT_INTERVAL_SECONDS rather than every frame loses nothing.
         # A bay that has just been claimed is checked straight away, so the
         # vehicle that took it starts its double-parking dwell immediately.
-        if claimed or (now - self._last_detect) >= DETECT_INTERVAL_SECONDS:
+        #
+        # ...and a bay part-way to being claimed is checked far more often. That
+        # is the one window where a two-second-old box is not good enough: the
+        # claim gate is 0.8s wide, so at the ordinary cadence a bay could form
+        # and complete an entire claim on a single stale observation, and a car
+        # driving across it would look stationary for the whole crossing.
+        #
+        # Often enough to keep a track inside TRACK_FRESH_SECONDS, and no more.
+        # Every frame would also work and costs four times the inference for no
+        # extra freshness, which matters because the trigger is a hit streak:
+        # a bay held part-claimed for minutes — someone standing in it — would
+        # otherwise run the model flat out for exactly as long as they stood
+        # there. An idle lot pays what it always paid.
+        interval = (CLAIM_DETECT_INTERVAL_SECONDS if self._claim_pending(spaces)
+                    else DETECT_INTERVAL_SECONDS)
+        if claimed or (now - self._last_detect) >= interval:
             self._last_detect = now
             vehicles = self._track(frame, now)
             self._check_double_parking(spaces, vehicles, frame, now)

@@ -1,0 +1,72 @@
+{
+  "id": "05-installer--02-destination",
+  "out": "05-installer/02-destination.png",
+  "section": "Installing the Campus System",
+  "title": "Step 2 · Choose the install folder",
+  "caption": "Keep the default folder unless your IT office says otherwise.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Install folder",
+      "desc": "Default: C:\\Smart Parking and Vehicle Verification System. Keep the path short: Setup refuses folders longer than 110 characters.",
+      "box": {
+        "x": 41,
+        "y": 173,
+        "w": 431,
+        "h": 23
+      }
+    },
+    {
+      "n": 2,
+      "label": "Browse...",
+      "desc": "Pick a different folder.",
+      "box": {
+        "x": 482,
+        "y": 172,
+        "w": 75,
+        "h": 23
+      }
+    },
+    {
+      "n": 3,
+      "label": "Disk space",
+      "desc": "About 6 GB is needed once the Python environment and application code are downloaded.",
+      "box": {
+        "x": 41,
+        "y": 389,
+        "w": 516,
+        "h": 16
+      }
+    },
+    {
+      "n": 4,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "patches": [
+    {
+      "x": 43,
+      "y": 175,
+      "w": 427,
+      "h": 19,
+      "text": "C:\\Smart Parking and Vehicle Verification System",
+      "bg": "#FFFFFF",
+      "color": "#FFFFFF",
+      "fontSize": 12,
+      "padLeft": 0,
+      "highlight": "#0078D4"
+    }
+  ],
+  "width": 598,
+  "height": 464,
+  "redact": []
+}

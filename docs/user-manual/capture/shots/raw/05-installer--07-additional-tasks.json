@@ -1,0 +1,59 @@
+{
+  "id": "05-installer--07-additional-tasks",
+  "out": "05-installer/07-additional-tasks.png",
+  "section": "Installing the Campus System",
+  "title": "Step 7 · Additional tasks",
+  "caption": "Optional shortcuts and system changes.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Desktop shortcut",
+      "desc": "Puts a launcher shortcut on the desktop (recommended).",
+      "box": {
+        "x": 41,
+        "y": 168,
+        "w": 260,
+        "h": 18
+      }
+    },
+    {
+      "n": 2,
+      "label": "Open at startup",
+      "desc": "Opens the launcher automatically when the computer starts. Recommended for a dedicated gate computer.",
+      "box": {
+        "x": 41,
+        "y": 190,
+        "w": 280,
+        "h": 18
+      }
+    },
+    {
+      "n": 3,
+      "label": "Add to PATH",
+      "desc": "For IT staff who run the launcher from a command prompt. Usually not needed.",
+      "box": {
+        "x": 41,
+        "y": 234,
+        "w": 280,
+        "h": 18
+      }
+    },
+    {
+      "n": 4,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

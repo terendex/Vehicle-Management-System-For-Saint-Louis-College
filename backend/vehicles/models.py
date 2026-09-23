@@ -1138,6 +1138,20 @@ class ParkingSpace(models.Model):
     lens_index   = models.PositiveSmallIntegerField(default=0)
     is_occupied  = models.BooleanField(default=False)    # what the screens show as red or green
     occupied_by  = models.CharField(max_length=20, blank=True)   # the plate, when one was read
+    # What this bay's own readings look like while it is empty, and therefore
+    # what counts as a change worth claiming it for — see bay_occupancy.
+    # {'samples': n, 'mad_mean', 'mad_std', 'edge_mean', 'edge_std', 'updated_at'}.
+    #
+    # Written with queryset .update(), never .save(): `updated_at` below is
+    # auto_now and feeds bay_occupancy.layout_signature, so saving the model
+    # would invalidate the zone's prepared baseline — discarding every bay's
+    # live baseline and restarting its refresh clock — every time a bay learned
+    # something about itself.
+    noise_stats  = models.JSONField(
+        null=True, blank=True,
+        help_text="Measured noise of this bay while empty; sets its occupancy "
+                  "thresholds. Cleared to fall back to the conservative defaults.",
+    )
     updated_at   = models.DateTimeField(auto_now=True)   # touched on every occupancy change
 
     class Meta:

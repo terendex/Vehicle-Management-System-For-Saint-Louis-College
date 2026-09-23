@@ -20,7 +20,27 @@ import { create } from 'zustand'
  * telling you to fix.
  */
 
-let _seq = 0
+// =============================================================================
+// Read this file as a QUEUE with two suppression rules, not as a toast library.
+//
+// The API looks like sonner's on purpose (see the docstring above), but the
+// behaviour is the opposite: nothing is transient, and everything is awaited.
+// Every call returns a promise that settles when the user acknowledges.
+//
+// Two separate mechanisms stop a machine burying the screen, and they are
+// easy to confuse:
+//
+//   COLLAPSE (keyOf + the `existing` check) — identical dialogs that are
+//     pending RIGHT NOW share one entry and one promise. Always on.
+//   MUTE (_mutedUntil + throttleMs) — after a dialog is dismissed, suppress
+//     an identical one for a while. Opt-in, and only for machine-raised
+//     messages; a person pressing Submit twice must be answered twice.
+//
+// Everything below serves one of those two, or turns whatever a caller threw
+// at it into displayable text (asText).
+// =============================================================================
+
+let _seq = 0                                    // monotonic dialog id; only used as a React key
 
 // Alerts sit in a queue rather than replacing one another. Several failures
 // can land at once — a websocket dropping takes its retries with it — and the
@@ -30,6 +50,10 @@ export const useFeedbackStore = create(() => ({ queue: [] }))
 /** Identical pending dialogs collapse into one. A camera that error-loops on
  *  a dead RTSP socket must not be able to stack fifty modals to click through. */
 function keyOf(d) {
+  // Every displayed field participates, so two dialogs collapse only when they
+  // would look identical. The separators are ASCII unit (\u001f) and record
+  // (\u001e) characters precisely because they cannot occur in a message — a
+  // plain '|' would let two different dialogs collide into one key.
   return [d.tone, d.title, d.message, d.description, (d.details || []).join('\u001f')].join('\u001e')
 }
 
@@ -45,18 +69,26 @@ const _mutedUntil = new Map()
 
 function enqueue(dialog) {
   const key = keyOf(dialog)
+  // COLLAPSE. Returning the EXISTING promise is what makes fifty callers share
+  // one dialog and all settle together when it is dismissed once.
   const existing = useFeedbackStore.getState().queue.find((d) => d.key === key)
   if (existing) return existing.promise
 
+  // MUTE. Note it resolves `undefined` rather than rejecting or hanging: a
+  // caller awaiting a suppressed alert continues immediately, and a suppressed
+  // confirm reads as "not confirmed" without ever appearing.
   const muted = _mutedUntil.get(key)
   if (muted !== undefined) {
     if (Date.now() < muted) return Promise.resolve(undefined)
-    _mutedUntil.delete(key)
+    _mutedUntil.delete(key)                     // window passed — drop the entry so the map does not accumulate
   }
 
+  // The same park-the-resolver shape as twofaStore: the promise is created
+  // here and settled later by closeTop, which is how a React dialog drives an
+  // `await` in code that knows nothing about React.
   let resolve
   const promise = new Promise((r) => { resolve = r })
-  const entry = { ...dialog, key, id: ++_seq, resolve, promise }
+  const entry = { ...dialog, key, id: ++_seq, resolve, promise }   // `promise` is stored too, so a collapse can hand back the same one
   useFeedbackStore.setState((s) => ({ queue: [...s.queue, entry] }))
   return promise
 }
@@ -66,10 +98,15 @@ export function closeTop(result) {
   const { queue } = useFeedbackStore.getState()
   const top = queue[0]
   if (!top) return
+  // slice(1), so the queue is strictly first-in-first-out — the oldest
+  // unacknowledged message is the one on screen, not the newest.
   useFeedbackStore.setState({ queue: queue.slice(1) })
   if (top.throttleMs > 0) {
     _mutedUntil.set(top.key, Date.now() + top.throttleMs)
     // Keep the map from growing without bound over a long shift at a gate.
+    // Swept lazily, only once the map is large, and only of entries that have
+    // already expired. A gate terminal runs for a whole shift, and an
+    // error-looping camera would otherwise add a key per distinct message.
     if (_mutedUntil.size > 64) {
       const now = Date.now()
       for (const [k, until] of _mutedUntil) if (until < now) _mutedUntil.delete(k)
@@ -87,20 +124,29 @@ const DEFAULT_TITLE = {
 
 // `message` may arrive as an Error or an axios payload when a catch block
 // forwards it straight through, so coerce rather than rendering "[object Object]".
+// Callers forward whatever they caught, so this has to handle five shapes.
+// Ordered cheapest-first, and RECURSIVE for the two container cases.
 function asText(message) {
-  if (message == null) return ''
+  if (message == null) return ''                // null/undefined -> empty, never the string "null"
   if (typeof message === 'string') return message
   if (message instanceof Error) return message.message
   // DRF reports a field as a list of strings.
   if (Array.isArray(message)) return message.map(asText).filter(Boolean).join(' ')
   if (typeof message === 'object') {
+    // The three keys this project's APIs actually use, in the order DRF and
+    // the custom views prefer them. `??` not `||`, so an empty string still
+    // counts as a present value rather than falling through.
     const first = message.detail ?? message.error ?? message.message
-    if (first != null) return asText(first)
+    if (first != null) return asText(first)     // recursive: the value may itself be a list
+    // Last resort. try/catch because a circular object throws here, and a
+    // feedback helper must never be the thing that crashes the page.
     try { return JSON.stringify(message) } catch { return String(message) }
   }
   return String(message)
 }
 
+// A factory rather than four near-identical functions, so the four tones
+// cannot drift apart in their defaults.
 function makeAlert(tone) {
   // Not a method — NotificationBell maps severities onto these functions
   // (`{ critical: notify.error, … }`), so they must not depend on `this`.
@@ -131,6 +177,8 @@ const info    = makeAlert('info')
  *   if (!(await notify.confirm({ message: 'Delete this camera?', danger: true }))) return
  */
 function confirm(options = {}) {
+  // Accepts a bare string as well as an options object, so the common case
+  // reads as `notify.confirm('Delete this camera?')`.
   const opts = typeof options === 'string' ? { message: options } : options
   return enqueue({
     tone:         'confirm',
@@ -156,6 +204,9 @@ async function validation(errors, options = {}) {
   const list = (Array.isArray(errors) ? errors : Object.values(errors || {}))
     .map(asText)
     .filter(Boolean)
+  // Resolves FALSE and shows nothing when the form is clean — which is what
+  // makes `if (await notify.validation(errs)) return` a correct submit guard
+  // rather than something that has to be wrapped in its own check.
   if (!list.length) return false
   await enqueue({
     tone:         'error',
@@ -175,6 +226,8 @@ async function validation(errors, options = {}) {
 export const notify = { success, error, warning, info, confirm, validation }
 
 // Drop-in alias for the call sites that read `toast.success(…)`.
+// Deliberate alias, not a leftover: a stray `toast.error(...)` anywhere in the
+// codebase lands in this modal system rather than silently doing nothing.
 export const toast = notify
 
 export default notify

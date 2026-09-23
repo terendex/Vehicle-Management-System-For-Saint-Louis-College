@@ -292,6 +292,11 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         topMargin=44 * mm, bottomMargin=16 * mm, title=report_title,
     )
     cell_style = ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10)
+    # The "nothing matched" line: centred across the spanned row and greyed, so
+    # it reads as a state of the report rather than as a record in it.
+    empty_style = ParagraphStyle('empty', parent=cell_style, alignment=1,   # 1 = TA_CENTER
+                                 fontSize=9, leading=12,
+                                 textColor=colors.HexColor('#6B7280'))
     head_style = ParagraphStyle('head', fontName='Helvetica-Bold', fontSize=9,
                                 textColor=colors.white, leading=11)
     sub_style = ParagraphStyle('sub', fontName='Helvetica', fontSize=9,
@@ -304,12 +309,16 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         data = [[Paragraph(esc(h), head_style) for h in t_headers]]
         for row in t_rows:
             data.append([Paragraph(esc(c), cell_style) for c in row])
-        if len(data) == 1:
-            data.append([Paragraph('No records match the selected filters.', cell_style)]
+
+        # An empty result still prints a table, so the reader can see WHICH
+        # columns came back with nothing rather than a bare page.
+        is_empty = len(data) == 1
+        if is_empty:
+            data.append([Paragraph('No records match the selected filters.', empty_style)]
                         + [Paragraph('', cell_style) for _ in range(len(t_headers) - 1)])
 
         table = Table(data, colWidths=[w * mm for w in t_widths], repeatRows=1)
-        table.setStyle(TableStyle([
+        style = [
             ('BACKGROUND', (0, 0), (-1, 0), brand),
             ('TOPPADDING', (0, 0), (-1, 0), 6),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
@@ -320,7 +329,18 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F5FA')]),
             ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E8F0')),
-        ]))
+        ]
+        if is_empty:
+            # Without the SPAN the message is confined to the first column,
+            # which on most of these reports is the 10mm '#' gutter - it wraps
+            # to one or two characters a line and reads as a broken render.
+            # Spanning the full width is also what makes centring mean anything.
+            style += [
+                ('SPAN',          (0, 1), (-1, 1)),
+                ('TOPPADDING',    (0, 1), (-1, 1), 14),
+                ('BOTTOMPADDING', (0, 1), (-1, 1), 14),
+            ]
+        table.setStyle(TableStyle(style))
         return table
 
     story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]

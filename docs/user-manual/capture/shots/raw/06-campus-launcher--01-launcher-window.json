@@ -1,0 +1,123 @@
+{
+  "id": "06-campus-launcher--01-launcher-window",
+  "out": "06-campus-launcher/01-launcher-window.png",
+  "section": "Running the Campus System",
+  "title": "The campus launcher",
+  "caption": "Opened from the desktop or Start Menu shortcut. It runs the server that the gate terminals connect to, so leave this window open.",
+  "display": 1,
+  "layout": "side",
+  "redact": [
+    {
+      "x": 436,
+      "y": 122,
+      "w": 590,
+      "h": 722,
+      "block": 10,
+      "label": "Log details hidden in this picture"
+    }
+  ],
+  "marks": [
+    {
+      "n": 1,
+      "label": "Server status and address",
+      "desc": "RUNNING or STOPPED, and the address guards and CDSO staff open in their browsers.",
+      "box": {
+        "x": 30,
+        "y": 90,
+        "w": 370,
+        "h": 76
+      }
+    },
+    {
+      "n": 2,
+      "label": "Health",
+      "desc": "Database connection, cameras online, and whether live updates are working.",
+      "box": {
+        "x": 34,
+        "y": 181,
+        "w": 362,
+        "h": 51
+      }
+    },
+    {
+      "n": 3,
+      "label": "Start / Stop server",
+      "desc": "Starts or stops the system. Stopping it disconnects every gate terminal and camera.",
+      "box": {
+        "x": 34,
+        "y": 248,
+        "w": 362,
+        "h": 42
+      }
+    },
+    {
+      "n": 4,
+      "label": "Open pages",
+      "desc": "Guard terminal opens the gate sign-in page, Admin login opens the CDSO login, and Copy URL copies the address.",
+      "box": {
+        "x": 34,
+        "y": 299,
+        "w": 362,
+        "h": 34
+      }
+    },
+    {
+      "n": 5,
+      "label": "Updates",
+      "desc": "Checks for a newer version every few minutes. When one is found, click \"Update and restart\" at a quiet moment: restarting drops the camera feeds briefly.",
+      "box": {
+        "x": 18,
+        "y": 363,
+        "w": 394,
+        "h": 133
+      }
+    },
+    {
+      "n": 6,
+      "label": "Settings",
+      "desc": "Port, start the server when this window opens, kiosk mode (full screen), and which page opens automatically.",
+      "box": {
+        "x": 30,
+        "y": 524,
+        "w": 370,
+        "h": 212
+      }
+    },
+    {
+      "n": 7,
+      "label": "Save settings / Credentials",
+      "desc": "Save your changes. Credentials holds the shared database URL and secret key; it is only needed once per computer.",
+      "box": {
+        "x": 34,
+        "y": 746,
+        "w": 362,
+        "h": 34
+      }
+    },
+    {
+      "n": 8,
+      "label": "Activity",
+      "desc": "Live messages from the server. Log files opens the saved logs; Clear empties this view. Useful when reporting a problem.",
+      "box": {
+        "x": 434,
+        "y": 78,
+        "w": 596,
+        "h": 770
+      }
+    },
+    {
+      "n": 9,
+      "label": "Install location and version",
+      "desc": "Where the application lives and which version (branch and commit) is running.",
+      "box": {
+        "x": 4,
+        "y": 868,
+        "w": 1040,
+        "h": 24
+      }
+    }
+  ],
+  "width": 1048,
+  "height": 894,
+  "patches": []
+}

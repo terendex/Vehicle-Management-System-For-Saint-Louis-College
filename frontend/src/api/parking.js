@@ -105,8 +105,26 @@ export const zoneApi = {
   },
 
   // Raw per-bay scores, for tuning thresholds against a real camera.
+  //
+  // `bays` is keyed by bay id and carries each reading together with the
+  // per-bay thresholds it was judged against, whether those were measured or
+  // are the fallback, how far that bay's live baseline has drifted, and why it
+  // was last held occupied or stopped from claiming. The zone-level `fps` is
+  // the measured scoring rate — a claim waits for `claim_frames` AND
+  // `claim_seconds`, and the frame count only starts to bind below
+  // claim_frames / claim_seconds.
   getSignals: async (id) => {
     const { data } = await api.get(`/vehicles/parking-zones/${id}/signals/`)
+    return { fps: null, person_suppression: false, bays: {}, ...(data || {}) }
+  },
+
+  // Score bays against the captured baseline again, discarding the drift the
+  // live baseline has picked up. Omit spaceId to reset the whole zone.
+  resetLiveBaseline: async (id, spaceId = null) => {
+    const { data } = await api.post(
+      `/vehicles/parking-zones/${id}/reset-live-baseline/`,
+      spaceId == null ? {} : { space_id: spaceId },
+    )
     return data
   },
 

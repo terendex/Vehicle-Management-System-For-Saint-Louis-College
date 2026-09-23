@@ -372,7 +372,12 @@ class TheGuardsThatSurvivedTests(TrialFlowTestCase):
                 self.assertEqual(res.status_code, 400)
 
     def test_the_review_payload_carries_nothing_withheld(self):
-        """What CDSO's queue and the owner portal actually receive."""
+        """What a reader with no request behind it receives: no documents at all.
+
+        The serializer is built bare here on purpose. Handing out the receipt
+        turns on the caller's role, and a caller that brought no request cannot
+        have one, so this is the floor the other two tests are measured against.
+        """
         from vehicles.serializers import VehicleRegistrationSerializer
 
         reg = self.submit(student_payload())
@@ -385,3 +390,60 @@ class TheGuardsThatSurvivedTests(TrialFlowTestCase):
         self.assertEqual(data['full_name'], 'DELA CRUZ, JUAN, SANTOS')
         self.assertEqual(data['drivers_license'], 'N01-20-800001')
         self.assertEqual(data['plate_number'], 'ABC1234')
+
+    def test_cdso_receives_the_receipt_photograph_in_the_review_queue(self):
+        """The reversal the DPO agreed to, checked where it has to work.
+
+        Collecting the photograph and rendering it are two different things, and
+        for a while only the first was true: the payment endpoint stored the
+        file, the review screen had markup to show it, and the serializer
+        blanked every document on the way out regardless — so the reviewer got
+        "No receipt photo on file" on every row that had one. Asserted through
+        the queue endpoint rather than the serializer, because that gap lived
+        between them.
+        """
+        reg = self.submit(student_payload())
+        self.assertEqual(self.pay(reg).status_code, 200)
+        reg.refresh_from_db()
+        self.assertTrue(reg.or_receipt_image, 'the payment endpoint stored no file')
+
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.get('/api/vehicles/registrations/pending/')
+        self.client.force_authenticate(user=None)
+
+        self.assertEqual(res.status_code, 200)
+        row = next(r for r in res.data if r['id'] == reg.pk)
+        self.assertTrue(row['or_receipt_image'],
+                        'CDSO cannot see the receipt it is being asked to check the number against')
+        # The reversal is exactly one document wide.
+        self.assertIsNone(row['drivers_license_image'])
+        self.assertIsNone(row['assessment_form'])
+        for name in WITHHELD:
+            self.assertNotIn(name, row)
+
+    def test_nobody_but_cdso_receives_the_receipt_photograph(self):
+        """The owner portal and the guard's vehicle profile read the same
+        serializer. Neither is the office that verifies payments, so neither is
+        handed the document — whether or not its view passes a request."""
+        from django.contrib.auth.models import AnonymousUser
+        from rest_framework.test import APIRequestFactory
+
+        from vehicles.serializers import VehicleRegistrationSerializer
+
+        reg = self.submit(student_payload())
+        self.assertEqual(self.pay(reg).status_code, 200)
+        reg.refresh_from_db()
+
+        owner = User.objects.create_user(
+            email='dpoowner@slc-sflu.edu.ph', full_name='Dpo Owner',
+            password='pw', role='vehicle_owner')
+        guard = User.objects.create_user(
+            email='dpoguard@slc-sflu.edu.ph', full_name='Dpo Guard',
+            password='pw', role='security')
+
+        for user in (owner, guard, AnonymousUser()):
+            with self.subTest(role=getattr(user, 'role', 'anonymous')):
+                request = APIRequestFactory().get('/')
+                request.user = user
+                data = VehicleRegistrationSerializer(reg, context={'request': request}).data
+                self.assertIsNone(data['or_receipt_image'])

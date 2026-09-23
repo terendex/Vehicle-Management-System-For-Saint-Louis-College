@@ -533,6 +533,22 @@ CELERY_WORKER_POOL = os.getenv('CELERY_WORKER_POOL', 'solo')
 ML_SAMPLE_BATCH_SIZE = int(os.getenv('ML_SAMPLE_BATCH_SIZE', 50))
 ML_AUTO_RETRAIN_ENABLED = os.getenv('ML_AUTO_RETRAIN_ENABLED', 'true').lower() == 'true'
 
+# Optional person detector for parking occupancy, OFF unless this points at a
+# local weights file with a "person" class (any COCO checkpoint has one).
+#
+# The campus detector is trained on plates and vehicles and drops every other
+# class, so it cannot tell a person standing in an empty bay from a car
+# arriving in it — the two look identical to a baseline comparison. Setting this
+# lets parking suppress a claim on the first case; leaving it unset means
+# parking simply has no information about people, which is how it has always
+# run. A second model is a second inference (~90ms/pass on GPU) every
+# DETECT_INTERVAL_SECONDS per zone, so it is opt-in rather than assumed.
+#
+# Deliberately a path, not a model name: the auto-download that
+# scanning/ml/auto_label.py uses is fine for an offline labelling tool and wrong
+# for a campus box mid-shift.
+PARKING_PERSON_WEIGHTS = os.getenv('PARKING_PERSON_WEIGHTS', '') or None
+
 # ── Production hardening ──────────────────────────────────────────────────────
 # Everything below is a no-op in local development (DEBUG=True).
 

@@ -366,12 +366,64 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
 
         Thresholds this cheap are only tunable if the numbers behind them are
         visible; without this the alternative is adjusting constants blind.
+
+        Each bay carries its reading, the per-bay thresholds that reading was
+        judged against, whether those came from measured noise or the fallback,
+        how far its live baseline has drifted, and why it was last held or
+        suppressed. `fps` is the zone's measured scoring rate: the frame gate on
+        a claim is only the faster of the two gates while that stays above
+        OCCUPY_THR / BASELINE_CLAIM_SECONDS.
         """
         zone = self.get_object()
         thread = parking_camera.get_thread(zone.id)
         if thread is None:
-            return Response({})                          # no detector running: nothing to report, not an error
-        return Response(thread.get_signals())            # the per-bay numbers the thresholds are compared against
+            # No detector running: nothing to report, not an error. Same shape
+            # as the live answer, so a caller never has to branch on it.
+            return Response({'fps': None, 'person_suppression': False, 'bays': {}})
+        from scanning.ml.detection import person_model_configured
+
+        return Response({
+            'fps':                thread.measured_fps(),
+            'claim_frames':       parking_camera.OCCUPY_THR,
+            'claim_seconds':      parking_camera.BASELINE_CLAIM_SECONDS,
+            'release_seconds':    parking_camera.OCCUPIED_GRACE_SECONDS,
+            # Off unless a person-capable model is configured; the suppression
+            # rule is inert rather than absent, so say which.
+            'person_suppression': person_model_configured(),
+            'bays':               thread.get_signals(),
+        })
+
+    @action(detail=True, methods=['post'], url_path='reset-live-baseline')
+    def reset_live_baseline(self, request, pk=None):
+        """Drop the drift a bay's live baseline has accumulated.
+
+        Scoring runs against a copy of the captured baseline that creeps toward
+        the current scene while a bay is confidently empty, which is what lets a
+        zone survive months of slow change without a re-capture. This is the
+        undo: something can still go wrong that no condition catches — a bay
+        re-drawn over ground that is never empty, a camera nudged a few degrees
+        — and the captured baseline is always there to go back to.
+
+        Body may carry `space_id` for one bay; without it the whole zone resets.
+        """
+        zone = self.get_object()
+        thread = parking_camera.get_thread(zone.id)
+        if thread is None:
+            return Response({'error': 'This zone has no detector running, so it has '
+                                      'no live baseline to reset.'}, status=400)
+
+        raw = request.data.get('space_id')
+        space_id = None
+        if raw not in (None, ''):
+            try:
+                space_id = int(raw)
+            except (TypeError, ValueError):
+                return Response({'error': 'space_id must be a bay id.'}, status=400)
+            if not zone.spaces.filter(pk=space_id).exists():
+                return Response({'error': 'That bay does not belong to this zone.'},
+                                status=400)
+
+        return Response({'reset': thread.reset_live_baseline(space_id)})
 
     @action(detail=True, methods=['get'], url_path='tracked-vehicles')
     def tracked_vehicles(self, request, pk=None):

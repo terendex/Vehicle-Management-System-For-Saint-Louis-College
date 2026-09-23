@@ -1,7 +1,13 @@
 # User manual images
 
-Annotated screenshots for the user manual. Each image has numbered callouts, and
-the same numbers are explained in the legend printed on the image and repeated below.
+**This file is generated.** `shots/index.mjs` writes it from the figure definitions in
+`shots/shots.mjs` and the prose in `shots/notes.mjs`; the Word document is then built from
+it. Edit those two files and re-run the capture, not this one — a hand edit here is lost on
+the next run, and it would also leave the text disagreeing with the legend printed inside
+each picture, which comes from the same definitions.
+
+Annotated screenshots for the user manual. Each image has numbered callouts, and the same
+numbers are explained in a legend printed inside the image and repeated below it.
 
 The web screenshots were taken against a separate demo database filled with
 fictional people, plates and records. Camera pictures in them are sample
@@ -78,8 +84,13 @@ The details a student applicant fills in.
 1. **Form type**: The kind of application you are filling in.
 2. **Campus Schedule**: Choose one schedule (Mon · Wed · Fri or Tue · Thu · Fri). Slots are first come, first served; a full schedule cannot be selected.
 3. **Registrant type**: Switch here if you picked the wrong type.
-4. **Vehicle identification**: Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number.
+4. **Vehicle identification**: Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number. Choosing E-Bike asks for neither: the college issues the unit a control number (FM-001, FM-002, and so on) on submission, and that number is what the gate, the pass and the QR code use in place of a plate.
 5. **Personal information**: Your name, then contact details further down. Scroll to the end to attach the required documents and submit.
+
+> After the form is submitted, the applicant pays the Vehicle Pass fee at the Accounting Office
+> and records it on the payment page: the Official Receipt number **and a photograph of the
+> receipt**, which is required. The photograph backs up the number, which on its own is only a
+> claim. It is never emailed, and it is never shown outside the CDSO review screen.
 
 ### Guard sign-in: choosing a gate
 
@@ -142,13 +153,20 @@ Alerts raised by new registrations, uploaded receipts and violations.
 Management › Vehicle Registration. Review and process vehicle pass applications.
 
 1. **Registration Form QR**: Shows a QR code applicants can scan to open the online application form.
-2. **Registrations report**: Pick a date range, then download a PDF or Excel report, or a one-page summary PDF.
+2. **Registrations report**: Pick a date range, then export a PDF or Excel report, or a one-page summary PDF. The export carries the screen’s own filters too — registrant type, payment and status — and the bar names them beside the label, so a table narrowed to Employees produces a report of employees.
 3. **Total registrations**: All applications received.
 4. **Quick filters**: Click a payment state or registrant type to narrow the list below.
 5. **Search**: Find an application by name, plate or type.
 6. **Type, payment and status filters**: Pending Review lists the applications still waiting for your decision.
 7. **Applications table**: Each row shows the applicant, plate, schedule, payment and status.
 8. **View**: Opens the application to check documents and approve or reject it.
+
+> **How reports are exported, everywhere in the system.** A PDF is confirmed before it is made:
+> the dialog restates the period, the filters in force and how many records match, and says so
+> plainly when nothing matches. The report then opens in a new browser tab instead of landing in
+> the downloads folder; the viewer’s own toolbar still offers Save and Print. Excel files are not
+> confirmed and still download. Every exported PDF ends with a Prepared by / Approved by signature
+> block — see *System Settings: report signatories*.
 
 ### Reviewing an application
 
@@ -157,10 +175,11 @@ Management › Vehicle Registration. Review and process vehicle pass application
 The application detail window, opened with the View (eye) button.
 
 1. **Applicant details**: Name, email, registrant type, schedule, department and driver’s license.
-2. **Payment**: Whether the fee is paid, the Official Receipt number, amount and date.
+2. **Payment**: Whether the fee is Paid, Unpaid or Exempt, with the Official Receipt number, the amount and the date it was settled.
 3. **Campus days**: The days this pass will allow entry.
-4. **Vehicle information**: Plate, vehicle type, colour and conduction number.
-5. **Accept Registration**: Check the receipt against the uploaded photo before approving. Scroll down for the documents and the decision buttons.
+4. **Official Receipt photograph**: The picture of the receipt the applicant uploaded, shown with the number it backs — click it to open it full size. A row that has none says so in words, so “nothing was uploaded” is never mistaken for a picture that has not loaded. Only CDSO is shown this; it reaches neither the owner’s portal nor a guard.
+5. **Vehicle information**: Plate, vehicle type, colour and conduction number.
+6. **Accept Registration**: Check the number against the photograph before approving. Scroll down for the decision buttons.
 
 ### Approving or rejecting an application
 
@@ -168,10 +187,17 @@ The application detail window, opened with the View (eye) button.
 
 The bottom of the Registration Details window.
 
-1. **Official Receipt (OR) Number**: Filled in from the receipt the applicant uploaded. Correct it only if it does not match the receipt under Submitted Documents.
+1. **Official Receipt (OR) Number**: Filled in from the receipt the applicant uploaded. Check it against the photograph shown with the OR number higher up this window, and correct it only if the two disagree. It is not asked for at all when the applicant is fee-exempt.
 2. **Reason for Extra Days**: Appears only when the pass allows more than the standard 3 days. Required; the registration is flagged as a Special Case.
 3. **Reject**: Turns the application down. You will be asked for the reason.
-4. **Confirm & Accept**: Approves the application: the pass and system ID are issued and the owner’s portal account is created.
+4. **Confirm & Accept**: Approves the application: the pass and system ID are issued and the owner’s portal account is created. It stays disabled while the fee is unsettled.
+
+> **A registration whose fee is unsettled can no longer be approved.** Where no Official Receipt
+> number is on file and the applicant is not marked Exempt, a notice appears in place of the OR
+> box and Confirm & Accept is disabled. Enter the OR number once the fee has been paid at the
+> counter — a number typed at the counter counts as settled, the same as an uploaded receipt — or
+> set the payment to Exempt where nothing is owed. The old justification box, which let a pass be
+> issued against money that had never been collected, is gone.
 
 ### User Management
 
@@ -225,6 +251,11 @@ Management › Suppliers. Supplier vehicles are admitted automatically when thei
 3. **Category**: Delivery, maintenance, vendor, contractor or other.
 4. **Active**: Click to deactivate a supplier; its vehicles stop being admitted automatically.
 
+> Each registered plate has a **Print Supplier Pass** button. It prints a standing pass for that
+> plate on the thermal printer, to be kept in the vehicle: the guard scans its QR at the gate the
+> way a registered vehicle’s QR is scanned, the first scan recording the entry and the next the
+> exit.
+
 ### Operations Center: live monitor
 
 ![Operations Center: live monitor](02-cdso-admin/09-operations-center.png)
@@ -266,24 +297,48 @@ Visitors still on campus, cross-gate discrepancies and confiscated accounts.
 Operations › Parking Space Management. Bays, zones, live occupancy and events.
 
 1. **Screen tabs**: Parking Spaces (this view) and Events (campus events that reserve parking).
-2. **Occupancy tiles**: Free, Occupied and Capacity come from gate scans. Bays Taken is what the camera sees in the selected zone.
-3. **Zones**: Each parking zone and the camera watching it. Click a zone to select it.
-4. **Refresh, Cameras, New Zone**: Reload, manage the parking cameras, or draw a new zone.
-5. **Live View / Edit Parking Slots**: Switch between watching the bays and drawing or adjusting them.
-6. **Delete Zone**: Removes the selected zone and its bays.
-7. **Bay map**: Green bays are free, red bays are taken (with the plate when known).
+2. **Occupancy tiles**: Free, Parked and Capacity cover every zone of the selected vehicle category and come from the parking cameras. On Campus counts vehicles scanned in at a gate, parked or not.
+3. **Zone tabs**: One tab per parking zone, each naming the camera that watches it, or "No camera" where none is assigned. Click a tab to select the zone.
+4. **Refresh, Cameras, New Zone**: Reload the zones, open the live parking feeds, or create a zone. The Cameras button carries an "unzoned" badge counting cameras with no zone drawn on them yet.
+5. **Live View / Edit Parking Slots**: Watch the bays over the live feed, or switch to drawing them over the zone’s still reference image.
+6. **Monitoring status**: Monitoring bays means the detector is running on this zone; Starting camera that it is coming up; Not monitored yet that the zone’s setup is unfinished, so the bay colours are not a live reading. There is no on/off switch — the server restarts the detector by itself.
+7. **Delete Zone**: Removes the selected zone and its bays. It sits apart from the working controls because it cannot be undone.
+8. **Bay map**: Drawn over the live feed. Green bays are free, red bays are taken (with the plate where one is known); a vehicle lying across two bays is flagged as double parking.
+
+> **Three steps make a zone monitored**, and until all three are done the zone reads *Not
+> monitored yet* and its bay colours are not a reading. Capture a reference image with the lot
+> empty, draw the parking slots on it, then press **Start Monitoring**, which stores that image as
+> the zone’s empty baseline. A banner on the zone names whichever step is outstanding and takes
+> you to it. Replacing the reference image later marks the baseline stale, and the banner asks you
+> to update it.
+
+> **On Campus is not the same count as Parked**, and the two are not meant to agree. Parked is
+> what the parking cameras can see in the bays; On Campus counts vehicles of that category scanned
+> in at a gate, parked or not. On a busy day On Campus runs ahead — drop-offs, vehicles still
+> circling, vehicles parked where no camera watches — and it falls behind wherever a zone is not
+> monitored yet and its bays are not being scored. The line beneath the tiles names both sources,
+> and warns when a zone is unmonitored and the Free figure may therefore be too high.
 
 ### Drawing parking bays
 
 ![Drawing parking bays](02-cdso-admin/13-parking-edit-slots.png)
 
-Edit Parking Slots mode: draw and adjust bays over the camera picture.
+Edit Parking Slots mode: draw and adjust bays over the zone’s reference image.
 
-1. **Drawing tools**: Box draws rectangular bays; Pen draws a free-form outline for angled bays.
+1. **Drawing tools**: Box draws rectangular bays; Pen places points and closes the shape on the first (yellow) point, for angled bays. The hint beside the tools counts the points placed.
 2. **Upload Image / Save Layout**: Upload a reference picture of the lot, and save the bays when you are done.
-3. **Drawing area**: Click and drag to draw a bay. Click a bay to rename or delete it.
-4. **Camera**: The camera whose picture the bays are drawn over.
-5. **Use as Reference Image**: Takes the current camera picture as this zone’s reference image.
+3. **Drawing area**: Click and drag to draw a bay. Click a bay to open its small toolbar: rename it, duplicate it, or remove it. Enter keeps a bay, Delete removes it, and Esc cancels a half-drawn shape.
+4. **Camera**: The camera whose picture the bays are drawn over. Draw against the zone’s own camera — bays drawn over another camera’s view are scored against a different scene.
+5. **Set Up Bay Monitoring**: The three steps that make this zone monitored, in order, with the next one’s button highlighted: capture a reference image of the empty lot, draw the parking slots on it, then Start Monitoring. Until all three are done the bays are not being watched.
+
+> **Cameras with two lenses.** Where a camera sends two views stacked in one frame, the editor
+> asks which view this zone covers before any bay is drawn, so that a bay cannot be placed across
+> the seam between them. Live View then shows that view alone, and the feeds panel labels the two
+> as Lens 1 and Lens 2.
+
+> A warning appears if you are looking at one camera while the selected zone is watched by
+> another, with a button to reassign it. Bays drawn against the wrong view are saved, but they are
+> scored against a different scene than the one they look right on.
 
 ### Campus events
 
@@ -297,6 +352,10 @@ Events reserve part of campus parking and note organizer plates.
 4. **Event actions**: Activate the event, reschedule it, show its details, or delete it.
 5. **Archived Events**: Past events, kept for reference.
 
+> Each organizer plate has a **Print Event Pass** button. It prints a standing pass for that plate
+> on the thermal printer, to be kept in the vehicle for the day: the guard scans its QR at the
+> gate like a registered vehicle’s, the first scan recording the entry and the next the exit.
+
 ### Violations
 
 ![Violations](02-cdso-admin/15-violations.png)
@@ -304,10 +363,10 @@ Events reserve part of campus parking and note organizer plates.
 Operations › Violations. The 3-offence penalty ladder and every recorded offence.
 
 1. **Active warnings**: How many violations are still counting against their owners.
-2. **Violations report**: Pick a date range and download a PDF or Excel report.
+2. **Violations report**: Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.
 3. **Status filter**: All, Warnings, Confiscated (3rd offence) or Cleared / Resolved.
 4. **Type and period**: Filter by violation type, and by Today, Week, Month or Year.
-5. **Search**: Find by plate, owner or notes. The arrow button resets all filters.
+5. **Search**: Find by plate, conduction number, owner or notes. The arrow button resets all filters.
 6. **Violations table**: Plate, owner, type with offence number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.
 7. **Lift**: Voids a violation as a false alarm. It stops counting, and later offences are renumbered.
 
@@ -343,7 +402,7 @@ Set when the online application form accepts submissions.
 
 1. **New Period**: Create a registration window with a label, start date and end date.
 2. **Period**: Label, start and end dates. Only one period can be Active; the public form accepts applications only while it is open.
-3. **Edit / Deactivate**: Change the dates, or close the window early.
+3. **Extend Duration / Deactivate**: Open a running period to move its end date, or close the window early. The editor is headed "Extending period" and saves with Save New Dates.
 
 ### Rule Constraints: access mode
 
@@ -370,9 +429,9 @@ System › Audit Log. What staff did to accounts and records.
 
 ![System Settings: accounts & fees](02-cdso-admin/21-settings-accounts-fees.png)
 
-System › System Settings. System-wide policies, grouped into four tabs.
+System › System Settings. System-wide policies, grouped into five tabs.
 
-1. **Settings tabs**: Accounts & Fees, Gates & Scanning, Parking, and Data & Backup.
+1. **Settings tabs**: Accounts & Fees, Gates & Scanning, Parking, Data & Backup, and Report Signatories. A tab holding unsaved changes carries a dot, and Save stays disabled until something differs from what is stored.
 2. **Account expiry period**: How long a vehicle-owner account lasts before it is archived automatically.
 3. **Retention notice**: What the chosen period means for owners’ records.
 4. **Vehicle pass fees**: The amounts applicants are asked to pay at the Accounting Office.
@@ -409,6 +468,28 @@ Backups, restore and data retention.
 3. **Automatic backups**: How often the server backs itself up, and how many automatic backups to keep.
 4. **Backups on the server**: Saved backups. Save As downloads a copy, Restore brings the system back to that point, and the bin deletes it.
 
+> **What a restore does to the live data.** It is a merge, not a wipe: records in the backup are
+> written over the matching live records, and nothing is deleted. Where a live record already
+> holds a value the backup needs — the same email address, the same camera number — the live
+> record is moved aside rather than removed, either by archiving it or by giving it a fresh value.
+> Restoring onto a system that is already running and restoring onto a brand-new installation
+> therefore both work.
+
+### System Settings: report signatories
+
+![System Settings: report signatories](02-cdso-admin/24b-settings-report-signatories.png)
+
+Who signs the PDF reports. Every exported PDF ends with this block.
+
+1. **Prepared by**: Normally whoever pressed the export button — their name and role are taken from the account signed in. Leave these two boxes blank to keep it that way; fill them in only to sign every report with one name instead.
+2. **Approved by**: Set here, because the head of office does not sign in to run every report and the post changes hands. Leave the name blank and the report prints an empty ruled line to be signed by hand.
+3. **Captions**: The wording above each signature. An office that files these as "Submitted by" or "Noted by" can say so without a change to the system.
+4. **Preview**: Shows the signature block exactly as it will be printed.
+
+> Leaving the approver’s name blank is a real choice, not a missing value: the report then prints
+> an empty ruled line to be signed by hand. Whatever is set here, the report footer still records
+> the account that exported it.
+
 ### Help & User Manual
 
 ![Help & User Manual](02-cdso-admin/25-help.png)
@@ -434,12 +515,27 @@ The guard’s main screen at the gate. Plates are read automatically from the en
 2. **CCTV Monitor**: Live picture from this gate’s entry camera. Detected plates are boxed and checked automatically. (Sample picture shown.)
 3. **Owner name / plate search**: Type a plate, conduction number or owner name when a plate is not read automatically.
 4. **Check Plate — Entry / Exit**: Checks the typed plate. A vehicle already inside is logged out; otherwise its entry is checked against its pass and schedule.
-5. **Scan QR**: Scan the QR code on the owner’s vehicle pass or a visitor slip.
-6. **No Plate?**: Record a vehicle with no plate or conduction sticker by describing it.
+5. **Scan QR**: Scan the QR code on the owner’s vehicle pass, or on any printed slip — a visitor slip, a supplier or event pass, or the entry slip given to a vehicle with no plate. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up cannot let a vehicle out by accident.
+6. **No Plate?**: Record a vehicle with no plate or conduction sticker by describing it. Its entry slip prints on the thermal printer for the driver to keep.
 7. **Recent Scans**: Latest decisions at this gate. The chips count entries by category.
 8. **Active Visitors**: Visitor passes still inside, with time left. +30m extends a pass.
 9. **Confiscated accounts**: Owners serving a violation penalty. They may not enter or park.
 10. **Shift controls**: On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.
+
+> **Two panels appear on the right when they have something in them.** **Unrecognized Vehicles
+> Inside** lists the no-plate vehicles still on campus, each with a Slip button (reprint it, or
+> record the exit from it) and a Log Exit button — without them those vehicles would sit in the
+> inside count for ever. **Overstaying** lists vehicles still on campus past the maximum stay
+> their entry rule allows, with how far over they are; **Acknowledge** issues the Time Exceed
+> violation there and then. They may still leave, but not return until the confiscation ends, and
+> a vehicle already recorded today is marked as such rather than offered again.
+
+> **Passes and slips print on the thermal printer.** Creating a visitor pass asks for the
+> visitor’s name, the office, the purpose and the allowed duration in hours and minutes, then
+> prints the slip — and the visitor’s entry is logged once the slip prints, not before. If the
+> printer is offline the pass is still created and the screen says so, with a Retry; a no-plate
+> vehicle’s entry is recorded either way, and its slip can be reprinted from the Unrecognized
+> Vehicles panel.
 
 ### Checking a plate
 
@@ -466,6 +562,10 @@ Describe the vehicle when there is no plate the system can read.
 4. **Note**: Anything useful, e.g. "newly delivered unit, plate not yet issued".
 5. **Record Entry**: Saves the entry to the Vehicle Log. Cancel closes without saving.
 
+> The entry slip prints on the thermal printer for the driver to keep. Scanning that slip when the
+> vehicle leaves is the quickest way to close the entry; the Unrecognized Vehicles Inside panel
+> does the same job when the slip has been lost.
+
 ### Parking monitor
 
 ![Parking monitor](03-security-guard/04-parking.png)
@@ -475,9 +575,9 @@ Watch parking zones, see free spaces and act on parking offences.
 1. **Zones**: Pick the parking zone to watch.
 2. **Cameras**: Switch between the cameras watching parking.
 3. **Live picture**: The camera view with bay outlines. (Sample picture shown.)
-4. **Legend**: Free, Occupied, and Vehicle seen (a vehicle the camera is tracking).
-5. **Campus-wide spaces**: Free spaces for this vehicle type across campus, counted from gate entries and exits.
-6. **Bays in this zone**: How many bays the camera sees taken.
+4. **Legend**: Free, Occupied and Double parking. The bays refresh every 8 seconds.
+5. **Campus-wide figures**: Free, Parked and Capacity for this vehicle type across campus, from the parking cameras. On campus beside them counts gate entry and exit scans instead, parked or not, so the two are counted differently and will not agree. Held appears where an event is reserving spaces.
+6. **Bays in this zone**: How many bays the camera sees taken, with the zone’s own status: Monitoring, Camera off, or Not set up — which means an admin has not finished the zone’s setup, so those bay colours may be out of date.
 7. **Issue Violation / Override Parking**: Record a parking offence, or let a vehicle park when the area is full (event mode).
 
 ### Issuing a parking violation
@@ -521,6 +621,10 @@ What a registered owner sees after signing in.
 7. **Registration status**: Whether your vehicle is authorized to enter campus.
 8. **Vehicle information**: Plate, type, colour and conduction number on file.
 
+> An e-bike shows its college-issued **Control Number** (FM-001, FM-002, and so on) in place of
+> both the plate and the conduction number. That number is the e-bike’s identity at the gate and
+> on its QR code, and it cannot be edited.
+
 ### Vehicle owner portal: violations & parking
 
 ![Vehicle owner portal: violations & parking](04-vehicle-owner/02-portal-violations-parking.png)
@@ -529,7 +633,7 @@ Further down the portal: your violation record, announcements and live parking.
 
 1. **My violation record**: Any violations against your account and their status.
 2. **Announcements**: Parking notices from the CDSO.
-3. **Available / occupied / total**: Spaces for your vehicle type right now.
+3. **Available / Parked / Total**: Spaces for your vehicle type right now. A "Held for event" figure joins them while an event is reserving parking.
 4. **Zone fill level**: How full each parking zone is.
 5. **Bays**: Green bays are free; red bays are taken.
 
@@ -651,4 +755,12 @@ Opened from the desktop or Start Menu shortcut. It runs the server that the gate
 7. **Save settings / Credentials**: Save your changes. Credentials holds the shared database URL and secret key; it is only needed once per computer.
 8. **Activity**: Live messages from the server. Log files opens the saved logs; Clear empties this view. Useful when reporting a problem.
 9. **Install location and version**: Where the application lives and which version (branch and commit) is running.
+
+> **When a browser refuses the camera.** Browsers only allow a page to use a webcam on a secure
+> page. The launcher’s own window is one, and so is the campus computer itself, but another device
+> opening `http://<campus computer>:8000` is not — so QR scanning by webcam will not start there.
+> The campus server also serves the same pages over HTTPS on port 8443, and any page that needs
+> the camera offers a link: **Open the secure page to use the camera**. The first time a device
+> follows it, the browser warns about the certificate, because it is one the college issued
+> itself; choose Advanced, then Proceed. A USB scanner works on either page.
 

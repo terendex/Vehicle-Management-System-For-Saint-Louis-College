@@ -1,0 +1,59 @@
+{
+  "id": "05-installer--03-components",
+  "out": "05-installer/03-components.png",
+  "section": "Installing the Campus System",
+  "title": "Step 3 · Select components",
+  "caption": "Choose what Setup installs. A full installation is right for a new gate computer.",
+  "marks": [
+    {
+      "n": 1,
+      "label": "Installation type",
+      "desc": "Full installation selects everything. Choose Custom installation to pick items yourself.",
+      "box": {
+        "x": 41,
+        "y": 144,
+        "w": 516,
+        "h": 23
+      }
+    },
+    {
+      "n": 2,
+      "label": "Component list",
+      "desc": "The launcher is always installed. Untick Git, Python, Node.js or FFmpeg only if your IT office already manages them. The firewall rule lets guards’ computers reach this machine.",
+      "box": {
+        "x": 41,
+        "y": 168,
+        "w": 516,
+        "h": 212
+      }
+    },
+    {
+      "n": 3,
+      "label": "Space required",
+      "desc": "Disk space the current selection needs.",
+      "box": {
+        "x": 41,
+        "y": 391,
+        "w": 516,
+        "h": 16
+      }
+    },
+    {
+      "n": 4,
+      "label": "Back / Next / Cancel",
+      "desc": "Next continues, Back returns to the previous page, and Cancel quits Setup without installing anything.",
+      "box": {
+        "x": 352,
+        "y": 430,
+        "w": 235,
+        "h": 23
+      }
+    }
+  ],
+  "display": 1.45,
+  "layout": "side",
+  "width": 598,
+  "height": 464,
+  "redact": [],
+  "patches": []
+}

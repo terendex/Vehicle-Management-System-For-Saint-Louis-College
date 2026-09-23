@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { reportFileName } from '../../utils/reportName'
 import { openReportTab } from '../../utils/saveFile'
+import { confirmPdfExport } from '../../utils/confirmReport'
 import './AuditLog.css'
 
 // Must stay in step with AuditLog.Action on the backend. Vehicle-owner gate
@@ -175,6 +176,14 @@ export default function AuditLog() {
   // filters. Opened for viewing rather than downloaded - openReportTab must be
   // called before the await, while the click is still a user gesture.
   const exportPdf = async () => {
+    // Confirm BEFORE opening the tab, or cancelling leaves a blank one behind.
+    const summary = [
+      actionFilter ? (ACTION_LABELS[actionFilter] || actionFilter) : '',
+      search ? `“${search}”` : '',
+    ].filter(Boolean).join(' · ')
+    if (!(await confirmPdfExport({
+      label: 'Audit Log Report', summary, from: dateFrom, to: dateTo, count: totalCount,
+    }))) return
     const tab = openReportTab()
     setExportingPdf(true)
     try {
