@@ -8,7 +8,9 @@ import datetime
 import json
 import os
 import shutil
+import socket
 import tempfile
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.utils import timezone as tz
@@ -198,9 +200,10 @@ class AutoBackupTaskTests(BackupTempDirMixin, TestCase):
 
         self.cfg.auto_backup_frequency = 'hourly'
         self.cfg.save()
+        host_key = f'auto_backup@{socket.gethostname()[:40]}'
         key = _claim_key('auto_backup')
-        self.assertNotEqual(key, 'auto_backup')
-        self.assertTrue(key.startswith('auto_backup:h'))
+        self.assertTrue(key.startswith(host_key + ':h'))
+        self.assertLessEqual(len(key), 64)
 
         # Every other frequency keeps the plain daily key, so the ledger only
         # grows when hourly is actually in use.
@@ -208,7 +211,45 @@ class AutoBackupTaskTests(BackupTempDirMixin, TestCase):
             with self.subTest(freq=freq):
                 self.cfg.auto_backup_frequency = freq
                 self.cfg.save()
-                self.assertEqual(_claim_key('auto_backup'), 'auto_backup')
+                self.assertEqual(_claim_key('auto_backup'), host_key)
+
+    def test_another_server_on_the_same_database_cannot_take_our_slot(self):
+        """The ledger is shared but the backup file is local: a cloud deployment
+        claiming the hour must not stop the campus PC writing its own backup."""
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import run_due_jobs
+
+        self.cfg.auto_backup_frequency = 'hourly'
+        self.cfg.save()
+        hour = tz.localtime().strftime('%H')
+        DailyJobRun.objects.create(job=f'auto_backup@some-other-host:h{hour}',
+                                   run_date=tz.localdate())
+        DailyJobRun.objects.create(job=f'auto_backup:h{hour}',   # pre-fix key
+                                   run_date=tz.localdate())
+
+        with patch('vehicles.tasks.auto_archive_expired_accounts', return_value={}), \
+             patch('vehicles.tasks.purge_old_records', return_value={}):
+            run_due_jobs()
+
+        self.assertEqual(len(backup_utils.list_backups()), 1)
+
+    def test_a_backup_that_was_not_due_gives_its_slot_back(self):
+        """Otherwise a daily backup whose first pass after a restart lands an
+        hour early loses the whole day."""
+        from vehicles.models import DailyJobRun
+        from vehicles.scheduler import _claim_key, run_due_jobs
+
+        self.cfg.auto_backup_frequency = 'daily'
+        self.cfg.save()
+        recent = tz.localtime() - tz.timedelta(hours=20)
+        self.touch(f'auto-backup-{recent.strftime("%Y%m%d-%H%M%S")}.json')
+
+        with patch('vehicles.tasks.auto_archive_expired_accounts', return_value={}), \
+             patch('vehicles.tasks.purge_old_records', return_value={}):
+            outcomes = run_due_jobs()
+
+        self.assertIn('not due', outcomes['auto_backup'])
+        self.assertFalse(DailyJobRun.objects.filter(job=_claim_key('auto_backup')).exists())
 
     def test_other_jobs_are_never_hour_keyed(self):
         from vehicles.scheduler import _claim_key

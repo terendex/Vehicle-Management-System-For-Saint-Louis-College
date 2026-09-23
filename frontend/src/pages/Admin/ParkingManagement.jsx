@@ -838,27 +838,6 @@ export default function ParkingManagement({ embedded = false }) {
     setSelDraft(null)
   }
 
-  // A copy beside the original, for rows of same-sized bays.
-  const duplicateSelDraft = () => {
-    const src = draftsRef.current.find(s => s._id === selDraft)
-    if (!src) return
-    commitLabel()
-    const dx = src.x2 + 0.01 + (src.x2 - src.x1) <= 1 ? (src.x2 - src.x1) + 0.01 : 0
-    const dy = dx ? 0 : Math.min(0.03, 1 - src.y2)
-    const id    = tid()
-    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
-    setDrafts(p => [...p, {
-      ...src,
-      _id: id, id: null,
-      space_number: label,
-      x1: src.x1 + dx, x2: src.x2 + dx, y1: src.y1 + dy, y2: src.y2 + dy,
-      points: src.points ? src.points.map(([x, y]) => [x + dx, y + dy]) : null,
-      is_occupied: false, occupied_by: '',
-    }])
-    setSelDraft(id)
-    setDraftLabel(label)
-  }
-
   // ── Save layout ─────────────────────────────────────────────────
   const saveLayout = async () => {
     if (!selId) return
@@ -1665,9 +1644,6 @@ export default function ParkingManagement({ embedded = false }) {
                   />
                   <button className="pm-popover-btn pm-popover-btn--ok" onClick={acceptSelDraft} title="Keep this slot (Enter)">
                     <Check size={14} />
-                  </button>
-                  <button className="pm-popover-btn pm-popover-btn--dup" onClick={duplicateSelDraft} title="Duplicate this slot">
-                    <Plus size={14} />
                   </button>
                   <button className="pm-popover-btn pm-popover-btn--del" onClick={deleteSelDraft} title="Remove this slot (Delete)">
                     <X size={14} />

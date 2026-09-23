@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import sys
 import threading
 
@@ -90,6 +91,13 @@ def _claim_key(job: str) -> str:
     hour is its own claim — still exactly one process per slot, just twenty-four
     slots in a day instead of one. Every other frequency keeps the plain daily
     key, which is why the ledger only grows when hourly is actually in use.
+
+    Backups are also keyed by machine. The ledger lives in the shared database
+    but the backup file lands on the local disk, so when two servers point at
+    one database (the campus PC and a cloud deployment) a shared key let
+    whichever woke first each hour take the backup — onto its own disk — and
+    the campus PC, whose System Settings lists only its own folder, never took
+    another one. Each machine now claims its own slots.
     """
     if job != 'auto_backup':
         return job
@@ -98,7 +106,9 @@ def _claim_key(job: str) -> str:
         hourly = SystemSettings.get().auto_backup_frequency == 'hourly'
     except Exception:                                   # noqa: BLE001 — pre-migrate
         return job
-    return f'{job}:h{timezone.localtime():%H}' if hourly else job
+    # The job column is 64 wide: 12 for "auto_backup@" and 4 for ":hNN".
+    key = f'{job}@{socket.gethostname()[:40]}'
+    return f'{key}:h{timezone.localtime():%H}' if hourly else key
 
 
 def run_due_jobs(force: bool = False) -> dict:
@@ -114,6 +124,7 @@ def run_due_jobs(force: bool = False) -> dict:
             continue
 
         failed = False
+        result = None
         try:
             result = getattr(tasks, job)()
             summary = str(result)[:255]
@@ -125,9 +136,17 @@ def run_due_jobs(force: bool = False) -> dict:
             summary = f"failed: {exc}"[:255]
             log.exception("[scheduler] %s failed", job)
 
+        # A backup that was not due yet has not done the slot's work. Keeping
+        # the claim would make a daily backup skip a whole day whenever the
+        # first pass after a restart lands a little before the 24 hours are up.
+        # The file age decides; the claim only stops two processes writing at
+        # once.
+        skipped = (job == 'auto_backup' and isinstance(result, dict)
+                   and result.get('skipped') == 'not due')
+
         outcomes[job] = summary
         if row is not None:
-            if failed:
+            if failed or skipped:
                 # Release the claim so the next pass retries in an hour rather
                 # than leaving the day unarchived. The jobs are idempotent, so a
                 # partial run finishing on the retry is correct; a job that keeps

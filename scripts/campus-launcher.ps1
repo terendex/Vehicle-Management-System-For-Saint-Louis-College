@@ -1238,6 +1238,9 @@ function Open-CampusPage {
     #     itself, so a gate terminal that boots unattended scans without anyone
     #     clicking Allow. The camera is still the real one - the fake-device
     #     flag is a different switch. The profile only ever opens this server.
+    #   * --test-type hides the "You are using an unsupported command-line flag"
+    #     bar the first flag puts across the top of every page. --disable-infobars
+    #     no longer covers that bar; this is the switch Chrome itself checks.
     $browserArgs = @(
         $(if ($cfg.Kiosk) { '--kiosk' } else { '--new-window' }), $url,
         "--user-data-dir=`"$profileDir`"",
@@ -1245,7 +1248,8 @@ function Open-CampusPage {
         '--use-fake-ui-for-media-stream',
         '--no-first-run',
         '--disable-session-crashed-bubble',
-        '--disable-infobars'
+        '--disable-infobars',
+        '--test-type'
     )
     if ($cfg.Kiosk -and $browser.Kind -eq 'edge') {
         # Without this Edge picks its "public browsing" kiosk, which is
