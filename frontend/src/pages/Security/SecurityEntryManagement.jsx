@@ -37,6 +37,11 @@ const STATUS_META = {
   open_entry: { label: 'Open Entry',             Icon: DoorOpen,      cls: 'authorized', logCls: 'authorized' },
   wrong_day:  { label: 'Wrong Schedule Day',     Icon: XCircle,       cls: 'wrong_day',  logCls: 'wrong_day'  },
   denied:     { label: 'Entry Denied',           Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
+  // Serving a violation penalty — an owner's account, or a visitor matched on
+  // plate, conduction number or name. It used to fall through to `unknown`
+  // and show as "Visitor / Unregistered" with a question mark, which read as
+  // "issue them a pass" — the one thing the guard must not do.
+  confiscated: { label: 'Entry Denied — Confiscated', Icon: ShieldOff, cls: 'denied',    logCls: 'denied'     },
   unknown:    { label: 'Visitor / Unregistered', Icon: HelpCircle,    cls: 'visitor',    logCls: 'visitor'    },
   no_pass:    { label: 'No Visitor Pass',        Icon: AlertTriangle, cls: 'visitor',    logCls: 'visitor'    },
   disabled:   { label: 'Access Disabled',        Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
@@ -961,6 +966,17 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
           </div>
           <div className="em-result-body">
             <p className="em-result-msg">{result.message}</p>
+            {result.status === 'confiscated' && (
+              <div className="em-result-rows">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Penalty</span>
+                  <span className="em-violation-pill"><ShieldOff size={10} /> Confiscated</span>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#C62828' }}>
+                  Do not admit{!owner ? ' or issue a visitor pass' : ''}. Refer them to the CDSO office.
+                </p>
+              </div>
+            )}
             {result.constraint && (
               <div className="em-constraint-info">
                 <AlertTriangle size={13} style={{ flexShrink: 0 }} />
