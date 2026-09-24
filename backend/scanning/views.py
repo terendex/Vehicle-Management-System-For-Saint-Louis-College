@@ -649,6 +649,11 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     Past violations stay stored, and the cumulative (non-cleared) count per
     ACCOUNT drives the penalty — 1st offence costs a week of campus access, 2nd
     two weeks, 3rd the rest of the registration period.
+
+    Returns what happened, for the guard's result card (see _issued_summary):
+    the new violation and the penalty it imposed, or {'already_recorded': True}
+    when the per-day cap meant no new strike. Callers that do not show a card
+    may ignore it.
     """
     from .models import active_guard_for_gate
 
@@ -680,7 +685,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
             issued_at__gte=_day_start,
             issued_at__lt=_day_end,
         ).exists():
-            return                               # already struck today; this scan adds nothing
+            return {'already_recorded': True}    # already struck today; this scan adds nothing
     else:
         # No account behind the plate (gate-issued vehicle). A visitor now
         # serves a ladder of their own (violations.penalty.visitor_confiscation),
@@ -700,7 +705,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
             issued_at__gte=_day_start,
             issued_at__lt=_day_end,
         ).exists():
-            return
+            return {'already_recorded': True}
 
     if owner is not None:
         offense_num = Violation.compute_offense_number(owner)   # which strike this is for the ACCOUNT, not the vehicle
@@ -724,12 +729,40 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     # Impose the ladder, then tell the owner. Both are best-effort: the
     # violation itself is already recorded and must not be rolled back by a
     # mail server being down.
+    penalty = None
     try:
         from violations.penalty import apply_penalty, notify_owner
         penalty = apply_penalty(violation)
         notify_owner(violation, penalty)
     except Exception:
         logger.exception('Could not apply penalty for violation %s', violation.pk)
+    return _issued_summary(violation, penalty)
+
+
+def _issued_summary(violation, penalty) -> dict:
+    """What a gate-issued violation did, in the shape the guard's card reads.
+
+    The card used to show only the refusal, so a guard turning a student away
+    on the wrong day had no idea the same scan had just confiscated the account
+    for a week — or that pressing Override would not undo it.
+    """
+    if penalty is None and violation.owner_id is None:
+        # A visitor: their penalty is derived, not stored (violations.penalty).
+        try:
+            from violations.penalty import visitor_confiscation, visitor_identity
+            penalty = visitor_confiscation(*visitor_identity(violation.vehicle))
+        except Exception:
+            penalty = None
+    until = penalty.get('until') if penalty else None
+    return {
+        'id':                violation.pk,
+        'type':              violation.violation_type,
+        'type_label':        violation.get_violation_type_display(),
+        'offense_number':    violation.offense_number,
+        'confiscated':       bool(penalty),
+        'confiscated_until': until.isoformat() if until else None,
+        'penalty':           penalty.get('reason', '') if penalty else '',
+    }
 
 
 # The camera's endpoint: one frame in, a decision per plate out.
@@ -1080,8 +1113,9 @@ class ScanView(APIView):
             # Refused AND at fault. The two excluded statuses are the ones
             # where refusal is simply the process working: a visitor who has
             # not been issued a pass yet has done nothing wrong.
+            issued = None
             if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
-                _auto_log_violation(vehicle, entry['message'], gate_id,
+                issued = _auto_log_violation(vehicle, entry['message'], gate_id,
                                 entry_status=entry['status'])   # lets the helper tell "confiscated" apart from ordinary refusal
 
             resp = {
@@ -1095,6 +1129,7 @@ class ScanView(APIView):
                 'already_inside':  already_inside,
                 'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate)),
                 'bbox':            bbox,
+                'violation':       issued,        # what this refusal cost them, for the result card
             }
             # Attached only when the ML pipeline actually recorded a sample,
             # so the guard page can offer "was this read correctly?" against a
@@ -3048,8 +3083,9 @@ class ManualEntryView(APIView):
         # Refused AND at fault. The two exclusions are the cases where being
         # turned away is the process working: a visitor waiting on a pass has
         # done nothing wrong.
+        issued = None
         if not entry['allowed'] and entry['status'] not in ('no_pass', 'unknown'):
-            _auto_log_violation(vehicle, entry['message'], gate_id,
+            issued = _auto_log_violation(vehicle, entry['message'], gate_id,
                                 entry_status=entry['status'])
 
         return Response({
@@ -3066,6 +3102,7 @@ class ManualEntryView(APIView):
             # event. This one only marks who they are.
             'organizer_event': get_organizer_event(*vehicle_identifiers(vehicle, plate_number)),
             'gate_id':         gate_id,
+            'violation':       issued,            # what this refusal cost them, for the result card
         })
 
 

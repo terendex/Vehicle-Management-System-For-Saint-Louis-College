@@ -977,6 +977,35 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                 </p>
               </div>
             )}
+            {/* What this refusal cost them. A wrong-day or out-of-hours
+                refusal issues a violation too, and the guard used to see only
+                "Wrong Schedule Day" — not that the same scan had just
+                confiscated the account, nor that Override would not undo it. */}
+            {result.violation && !result.violation.already_recorded && (
+              <div className="em-result-rows">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Violation</span>
+                  <span className="em-violation-pill">
+                    <AlertTriangle size={10} /> {result.violation.type_label}
+                    {result.violation.offense_number ? ` · offence ${result.violation.offense_number} of 3` : ''}
+                  </span>
+                </div>
+                {result.violation.penalty && (
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#C62828' }}>
+                    {result.violation.penalty}
+                    {isDeniable && ' Overriding entry now lets them in, but the violation and confiscation stay.'}
+                  </p>
+                )}
+              </div>
+            )}
+            {result.violation?.already_recorded && (
+              <div className="em-result-rows">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Violation</span>
+                  <span className="em-result-row-value">Already recorded today — no new offence</span>
+                </div>
+              </div>
+            )}
             {result.constraint && (
               <div className="em-constraint-info">
                 <AlertTriangle size={13} style={{ flexShrink: 0 }} />

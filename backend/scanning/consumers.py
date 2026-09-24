@@ -969,9 +969,10 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         # A visitor waiting for a pass ('no_pass'/'unknown') isn't a violation —
         # only genuinely denied/wrong-day entries are auto-fined.
+        issued = None
         if not entry["allowed"] and entry["status"] not in ("no_pass", "unknown"):
             try:
-                _auto_log_violation(
+                issued = _auto_log_violation(
                     vehicle, entry["message"], gate_id,
                     entry_status=entry["status"])
             except Exception:
@@ -1026,6 +1027,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "has_violations":  has_violations,
             "already_inside":  already_inside,
             "organizer_event": organizer_event,
+            "violation":       issued,                 # what a refusal cost them, for the result card
         }
 
     # The same state machine as _check_vehicle, for a plate on a supplier's
