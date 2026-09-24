@@ -195,6 +195,124 @@ def recompute_for_owner(owner) -> None:
     ])                                           # confiscated_at is not in this list, so the start stays as it was
 
 
+# ── Visitors ─────────────────────────────────────────────────────────────────
+#
+# A visitor has no account, so apply_penalty has nothing to write a penalty
+# onto — an overstaying visitor used to be recorded and then waved straight
+# back in on a fresh pass. Their penalty is instead DERIVED, every time it is
+# asked, from the violations that name them: the same ladder, the same lengths,
+# counted from the newest offence. Nothing is stored, so lifting or clearing a
+# violation lifts the penalty with it and there is no recompute to forget.
+#
+# A visitor is who the gate wrote down: the plate, the conduction number and
+# the name on their pass. Any one of them matching a standing violation is
+# enough — a visitor who comes back in a different car is still the same
+# person, and a car lent to someone else is still the car that overstayed.
+
+def _normalise_id(value) -> str:
+    """Plate / conduction text in the shape the gate stores it."""
+    return (value or '').strip().upper().replace(' ', '')
+
+
+def _normalise_name(value) -> str:
+    """A name in the shape VisitorPassView stores it."""
+    return ' '.join((value or '').split()).upper()
+
+
+def visitor_identity(vehicle) -> tuple:
+    """(plate, conduction, name) for a vehicle with no account behind it.
+
+    The name and conduction number live on the newest visitor pass, not on the
+    gate-created vehicle row.
+    """
+    if vehicle is None:
+        return '', '', ''
+    from scanning.models import VisitorPass     # scanning imports violations; see _gate_recorded_name
+    pass_ = (VisitorPass.objects.filter(vehicle=vehicle)
+             .order_by('-entered_at')
+             .values('visitor_name', 'conduction_number')
+             .first()) or {}
+    return (vehicle.plate_number or '',
+            pass_.get('conduction_number') or vehicle.conduction_number or '',
+            pass_.get('visitor_name') or '')
+
+
+def visitor_violations(plate='', conduction='', name=''):
+    """Standing ladder violations against a visitor, by any of their identifiers.
+
+    Only rows with no account behind them: a registered owner's violations are
+    counted against their account by apply_penalty, and must not also follow
+    their plate into the visitor lane. `owner_email=''` keeps out a deleted
+    owner's rows, whose account link was nulled but whose email snapshot says
+    whose they were.
+    """
+    from django.db.models import Q
+    plate, conduction, name = (_normalise_id(plate), _normalise_id(conduction),
+                               _normalise_name(name))
+    q = Q()
+    # Plate and conduction are checked against both columns: a plateless car's
+    # conduction number is often what the guard typed into the plate field.
+    for ident in {plate, conduction} - {''}:
+        q |= Q(plate_number=ident) | Q(conduction_number=ident)
+    if name:
+        q |= Q(owner_name=name)
+    if not q:
+        return Violation.objects.none()
+    return (Violation.objects
+            .filter(q, owner__isnull=True, owner_email='',
+                    violation_type__in=NEW_STYLE_TYPES)
+            .exclude(status__in=Violation.INACTIVE_STATUSES))
+
+
+def visitor_confiscation(plate='', conduction='', name='') -> dict | None:
+    """The penalty a visitor is serving right now, or None.
+
+    Returns {level, until, reason, days_left, matched_on, plate} — `matched_on`
+    says which of the three identifiers tied them to the offence, so a guard
+    refusing someone on a name alone knows that is what happened.
+    """
+    rows = list(visitor_violations(plate, conduction, name)
+                .order_by('-issued_at')
+                .values('plate_number', 'conduction_number', 'owner_name', 'issued_at'))
+    if not rows:
+        return None
+
+    level = min(len(rows), 3)
+    newest = rows[0]
+    issued_on = timezone.localtime(newest['issued_at']).date()
+    if level in CONFISCATION_DAYS:
+        from datetime import timedelta
+        until = issued_on + timedelta(days=CONFISCATION_DAYS[level])
+    else:
+        until = _period_end()                    # 3rd strike: the rest of the period, or indefinite
+
+    today = timezone.localdate()
+    if until is not None and today > until:
+        return None                              # served; inclusive of the last day, like User.is_confiscated
+
+    ids = {_normalise_id(plate), _normalise_id(conduction)} - {''}
+    name = _normalise_name(name)
+    matched = []
+    if any(r['plate_number'] in ids or r['conduction_number'] in ids for r in rows):
+        matched.append('plate / conduction number')
+    if name and any(r['owner_name'] == name for r in rows):
+        matched.append('name')
+
+    return {
+        'level':      level,
+        'until':      until,
+        'days_left':  None if until is None else max(0, (until - today).days),
+        'reason':     describe(level, until).replace('Account confiscated', 'Visitor entry confiscated'),
+        'matched_on': matched,
+        'plate':      newest['plate_number'] or newest['conduction_number'],
+    }
+
+
+def visitor_offense_number(plate='', conduction='', name='') -> int:
+    """The strike the next offence for this visitor will carry (1–3)."""
+    return min(visitor_violations(plate, conduction, name).count() + 1, 3)
+
+
 # Everyone currently serving a penalty, for the screens that list them.
 def confiscated_owners():
     """Every account currently serving a penalty.

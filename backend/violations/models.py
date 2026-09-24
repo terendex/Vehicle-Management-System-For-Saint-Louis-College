@@ -200,6 +200,16 @@ class Violation(models.Model):
         # dash where the offender's name belongs. Read it from whichever record
         # the gate wrote when they came in.
         self.owner_name = self._gate_recorded_name() or ''
+        # A visitor's conduction number is written on their pass, not on the
+        # gate-created vehicle row, so take it from there when the row has none.
+        if not self.conduction_number:
+            from scanning.models import VisitorPass
+            self.conduction_number = (VisitorPass.objects
+                                      .filter(vehicle=vehicle)
+                                      .exclude(conduction_number='')
+                                      .order_by('-entered_at')
+                                      .values_list('conduction_number', flat=True)
+                                      .first()) or ''
 
     # The name the gate took down for someone with no account, newest first.
     def _gate_recorded_name(self) -> str:

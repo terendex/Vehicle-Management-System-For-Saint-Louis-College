@@ -86,6 +86,11 @@ class VisitorPass(models.Model):
     # Printed on the slip, and what a guard can type at the exit instead of
     # scanning the slip QR. Blank on passes issued before the field existed.
     visitor_name = models.CharField(max_length=150, blank=True, default='')
+    # Optional: the sticker number on a new car that has one. Kept on the pass
+    # rather than the gate-created Vehicle, whose conduction_number is unique
+    # across registered vehicles. Copied onto any violation the visit earns, and
+    # one of the identifiers a visitor penalty is matched on.
+    conduction_number = models.CharField(max_length=50, blank=True, default='', db_index=True)
     office     = models.ForeignKey(
         Office, on_delete=models.SET_NULL, null=True, blank=True,   # office being visited (optional)
     )

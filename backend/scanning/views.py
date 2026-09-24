@@ -682,14 +682,18 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         ).exists():
             return                               # already struck today; this scan adds nothing
     else:
-        # No account behind the plate (gate-issued vehicle) — fall back to the
-        # per-vehicle, per-type cap, which is all that can be keyed on.
-        dedup_types = [vtype]
+        # No account behind the plate (gate-issued vehicle). A visitor now
+        # serves a ladder of their own (violations.penalty.visitor_confiscation),
+        # so the account rule applies here too: one ladder strike per vehicle
+        # per day, whatever the type — otherwise the overstay recorded at the
+        # exit and the "activity while confiscated" of the next camera sighting
+        # would spend two strikes on one incident.
+        dedup_types = set(NEW_STYLE_TYPES) | {vtype}
         # Rows written before the type was renamed still count as the same
         # offence, so a plate is not struck twice for one thing across the
         # rename boundary.
         if vtype == Violation.Type.UNAUTHORIZED_ENTRY:
-            dedup_types.append(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
+            dedup_types.add(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
         if Violation.objects.filter(
             vehicle=vehicle,
             violation_type__in=dedup_types,
@@ -698,7 +702,13 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         ).exists():
             return
 
-    offense_num  = Violation.compute_offense_number(owner)   # which strike this is for the ACCOUNT, not the vehicle
+    if owner is not None:
+        offense_num = Violation.compute_offense_number(owner)   # which strike this is for the ACCOUNT, not the vehicle
+    else:
+        # Counted across the visitor's plate, conduction number and name, the
+        # same identifiers their penalty is matched on.
+        from violations.penalty import visitor_identity, visitor_offense_number
+        offense_num = visitor_offense_number(*visitor_identity(vehicle))
     violation = Violation.objects.create(
         vehicle              = vehicle,
         owner                = owner,
@@ -1134,6 +1144,30 @@ class VisitorPassView(APIView):
         plate_number = (request.data.get('plate_number') or '').strip().upper().replace(' ', '')
         if not plate_number:
             return Response({'error': 'plate_number is required.'}, status=400)
+        conduction_number = (request.data.get('conduction_number') or '').strip().upper().replace(' ', '')[:50]
+        # Upper-cased like every other name the system stores.
+        # split()/join() collapses runs of whitespace as well as trimming, so
+        # a name typed with stray spaces is stored tidily. Truncated to the
+        # column's length rather than rejected — a long name is not a reason to
+        # turn somebody away at the gate.
+        visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
+
+        # A visitor serving a penalty gets no pass. Asked before anything is
+        # created, so a refusal leaves no half-made vehicle or pass behind. The
+        # overstay that earned it let them leave once; this is what stops them
+        # coming back in on a fresh pass the next morning.
+        from violations.penalty import visitor_confiscation
+        penalty = visitor_confiscation(plate_number, conduction_number, visitor_name)
+        if penalty:
+            when = (f"{penalty['days_left']} day(s) left" if penalty['days_left'] is not None
+                    else 'until the CDSO lifts it')
+            return Response({
+                'error': 'visitor_confiscated',
+                'detail': (f"Visitor entry confiscated ({when}). Offence {penalty['level']} of 3, "
+                           f"matched on {' and '.join(penalty['matched_on']) or 'a previous offence'} "
+                           f"({penalty['plate']}). No pass can be issued. Refer them to the CDSO office."),
+                'confiscation': {**penalty, 'until': penalty['until'].isoformat() if penalty['until'] else None},
+            }, status=403)
 
         # A pass needs a Vehicle to hang off, so one is made if the plate is
         # unknown. Unowned and unauthorized: it carries the visit, it does not
@@ -1166,18 +1200,12 @@ class VisitorPassView(APIView):
         except (TypeError, ValueError):
             allowed_duration = 60                # unparseable falls back to an hour rather than refusing the visitor
 
-        # Upper-cased like every other name the system stores.
-        # split()/join() collapses runs of whitespace as well as trimming, so
-        # a name typed with stray spaces is stored tidily. Truncated to the
-        # column's length rather than rejected — a long name is not a reason to
-        # turn somebody away at the gate.
-        visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
-
-        now = timezone.now()                     # one instant for both entered_at and expires_at, so the window is exact
+        now = timezone.now()                    # one instant for both entered_at and expires_at, so the window is exact
         pass_ = VisitorPass.objects.create(
             vehicle=vehicle,
             plate_number=plate_number,
             visitor_name=visitor_name,
+            conduction_number=conduction_number,
             office=office,
             purpose=request.data.get('purpose', ''),
             issued_by=request.user,
@@ -1198,7 +1226,9 @@ class VisitorPassView(APIView):
         _audit(
             request,
             AuditLog.Action.VISITOR_ISSUED,
-            f"Visitor pass issued | Plate: {plate_number} | Visitor: {visitor_name or 'N/A'} | "
+            f"Visitor pass issued | Plate: {plate_number} | "
+            + (f"Conduction: {conduction_number} | " if conduction_number else "")
+            + f"Visitor: {visitor_name or 'N/A'} | "
             f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
             f"Duration: {allowed_duration} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
@@ -1494,27 +1524,19 @@ def _record_visitor_exit(request, pass_, gate_id):
     pass_.exited_at = now
     pass_.save(update_fields=['status', 'exited_at'])
 
-    # Note, factually: this exit row is created with NO paired_entry, and
-    # _pair_entry_exit is not called — unlike _record_supplier_exit and
-    # _record_event_exit just below, which both pass paired_entry=entry.
-    #
-    # The occupancy ledger decides who is still on campus by excluding entries
-    # whose pk appears as a paired_entry_id (scanning/occupancy.py), so the
-    # visitor's AUTHORIZED row from VisitorPassPrintedView stays unclosed and
-    # they keep counting as inside. They drop out after STALE_ENTRY_HOURS (12),
-    # and are then reported in `stale_excluded` — the figure the admin screen
-    # presents as exit scans a gate MISSED.
-    #
-    # This is the mirror of the gap noted in ScanView: there the camera closes
-    # the pairing but not the pass, here the slip closes the pass but not the
-    # pairing. Recorded, not changed: this pass comments code.
-    AccessLog.objects.create(
+    # Paired with the visitor's entry row (written by VisitorPassPrintedView),
+    # as the supplier and event exits below are. It used to be left unpaired,
+    # so the occupancy ledger kept the visitor inside for STALE_ENTRY_HOURS —
+    # and the gate read their next scan that day as a second EXIT, never
+    # reaching check_entry, which is where a confiscated visitor is refused.
+    exit_log = AccessLog.objects.create(
         vehicle=pass_.vehicle,
         plate_number=pass_.plate_number,
         status=AccessLog.Status.EXITED,
         gate_id=gate_id,
         scanned_by=request.user,
     )
+    _pair_entry_exit(exit_log)
 
     # Measured from the PASS, not from the AccessLog rows — the visitor's
     # clock started when the pass was issued.
@@ -3142,10 +3164,22 @@ def _overstaying_now(gate_id: str = '') -> list:
     are actually over, which is a short list or an empty one.
     """
     limits = _stay_limits()
-    if not limits:
-        return []                                # no rule caps a stay: nothing can be an overstay
-
     now = timezone.now()
+
+    # Today's open visitor passes, by plate. A gate-created visitor vehicle has
+    # no account behind it, which used to send it down the supplier branch
+    # below: judged against the supplier rule instead of its own pass, and
+    # listed with no name. One query for all of them, not one per row.
+    #
+    # Closed passes are loaded too. A slip exit closes the pass but leaves the
+    # entry row unpaired (see _record_visitor_exit), so without them a visitor
+    # who already left would come back here as an overstaying "supplier".
+    passes = {}
+    for p in (VisitorPass.objects
+              .filter(valid_date=timezone.localdate())
+              .order_by('entered_at')):          # oldest first, so the newest pass per plate wins
+        passes[p.plate_number] = p
+
     rows, seen = [], set()
     for log in _open_entries_today():
         plate = log.plate_number
@@ -3155,6 +3189,33 @@ def _overstaying_now(gate_id: str = '') -> list:
 
         vehicle = log.vehicle
         owner   = vehicle.user if vehicle is not None else None
+
+        pass_ = passes.get(plate) if owner is None else None
+        if pass_ is not None:
+            # A visitor: their limit is the allowance on their pass.
+            if pass_.status != VisitorPass.Status.ACTIVE:
+                continue                         # already left on their slip
+            if not pass_.expires_at or now <= pass_.expires_at:
+                continue                         # no limit, or still inside it
+            rows.append({
+                'access_log_id':     log.pk,
+                'plate_number':      plate,
+                'vehicle_id':        vehicle.pk if vehicle is not None else None,
+                'owner_name':        pass_.visitor_name,
+                'owner_type':        'visitor',
+                'conduction_number': pass_.conduction_number,
+                'entered_at':        pass_.entered_at,
+                'gate_id':           log.gate_id,
+                'inside_minutes':    int((now - pass_.entered_at).total_seconds() // 60),
+                'max_minutes':       pass_.allowed_duration,
+                'over_minutes':      int((now - pass_.expires_at).total_seconds() // 60),
+                'rule_name':         'Visitor pass',
+                'already_issued':    _struck_today(vehicle),
+            })
+            continue
+
+        if not limits:
+            continue                             # no rule caps any other kind of stay
 
         if owner is not None:
             if owner.owner_type == User.OwnerType.VISITOR:
@@ -3182,6 +3243,7 @@ def _overstaying_now(gate_id: str = '') -> list:
             'vehicle_id':     vehicle.pk if vehicle is not None else None,
             'owner_name':     owner.full_name if owner else '',
             'owner_type':     owner.owner_type if owner else 'supplier',
+            'conduction_number': (vehicle.conduction_number if vehicle is not None else '') or '',
             'entered_at':     log.scanned_at,
             'gate_id':        log.gate_id,
             'inside_minutes': inside_minutes,

@@ -198,6 +198,7 @@ def visitor_slip(pass_):
         'overstay_minutes': overstay,
         'sections': [
             [['Visitor', pass_.visitor_name or 'N/A', KEY],
+             *([['Conduction No.', pass_.conduction_number]] if pass_.conduction_number else []),
              ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
              ['Purpose', pass_.purpose or 'N/A'],
              ['Duration', _duration(pass_.allowed_duration)]],

@@ -165,6 +165,7 @@ const autoPrintedSlips = new Set()
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
 function VisitorPassModal({ plate, offices, onClose, onCreated }) {
   const [visitorName, setVisitorName] = useState('')
+  const [conduction, setConduction]   = useState('')
   const [officeId, setOfficeId] = useState('')
   const [purpose, setPurpose]   = useState('')
   // Typeable strings; the pass defaults to 0 hr 15 min.
@@ -253,6 +254,9 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
       }
       const problems = [...fieldProblems(e.currentTarget)]
       if (!visitorName.trim()) problems.push("Enter the visitor's name.")
+      if (conduction.trim() && !isValidConductionNumber(conduction)) {
+        problems.push('The conduction number should be 5–12 letters and digits, or left blank.')
+      }
       if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
       if (await notify.validation(problems, { title: 'Pass not issued' })) return
       if (!(await notify.confirm({
@@ -269,13 +273,22 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
     setLoading(true)
     try {
       const res = await createVisitorPass({
-        plate_number: plate, visitor_name: visitorName.trim(), office: officeId || null,
+        plate_number: plate, visitor_name: visitorName.trim(),
+        conduction_number: conduction.trim(), office: officeId || null,
         purpose, allowed_duration: durationNum,
       })
       // The printer takes a few seconds; say so instead of a stuck "Creating…".
       setPrinting(true)
       await printPass(res.data)
     } catch (err) {
+      // A visitor still serving the penalty for an earlier offence. A refusal
+      // the guard must act on — turn the visitor away — so it is a modal they
+      // acknowledge, and the form closes: no pass can be issued to them today.
+      if (err?.response?.data?.error === 'visitor_confiscated') {
+        await notify.error(err.response.data.detail, { title: 'Visitor entry confiscated' })
+        onClose()
+        return
+      }
       toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
     } finally { setLoading(false); setPrinting(false) }
   }
@@ -333,6 +346,14 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
               <input className="em-input" value={visitorName} required autoFocus
                 placeholder="e.g. JUAN DELA CRUZ" maxLength={150}
                 onChange={(e) => setVisitorName(e.target.value.toUpperCase())} />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Conduction Number <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
+              {/* For a new car still on its conduction sticker. Printed on the
+                  slip and carried onto any violation from this visit. */}
+              <input className="em-input" value={conduction}
+                placeholder="e.g. CS1234" maxLength={20}
+                onChange={(e) => setConduction(e.target.value.toUpperCase().replace(/\s/g, ''))} />
             </div>
             <div className="em-field">
               <label className="em-label">Destination Office <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
@@ -1295,7 +1316,7 @@ export default function SecurityEntryManagement() {
   // the offence ladder — a first offence costs the owner a week of campus
   // access. Too expensive for a single unconfirmed tap.
   const handleAcknowledgeOverstay = async (row) => {
-    const who = row.owner_name ? `${row.plate_number} — ${row.owner_name}` : row.plate_number
+    const who = [row.plate_number, row.conduction_number, row.owner_name].filter(Boolean).join(' — ')
     if (!(await notify.confirm({
       title: 'Record this overstay?',
       message: `${who} has been inside ${fmtMinutes(row.inside_minutes)}, which is `
@@ -1944,6 +1965,8 @@ export default function SecurityEntryManagement() {
                       </div>
                       <div className="em-visitor-sub">
                         {row.owner_name || 'No owner on file'}
+                        {row.owner_type === 'visitor' && ' (visitor)'}
+                        {row.conduction_number && ` · Conduction ${row.conduction_number}`}
                         {' · '}{fmtShort(row.inside_minutes)} inside of {fmtShort(row.max_minutes)}
                         {' · '}{row.rule_name}
                       </div>

@@ -310,6 +310,25 @@ def check_entry(vehicle) -> dict:
     # account) and owners registered as visitors. Entry is granted purely by
     # an active, unexpired pass for today.
     if not user or user.owner_type == User.OwnerType.VISITOR:
+        # A visitor serving a penalty. They have no account for the check above
+        # to read, so it is derived from the violations against their plate,
+        # conduction number or name — see violations.penalty. Checked before the
+        # pass for the same reason the account check comes first: the guard
+        # must see "confiscated", not "no pass", or they would simply issue one.
+        if not user:
+            from violations.penalty import visitor_confiscation, visitor_identity
+            penalty = visitor_confiscation(*visitor_identity(vehicle))
+            if penalty:
+                days = penalty['days_left']
+                when = f'{days} day(s) left' if days is not None else 'until the CDSO lifts it'
+                return _result(
+                    'confiscated', False,
+                    f'Entry denied — visitor entry confiscated ({when}). '
+                    f"Offence {penalty['level']} of 3. "
+                    'Report to the CDSO office.',
+                    None,
+                )
+
         today = timezone.localdate()                    # passes are issued for one calendar day
         pass_ = VisitorPass.objects.filter(
             vehicle=vehicle,
