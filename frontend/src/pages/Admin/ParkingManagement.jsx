@@ -1154,9 +1154,22 @@ export default function ParkingManagement({ embedded = false }) {
                   !hasBaseline ? (
                     <span className="pm-detect-badge pm-detect-badge--warn">Not monitored yet</span>
                   ) : (
-                    <span className={`pm-detect-badge ${camRunning[selZone.id] ? 'pm-detect-badge--on' : 'pm-detect-badge--off'}`}>
-                      {camRunning[selZone.id] ? 'Monitoring bays' : 'Starting camera…'}
-                    </span>
+                    (() => {
+                      // Offline keeps the bays as last seen rather than clearing
+                      // them, so the badge is what tells an admin they are stale.
+                      const st = camRunning[selZone.id]
+                      if (st?.running && st.stream === 'offline') {
+                        return <span className="pm-detect-badge pm-detect-badge--warn">Camera offline · bays show last known state</span>
+                      }
+                      if (st?.running && st.stream === 'online') {
+                        return <span className="pm-detect-badge pm-detect-badge--on">Monitoring bays</span>
+                      }
+                      return (
+                        <span className="pm-detect-badge pm-detect-badge--off">
+                          {st?.running ? 'Connecting to camera…' : 'Starting camera…'}
+                        </span>
+                      )
+                    })()
                   )
                 )}
 

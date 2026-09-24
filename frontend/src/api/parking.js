@@ -147,7 +147,8 @@ export const zoneApi = {
   },
   getCameraStatus: async () => {
     const { data } = await api.get('/vehicles/parking-zones/camera-status/')
-    return data  // { zone_id: bool }
+    // { zone_id: { running, stream: 'online'|'connecting'|'offline', offline_seconds } }
+    return data && typeof data === 'object' ? data : {}
   },
   // The boxes the detector last saw, per running zone. Polled rather than
   // pushed: the worker only re-detects every couple of seconds, so a socket

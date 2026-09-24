@@ -187,9 +187,13 @@ export default function SecurityParkingView() {
   const camFs = useFullscreen()
 
   const selZone    = zones.find(z => z.id === selId) ?? null
-  const camRunning = !!camStatus[selId]
+  const camInfo    = camStatus[selId]
+  const camRunning = !!camInfo?.running
+  // A running detector whose camera has stopped sending frames. Its bays keep
+  // what it last saw, so they are shown but flagged as not live.
+  const camOffline = camRunning && camInfo.stream === 'offline'
   // Bays are only watched once the zone has an empty baseline to compare against.
-  const monitored  = camRunning && !!selZone?.has_baseline
+  const monitored  = camRunning && camInfo.stream === 'online' && !!selZone?.has_baseline
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -784,9 +788,13 @@ export default function SecurityParkingView() {
                 <div className="cm-panel-head">
                   <span className="cm-panel-title"><LayoutGrid size={14} /> Bays in {selZone.name}</span>
                   <div className="cm-panel-end">
-                    <span className={`pm-guard-detector${monitored ? ' on' : ''}${!selZone.has_baseline ? ' warn' : ''}`}>
+                    <span className={`pm-guard-detector${monitored ? ' on' : ''}${!selZone.has_baseline || camOffline ? ' warn' : ''}`}>
                       <span className="cm-dot" />{' '}
-                      {!selZone.has_baseline ? 'Not set up' : monitored ? 'Monitoring' : 'Camera off'}
+                      {!selZone.has_baseline ? 'Not set up'
+                        : camOffline ? 'Camera offline'
+                        : monitored ? 'Monitoring'
+                        : camRunning ? 'Connecting…'
+                        : 'Camera off'}
                     </span>
                   </div>
                 </div>
@@ -800,9 +808,11 @@ export default function SecurityParkingView() {
                         colours are whatever they last were. A guard has to know
                         that before sending anyone to a "free" bay. */}
                     <p className="pm-guard-note">
-                      {selZone.has_baseline
-                        ? 'What the camera sees in this zone.'
-                        : 'Not monitored yet. An admin needs to finish this zone’s setup, so these bays may be out of date.'}
+                      {!selZone.has_baseline
+                        ? 'Not monitored yet. An admin needs to finish this zone’s setup, so these bays may be out of date.'
+                        : camOffline
+                          ? 'Camera offline. These bays show what it last saw and may be out of date. Check the lot before sending anyone to a free bay.'
+                          : 'What the camera sees in this zone.'}
                     </p>
                   </div>
                 </div>

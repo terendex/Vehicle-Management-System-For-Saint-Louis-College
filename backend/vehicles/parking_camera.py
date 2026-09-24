@@ -22,7 +22,7 @@ Public API (called from views.py):
     start(zone_id, rtsp_url)  → ParkingCameraThread
     stop(zone_id)
     get_thread(zone_id)       → ParkingCameraThread | None
-    status_dict()             → {zone_id: is_alive}
+    status_dict()             → {zone_id: {running, stream, offline_seconds}}
     stream_status()           → {rtsp_url: zones_reading_it}
 """
 
@@ -296,6 +296,15 @@ FRAME_WAIT_SECONDS = 2.0
 # Seconds between reconnect attempts after the stream drops.
 RECONNECT_DELAY_SECONDS = 2.0
 
+# How long a zone may go without a frame before its camera counts as offline.
+#
+# An offline zone is not scored, so its bays keep whatever state they last had
+# — deliberately: clearing them would show a full lot as empty for as long as
+# the camera is down. The screens say "camera offline" instead, so nobody reads
+# those bays as live. Well above FRAME_WAIT_SECONDS plus a reconnect attempt, so
+# a camera that merely stutters or reconnects once never flashes offline.
+STREAM_OFFLINE_SECONDS = 10.0
+
 _cameras: dict[int, "ParkingCameraThread"] = {}
 _readers: dict[str, "_StreamReader"] = {}
 _lock = threading.Lock()
@@ -463,9 +472,25 @@ def get_thread(zone_id: int) -> "ParkingCameraThread | None":
     return _cameras.get(zone_id)
 
 
-def status_dict() -> dict[int, bool]:
+def status_dict() -> dict[int, dict]:
+    """{zone_id: {running, stream, offline_seconds}} for every started zone.
+
+    `running` is the detector thread; `stream` is whether frames are actually
+    reaching it — see ParkingCameraThread.stream_state(). A thread can be alive
+    for hours against a camera that has been unplugged, which is why the two
+    are reported separately.
+    """
     with _lock:
-        return {zid: t.is_alive() for zid, t in list(_cameras.items())}
+        threads = list(_cameras.items())
+    out = {}
+    for zid, t in threads:
+        state, offline_for = t.stream_state()
+        out[zid] = {
+            'running':         t.is_alive(),
+            'stream':          state,
+            'offline_seconds': None if offline_for is None else int(offline_for),
+        }
+    return out
 
 
 def detections_dict() -> dict[int, dict]:
@@ -783,6 +808,11 @@ class ParkingCameraThread(threading.Thread):
         # When the detector last ran, for the classic path's slower cadence.
         self._last_detect = 0.0
 
+        # When this zone started, and when it last received a frame — what
+        # stream_state() reads to tell connecting, online and offline apart.
+        self._started_at    = time.monotonic()
+        self._last_frame_at: "float | None" = None
+
         # Dwell thresholds in force. Refreshed from System Settings alongside
         # the zone config; the module constants are what a zone runs on until
         # that first read succeeds, and what it falls back to if it never does.
@@ -855,6 +885,8 @@ class ParkingCameraThread(threading.Thread):
                             break
                     continue
 
+                self._note_frame(time.monotonic())
+
                 try:
                     self._process_frame(frame)
                 except Exception as exc:
@@ -869,6 +901,51 @@ class ParkingCameraThread(threading.Thread):
             _release_reader(reader)
 
         log.info("[ParkingCam] Stopped zone %d", self.zone_id)
+
+    def stream_state(self, now: "float | None" = None) -> tuple:
+        """('online' | 'connecting' | 'offline', seconds offline or None).
+
+        Connecting is a zone that has not had its first frame yet but has not
+        been waiting long either — a fresh start, not a fault. Past
+        STREAM_OFFLINE_SECONDS without a frame it is offline either way, and
+        the seconds count from the last frame it did get (or from its start).
+        """
+        now  = time.monotonic() if now is None else now
+        last = self._last_frame_at
+        if last is not None and now - last < STREAM_OFFLINE_SECONDS:
+            return 'online', None
+        since = self._started_at if last is None else last
+        if last is None and now - since < STREAM_OFFLINE_SECONDS:
+            return 'connecting', None
+        return 'offline', now - since
+
+    def _note_frame(self, now: float) -> None:
+        """Record a frame's arrival, resuming cleanly if it ends an outage."""
+        if (self._last_frame_at is not None
+                and now - self._last_frame_at >= STREAM_OFFLINE_SECONDS):
+            self._resume_after_gap(now)
+        self._last_frame_at = now
+
+    def _resume_after_gap(self, now: float) -> None:
+        """Pick up cleanly after the camera was offline.
+
+        Bays kept their state through the outage, but every clock behind that
+        state stopped with the stream. Left alone, the release clock would
+        already be past its grace, so an occupied bay would free on its first
+        empty-looking frame; a claim streak from before the gap could complete
+        on a single frame after it; and the tracker would still hold boxes of
+        vehicles that may have left. So each occupied bay gets a full grace from
+        now, half-formed claims start over, and vehicles are re-tracked from
+        scratch.
+        """
+        log.info("[ParkingCam] Zone %d stream back after %.0fs",
+                 self.zone_id, now - (self._last_frame_at or now))
+        for sid in self._last_filled:
+            self._last_filled[sid] = now
+        self._hyst.clear()
+        self._changed_since.clear()
+        self._tracker.reset()
+        self._persons = []
 
     def _load_spaces(self):
         """The zone's placed spaces, re-read from the DB at most every TTL.

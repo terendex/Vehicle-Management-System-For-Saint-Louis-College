@@ -490,7 +490,11 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     # because the screen shows a badge per zone.
     @action(detail=False, methods=['get'], url_path='camera-status')
     def camera_status(self, request):
-        """Returns {zone_id: is_running} for all zones."""
+        """Returns {zone_id: {running, stream, offline_seconds}} for all zones.
+
+        `stream` is 'online', 'connecting' or 'offline'. An offline zone keeps
+        its last bay states, so the screens flag them as not live.
+        """
         return Response(parking_camera.status_dict())
 
     # The detector's raw boxes, for seeing why a bay reads as it does.

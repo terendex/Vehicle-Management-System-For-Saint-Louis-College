@@ -327,7 +327,7 @@ export const SHOTS = [
     // The badge asks the server whether the detector is running, and the
     // capture runs with auto-detection off so the bays cannot be rewritten
     // mid-run. Answering for a working campus install instead: see applyRoutes.
-    routes: { '/parking-zones/camera-status/': { 1: true, 2: true } },
+    routes: { '/parking-zones/camera-status/': { 1: { running: true, stream: 'online', offline_seconds: null }, 2: { running: true, stream: 'online', offline_seconds: null } } },
     marks: [
       m(1, 'Screen tabs', 'Parking Spaces (this view) and Events (campus events that reserve parking).', union(btn(/Parking Spaces/), btn(/^Events$/))),
       m(2, 'Occupancy tiles', 'Free, Parked and Capacity cover every zone of the selected vehicle category and come from the parking cameras. On Campus counts vehicles scanned in at a gate, parked or not.', parent(card(text('Free', 'main')))),
@@ -558,7 +558,7 @@ export const SHOTS = [
     who: 'guard', path: '/security/parking', title: 'Parking monitor',
     caption: 'Watch parking zones, see free spaces and act on parking offences.',
     wait: 3500,
-    routes: { '/parking-zones/camera-status/': { 1: true, 2: true } },
+    routes: { '/parking-zones/camera-status/': { 1: { running: true, stream: 'online', offline_seconds: null }, 2: { running: true, stream: 'online', offline_seconds: null } } },
     marks: [
       m(1, 'Zones', 'Pick the parking zone to watch.', union(text('ZONES', 'main', false), btn(/Gym Motorcycle Area/))),
       m(2, 'Cameras', 'Switch between the cameras watching parking.', union(btn(/Main Parking Cam/), btn(/Motorcycle Parking Cam/))),
