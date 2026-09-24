@@ -520,6 +520,11 @@
   gap: 8px;
 }
 .pm-cam-bar-icon { color: #5C7B92; flex-shrink: 0; }
+.pm-cam-bar-label {
+  font-size: 12px;
+  color: #5C7B92;
+  white-space: nowrap;
+}
 .pm-cam-bar-note {
   font-size: 11px;
   color: #7E9BB2;
@@ -707,6 +712,10 @@
 .pm-legend-dot--free { background: #A8DCC8; border: 1.5px solid #1BA968; }
 .pm-legend-dot--occ  { background: #F0B4B4; border: 1.5px solid #D93B3B; }
 .pm-legend-dot--dbl  { background: transparent; border: 1.5px dashed #D93B3B; }
+.pm-legend-dot--offline {
+  border: 1.5px dashed #8FA6B8;
+  background: repeating-linear-gradient(45deg, #D5E0E9 0 3px, #8FA6B8 3px 5px);
+}
 .pm-legend-note      { margin-left: auto; font-style: italic; }
 
 /* Camera active badge */
@@ -1677,4 +1686,163 @@
 .pm-event-banner svg {
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+
+/* ── Camera window ────────────────────────────────────────────────────────
+   Camera and lens switching, on the picture itself (top-left; fullscreen is
+   top-right). One line when collapsed; the camera list drops down under it. */
+.pm-camwin {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  max-width: min(320px, calc(100% - 56px));
+  background: rgba(2, 12, 21, 0.82);
+  border: 1px solid rgba(199, 221, 238, 0.18);
+  border-radius: 8px;
+  color: #DCE8F2;
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.pm-camwin-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  flex-wrap: wrap;
+}
+.pm-camwin-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.pm-camwin-head:hover { background: rgba(199, 221, 238, 0.1); }
+.pm-camwin-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pm-camwin-state { color: #8FA9BE; font-size: 11px; white-space: nowrap; }
+.pm-camwin-chev { flex-shrink: 0; transition: transform 0.15s; }
+.pm-camwin--open .pm-camwin-chev { transform: rotate(180deg); }
+
+.pm-camwin-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #5C7B92;
+}
+.pm-camwin-dot--live       { background: #1BA968; }
+.pm-camwin-dot--connecting { background: #E0B00C; }
+.pm-camwin-dot--offline    { background: #D93B3B; }
+
+.pm-camwin-lens {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(199, 221, 238, 0.1);
+}
+.pm-camwin-lens button {
+  padding: 3px 9px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #B7CCDD;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pm-camwin-lens button:hover  { color: #FFFFFF; }
+.pm-camwin-lens button.active { background: #F6CE11; color: #03396C; }
+
+.pm-camwin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border-top: 1px solid rgba(199, 221, 238, 0.14);
+}
+.pm-camwin-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #DCE8F2;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pm-camwin-item .pm-camwin-name { flex: 1; font-weight: 500; }
+.pm-camwin-item:hover  { background: rgba(199, 221, 238, 0.1); }
+.pm-camwin-item.active { background: rgba(246, 206, 17, 0.14); color: #FFFFFF; }
+.pm-camwin-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #FDF0BE;
+  color: #8A6B00;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pm-camwin-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: rgba(199, 221, 238, 0.08);
+  color: #8FA9BE;
+}
+.pm-camwin-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #FFFFFF;
+  font: inherit;
+}
+.pm-camwin-none { margin: 4px 8px; color: #8FA9BE; }
+
+/* ── Is the picture live? ─────────────────────────────────────────────────
+   Bottom-left of the picture. Offline is the detector for this zone: the slots
+   are frozen at what it last saw, hatched to match. */
+.pm-canvas-status {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 16px);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(2, 12, 21, 0.8);
+  color: #C7DDEE;
+  font-size: 12px;
+  pointer-events: none;
+}
+.pm-canvas-status svg { flex-shrink: 0; }
+.pm-canvas-status--offline {
+  background: rgba(138, 36, 36, 0.92);
+  color: #FFFFFF;
 }

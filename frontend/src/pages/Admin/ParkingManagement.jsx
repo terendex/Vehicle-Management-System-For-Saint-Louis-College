@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'rea
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
-  Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
+  Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, ListChecks, Check,
-  VideoOff, Search, Maximize2, Minimize2, Copy,
+  VideoOff, Search, Maximize2, Minimize2, Copy, ChevronDown, WifiOff,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -15,6 +15,7 @@ import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useFullscreen } from '../../hooks/useFullscreen'
+import { feedState, FEED_LABEL } from '../../utils/feedState'
 import './ParkingManagement.css'
 
 const CAT_OPTS = [
@@ -156,6 +157,8 @@ export default function ParkingManagement({ embedded = false }) {
           registerCanvas: registerPkCanvas, paneCounts: livePaneCounts } = useCameraContext()
   const [pkActiveCamId, setPkActiveCam] = useState(null)
   const [camQuery, setCamQuery] = useState('')
+  // The camera window on the feed: collapsed to one line until asked for.
+  const [camWinOpen, setCamWinOpen] = useState(false)
   // The reference image URL is signed and expires, so "it loaded an hour ago"
   // is not a guarantee it loads now. Tracked per zone id: switching zones must
   // not carry one zone's failure over to the next.
@@ -354,10 +357,26 @@ export default function ParkingManagement({ embedded = false }) {
   const camPanelHasContent = Boolean(
     activeCamUnzoned ||
     camZoneMismatch ||
-    parkingCams.length !== 1 ||     // 0 shows a note, 2+ shows the picker
+    parkingCams.length === 0 ||     // the "no cameras" note; switching lives in the camera window
     !selZone ||                     // the "create a zone" hint
     mode === 'edit'                 // capture + scoring method
   )
+
+  // Two different "is the camera up" questions, answered by two sources.
+  //   activeFeed      — the picture in THIS browser (CameraContext's socket).
+  //   zoneCamOffline  — the server's detector for the selected zone has had
+  //                     no frames. Its bays are then frozen at what it last
+  //                     saw, which is the one that makes the slot colours stale.
+  const activeFeed     = feedState(pkActiveCam)
+  const zoneStatus     = selZone ? camRunning[selZone.id] : null
+  const zoneCamOffline = mode === 'live' && !!zoneStatus?.running && zoneStatus.stream === 'offline'
+  const offlineFor     = (() => {
+    const secs = zoneStatus?.offline_seconds
+    if (secs == null) return ''
+    if (secs < 90) return `${secs}s`
+    if (secs < 5400) return `${Math.round(secs / 60)} min`
+    return `${Math.round(secs / 3600)} h`
+  })()
 
   // ── Load zones ──────────────────────────────────────────────────
   const loadZones = useCallback(async () => {
@@ -1577,13 +1596,22 @@ export default function ParkingManagement({ embedded = false }) {
                 onMouseLeave={onMouseLeave}
                 onClick={onSvgClick}
               >
+                {/* Hatching for bays whose camera is offline: still shown in
+                    their last known colour, but visibly not live. */}
+                <defs>
+                  <pattern id="pm-offline-hatch" width="0.02" height="0.02"
+                    patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                    <rect width="0.01" height="0.02" fill="rgba(11, 35, 64, 0.55)" />
+                  </pattern>
+                </defs>
+
                 {/* Parking space boxes */}
                 {spaceList.map(s => {
                   const x  = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2)
                   const w  = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                   const id = s._id ?? s.id
                   const sel    = id === selDraft
-                  const color  = s.is_occupied ? '#D93B3B' : '#1BA968'
+                  const color  = zoneCamOffline ? '#8FA6B8' : s.is_occupied ? '#D93B3B' : '#1BA968'
                   const fill   = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
                   const stroke = sel ? '#F6CE11' : color
                   return (
@@ -1600,24 +1628,32 @@ export default function ParkingManagement({ embedded = false }) {
                       }}
                       style={{ cursor: sel && mode === 'edit' ? 'move' : 'pointer' }}
                     >
-                      {s.points && s.points.length >= 3 ? (
-                        <polygon
-                          points={s.points.map(p => p.join(',')).join(' ')}
-                          fill={fill}
-                          stroke={stroke}
-                          strokeWidth={sel ? 0.006 : 0.003}
-                          strokeDasharray={sel ? '0.015 0.007' : undefined}
-                        />
-                      ) : (
-                        <rect
-                          x={x} y={y} width={w} height={h}
-                          fill={fill}
-                          stroke={stroke}
-                          strokeWidth={sel ? 0.006 : 0.003}
-                          strokeDasharray={sel ? '0.015 0.007' : undefined}
-                          rx={0.004}
-                        />
-                      )}
+                      {[fill, zoneCamOffline && 'url(#pm-offline-hatch)'].filter(Boolean).map((f, layer) => (
+                        // Layer 1 is the offline hatching, laid over the
+                        // last-known colour rather than replacing it.
+                        s.points && s.points.length >= 3 ? (
+                          <polygon
+                            key={layer}
+                            points={s.points.map(p => p.join(',')).join(' ')}
+                            fill={f}
+                            stroke={layer ? 'none' : stroke}
+                            strokeWidth={sel ? 0.006 : 0.003}
+                            strokeDasharray={sel ? '0.015 0.007' : zoneCamOffline ? '0.012 0.008' : undefined}
+                            pointerEvents={layer ? 'none' : undefined}
+                          />
+                        ) : (
+                          <rect
+                            key={layer}
+                            x={x} y={y} width={w} height={h}
+                            fill={f}
+                            stroke={layer ? 'none' : stroke}
+                            strokeWidth={sel ? 0.006 : 0.003}
+                            strokeDasharray={sel ? '0.015 0.007' : zoneCamOffline ? '0.012 0.008' : undefined}
+                            rx={0.004}
+                            pointerEvents={layer ? 'none' : undefined}
+                          />
+                        )
+                      ))}
                       <text
                         x={x + w/2}
                         y={y + h/2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}
@@ -1775,6 +1811,119 @@ export default function ParkingManagement({ embedded = false }) {
                   ))}
               </svg>
 
+              {/* ── Camera window ──
+                  Which camera, and which of its views, in one small window on
+                  the picture itself. Both used to live apart from it — the
+                  camera list in the panel below the page, the lens buttons in a
+                  bar under the picture — so switching meant scrolling away from
+                  the thing being switched. Collapsed, it is one line: the
+                  camera, its state, and the lens buttons, which are used far
+                  more often than the camera list. */}
+              {(pkActiveCam || lensCount > 1) && (
+                <div
+                  className={`pm-camwin${camWinOpen ? ' pm-camwin--open' : ''}`}
+                  // Clicks here are not drawing on the picture underneath.
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="pm-camwin-bar">
+                    <button
+                      type="button"
+                      className="pm-camwin-head"
+                      onClick={() => parkingCams.length > 1 && setCamWinOpen(o => !o)}
+                      aria-expanded={parkingCams.length > 1 ? camWinOpen : undefined}
+                      title={parkingCams.length > 1 ? 'Switch camera' : pkActiveCam?.name}
+                      style={{ cursor: parkingCams.length > 1 ? 'pointer' : 'default' }}
+                    >
+                      <span className={`pm-camwin-dot pm-camwin-dot--${activeFeed}`} />
+                      <Video size={13} />
+                      <span className="pm-camwin-name">{pkActiveCam?.name ?? 'No camera'}</span>
+                      <span className="pm-camwin-state">{FEED_LABEL[activeFeed]}</span>
+                      {parkingCams.length > 1 && <ChevronDown size={13} className="pm-camwin-chev" />}
+                    </button>
+                    {lensCount > 1 && (
+                      <div className="pm-camwin-lens" role="group" aria-label="Camera view">
+                        {Array.from({ length: lensCount }, (_, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className={lensView === i ? 'active' : ''}
+                            onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
+                            title={`Show lens ${i + 1}`}
+                          >
+                            Lens {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {camWinOpen && parkingCams.length > 1 && (
+                    <div className="pm-camwin-list">
+                      {parkingCams.length > 5 && (
+                        <div className="pm-camwin-search">
+                          <Search size={12} />
+                          <input
+                            type="search"
+                            placeholder="Search cameras…"
+                            value={camQuery}
+                            onChange={e => setCamQuery(e.target.value)}
+                            aria-label="Search parking cameras"
+                            autoFocus
+                          />
+                        </div>
+                      )}
+                      {shownCams.length === 0 && (
+                        <p className="pm-camwin-none">No cameras match “{camQuery.trim()}”</p>
+                      )}
+                      {shownCams.map(cam => {
+                        const dev     = deviceCamFor(cam)
+                        const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
+                        const st      = feedState(cam)
+                        return (
+                          <button
+                            key={`cw-${cam.id}`}
+                            type="button"
+                            className={`pm-camwin-item${pkActiveCam?.id === cam.id ? ' active' : ''}`}
+                            onClick={() => { setPkActiveCam(cam.id); setCamWinOpen(false) }}
+                            title={unzoned ? `${cam.name} — no zone drawn yet` : cam.name}
+                          >
+                            <span className={`pm-camwin-dot pm-camwin-dot--${st}`} />
+                            <span className="pm-camwin-name">{cam.name}</span>
+                            {unzoned && <span className="pm-camwin-badge">No zone</span>}
+                            {pkActiveCam?.id === cam.id && <Check size={12} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Is what is on screen live? ──
+                  The detector going offline is the one that matters for the
+                  bays: they stay at whatever it last saw, so they are hatched
+                  and this says so. A browser feed that is merely not showing a
+                  picture is a lesser note — the bays may still be live. */}
+              {zoneCamOffline ? (
+                <div className="pm-canvas-status pm-canvas-status--offline" role="status">
+                  <WifiOff size={13} />
+                  <span>
+                    <strong>Camera offline{offlineFor ? ` for ${offlineFor}` : ''}.</strong>{' '}
+                    Slots show the last known state and may be out of date.
+                  </span>
+                </div>
+              ) : mode === 'live' && pkActiveCam && activeFeed !== 'live' ? (
+                <div className="pm-canvas-status" role="status">
+                  <VideoOff size={13} />
+                  <span>
+                    {activeFeed === 'offline'
+                      ? `No video from ${pkActiveCam.name}${pkActiveCam.statusMsg ? ` — ${pkActiveCam.statusMsg}` : ''}`
+                      : `Connecting to ${pkActiveCam.name}…`}
+                  </span>
+                </div>
+              ) : null}
+
               {/* Space label popover (edit mode) */}
               {selDraftSp && mode === 'edit' && (
                 <div
@@ -1811,13 +1960,14 @@ export default function ParkingManagement({ embedded = false }) {
               )}
             </div>
 
-            {/* Camera options, under the picture rather than above it: the feed
-                is the subject of this screen, and the controls that pick which
-                camera and which of its views you are looking at belong beneath
-                it like the controls of a player. */}
+            {/* The zone's own camera — a setting of the zone, saved to it. Which
+                camera and lens are being LOOKED AT is the camera window on the
+                picture; the label is what keeps the two from being mistaken
+                for each other now that they sit apart. */}
             <div className="pm-cam-bar">
               <div className="pm-cam-bar-group">
                 <Video size={14} className="pm-cam-bar-icon" />
+                <span className="pm-cam-bar-label">{selZone.name} is watched by</span>
                 <select
                   className="pm-cam-assign-select"
                   value={selZone.camera ?? ''}
@@ -1836,22 +1986,11 @@ export default function ParkingManagement({ embedded = false }) {
                 )}
               </div>
 
+              {/* Lens buttons moved to the camera window on the picture. */}
               {lensCount > 1 && (
-                <div className="pm-lens-picker" role="group" aria-label="Camera view">
-                  <span className="pm-lens-label">View</span>
-                  {Array.from({ length: lensCount }, (_, i) => (
-                    <button
-                      key={i}
-                      className={`pm-lens-btn${lensView === i ? ' pm-lens-btn--active' : ''}`}
-                      onClick={() => setLensSelFor(m => ({ ...m, [selZone.id]: i }))}
-                    >
-                      Lens {i + 1}
-                    </button>
-                  ))}
-                  <span className="pm-cam-bar-note">
-                    {spaceList.length} slot{spaceList.length === 1 ? '' : 's'} on this view
-                  </span>
-                </div>
+                <span className="pm-cam-bar-note">
+                  {spaceList.length} slot{spaceList.length === 1 ? '' : 's'} on Lens {lensIdx + 1}
+                </span>
               )}
             </div>
 
@@ -1859,6 +1998,9 @@ export default function ParkingManagement({ embedded = false }) {
             <div className="pm-legend">
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--free" />Free</span>
               <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--occ" />Occupied</span>
+              {zoneCamOffline && (
+                <span className="pm-legend-item"><span className="pm-legend-dot pm-legend-dot--offline" />Camera offline — last known</span>
+              )}
               <span className="pm-legend-note">
                 {mode === 'live'
                   ? 'Click a space to toggle manually · auto-refreshes every 8 s'
@@ -2036,57 +2178,7 @@ export default function ParkingManagement({ embedded = false }) {
               </div>
             )}
 
-            {/* Thumbnail strip — only when 2+ cameras */}
-            {parkingCams.length > 1 && (
-              <div className="pm-cam-search">
-                <Search size={13} className="pm-cam-search-icon" />
-                <input
-                  type="search"
-                  placeholder="Search cameras…"
-                  value={camQuery}
-                  onChange={e => setCamQuery(e.target.value)}
-                  aria-label="Search parking cameras"
-                />
-                {camQ && (
-                  <>
-                    <span className="pm-cam-search-count">{shownCams.length}/{parkingCams.length}</span>
-                    <button type="button" className="pm-cam-search-clear"
-                      onClick={() => setCamQuery('')} title="Clear search" aria-label="Clear search">
-                      <X size={12} />
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {parkingCams.length > 1 && (
-              <div className="pm-cam-thumb-strip">
-                {shownCams.length === 0 && (
-                  <div className="pm-cam-thumb-none">No cameras match “{camQuery.trim()}”</div>
-                )}
-                {shownCams.map(cam => {
-                  const dev     = deviceCamFor(cam)
-                  const unzoned = !!dev && !(zonesByCamera.get(dev.id)?.length)
-                  return (
-                    <div
-                      key={`st-${cam.id}`}
-                      className={`pm-cam-strip-thumb ${pkActiveCamId === cam.id ? 'active' : ''}`}
-                      onClick={() => setPkActiveCam(cam.id)}
-                      title={unzoned ? `${cam.name} — no zone drawn yet` : cam.name}
-                    >
-                      <span
-                        className="pm-cam-strip-dot"
-                        style={{ background: cam.streamConnected ? '#1BA968' : cam.wsActive ? '#E0B00C' : '#5C7B92' }}
-                      />
-                      <Wifi size={14} />
-                      <span className="pm-cam-strip-label">{cam.name}</span>
-                      {/* Which feeds still need a zone, without clicking through each */}
-                      {unzoned && <span className="pm-cam-strip-badge">No zone</span>}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+            {/* Switching cameras moved to the camera window on the picture. */}
 
             {parkingCams.length === 0 && (
               <p style={{ fontSize: 12, color: '#6B8CA6', margin: '8px 0 0', textAlign: 'center' }}>
