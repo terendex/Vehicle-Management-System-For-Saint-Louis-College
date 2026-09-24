@@ -4,7 +4,7 @@ import {
   ParkingCircle, Bike, Car, Camera, Plus, RefreshCw, Upload, Save,
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video, Wifi,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, ListChecks, Check,
-  VideoOff, Search, Maximize2, Minimize2,
+  VideoOff, Search, Maximize2, Minimize2, Copy,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -87,6 +87,25 @@ function withPoints(s, pts) {
     x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
   }
 }
+
+// The same slot shifted by (dx, dy) — box and outline together.
+function translated(s, dx, dy) {
+  return {
+    ...s,
+    x1: s.x1 + dx, x2: s.x2 + dx, y1: s.y1 + dy, y2: s.y2 + dy,
+    points: s.points ? s.points.map(([x, y]) => [x + dx, y + dy]) : s.points,
+  }
+}
+
+// How far a pasted slot lands from the one it was copied from, as a fraction
+// of the frame. Enough to see it is a new slot, close enough to drag into place.
+const PASTE_STEP = 0.03
+
+// A four-way arrow in a -1..1 box, drawn as the centre move handle.
+const MOVE_GLYPH =
+  'M0,-0.55 L0,0.55 M-0.55,0 L0.55,0 ' +
+  'M-0.22,-0.33 L0,-0.55 L0.22,-0.33 M-0.22,0.33 L0,0.55 L0.22,0.33 ' +
+  'M-0.33,-0.22 L-0.55,0 L-0.33,0.22 M0.33,-0.22 L0.55,0 L0.33,0.22'
 
 function autoLabel(list, cat) {
   const pre  = cat === 'motorcycle' ? 'M' : 'C'
@@ -208,6 +227,12 @@ export default function ParkingManagement({ embedded = false }) {
   const xformRef    = useRef(null)
   // The click that ends a transform must not also place a pen point.
   const justXformed = useRef(false)
+  // The copied slot (Ctrl+C), and whether the last copy was a slot rather than
+  // label text — the label box has focus whenever a slot is selected, so the
+  // shortcuts have to tell the two apart. See the keydown handler.
+  const clipRef      = useRef(null)
+  const clipIsShape  = useRef(false)
+  const [clipLabel, setClipLabel] = useState(null)   // shown in the hint line
 
   useEffect(() => { draftsRef.current = drafts }, [drafts])
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
@@ -429,28 +454,6 @@ export default function ParkingManagement({ embedded = false }) {
     setPenPoints([])
     setPenCursor(null)
   }, [mode, selId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Escape cancels an in-progress pen shape, then lets go of the selected slot.
-  // Delete / Backspace removes the selected slot — except while its label is
-  // being typed, where those keys belong to the text.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        if (tool === 'pen' && penPoints.length > 0) setPenPoints([])
-        else if (selDraft) setSelDraft(null)
-        return
-      }
-      if (mode !== 'edit' || !selDraft) return
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName ?? '')
-      if (!typing && (e.key === 'Delete' || e.key === 'Backspace')) {
-        e.preventDefault()
-        setDrafts(p => p.filter(s => s._id !== selDraft))
-        setSelDraft(null)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [tool, penPoints, mode, selDraft])
 
   // ── Zone CRUD ───────────────────────────────────────────────────
   // A zone is born attached to a camera, defaulting to the one on screen. It
@@ -684,11 +687,7 @@ export default function ParkingManagement({ embedded = false }) {
     if (xf.kind === 'move') {
       const dx = Math.max(-orig.x1, Math.min(1 - orig.x2, pt.x - xf.start.x))
       const dy = Math.max(-orig.y1, Math.min(1 - orig.y2, pt.y - xf.start.y))
-      next = {
-        ...orig,
-        x1: orig.x1 + dx, x2: orig.x2 + dx, y1: orig.y1 + dy, y2: orig.y2 + dy,
-        points: orig.points ? orig.points.map(([x, y]) => [x + dx, y + dy]) : orig.points,
-      }
+      next = translated(orig, dx, dy)
     } else if (e.shiftKey && !(orig.points && orig.points.length >= 3)) {
       // Rectangular resize: the dragged corner moves, the opposite one stays.
       const opp = shapePoints(orig)[(xf.index + 2) % 4]
@@ -831,6 +830,116 @@ export default function ParkingManagement({ embedded = false }) {
     setDrafts(p => p.filter(s => s._id !== selDraft))
     setSelDraft(null)
   }
+
+  // ── Copy / paste ─────────────────────────────────────────────────
+  // Only the geometry is copied: a pasted slot is a new, free slot with the
+  // next label, not a second copy of the old one's id or occupancy.
+  const copySelDraft = () => {
+    const s = draftsRef.current.find(d => d._id === selDraft)
+    if (!s) return false
+    commitLabel()
+    clipRef.current = {
+      x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
+      points: s.points ? s.points.map(p => [p[0], p[1]]) : null,
+      lens_index: s.lens_index ?? 0,
+    }
+    clipIsShape.current = true
+    // Said in the hint line, not a dialog: a modal on every Ctrl+C would stop
+    // the paste that follows it.
+    setClipLabel(s.space_number)
+    return true
+  }
+
+  // Lands a step down and to the right of the copied slot (or up and left at
+  // the edge of the picture), selected, so it can be dragged straight into
+  // place. Each paste steps on from the previous one, so repeated pastes fan
+  // out instead of stacking invisibly on top of each other.
+  const pasteClip = () => {
+    const src = clipRef.current
+    if (!src || mode !== 'edit' || needsLensChoice) return false
+    commitLabel()
+    const top = lensIdx / lensCount, bot = (lensIdx + 1) / lensCount
+    // Onto the view on screen. A slot copied on the other lens keeps its place
+    // within the picture rather than landing on a lens nobody is looking at.
+    const s = translated(src, 0, (lensIdx - (src.lens_index ?? 0)) / lensCount)
+    let dx = PASTE_STEP, dy = PASTE_STEP / lensCount
+    if (s.x2 + dx > 1)   dx = -dx
+    if (s.y2 + dy > bot) dy = -dy
+    dx = Math.max(-s.x1, Math.min(1 - s.x2, dx))
+    dy = Math.max(top - s.y1, Math.min(bot - s.y2, dy))
+
+    const id    = tid()
+    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
+    const pasted = {
+      ...translated(s, dx, dy),
+      _id: id, id: null,
+      space_number: label,
+      vehicle_category: selZone?.vehicle_category,
+      lens_index: lensIdx,
+      is_occupied: false, occupied_by: '',
+    }
+    setDrafts(p => [...p, pasted])
+    // Ahead of the effect that normally syncs it, so a second paste pressed
+    // straight after labels past this one instead of reusing its number.
+    draftsRef.current = [...draftsRef.current, pasted]
+    clipRef.current = { ...pasted }
+    setSelDraft(id)
+    setDraftLabel(label)
+    return true
+  }
+
+  // Escape cancels an in-progress pen shape, then lets go of the selected slot.
+  // Delete / Backspace removes the selected slot — except while its label is
+  // being typed, where those keys belong to the text.
+  //
+  // Ctrl+C copies the selected slot, Ctrl+V pastes it, Ctrl+D does both. The
+  // selected slot's label box has focus, so inside it: Ctrl+C with label text
+  // highlighted is an ordinary text copy, and Ctrl+V pastes a slot only when
+  // the last thing copied was one. Any other field keeps its keys entirely.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        if (tool === 'pen' && penPoints.length > 0) setPenPoints([])
+        else if (selDraft) setSelDraft(null)
+        return
+      }
+      if (mode !== 'edit') return
+      const typing  = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName ?? '')
+      const inLabel = !!e.target?.classList?.contains('pm-popover-input')
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (!typing || inLabel)) {
+        const key = e.key.toLowerCase()
+        const textSelected = inLabel && e.target.selectionStart !== e.target.selectionEnd
+        if (key === 'c' && selDraft) {
+          if (textSelected) { clipIsShape.current = false; return }   // copying label text
+          e.preventDefault()
+          copySelDraft()
+          return
+        }
+        if (key === 'v' && clipRef.current && (!inLabel || clipIsShape.current)) {
+          e.preventDefault()
+          pasteClip()
+          return
+        }
+        if (key === 'd' && selDraft) {
+          e.preventDefault()                                          // not the browser's bookmark
+          if (copySelDraft()) pasteClip()
+          return
+        }
+      }
+
+      if (!selDraft) return
+      if (!typing && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault()
+        setDrafts(p => p.filter(s => s._id !== selDraft))
+        setSelDraft(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  // No dependency list: copy/paste read the lens, zone and drafts of the
+  // current render, so the listener is re-attached with each one.
+  })
 
   // ✓ — keep the slot as it is (label included) and put the handles away.
   const acceptSelDraft = () => {
@@ -1572,6 +1681,36 @@ export default function ParkingManagement({ embedded = false }) {
                         </title>
                       </ellipse>
                     ))}
+                    {/* Centre move handle: grab here to carry the whole slot.
+                        Dragging the body works too, but on a small slot the
+                        body is mostly corner handles, and nothing said so. */}
+                    {(() => {
+                      const cx = (selDraftSp.x1 + selDraftSp.x2) / 2
+                      const cy = (selDraftSp.y1 + selDraftSp.y2) / 2
+                      const r  = handleR * 1.7
+                      return (
+                        <g
+                          style={{ cursor: 'move' }}
+                          onMouseDown={e => startXform(e, 'move', selDraftSp)}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <title>Drag to move the whole slot</title>
+                          <ellipse
+                            cx={cx} cy={cy} rx={r} ry={r / lensCount}
+                            fill="#03396C" stroke="#fff" strokeWidth={0.002}
+                            opacity={0.9}
+                          />
+                          <path
+                            d={MOVE_GLYPH}
+                            transform={`translate(${cx} ${cy}) scale(${r} ${r / lensCount})`}
+                            fill="none" stroke="#fff" strokeWidth={1.6}
+                            strokeLinecap="round" strokeLinejoin="round"
+                            vectorEffect="non-scaling-stroke"
+                            pointerEvents="none"
+                          />
+                        </g>
+                      )
+                    })()}
                   </g>
                 )}
 
@@ -1658,6 +1797,13 @@ export default function ParkingManagement({ embedded = false }) {
                   <button className="pm-popover-btn pm-popover-btn--ok" onClick={acceptSelDraft} title="Keep this slot (Enter)">
                     <Check size={14} />
                   </button>
+                  <button
+                    className="pm-popover-btn pm-popover-btn--dup"
+                    onClick={() => { if (copySelDraft()) pasteClip() }}
+                    title="Duplicate this slot (Ctrl+D) — or Ctrl+C, then Ctrl+V"
+                  >
+                    <Copy size={14} />
+                  </button>
                   <button className="pm-popover-btn pm-popover-btn--del" onClick={deleteSelDraft} title="Remove this slot (Delete)">
                     <X size={14} />
                   </button>
@@ -1716,11 +1862,12 @@ export default function ParkingManagement({ embedded = false }) {
               <span className="pm-legend-note">
                 {mode === 'live'
                   ? 'Click a space to toggle manually · auto-refreshes every 8 s'
-                  : selDraftSp
-                    ? 'Drag the slot to move · drag a yellow corner to reshape (Shift = keep box) · blue dot adds a corner · ✓ keep · ✗ / Delete remove'
-                    : tool === 'pen'
-                      ? 'Click to trace a freeform shape · click a slot to edit it'
-                      : 'Click-drag to draw · click a slot to move, reshape, or remove it'}
+                  : (selDraftSp
+                      ? 'Drag the centre handle to move · drag a yellow corner to reshape (Shift = keep box) · blue dot adds a corner · Ctrl+C / Ctrl+V copy & paste · ✓ keep · ✗ / Delete remove'
+                      : tool === 'pen'
+                        ? 'Click to trace a freeform shape · click a slot to edit it'
+                        : 'Click-drag to draw · click a slot to move, reshape, copy, or remove it')
+                    + (clipLabel ? ` · Copied ${clipLabel} — Ctrl+V to paste` : '')}
               </span>
             </div>
           </div>
